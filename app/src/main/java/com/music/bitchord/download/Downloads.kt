@@ -1486,7 +1486,8 @@ object Downloads {
                 // HLS has no tag container, but its private offline package has
                 // sidecars for exactly the same lyrics and full-resolution cover.
                 if (route.taggable && (route.offlineHls != null || MediaTagger.carriesTags(route.extension))) {
-                    lyrics = async { LyricsTag.forTrack(track) }
+                    // Not every tagged file wants lyrics — see [Route.lyrics].
+                    if (route.lyrics) lyrics = async { LyricsTag.forTrack(track) }
                     artwork = async { MediaTagger.artworkFor(context, track) }
                 }
 
@@ -1587,6 +1588,15 @@ object Downloads {
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
         val taggable: Boolean = true,
+        /**
+         * Whether to go looking for lyrics for this file.
+         *
+         * A song has a title and an artist that a lyrics service can match
+         * against a catalogue. A podcast episode called "The End" does not:
+         * the search finds a song called "The End", and the episode is then
+         * saved wearing somebody else's words. See [directRoute].
+         */
+        val lyrics: Boolean = true,
         val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
     )
@@ -1615,6 +1625,12 @@ object Downloads {
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
     private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
+        // A podcast episode and an audiobook chapter are not catalogue tracks:
+        // their id *is* the address of the recording, put there by the feed.
+        // There is nothing to match against a catalogue and nothing to resolve
+        // — the bytes are at the other end of that address, and the feed has
+        // already said which address.
+        directRoute(track)?.let { return it }
         fromSources(track, quality)?.let { (stream, storable) ->
             // A manifest is an index, not audio. Whichever kind it is, fetching
             // it as a file writes the index into something named `.flac` —
@@ -1683,6 +1699,46 @@ object Downloads {
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
             write = { sink, onProgress ->
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
+            },
+        )
+    }
+
+    /**
+     * The route for a recording that already knows its own address.
+     *
+     * A podcast episode arrives from an RSS feed with an enclosure URL, and
+     * an audiobook chapter arrives from an archive with a file URL. Both are
+     * carried as the track's own id — see `ItunesPodcasts` — so a download of
+     * one is not a catalogue lookup at all: it is a fetch of the address the
+     * feed gave, with no matching, no source search, and no quality ladder to
+     * climb. The feed's file is the recording.
+     *
+     * The extension is read off the URL so the file is named and typed for
+     * what it is. A feed that serves its audio without an extension in the
+     * path is served as an mp3, which is what the overwhelming majority of
+     * them are.
+     *
+     * Lyrics are not looked for: an episode titled "The End" is not a song
+     * titled "The End", and a lyrics service that cannot tell the difference
+     * would save the episode wearing a stranger's words.
+     */
+    private fun directRoute(track: Song): Route? {
+        val url = track.videoId.trim()
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
+            return null
+        }
+        val path = url.substringBefore('?').substringBefore('#')
+        val fromPath = path.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it in DIRECT_EXTENSIONS }
+        val extension = fromPath ?: DEFAULT_DIRECT_EXTENSION
+        return Route(
+            extension = extension,
+            mimeType = DIRECT_MIME_TYPES[extension] ?: "audio/mpeg",
+            describe = "direct file",
+            lyrics = false,
+            write = { sink, onProgress ->
+                Downloader.fetchDirect(url, emptyMap(), sink, onProgress)
             },
         )
     }
@@ -1834,6 +1890,26 @@ object Downloads {
      * with a transcode and never fetch the real thing.
      */
     private val LOSSLESS_EXTENSIONS = listOf("flac", "wav")
+
+    /**
+     * The container types a podcast feed or an audiobook archive is allowed to
+     * hand over, and what the file is called and typed as once it has.
+     *
+     * Only the ones Android's audio collection will accept: `webm` is refused
+     * by the media store on affected versions, which is the same reason the
+     * YouTube route pins an exported Opus download to AAC in MP4.
+     */
+    private val DIRECT_EXTENSIONS = setOf("mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus")
+    private const val DEFAULT_DIRECT_EXTENSION = "mp3"
+    private val DIRECT_MIME_TYPES = mapOf(
+        "mp3" to "audio/mpeg",
+        "m4a" to "audio/mp4",
+        "mp4" to "audio/mp4",
+        "aac" to "audio/aac",
+        "ogg" to "audio/ogg",
+        "oga" to "audio/ogg",
+        "opus" to "audio/ogg",
+    )
 
     /**
      * Why a download didn't start, when the reason is a setting rather than a

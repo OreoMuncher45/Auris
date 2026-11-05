@@ -270,6 +270,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun isEpisodeLater(url: String): Boolean =
         com.music.bitchord.data.settings.PodcastLibrary.isEpisodeLater(url)
+    /** Take an episode out of "Episodes for later" without toggling it back in. */
+    fun removeLaterEpisode(url: String) {
+        com.music.bitchord.data.settings.PodcastLibrary.removeLaterEpisode(url)
+        refreshPodcastShelves()
+    }
+    fun toggleEpisodeLiked(song: Song) {
+        com.music.bitchord.data.settings.PodcastLibrary.toggleEpisodeLiked(song)
+        refreshPodcastShelves()
+    }
+    fun isEpisodeLiked(url: String): Boolean =
+        com.music.bitchord.data.settings.PodcastLibrary.isEpisodeLiked(url)
+    /** Take an episode out of "Continue listening". */
+    fun removeRecentEpisode(url: String) {
+        com.music.bitchord.data.settings.PodcastLibrary.removeRecentEpisode(url)
+        refreshPodcastShelves()
+    }
+    /**
+     * The episodes of one show the listener has played, most recent first.
+     *
+     * These are what a smart download takes: what has been heard already, and
+     * the few episodes published since.
+     */
+    fun playedEpisodes(collectionId: String): List<Song> =
+        com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes()
+            .filter { it.optString("collectionId") == collectionId }
+            .map { o ->
+                Song(
+                    videoId = o.optString("url"),
+                    title = o.optString("title"),
+                    artist = o.optString("show"),
+                    thumbnailUrl = o.optString("artwork").takeIf { it.isNotBlank() },
+                )
+            }
+
+    /** Whether an episode is on the "Continue listening" shelf. */
+    fun isEpisodeInContinueListening(url: String): Boolean =
+        com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes()
+            .any { it.optString("url") == url }
+
+    /**
+     * The last episode listened to in one show — the anchor of a smart
+     * download, and the episode a "Continue listening" shelf is built on.
+     */
+    fun lastListenedEpisode(collectionId: String): Song? =
+        com.music.bitchord.data.settings.PodcastLibrary.lastListenedEpisode(collectionId)?.let { o ->
+            Song(
+                videoId = o.optString("url"),
+                title = o.optString("title"),
+                artist = o.optString("show"),
+                thumbnailUrl = o.optString("artwork").takeIf { it.isNotBlank() },
+            )
+        }
     fun recordRecentShow(collectionId: String, name: String, artwork: String?, feedUrl: String? = null) {
         com.music.bitchord.data.settings.PodcastLibrary.recordRecentShow(collectionId, name, artwork, feedUrl)
         refreshPodcastShelves()
@@ -301,6 +353,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         })
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The last listened podcast episodes, newest first.
+     *
+     * The whole set, not the shelf's handful: the shelf is what fits on a
+     * screen and this is what the arrow behind it opens.
+     */
+    val continueListeningEpisodes: StateFlow<List<Song>> = _podcastShelfVersion.map {
+        com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes().map { o ->
+            Song(
+                videoId = o.optString("url"),
+                title = o.optString("title"),
+                artist = o.optString("show"),
+                thumbnailUrl = o.optString("artwork").takeIf { it.isNotBlank() },
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val podcastLikedShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {
         val shows = com.music.bitchord.data.settings.PodcastLibrary.likedShows()

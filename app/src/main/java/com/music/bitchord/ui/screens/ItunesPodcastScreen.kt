@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +41,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.MediaDownloadButton
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.compose.ui.res.stringResource
@@ -57,10 +61,16 @@ fun ItunesPodcastScreen(
     modifier: Modifier = Modifier,
     isLikedShow: Boolean = false,
     onToggleLikeShow: () -> Unit = {},
-    onToggleLater: (Song) -> Unit = {},
-    isLater: (String) -> Boolean = { false },
     sortNewestFirst: Boolean = true,
     onToggleSort: () -> Unit = {},
+    onDownload: (Song) -> Unit = {},
+    /** The episode's own menu: download, like, keep, take off the shelf. */
+    onEpisodeMenu: (Song) -> Unit = {},
+    /**
+     * The smart download: the last episode listened to in this show, and the
+     * few that came after it.
+     */
+    onSmartDownload: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -114,6 +124,19 @@ fun ItunesPodcastScreen(
                         tint = if (isLikedShow) MaterialTheme.colorScheme.primary
                                else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                // The smart download: the episode this listener is actually
+                // on, plus the few that came after it, so the next hours are
+                // on the device without a second thought.
+                val feed = (episodes as? UiState.Success)?.data.orEmpty()
+                if (feed.isNotEmpty()) {
+                    IconButton(onClick = onSmartDownload) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoAwesome,
+                            contentDescription = stringResource(R.string.smart_download),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -201,12 +224,18 @@ fun ItunesPodcastScreen(
                                         modifier = Modifier.padding(start = 8.dp),
                                     )
                                 }
-                                IconButton(onClick = { onToggleLater(song) }) {
+                                MediaDownloadButton(
+                                    videoId = song.videoId,
+                                    onDownload = { onDownload(song) },
+                                )
+                                // The episode's own menu — the heart that was
+                                // here only ever meant "keep this", and kept
+                                // nothing else about the episode.
+                                IconButton(onClick = { onEpisodeMenu(song) }) {
                                     Icon(
-                                        imageVector = if (isLater(song.videoId)) BitChordIcons.HeartFilled else BitChordIcons.Heart,
-                                        contentDescription = null,
-                                        tint = if (isLater(song.videoId)) MaterialTheme.colorScheme.primary
-                                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        imageVector = Icons.Rounded.MoreVert,
+                                        contentDescription = stringResource(R.string.episode_options),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }

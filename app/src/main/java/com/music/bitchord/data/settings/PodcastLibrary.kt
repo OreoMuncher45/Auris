@@ -11,23 +11,32 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * The user's own podcast shelf, persisted locally:
  *  - liked shows (starred) — keyed by collectionId
- *  - "episodes for later" (hearted episodes) — keyed by episode URL
+ *  - liked episodes — keyed by episode URL
+ *  - "episodes for later" — keyed by episode URL
  *  - recently played shows — keyed by show name, newest first, capped
+ *  - recently played episodes ("Continue listening") — keyed by episode URL
  *
  * These power the "Continue", "Liked podcasts" and "Episodes for later"
  * shelves on the Podcasts page and the Podcasts section in Library.
+ *
+ * Every list here can be edited: an episode can be liked, put aside for
+ * later, and taken back out of "Continue listening" when the listener has
+ * had enough of it. A shelf the user cannot empty is a shelf they stop
+ * trusting.
  */
 object PodcastLibrary {
     private const val FILE = "bitchord_podcast_library"
     private const val KEY_LIKED = "liked_shows"   // id -> {collectionId,name,artist,artwork}
     private const val KEY_LATER = "episodes_later" // url -> {title,show,artwork,url}
     private const val KEY_RECENT = "recent_shows"  // name -> {name,artwork,lastPlayedMs}
+    private const val KEY_LIKED_EP = "liked_episodes" // url -> {title,show,artwork,url}
     private const val RECENT_CAP = 12
 
     private lateinit var prefs: SharedPreferences
     private val liked = ConcurrentHashMap<String, JSONObject>()
     private val later = LinkedHashMap<String, JSONObject>()
     private val recent = LinkedHashMap<String, JSONObject>()
+    private val likedEps = LinkedHashMap<String, JSONObject>()
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -53,6 +62,12 @@ object PodcastLibrary {
                 recentEps[o.optString("url")] = o
             }
         }
+        JSONArray(prefs.getString(KEY_LIKED_EP, "[]") ?: "[]").let { a ->
+            for (i in 0 until a.length()) {
+                val o = a.getJSONObject(i)
+                likedEps[o.optString("url")] = o
+            }
+        }
     }
 
     private fun save() {
@@ -61,6 +76,7 @@ object PodcastLibrary {
             .putString(KEY_LATER, JSONArray(later.values).toString())
             .putString(KEY_RECENT, JSONArray(recent.values).toString())
             .putString(KEY_RECENT_EP, JSONArray(recentEps.values).toString())
+            .putString(KEY_LIKED_EP, JSONArray(likedEps.values).toString())
             .apply()
     }
 
@@ -78,9 +94,7 @@ object PodcastLibrary {
     // --- episodes for later ---
     @Synchronized fun toggleEpisodeLater(song: Song) {
         if (later.containsKey(song.videoId)) later.remove(song.videoId)
-        else later[song.videoId] = JSONObject()
-            .put("url", song.videoId).put("title", song.title)
-            .put("show", song.artist).put("artwork", song.thumbnailUrl ?: "")
+        else later[song.videoId] = episodeRecord(song)
         save()
     }
     fun isEpisodeLater(url: String): Boolean = later.containsKey(url)
@@ -88,6 +102,34 @@ object PodcastLibrary {
         Song(videoId = it.optString("url"), title = it.optString("title"),
             artist = it.optString("show"), thumbnailUrl = it.optString("artwork").takeIf { s -> s.isNotBlank() })
     }
+
+    /** Take one episode out of "Episodes for later", leaving the rest alone. */
+    @Synchronized fun removeLaterEpisode(url: String) {
+        if (later.remove(url) != null) save()
+    }
+
+    // --- liked episodes ---
+    /**
+     * Like or unlike an episode.
+     *
+     * A show can be liked from its own page and an episode can be liked from
+     * the episode's menu; both are worth keeping, and neither is the other's
+     * business — a listener can love a show and skip every episode in it.
+     */
+    @Synchronized fun toggleEpisodeLiked(song: Song) {
+        if (likedEps.containsKey(song.videoId)) likedEps.remove(song.videoId)
+        else likedEps[song.videoId] = episodeRecord(song)
+        save()
+    }
+    fun isEpisodeLiked(url: String): Boolean = likedEps.containsKey(url)
+    fun likedEpisodes(): List<Song> = likedEps.values.map {
+        Song(videoId = it.optString("url"), title = it.optString("title"),
+            artist = it.optString("show"), thumbnailUrl = it.optString("artwork").takeIf { s -> s.isNotBlank() })
+    }
+
+    private fun episodeRecord(song: Song) = JSONObject()
+        .put("url", song.videoId).put("title", song.title)
+        .put("show", song.artist).put("artwork", song.thumbnailUrl ?: "")
 
     // --- recent shows (Continue) ---
     @Synchronized fun recordRecentShow(collectionId: String, name: String, artwork: String?, feedUrl: String? = null) {
@@ -108,7 +150,15 @@ object PodcastLibrary {
     // --- recent episodes (Continue listening = resume the exact episode) ---
     private val KEY_RECENT_EP = "recent_episodes"
     private val recentEps = LinkedHashMap<String, JSONObject>()
-    private const val RECENT_EP_CAP = 12
+    /**
+     * How many played episodes are remembered.
+     *
+     * Fifty, because the "Continue listening" page behind the shelf's arrow
+     * is the whole history the listener can reach back into — and a shelf
+     * that keeps twelve of them is a shelf that has forgotten more than it
+     * shows.
+     */
+    private const val RECENT_EP_CAP = 50
 
     @Synchronized fun recordRecentEpisode(collectionId: String, showName: String, artwork: String?, feedUrl: String?, song: Song) {
         recentEps.remove(song.videoId)
@@ -123,6 +173,27 @@ object PodcastLibrary {
         save()
     }
     fun recentEpisodes(): List<JSONObject> = recentEps.values.sortedByDescending { it.optLong("lastPlayedMs") }
+
+    /**
+     * Take one episode out of "Continue listening".
+     *
+     * The shelf is a list of what was played, and what was played is not a
+     * verdict: a listener who has finished with an episode wants it gone from
+     * the shelf, not for the app to keep offering it as the next thing to
+     * resume.
+     */
+    @Synchronized fun removeRecentEpisode(url: String) {
+        if (recentEps.remove(url) != null) save()
+    }
+
+    /**
+     * The last episode listened to in one show, newest first.
+     *
+     * This is what a smart download is built around: the episode the listener
+     * is actually on, and the ones that came after it.
+     */
+    fun lastListenedEpisode(collectionId: String): JSONObject? =
+        recentEpisodes().firstOrNull { it.optString("collectionId") == collectionId }
 
     /** Rebuild an [ItunesShow] from what we persisted, so a saved show opens
      *  even when the in-memory search cache is cold ("Show not found"). */

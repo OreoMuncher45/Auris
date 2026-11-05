@@ -182,7 +182,10 @@ import com.music.bitchord.ui.screens.libraryLinks
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
+import com.music.bitchord.data.audiobook.Audiobook
+import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.ui.screens.QuickPicksScreen
+import com.music.bitchord.ui.screens.ContinueListeningScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -231,6 +234,7 @@ import com.music.bitchord.ui.components.LocalCollectionActions
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
+import com.music.bitchord.ui.components.PodcastEpisodeSheet
 import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
@@ -876,6 +880,8 @@ private fun BitChordApp(
     // The whole Quick Picks set, opened from the arrow at the end of its
     // heading on Home. It is a section of Home rather than a tab of its own.
     var showQuickPicks by remember { mutableStateOf(false) }
+    // The podcast pages that sit over the feed — see [PodcastUiState].
+    val podcastUi = remember { PodcastUiState() }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
     val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
@@ -958,6 +964,7 @@ private fun BitChordApp(
     val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
     val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
     val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
+    val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
     val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
     val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
@@ -1356,6 +1363,7 @@ private fun BitChordApp(
     val podcastListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val quickPicksListState = rememberLazyListState()
+    val continueListeningListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
@@ -2384,6 +2392,33 @@ private fun BitChordApp(
     }
 
     /**
+     * The smart download for the show on screen.
+     *
+     * The episodes of it the listener has already played, and the few that
+     * came after the last of them — the ones published since. Not the whole
+     * back catalogue: a smart download is what a listener wants on the device
+     * before the next drive, and the episodes they have already heard are the
+     * ones they may want again.
+     *
+     * [anchor] is the episode the action was taken from, when it was taken
+     * from one; the show's own last played episode otherwise.
+     */
+    fun smartDownloadPodcast(anchor: Song?) {
+        val feed = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
+        val showId = itunesPodcastId
+        val played = showId?.let { viewModel.playedEpisodes(it) }.orEmpty()
+        val seed = if (anchor != null) listOf(anchor) + played else played
+        val picked = com.music.bitchord.data.podcast.PodcastSmartDownload.select(feed, seed)
+        if (picked.isEmpty()) return
+        Downloads.enqueueAll(context, picked, "Podcast")
+        Toast.makeText(
+            context,
+            context.getString(R.string.smart_download_started, picked.size),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    /**
      * Holding a card on a feed whose shelves mix tracks with collections —
      * Quick picks and Recently played are songs, Listen again is either.
      *
@@ -3252,6 +3287,7 @@ private fun BitChordApp(
         BackHandler(enabled = showHistory) { showHistory = false }
         BackHandler(enabled = showFlow) { showFlow = false }
         BackHandler(enabled = showQuickPicks) { showQuickPicks = false }
+        BackHandler(enabled = podcastUi.showContinueListening) { podcastUi.showContinueListening = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
@@ -3731,6 +3767,7 @@ private fun BitChordApp(
                     showHistory -> "history"
                     showFlow -> "flow"
                     showQuickPicks -> "quick_picks"
+                    podcastUi.showContinueListening -> "continue_listening"
                     // `&& detail == null`: a card opened from the grid
                     // stacks a detail page over it exactly as one opened
                     // from the Library tab does — see
@@ -3977,6 +4014,26 @@ private fun BitChordApp(
                             listState = quickPicksListState,
                             contentPadding = listPadding,
                         )
+                    } else if (key == "continue_listening") {
+                        ContinueListeningScreen(
+                            episodes = continueListeningEpisodes,
+                            query = podcastUi.continueQuery,
+                            onQueryChange = { podcastUi.continueQuery = it },
+                            onPlay = { episode ->
+                                playWithResume(listOf(episode), 0)
+                            },
+                            onRemove = { episode ->
+                                viewModel.removeRecentEpisode(episode.videoId)
+                                Toast.makeText(
+                                    context,
+                                    R.string.continue_listening_removed,
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                            onMore = { episode -> podcastUi.episodeMenu = episode },
+                            listState = continueListeningListState,
+                            contentPadding = listPadding,
+                        )
                     } else if (key == "library_show_all") {
                         libraryShowAll?.let { shelf ->
                             LibraryGridPage(
@@ -4145,19 +4202,33 @@ private fun BitChordApp(
                                 chapters = audiobookChapters,
                                 onPlayChapter = { index ->
                                     val chapters = (audiobookChapters as? UiState.Success)?.data.orEmpty()
-                                    val songs = chapters.map { chapter ->
-                                        Song(
-                                            videoId = chapter.audioUrl,
-                                            title = chapter.title,
-                                            artist = book.title,
-                                            thumbnailUrl = chapter.coverUrl ?: book.coverUrl,
-                                            durationText = chapter.seconds?.let { com.music.bitchord.ui.screens.formatRuntime(it) },
-                                        )
-                                    }
+                                    val songs = chapters.map { chapter -> audiobookSong(book, chapter) }
                                     if (index in songs.indices) playWithResume(songs, index)
                                  },
                                  onRetry = { viewModel.reloadAudiobookChapters(book.id) },
                                 contentPadding = listPadding,
+                                onDownloadChapter = { chapter ->
+                                    Downloads.enqueue(
+                                        context,
+                                        audiobookSong(book, chapter),
+                                        "Audiobook",
+                                    )
+                                },
+                                onDownloadBook = { chapters ->
+                                    val count = chapters.size
+                                    if (count > 0) {
+                                        Downloads.enqueueAll(
+                                            context,
+                                            chapters.map { audiobookSong(book, it) },
+                                            "Audiobook",
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.download_book_started, count),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                },
                             )
                         }
                     } else if (key == "audiobooks") {
@@ -4196,10 +4267,13 @@ private fun BitChordApp(
                                     viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl, it.feedUrl)
                                 }
                             },
-                            onToggleLater = { song -> viewModel.toggleEpisodeLater(song) },
-                            isLater = { url -> viewModel.isEpisodeLater(url) },
                             sortNewestFirst = podcastSortNewest,
                             onToggleSort = { podcastSortNewest = !podcastSortNewest },
+                            onDownload = { song ->
+                                Downloads.enqueue(context, song, "Podcast")
+                            },
+                            onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
+                            onSmartDownload = { smartDownloadPodcast(null) },
                         )
                     } else if (key == "settings") {
                         SettingsScreen(
@@ -4531,6 +4605,22 @@ private fun BitChordApp(
                             continueShelf = podcastContinueShelf,
                             likedShelf = podcastLikedShelf,
                             laterShelf = podcastLaterShelf,
+                            // The arrow at the end of the shelf's heading opens
+                            // the whole set, the way Quick Picks' does on Home.
+                            onOpenContinueListening = { podcastUi.showContinueListening = true },
+                            // Held on an episode of one of the listener's own
+                            // shelves: the same menu an episode's own row has.
+                            onOwnShelfItemLongPress = { item ->
+                                val url = item.videoId
+                                if (url != null && url.startsWith("http")) {
+                                    podcastUi.episodeMenu = Song(
+                                        videoId = url,
+                                        title = item.title,
+                                        artist = item.subtitle,
+                                        thumbnailUrl = item.thumbnailUrl,
+                                    )
+                                }
+                            },
                             onShowClick = { item ->
                                 val browseId = item.browseId
                                 if (browseId != null && browseId.startsWith("itunes:")) {
@@ -4899,6 +4989,7 @@ private fun BitChordApp(
                         showHistory -> stringResource(R.string.history)
                         showFlow -> stringResource(R.string.flow)
                         showQuickPicks -> quickPicksLabel
+                        podcastUi.showContinueListening -> stringResource(R.string.continue_listening)
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> stringResource(R.string.account_scrobbling)
                         showSources -> stringResource(R.string.sources)
@@ -4929,6 +5020,7 @@ private fun BitChordApp(
                         showSettings || showAccountScrobbling || showSources || showListenTogether ||
                             showEqualizer ||
                             showDiscord || showHistory || showFlow || showQuickPicks ||
+                            podcastUi.showContinueListening ||
                             (libraryShowAll != null && detail == null) ||
                             (detail != null && detailActiveShelf != null) ||
                             selectedMoodGenre != null -> true
@@ -4946,6 +5038,7 @@ private fun BitChordApp(
                         showHistory -> ({ showHistory = false })
                         showFlow -> ({ showFlow = false })
                         showQuickPicks -> ({ showQuickPicks = false })
+                        podcastUi.showContinueListening -> ({ podcastUi.showContinueListening = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({
                             showAccountScrobbling = false
@@ -5719,6 +5812,50 @@ private fun BitChordApp(
                     viewModel.saveFlow(name)
                 },
             )
+        }
+
+        // ---- Podcast episode ----
+        // What can be done to an episode. Not the track menu: an episode has
+        // no rating, no playlist and no source, so the rows that would mean
+        // nothing there are not here.
+        podcastUi.episodeMenu?.let { episode ->
+            val dismiss = { podcastUi.episodeMenu = null }
+            ModalBottomSheet(
+                onDismissRequest = dismiss,
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                PodcastEpisodeSheet(
+                    episode = episode,
+                    isLiked = viewModel.isEpisodeLiked(episode.videoId),
+                    isLater = viewModel.isEpisodeLater(episode.videoId),
+                    isInContinueListening = viewModel.isEpisodeInContinueListening(episode.videoId),
+                    onDownload = {
+                        dismiss()
+                        Downloads.enqueue(context, episode, "Podcast")
+                    },
+                    onSmartDownload = {
+                        dismiss()
+                        smartDownloadPodcast(episode)
+                    },
+                    onToggleLike = {
+                        dismiss()
+                        viewModel.toggleEpisodeLiked(episode)
+                    },
+                    onToggleLater = {
+                        dismiss()
+                        viewModel.toggleEpisodeLater(episode)
+                    },
+                    onRemoveFromContinueListening = {
+                        dismiss()
+                        viewModel.removeRecentEpisode(episode.videoId)
+                        Toast.makeText(
+                            context,
+                            R.string.continue_listening_removed,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                )
+            }
         }
 
         // ---- Download manager ----
@@ -6746,6 +6883,39 @@ private fun DiscordLoginHost(
         }
     }
 }
+
+/**
+ * The state of the podcast pages that sit over the feed.
+ *
+ * A holder rather than four separate `mutableStateOf`s in the app's root
+ * composable: that composable's lambdas already capture everything they can
+ * see, and the JVM allows a method 255 argument slots — so every new piece
+ * of state at that level is a fight for the last few slots. One object is one
+ * slot, however many fields it carries.
+ */
+private class PodcastUiState {
+    /** The whole "Continue listening" page, behind the shelf's arrow. */
+    var showContinueListening by mutableStateOf(false)
+    /** The episode whose menu is open, or null when it is shut. */
+    var episodeMenu by mutableStateOf<Song?>(null)
+    /** What the page's search is looking for. */
+    var continueQuery by mutableStateOf("")
+}
+
+/**
+ * A chapter of a book as a track.
+ *
+ * The chapter's own address is the track's id, which is what makes it
+ * downloadable: the archive's file is fetched from the address the archive
+ * gave, with no catalogue in between.
+ */
+private fun audiobookSong(book: Audiobook, chapter: AudiobookChapter): Song = Song(
+    videoId = chapter.audioUrl,
+    title = chapter.title,
+    artist = book.title,
+    thumbnailUrl = chapter.coverUrl ?: book.coverUrl,
+    durationText = chapter.seconds?.let { com.music.bitchord.ui.screens.formatRuntime(it) },
+)
 
 private fun tween(durationMillis: Int) =
     androidx.compose.animation.core.tween<Float>(durationMillis)

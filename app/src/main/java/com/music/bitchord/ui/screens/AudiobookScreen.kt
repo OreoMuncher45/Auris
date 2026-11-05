@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +37,7 @@ import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.MediaDownloadButton
 import com.music.bitchord.ui.components.PAGE_GUTTER
 
 /**
@@ -51,6 +56,8 @@ fun AudiobookScreen(
     onRetry: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    onDownloadChapter: (AudiobookChapter) -> Unit = {},
+    onDownloadBook: (List<AudiobookChapter>) -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -93,6 +100,19 @@ fun AudiobookScreen(
                     )
                 }
             }
+            // The whole book, in one go. A book is read over weeks and a
+            // chapter at a time is the point of it, but a reader who is
+            // about to lose a connection wants the shelf on the device.
+            val bookChapters = (chapters as? UiState.Success)?.data.orEmpty()
+            if (bookChapters.isNotEmpty()) {
+                IconButton(onClick = { onDownloadBook(bookChapters) }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Download,
+                        contentDescription = stringResource(R.string.download_whole_book),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         when (chapters) {
             UiState.Loading -> MessageState(stringResource(R.string.audiobooks_loading))
@@ -115,6 +135,7 @@ fun AudiobookScreen(
                                 index = index,
                                 chapter = chapter,
                                 onClick = { onPlayChapter(index) },
+                                onDownload = { onDownloadChapter(chapter) },
                             )
                         }
                     }
@@ -126,7 +147,12 @@ fun AudiobookScreen(
 
 /** One chapter: its number, its title, how long it runs, who reads it. */
 @Composable
-private fun ChapterRow(index: Int, chapter: AudiobookChapter, onClick: () -> Unit) {
+private fun ChapterRow(
+    index: Int,
+    chapter: AudiobookChapter,
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -188,6 +214,10 @@ private fun ChapterRow(index: Int, chapter: AudiobookChapter, onClick: () -> Uni
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
+        MediaDownloadButton(
+            videoId = chapter.audioUrl,
+            onDownload = onDownload,
+        )
     }
 }
 
