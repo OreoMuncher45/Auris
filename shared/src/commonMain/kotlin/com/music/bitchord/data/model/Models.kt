@@ -529,7 +529,12 @@ fun SearchResult.songOrNull(): Song? = when (this) {
     is SearchResult.Browse -> null
 }
 
-enum class SearchFilter(val label: String, val params: String?) {
+enum class SearchFilter(
+    val label: String,
+    val params: String?,
+    /** Needs a signed-in account: it searches that account's own library. */
+    val requiresAuth: Boolean = false,
+) {
     /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
     ALL("All", null),
     SONGS("Songs", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
@@ -539,6 +544,8 @@ enum class SearchFilter(val label: String, val params: String?) {
     PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
     /** Not a YouTube filter — searched against the Apple podcast catalogue instead. */
     PODCASTS("Podcasts", null),
+    /** Only the songs in the signed-in account's own YouTube Music library. */
+    LIBRARY("Library", "agIYBA==", requiresAuth = true),
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */

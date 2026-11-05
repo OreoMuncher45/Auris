@@ -3508,7 +3508,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Spotify has no videos tab, and a filter the request does
                 // not honour is a filter that lies: the pill says one thing
                 // and the list answers another.
-                if (_filter.value == SearchFilter.VIDEOS) _filter.value = SearchFilter.ALL
+                if (_filter.value == SearchFilter.VIDEOS || _filter.value == SearchFilter.LIBRARY) {
+                    _filter.value = SearchFilter.ALL
+                }
                 submitSearch()
             }
         }
@@ -3620,6 +3622,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
+                // Library is the account's own songs: signed out there is
+                // nothing to search, so it says why rather than asking. Ahead
+                // of the cache, so a signed-out page can't show an earlier
+                // account's library.
+                if (request.filter.requiresAuth && !_signedIn.value) {
+                    _results.value = UiState.Error(text(R.string.library_sign_in_description))
+                    return@collectLatest
+                }
                 val key = cacheKey(request.query, request.filter, request.source)
                 // Something to look at immediately: the exact answer if this
                 // query has been run before, otherwise the closest earlier

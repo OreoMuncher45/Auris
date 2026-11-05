@@ -6267,7 +6267,9 @@ private fun RootPage(
                 searchSource == SearchSource.SPOTIFY ->
                     com.music.bitchord.data.model.SearchFilter.entries.filter {
                         it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
-                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS
+                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS &&
+                            // An account's YouTube library isn't Spotify's.
+                            it != com.music.bitchord.data.model.SearchFilter.LIBRARY
                     }
                 podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
                 else -> com.music.bitchord.data.model.SearchFilter.entries
