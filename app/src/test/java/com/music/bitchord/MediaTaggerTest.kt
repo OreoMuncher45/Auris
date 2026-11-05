@@ -5,6 +5,7 @@ import com.music.bitchord.download.Mp4Tagger
 import com.music.bitchord.download.WebmTagger
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -196,6 +197,71 @@ class MediaTaggerTest {
         val decoded = ((b0 and 0x3F) shl 8) or b1
         val newBodyLength = tagged.size - (sizeFieldOffset + 2)
         assertEquals(newBodyLength.toLong(), decoded.toLong())
+    }
+
+    @Test
+    fun `webm tagging on disk appends after an unknown-size segment untouched`() {
+        val unknownSize = byteArrayOf(0x01) + ByteArray(7) { 0xFF.toByte() }
+        val segmentBody = ByteArray(10) { (it + 1).toByte() }
+        val original = buildFakeWebm(segmentBody, unknownSize)
+
+        val file = java.io.File.createTempFile("auris-webm", ".webm")
+        try {
+            file.writeBytes(original)
+            val tagged = WebmTagger.tagFile(file, "T", "A", "Al", null, null, "image/jpeg")
+            assertTrue(tagged)
+
+            val after = file.readBytes()
+            assertArrayEquals(original, after.copyOfRange(0, original.size))
+            assertTrue(after.indexOfBytes("TITLE".toByteArray(Charsets.US_ASCII)) >= 0)
+            assertTrue(after.indexOfBytes("ARTIST".toByteArray(Charsets.US_ASCII)) >= 0)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `webm tagging on disk widens a definite segment size in place`() {
+        val segmentBody = ByteArray(20) { it.toByte() }
+        val declaredSize = segmentBody.size.toLong()
+        val sizeField = byteArrayOf(
+            (0x40 or ((declaredSize ushr 8).toInt() and 0x3F)).toByte(),
+            (declaredSize and 0xFF).toByte(),
+        )
+        val original = buildFakeWebm(segmentBody, sizeField)
+
+        val file = java.io.File.createTempFile("auris-webm", ".webm")
+        try {
+            file.writeBytes(original)
+            val tagged = WebmTagger.tagFile(file, "T", "", null, null, null, "image/jpeg")
+            assertTrue(tagged)
+
+            val after = file.readBytes()
+            val sizeFieldOffset = ebmlHeaderId.size + 1 + 4 + segmentId.size
+            assertArrayEquals(
+                original.copyOfRange(0, sizeFieldOffset),
+                after.copyOfRange(0, sizeFieldOffset),
+            )
+            val b0 = after[sizeFieldOffset].toInt() and 0xFF
+            val b1 = after[sizeFieldOffset + 1].toInt() and 0xFF
+            val decoded = ((b0 and 0x3F) shl 8) or b1
+            assertEquals((after.size - (sizeFieldOffset + 2)).toLong(), decoded.toLong())
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `webm tagging on disk leaves a file it does not recognise alone`() {
+        val bytes = ByteArray(64) { it.toByte() }
+        val file = java.io.File.createTempFile("auris-webm", ".webm")
+        try {
+            file.writeBytes(bytes)
+            assertFalse(WebmTagger.tagFile(file, "T", "A", null, null, null, "image/jpeg"))
+            assertArrayEquals(bytes, file.readBytes())
+        } finally {
+            file.delete()
+        }
     }
 
     @Test

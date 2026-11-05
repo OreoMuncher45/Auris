@@ -50,6 +50,9 @@ object AudioDecoder {
     private const val TAG = "BitChordAudioDecoder"
     private const val TIMEOUT_US = 10_000L
 
+    /** The first buffer's size: about a second and a half of audio at 48 kHz. */
+    private const val INITIAL_SAMPLES = 1 shl 16
+
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
 
@@ -113,11 +116,11 @@ object AudioDecoder {
         endSeconds: Double,
         abort: () -> Boolean = { false },
     ): Pair<Pcm, Double>? {
-        val chunks = ArrayList<FloatArray>()
+        val samples = SampleBuffer()
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
-            chunks += toMono(buffer, info, channels)
+            samples.add(toMono(buffer, info, channels))
         } ?: return null
-        return Pcm(flatten(chunks), decoded.first) to decoded.second
+        return Pcm(samples.toArray(), decoded.first) to decoded.second
     }
 
     /**
@@ -134,23 +137,47 @@ object AudioDecoder {
         endSeconds: Double,
         abort: () -> Boolean = { false },
     ): Pair<StereoPcm, Double>? {
-        val left = ArrayList<FloatArray>()
-        val right = ArrayList<FloatArray>()
+        val left = SampleBuffer()
+        val right = SampleBuffer()
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
-        return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
+        return StereoPcm(left.toArray(), right.toArray(), decoded.first) to decoded.second
     }
 
-    /** Concatenates the decoded chunks into one contiguous buffer. */
-    private fun flatten(chunks: List<FloatArray>): FloatArray {
-        val samples = FloatArray(chunks.sumOf { it.size })
-        var offset = 0
-        for (chunk in chunks) {
-            chunk.copyInto(samples, offset)
-            offset += chunk.size
+    /**
+     * One growable buffer of decoded samples.
+     *
+     * The decoder hands its output over one buffer at a time and the caller
+     * wants the track contiguous, and the obvious way to get there — collect
+     * the chunks, then copy them into one array — holds the track twice: at
+     * the container's own rate a ten-minute song is a hundred megabytes of
+     * mono float, and two of those is more than the process is allowed in
+     * total. On a long recording it was the difference between an analysis
+     * and an OutOfMemoryError that took the player's own next allocation
+     * with it.
+     *
+     * So the samples go into one buffer that grows as they arrive, and the
+     * track is in memory once. The growth is a copy, so the buffer is sized
+     * for the region on its first buffer rather than doubling its way there:
+     * a decoder that produces more than the region asked for — the priming
+     * samples at the front — grows once more and then holds.
+     */
+    private class SampleBuffer {
+        private var samples = FloatArray(INITIAL_SAMPLES)
+        private var size = 0
+
+        fun add(chunk: FloatArray) {
+            if (size + chunk.size > samples.size) {
+                var next = samples.size
+                while (next < size + chunk.size) next = next shl 1
+                samples = samples.copyOf(next)
+            }
+            chunk.copyInto(samples, size)
+            size += chunk.size
         }
-        return samples
+
+        fun toArray(): FloatArray = if (size == samples.size) samples else samples.copyOf(size)
     }
 
     /**
@@ -297,8 +324,8 @@ object AudioDecoder {
         buffer: ByteBuffer,
         info: MediaCodec.BufferInfo,
         channels: Int,
-        left: MutableList<FloatArray>,
-        right: MutableList<FloatArray>,
+        left: SampleBuffer,
+        right: SampleBuffer,
     ) {
         val safeChannels = max(1, channels)
         val shorts = buffer.duplicate().apply {
@@ -315,8 +342,8 @@ object AudioDecoder {
             leftChunk[index] = frame[0] / 32768f
             rightChunk[index] = (if (safeChannels > 1) frame[1] else frame[0]) / 32768f
         }
-        left += leftChunk
-        right += rightChunk
+        left.add(leftChunk)
+        right.add(rightChunk)
     }
 
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null

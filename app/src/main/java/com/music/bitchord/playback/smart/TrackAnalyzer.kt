@@ -1067,6 +1067,25 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return WholeTrack(empty(trackId, 0.0))
         }
 
+        // A track longer than the cap is not analysed whole.
+        //
+        // The whole-track pass decodes the entire recording into one mono
+        // float buffer — at the container's rate, that is about ten megabytes
+        // a minute, so a two-hour episode is a gigabyte and a half of PCM on a
+        // heap this process is allowed a quarter of a gigabyte of. The
+        // allocation does not fail politely: it takes the heap with it, and
+        // the next thing that asks for memory — the player's own loader, on
+        // the next track — dies instead, which is what a crash at the end of
+        // a long track looked like from the outside.
+        //
+        // Nothing is lost by refusing it. The transitions read two windows of
+        // a track, the head and the tail, and both are read below whatever
+        // this pass does; the one thing that does not happen is the energy
+        // curve over the middle, which is what the mix-out anchor is read
+        // from. A podcast with a plain crossfade instead of a measured one is
+        // a smaller loss than a crash.
+        val wholeTrack = effectiveDuration <= MAX_WHOLE_TRACK_SECONDS
+
         // Pass 1 (Phase 1, DSP-only): the analyzer needs the whole track — the energy curve,
         // phrase structure and mix-out anchor all read the tail, not just a window of it — at its
         // own low sample rate, so this is a much smaller decode than a full-rate pass would be.
@@ -1080,7 +1099,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // held while the models ran, in a process that was reaching a 256 MB heap limit and had
         // died on it. Returning is what releases them — a `val` cannot be nulled, and a narrower
         // scope alone does not make ART treat one as dead.
-        val structural = structure(trackId, uri, copy, effectiveDuration)
+        val structural = if (wholeTrack) {
+            structure(trackId, uri, copy, effectiveDuration)
+        } else {
+            Log.i(TAG, "Not analysing $trackId whole: ${"%.0f".format(Locale.ROOT, effectiveDuration)}s is over the ${MAX_WHOLE_TRACK_SECONDS}s cap")
+            Structural(null)
+        }
         // A party started while Pass 1 was decoding. Dropped as "no result"
         // rather than as a failure — the track was never measured, so nothing
         // should be recorded against it and nothing should stop it being
@@ -1091,7 +1115,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // exactly what those lines write a permanent "cannot be analysed" for.
         if (stopped) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
-        val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
+        // A track over the cap has no features: the energy curve was what the
+        // whole-track pass was for, and it was not run. The windows below are
+        // read without them, which is how the head pass reads them.
+        val features = structural.features
+        if (features == null && wholeTrack) return WholeTrack(empty(trackId, effectiveDuration))
 
         // Pass 2 (Phases 2 and 3, models): the Beat This! grid and the open-unmix vocal mask, over
         // the head and tail only. A transition only ever reads the tail of the outgoing track and
@@ -1122,46 +1150,52 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         Log.d(
             TAG,
-            "Analysed $trackId: bpm=${leading?.bpm ?: features.bpm} " +
-                "conf=${leading?.beatConfidence ?: features.beatConfidence} " +
-                "key=${features.key} contentEnd=${features.contentEndTime} " +
-                "mixOutCandidates=${features.mixOutCandidates.size} " +
+            "Analysed $trackId: bpm=${leading?.bpm ?: features?.bpm} " +
+                "conf=${leading?.beatConfidence ?: features?.beatConfidence} " +
+                "key=${features?.key} contentEnd=${features?.contentEndTime} " +
+                "mixOutCandidates=${features?.mixOutCandidates?.size ?: 0} " +
                 "vocalMask=${if (head?.vocalMask != null || tail?.vocalMask != null) "model" else "dsp"}",
         )
 
+        // A track over the cap has no features: the energy curve was what the
+        // whole-track pass was for, and it was not run. What is left is the
+        // beat grid over the head and the tail, which is what a transition
+        // reads anyway — so the analysis is published without the curve, and
+        // the policy falls back to a plain crossfade where it has nothing to
+        // go on.
         return WholeTrack(
                 TrackAnalysis(
                     status = TrackAnalysis.STATUS_READY,
                     trackId = trackId,
                     duration = effectiveDuration,
-                    contentEndTime = features.contentEndTime.takeIf { it > 0 } ?: effectiveDuration,
-                    bpm = leading?.bpm ?: features.bpm,
-                beatInterval = leading?.beatInterval ?: features.beatInterval,
-                beatConfidence = leading?.beatConfidence ?: features.beatConfidence,
+                    contentEndTime = features?.contentEndTime?.takeIf { it > 0 } ?: effectiveDuration,
+                    bpm = leading?.bpm ?: features?.bpm ?: 0.0,
+                beatInterval = leading?.beatInterval ?: features?.beatInterval ?: 0.0,
+                beatConfidence = leading?.beatConfidence ?: features?.beatConfidence ?: 0.0,
                 downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
-                    .ifEmpty { features.downbeats }
+                    .ifEmpty { features?.downbeats.orEmpty() }
                     .sorted(),
-                firstBeat = headGrid?.firstBeat ?: features.firstBeat,
-                phraseBoundaries = features.phraseBoundaries,
-                key = features.key,
-                keyConfidence = features.keyConfidence,
-                audibleStartTime = features.audibleStartTime,
-                pickupTime = features.pickupTime,
-                introEndTime = features.introEndTime,
-                outroStartTime = features.outroStartTime,
-                mixInTime = features.mixInTime,
-                mixOutTime = features.mixOutTime,
-                mixInCandidates = features.mixInCandidates,
-                mixOutCandidates = features.mixOutCandidates,
-                energyCurve = features.energyCurve,
-                lowEnergyCurve = features.lowEnergyCurve,
+                firstBeat = headGrid?.firstBeat ?: features?.firstBeat ?: 0.0,
+                phraseBoundaries = features?.phraseBoundaries ?: emptyList(),
+                key = features?.key.orEmpty(),
+                keyConfidence = features?.keyConfidence ?: 0.0,
+                audibleStartTime = features?.audibleStartTime,
+                pickupTime = features?.pickupTime,
+                introEndTime = features?.introEndTime ?: 0.0,
+                outroStartTime = features?.outroStartTime ?: 0.0,
+                mixInTime = features?.mixInTime ?: 0.0,
+                mixOutTime = features?.mixOutTime ?: 0.0,
+                mixInCandidates = features?.mixInCandidates.orEmpty(),
+                mixOutCandidates = features?.mixOutCandidates.orEmpty(),
+                energyCurve = features?.energyCurve.orEmpty(),
+                lowEnergyCurve = features?.lowEnergyCurve.orEmpty(),
                 // The model's mask where it ran, the DSP heuristic's where it didn't. Falling back to
                 // the heuristic rather than to nothing matters because the policy reads an
                 // absent mask and a neutral one identically — as "no evidence" — so a failed model
                 // pass would otherwise silently discard the estimate Phase 1 already had.
-                vocalActivityMask = mergeMasks(features.energyCurve.size, head?.vocalMask, tail?.vocalMask)
-                    ?: features.vocalActivityMask,
-                vocalProbability = features.vocalProbability,
+                vocalActivityMask = mergeMasks(features?.energyCurve?.size ?: 0, head?.vocalMask, tail?.vocalMask)
+                    ?: features?.vocalActivityMask.orEmpty(),
+                vocalProbability = features?.vocalProbability ?: 0.0,
             ),
         )
     }
@@ -1390,6 +1424,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * refusing over that would refuse everything.
          */
         const val MIN_DECODED_FRACTION = 0.95
+
+        /**
+         * The longest track the analyzer will decode whole.
+         *
+         * A song is three to eight minutes; a radio edit is under ten. Past
+         * that the thing being decoded is a podcast episode or an audiobook
+         * chapter, and the whole-track pass would put more PCM on the heap
+         * than the process is allowed altogether.
+         */
+        const val MAX_WHOLE_TRACK_SECONDS = 10 * 60.0
 
         /** Refusals before a track is written off as truncated rather than still filling in. */
         const val MAX_SHORT_DECODE_ATTEMPTS = 3

@@ -69,6 +69,15 @@ object MediaTagger {
     private val TAGGABLE = setOf("m4a", "webm", "flac")
 
     /**
+     * The largest file the in-memory tagging route will take.
+     *
+     * That route holds the file three times over, so thirty-two megabytes is
+     * about a hundred megabytes of byte arrays — a budget that leaves room
+     * for everything else in a process that has just come out of a download.
+     */
+    private const val IN_MEMORY_TAG_LIMIT = 32L * 1024 * 1024
+
+    /**
      * Whether a file of [extension] gets tags at all.
      *
      * Asked by [Downloads] before it starts fetching anything that exists only
@@ -219,6 +228,33 @@ object MediaTagger {
         ) {
             return
         }
+        // WebM — which is what YouTube serves, and so what a podcast episode
+        // or an audiobook chapter arrives as — is tagged on disk too: its
+        // tags are appended at the end and its Segment size is widened in
+        // place, so the file never has to be in memory. A two-hour episode is
+        // a hundred and twenty megabytes, and the in-memory route takes three
+        // copies of that to write a few kilobytes of text.
+        if (extension == "webm" &&
+            tagWebmOnDisk(context, uri, track, plain, words, artwork)
+        ) {
+            return
+        }
+
+        // What is left needs the whole file in memory: an MP4's `stco`
+        // offsets move when the `moov` grows, so the file has to be reachable
+        // from both ends at once.
+        //
+        // Which puts a ceiling on it. The in-memory route holds the file
+        // three times over — the array that was read, the one the tagger
+        // builds, and the one that copy is turned into — and the app's heap
+        // is a quarter of a gigabyte. A file over the cap is left as it
+        // arrived rather than risking the process for it: the artwork is
+        // already saved beside the file, and the app's own record of the
+        // download knows what the file is.
+        if (fileSize(context, uri) > IN_MEMORY_TAG_LIMIT) {
+            Log.w(TAG, "not tagging ${track.videoId}: the file is over the ${IN_MEMORY_TAG_LIMIT}B limit")
+            return
+        }
 
         val original = readAll(context, uri) ?: return
         val tagged = runCatching {
@@ -342,6 +378,38 @@ object MediaTagger {
         }.getOrDefault(false)
     }
 
+    /**
+     * Tags a WebM file where it lies, without reading it into memory.
+     *
+     * The file has to be one this app can open by path — the download lands
+     * in the app's own directory — and anything else (a `content://` uri, a
+     * file that isn't there) falls back to the general route below.
+     */
+    private fun tagWebmOnDisk(
+        context: Context,
+        uri: Uri,
+        track: Song,
+        lyrics: String?,
+        wordLyrics: String?,
+        artwork: Artwork?,
+    ): Boolean {
+        if (uri.scheme != "file") return false
+        val file = File(requireNotNull(uri.path))
+        if (!file.isFile) return false
+        return WebmTagger.tagFile(
+            file = file,
+            title = track.title,
+            artist = track.artist,
+            album = track.albumName,
+            lyrics = lyrics,
+            cover = artwork?.bytes,
+            coverMime = artwork?.mime ?: "image/jpeg",
+            wordLyrics = wordLyrics,
+        ).also { tagged ->
+            if (!tagged) Log.w(TAG, "streaming webm tag failed for ${track.videoId}")
+        }
+    }
+
     /** Move [temp] over whatever [uri] names, leaving nothing behind either way. */
     private fun replaceWith(context: Context, uri: Uri, temp: File) {
         if (uri.scheme == "file") {
@@ -435,6 +503,15 @@ object MediaTagger {
             true,
         )
     }
+
+    /** How long the file is, or null when it cannot be asked. */
+    private fun fileSize(context: Context, uri: Uri): Long = runCatching {
+        if (uri.scheme == "file") {
+            File(requireNotNull(uri.path)).length()
+        } else {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+        }
+    }.getOrDefault(0L)
 
     private fun readAll(context: Context, uri: Uri): ByteArray? = runCatching {
         if (uri.scheme == "file") {
