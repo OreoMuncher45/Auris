@@ -595,7 +595,6 @@ private fun BitChordApp(
     viewModel: MainViewModel = viewModel(),
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
     // Recording the backdrop layer costs a draw pass, so it only runs when a
     // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
@@ -615,8 +614,6 @@ private fun BitChordApp(
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
     val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
-    val useFoldingNav = foldingNavBar && glassActive
-    val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
     // What folds [GlassNavBar] between its expanded and inline shapes. Held here
     // rather than inside the bar because the page's scroll is what drives it,
     // and the page is a sibling of the bar rather than a child.
@@ -656,7 +653,6 @@ private fun BitChordApp(
     // off there is no motion between pages either — the page is simply the
     // next page.
     val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val activeDock = playerDock.takeIf { !reducePlayerMotion }
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
     // How the app takes the player down, whatever for: a back press, or a page
     // opened from inside it. Set straight to false, the sheet left in one frame
@@ -1104,11 +1100,6 @@ private fun BitChordApp(
             UiState.Success(base)
         }
     }
-    // The Flow and Replay cards ride at the head of the page: in the quick
-    // picks row when the feed has one, in a row of their own when it does not.
-    // They are never a shelf of their own — a shelf at the top of Home is a
-    // full-width hero, which is the old huge Flow.
-    val homeFlowLeading: ShelfItem? = flowTile
     // Radio's seed row: what was played recently, so a station can be started
     // from something the listener already chose rather than a cold suggestion.
     val radioSeeds: List<ShelfItem> = remember(homeState) {
@@ -1137,22 +1128,11 @@ private fun BitChordApp(
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
-    // Local Music has no artwork to wash the top inset in, so it renders with
-    // the ordinary bounded status bar rather than the artwork gradient used by
-    // album/artist/playlist pages. Downloads is the same page, and the tab row
-    // it now carries sits directly under the bar, so it needs that same plain
-    // treatment rather than a release-style colour wash over its tabs.
-    //
-    // A downloaded playlist's page is under `local:` too and is none of that: it
-    // has a cover and a track list, so it takes the bar every other release page
-    // takes. Hence the folder question rather than the prefix.
-    val isLocalDetail = detail?.browseId.isDeviceFolder()
     // Not keyed on the browse id and not remembered here: each page's choice
     // lives in AppSettings keyed by that page — Spotify-style, one playlist's
     // order never imposes itself on another, and every page keeps its own
     // across visits.
     val detailSongSorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
-    val songSort = detail?.browseId?.let { detailSongSorts[it] } ?: SongSort.DEFAULT
     var songSortMenuOpen by remember { mutableStateOf(false) }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // Which tracks are being held on YouTube's own upload, so the player's menu
@@ -1418,13 +1398,6 @@ private fun BitChordApp(
         if (currentFeed == MainViewModel.Feed.LIBRARY) viewModel.onLibraryShown()
     }
 
-    val currentPull = when (currentFeed) {
-        MainViewModel.Feed.HOME -> homePull
-        MainViewModel.Feed.EXPLORE -> explorePull
-        MainViewModel.Feed.LIBRARY -> libraryPull
-        MainViewModel.Feed.PODCASTS -> podcastPull
-        null -> null
-    }
     val scrolled by remember(currentListState) {
         derivedStateOf {
             currentListState.firstVisibleItemIndex > 0 ||
@@ -1484,8 +1457,6 @@ private fun BitChordApp(
     val radioLabel = stringResource(R.string.radio)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
-    val historyLabel = stringResource(R.string.history)
-    val replayLabel = stringResource(R.string.replay)
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
     val quickPicksLabel = stringResource(R.string.quick_picks)
@@ -1512,8 +1483,6 @@ private fun BitChordApp(
     // Podcasts off means the tab is gone, not greyed out: a tab that leads
     // nowhere is a tab that lies.
     val visibleTabDefs = tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
-    val tabs = visibleTabDefs.map { it.second }
-    val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
 
     val scope = rememberCoroutineScope()
 
@@ -3225,6 +3194,50 @@ private fun BitChordApp(
     }
 
     AppRootBox {
+
+        val clipboard = LocalClipboardManager.current
+
+        val useFoldingNav = foldingNavBar && glassActive
+
+        val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
+
+        val activeDock = playerDock.takeIf { !reducePlayerMotion }
+
+        // The Flow and Replay cards ride at the head of the page: in the quick
+        // picks row when the feed has one, in a row of their own when it does not.
+        // They are never a shelf of their own — a shelf at the top of Home is a
+        // full-width hero, which is the old huge Flow.
+        val homeFlowLeading: ShelfItem? = flowTile
+
+        // Local Music has no artwork to wash the top inset in, so it renders with
+        // the ordinary bounded status bar rather than the artwork gradient used by
+        // album/artist/playlist pages. Downloads is the same page, and the tab row
+        // it now carries sits directly under the bar, so it needs that same plain
+        // treatment rather than a release-style colour wash over its tabs.
+        //
+        // A downloaded playlist's page is under `local:` too and is none of that: it
+        // has a cover and a track list, so it takes the bar every other release page
+        // takes. Hence the folder question rather than the prefix.
+        val isLocalDetail = detail?.browseId.isDeviceFolder()
+
+        val songSort = detail?.browseId?.let { detailSongSorts[it] } ?: SongSort.DEFAULT
+
+        val currentPull = when (currentFeed) {
+            MainViewModel.Feed.HOME -> homePull
+            MainViewModel.Feed.EXPLORE -> explorePull
+            MainViewModel.Feed.LIBRARY -> libraryPull
+            MainViewModel.Feed.PODCASTS -> podcastPull
+            null -> null
+        }
+
+        val historyLabel = stringResource(R.string.history)
+
+        val replayLabel = stringResource(R.string.replay)
+
+        val tabs = visibleTabDefs.map { it.second }
+
+        val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
+
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         // Replay's three layers unwind in the order they were opened. Ahead of

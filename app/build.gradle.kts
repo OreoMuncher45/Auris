@@ -256,6 +256,24 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        // Lambdas as classes, not invokedynamic.
+        //
+        // Kotlin 2.3 compiles a lambda literal into an invokedynamic whose
+        // call site carries every captured value as a stack argument. The
+        // AppRootBox content lambda inside MainActivity.kt captures 252
+        // values, so the call site has 255 arguments and dex has to encode
+        // them as one invoke-direct/range — a register window of 256 words.
+        // The window's size lives in one byte, 256 wraps to 0, and ART reads
+        // that as "no arguments at all" and rejects the whole class:
+        //
+        //   VerifyError: Verifier rejected class com.music.bitchord.MainActivityKt
+        //   [0xFFFFFFFF] invalid arg count (0) in invoke-direct/range
+        //
+        // A class-based lambda keeps the captured values in a constructor
+        // (252 arguments) and passes the lambda's own parameters to invoke()
+        // instead, so the widest call is 253 words and fits. The flag costs a
+        // little indirection and buys back the crash.
+        freeCompilerArgs.add("-Xlambdas=class")
     }
 }
 
