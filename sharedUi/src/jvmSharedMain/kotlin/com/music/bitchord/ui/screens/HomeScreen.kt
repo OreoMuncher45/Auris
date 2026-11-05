@@ -665,6 +665,8 @@ internal fun SectionHeader(
     onShowAll: (() -> Unit)? = null,
     icon: ImageVector? = null,
     onNavigate: (() -> Unit)? = null,
+    /** A control at the end of the heading — the list/grid switch, usually. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val displayTitle = localizeShelfTitle(title)
     val displaySubtitle = localizeShelfSubtitle(subtitle)
@@ -701,7 +703,9 @@ internal fun SectionHeader(
                 )
             }
         }
-        if (onShowAll != null) {
+        if (trailing != null) {
+            trailing()
+        } else if (onShowAll != null) {
             Text(
                 text = stringResource(Res.string.show_all),
                 style = MaterialTheme.typography.titleSmall,

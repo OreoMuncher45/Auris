@@ -4310,6 +4310,9 @@ private fun BitChordApp(
                             },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
+                            // Bringing a Spotify playlist in is a setting of the
+                            // account, not a tile in the Library: it is done
+                            // once, not browsed.
                             category = settingsCategory,
                             onOpenCategory = { settingsCategory = it },
                             // Every shelf the feed has brought, hidden ones
@@ -4901,7 +4904,6 @@ private fun BitChordApp(
                             // belongs to the device and works signed out.
                             onNewFolder = { creatingFolder = true },
                             folders = folderItems,
-                            onImportSpotifyPlaylist = { showSpotifyImportDialog = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
                             replay = {
                                 if (libraryReplayVisible) {

@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.longPressMenuClickable
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -61,6 +63,9 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.ui.AppUi
+import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
@@ -129,7 +134,7 @@ fun LibraryScreen(
      * The folders themselves, as cards on the On Device shelf.
      */
     folders: List<ShelfItem> = emptyList(),
-    onImportSpotifyPlaylist: (() -> Unit)? = null,
+
     /**
      * A shelf's "Show all" — every shelf's row here stops at five cards (see
      * [LibraryGridShelf]), so this is the only way to reach whatever didn't
@@ -297,7 +302,6 @@ fun LibraryScreen(
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
                                 onNewPlaylist = onNewPlaylist,
-                                onImportSpotifyPlaylist = onImportSpotifyPlaylist,
                                 onShowAll = { onShowAll(shelf) },
                                 pinnedPlaylists = pinnedPlaylists,
                             )
@@ -554,16 +558,53 @@ private val LINK_ICON_GAP = 16.dp
  * that creates a playlist, and holding a card gets rename and delete on top of
  * the queue actions every other shelf's menu offers.
  */
+/**
+ * The account's playlists, as a row of covers or as a list.
+ *
+ * The covers are the better first look at a handful of playlists — the art is
+ * most of what a playlist is. They are the worse way to read thirty of them:
+ * a grid of squares says nothing about how many tracks are in a playlist or
+ * when it was last touched, and the names are what a listener with thirty
+ * playlists is looking for. So the shelf can be either, and the switch is at
+ * the end of its heading.
+ */
 @Composable
 private fun PlaylistShelf(
     shelf: HomeShelf,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
-    onImportSpotifyPlaylist: (() -> Unit)? = null,
     onShowAll: () -> Unit,
     pinnedPlaylists: List<String> = emptyList(),
 ) {
+    val viewType by AppUi.host.libraryPlaylistsViewType.collectAsStateWithLifecycle()
+    val toggle = {
+        val next = if (viewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
+        AppUi.host.setLibraryPlaylistsViewType(next)
+    }
+
+    if (viewType == LibraryViewType.LIST) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            SectionHeader(
+                title = shelf.title,
+                subtitle = shelf.subtitle,
+                trailing = { ViewTypeToggle(viewType = viewType, onToggle = toggle) },
+            )
+            Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
+                NewPlaylistRow(onClick = onNewPlaylist)
+                shelf.items.forEach { item ->
+                    PlaylistListRow(
+                        item = item,
+                        isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                        onClick = { onItemClick(item) },
+                        onLongPress = { onItemLongPress(item) },
+                    )
+                }
+            }
+        }
+        return
+    }
+
     LibraryGridShelf(
         shelf = shelf,
         onItemClick = onItemClick,
@@ -571,25 +612,149 @@ private fun PlaylistShelf(
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
         leadingCard = {
-            Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
-                NewShelfCard(
-                    icon = BitChordIcons.Plus,
-                    label = stringResource(Res.string.new_playlist),
-                    subtitle = stringResource(Res.string.saved_to_youtube_music),
-                    onClick = onNewPlaylist,
-                )
-                if (onImportSpotifyPlaylist != null) {
-                    NewShelfCard(
-                        icon = BitChordIcons.Download,
-                        label = stringResource(Res.string.import_spotify),
-                        subtitle = stringResource(Res.string.import_spotify_subtitle),
-                        onClick = onImportSpotifyPlaylist,
-                        logo = Res.drawable.spotify_logo,
-                    )
-                }
-            }
+            NewShelfCard(
+                icon = BitChordIcons.Plus,
+                label = stringResource(Res.string.new_playlist),
+                subtitle = stringResource(Res.string.saved_to_youtube_music),
+                onClick = onNewPlaylist,
+            )
         },
     )
+}
+
+/**
+ * The switch at the end of a heading: the same control Home's Recents shelf
+ * has, for the same reason — a shelf can be read two ways and the listener
+ * picks which.
+ */
+@Composable
+internal fun ViewTypeToggle(viewType: LibraryViewType, onToggle: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (viewType == LibraryViewType.LIST) {
+                BitChordIcons.GridView
+            } else {
+                BitChordIcons.ListView
+            },
+            contentDescription = stringResource(
+                if (viewType == LibraryViewType.LIST) {
+                    Res.string.switch_to_grid_view
+                } else {
+                    Res.string.switch_to_list_view
+                },
+            ),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(19.dp),
+        )
+    }
+}
+
+/** "New playlist", as a row rather than a tile. */
+@Composable
+private fun NewPlaylistRow(onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = BitChordIcons.Plus,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(Res.string.new_playlist),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(Res.string.saved_to_youtube_music),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** One playlist, as a row: its cover, its name, how much is in it. */
+@Composable
+private fun PlaylistListRow(
+    item: ShelfItem,
+    isPinned: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .padding(vertical = 6.dp),
+    ) {
+        AsyncImage(
+            model = item.thumbnailUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isPinned) {
+                    Icon(
+                        imageVector = BitChordIcons.Pin,
+                        contentDescription = stringResource(Res.string.pinned),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val subtitle = localizeCardSubtitle(item.subtitle)
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
 }
 
 /** A Library shelf's preview row never swipes past this many cards. */

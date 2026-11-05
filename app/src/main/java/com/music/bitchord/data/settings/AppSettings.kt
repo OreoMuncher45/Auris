@@ -860,6 +860,15 @@ object AppSettings {
     val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST)
 
     /**
+     * The Library's Playlists shelf as a row of cards or as a list of rows.
+     *
+     * A grid of covers says nothing about how many tracks are in a playlist
+     * or when it was last touched, and a listener with thirty playlists wants
+     * to read the names rather than look at thirty squares.
+     */
+    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.GRID)
+
+    /**
      * Whether the synthetic Flow card is offered on Home.
      *
      * The Flow feature itself is untouched: this hides only the Home entry, so
@@ -1527,6 +1536,10 @@ object AppSettings {
         localMusicViewType.value = readLibraryViewType(KEY_LOCAL_MUSIC_VIEW_TYPE)
         downloadedMusicViewType.value = readLibraryViewType(KEY_DOWNLOADED_MUSIC_VIEW_TYPE)
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
+        libraryPlaylistsViewType.value = readLibraryViewType(
+            KEY_LIBRARY_PLAYLISTS_VIEW_TYPE,
+            fallback = LibraryViewType.GRID,
+        )
         homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
         homeReplayVisible.value = prefs.getBoolean(KEY_HOME_REPLAY_VISIBLE, true)
         hiddenHomeShelves.value = prefs.getStringSet(KEY_HIDDEN_HOME_SHELVES, emptySet())
@@ -2648,6 +2661,11 @@ object AppSettings {
         prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
     }
 
+    fun setLibraryPlaylistsViewType(value: LibraryViewType) {
+        libraryPlaylistsViewType.value = value
+        prefs.edit().putString(KEY_LIBRARY_PLAYLISTS_VIEW_TYPE, value.name).apply()
+    }
+
     fun setHomeFlowVisible(value: Boolean) {
         homeFlowVisible.value = value
         prefs.edit().putBoolean(KEY_HOME_FLOW_VISIBLE, value).apply()
@@ -2758,10 +2776,10 @@ object AppSettings {
             ?.let { saved -> LocalMusicSort.entries.firstOrNull { it.name == saved } }
             ?: LocalMusicSort.TITLE_ASC
 
-    private fun readLibraryViewType(key: String): LibraryViewType =
+    private fun readLibraryViewType(key: String, fallback: LibraryViewType = LibraryViewType.LIST): LibraryViewType =
         prefs.getString(key, null)
             ?.let { saved -> LibraryViewType.entries.firstOrNull { it.name == saved } }
-            ?: LibraryViewType.LIST
+            ?: fallback
 
     /**
      * Pins or unpins [browseId], returning whether it is pinned afterwards.
@@ -3049,6 +3067,7 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type"
+    private const val KEY_LIBRARY_PLAYLISTS_VIEW_TYPE = "library_playlists_view_type"
     private const val KEY_HOME_FLOW_VISIBLE = "home_flow_visible"
     private const val KEY_BLOCKED_ARTISTS = "blocked_artists"
     private const val KEY_AI_ARTISTS = "ai_artists"

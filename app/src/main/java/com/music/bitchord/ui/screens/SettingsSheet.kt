@@ -214,6 +214,8 @@ fun SettingsScreen(
     category: String? = null,
     /** Opens a category's page. */
     onOpenCategory: (String) -> Unit = {},
+    /** Brings a Spotify playlist into the account's own playlists. */
+    onImportSpotifyPlaylist: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -1409,6 +1411,15 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setHomeFlowVisible(!homeFlowVisible) },
+                )
+            }
+            val importSpotifyTitle = stringResource(R.string.import_spotify)
+            row(importSpotifyTitle, "spotify", "import", "playlist") {
+                SettingsRow(
+                    icon = Icons.Rounded.Download,
+                    title = importSpotifyTitle,
+                    subtitle = stringResource(R.string.import_spotify_subtitle),
+                    onClick = onImportSpotifyPlaylist,
                 )
             }
             val blockedArtistsTitle = stringResource(R.string.blocked_artists)
