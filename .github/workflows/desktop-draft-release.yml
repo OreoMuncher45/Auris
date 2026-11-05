@@ -1,0 +1,232 @@
+name: Desktop draft
+
+# The desktop's own build, and nothing else.
+#
+# It makes a *draft* release and stops there: the files sit in the repository's
+# drafts, where only the people with access can see them, until somebody
+# publishes them by hand. The phone's release workflow is a different workflow
+# and a different lineage — this one builds the desktop alone.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the packages (no leading v)"
+        required: true
+        default: "3.0.3-draft"
+      title:
+        description: "Title of the draft release"
+        required: false
+        default: "Auris Desktop — private demo"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux · AppImage, deb, rpm
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Work out the version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          [ -n "$version" ] || version="3.0.3-draft"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+      - name: Write local.properties
+        run: |
+          echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
+          echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
+
+      - name: Packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot binutils file
+          curl -sSL -o appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+
+      - run: chmod +x gradlew
+
+      - name: Tests
+        run: ./gradlew :shared:jvmTest :desktopApp:test -Pauris.version=${{ steps.version.outputs.value }}
+
+      - name: Build deb, rpm and the app image
+        run: |
+          ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable \
+            -Pauris.version=${{ steps.version.outputs.value }} -Pauris.requireNative=true
+
+      - name: The analyser and models are in the jar
+        run: |
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/lib/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/libauris_analysis.so'
+          jar tf "$jar" | grep -q 'models/.*\.onnx'
+
+      - name: Build the AppImage
+        run: |
+          desktopApp/packaging/appimage.sh \
+            desktopApp/build/compose/binaries/main/app/Auris \
+            dist/Auris-${{ steps.version.outputs.value }}-linux-x86_64.AppImage \
+            "$PWD/appimagetool.AppImage"
+
+      - name: Collect
+        run: |
+          v=${{ steps.version.outputs.value }}
+          mkdir -p dist
+          cp desktopApp/build/compose/binaries/main/deb/*.deb "dist/Auris-$v-linux-amd64.deb"
+          cp desktopApp/build/compose/binaries/main/rpm/*.rpm "dist/Auris-$v-linux-x86_64.rpm"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: dist/*
+
+  windows:
+    name: Windows · installer, msi, portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Ninja is CMake's generator for the native libraries, and the image ships MinGW without
+      # putting it on the PATH. Without both, the native builds are skipped and the packaged app
+      # has no Automix analyser, no Windows frame bridge and no media keys.
+      - name: Native toolchain
+        shell: pwsh
+        run: |
+          choco install ninja --no-progress -y
+          $mingw = "C:\mingw64\bin"
+          if (Test-Path "$mingw\g++.exe") {
+            Add-Content -Path $env:GITHUB_PATH -Value $mingw
+            "MINGW_BIN=$mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          "g++ --version"
+          "ninja --version"
+          "cmake --version"
+
+      # jpackage builds the MSI through WiX 3, which the image does not carry.
+      - name: WiX Toolset 3
+        shell: pwsh
+        run: |
+          $url = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          Invoke-WebRequest -Uri $url -OutFile wix.zip
+          Expand-Archive wix.zip -DestinationPath "$env:RUNNER_TEMP\wix"
+          "$env:RUNNER_TEMP\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: CMake version
+        run: cmake --version
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          [ -n "$version" ] || version="3.0.3-draft"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+      - name: Write local.properties
+        shell: bash
+        run: |
+          echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
+          echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
+
+      - name: Tests
+        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pauris.version=${{ steps.version.outputs.value }}"
+
+      - name: Build msi, exe and the app image
+        run: |
+          .\gradlew.bat :desktopApp:packageMsi :desktopApp:packageExe :desktopApp:createDistributable `
+            "-Pauris.version=${{ steps.version.outputs.value }}" `
+            "-Pauris.requireNative=true"
+
+      - name: The analyser and models are in the jar
+        shell: bash
+        run: |
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/auris_analysis.dll'
+          jar tf "$jar" | grep -q 'models/.*\.onnx'
+          # The media keys, built against the raw WinRT ABI because MinGW has no C++/WinRT.
+          jar tf "$jar" | grep -q 'native/auris_smtc.dll'
+          jar tf "$jar" | grep -q 'native/auris_window.dll'
+          # The runtime image jlink cut from the JDK. Without the charset tables it falls back
+          # to the system code page and every UTF-8 string comes back mangled. The image has no
+          # java executable — the app launcher loads it directly — so the module list is read
+          # from the release file jlink writes.
+          runtime=""
+          for candidate in \
+            desktopApp/build/compose/binaries/main/app/Auris/runtime/release \
+            desktopApp/build/compose/binaries/main/app/Auris/lib/runtime/release; do
+            if [ -f "$candidate" ]; then runtime="$candidate"; break; fi
+          done
+          test -n "$runtime"
+          grep -q 'jdk.charsets' "$runtime"
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/Auris-$v-windows-x64.msi"
+          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/Auris-$v-windows-x64-setup.exe"
+          7z a -tzip -mx=5 "dist/Auris-$v-windows-x64-portable.zip" `
+            "desktopApp/build/compose/binaries/main/app/Auris/*" | Out-Null
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist/*
+
+  draft:
+    name: Draft the release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-artifacts"
+          merge-multiple: true
+          path: dist
+
+      - run: ls -lh dist
+
+      # A draft, and only a draft. `draft: true` is the whole point: the release is written
+      # to the repository's drafts, where it is invisible to the public and to the update
+      # check, and it stays there until somebody publishes it by hand. `prerelease` keeps it
+      # out of "latest" as well, and `make_latest: false` says so twice.
+      - name: Draft the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-draft-${{ inputs.version }}
+          name: ${{ inputs.title }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          commit: ${{ github.sha }}
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
