@@ -156,6 +156,15 @@ fun HomeScreen(
     onFlowClick: (() -> Unit)? = null,
     /** Opens Replay; its card leads Top Picks, the way Apple's does. */
     onOpenReplay: (() -> Unit)? = null,
+    /**
+     * Opens the Quick Picks shelf as a page of its own.
+     *
+     * The phone's rows end where the feed ends. A desktop's row runs past the edge of the
+     * window, so the row that leads the page says where the rest of it is: a chevron tile at
+     * the end of the row, the way the Radio and Library rows end. Nothing is drawn when this
+     * is null — the phone's Home has no such tile.
+     */
+    onOpenQuickPicks: (() -> Unit)? = null,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -222,6 +231,7 @@ fun HomeScreen(
                         flowItem = flowItem,
                         onFlowClick = onFlowClick,
                         onOpenReplay = onOpenReplay,
+                        onOpenQuickPicks = onOpenQuickPicks,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
@@ -273,6 +283,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     flowItem: ShelfItem? = null,
     onFlowClick: (() -> Unit)? = null,
     onOpenReplay: (() -> Unit)? = null,
+    /** The tile at the end of the Quick Picks row; see [HomeScreen]. */
+    onOpenQuickPicks: (() -> Unit)? = null,
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
@@ -342,6 +354,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
                     leadingCard = topPickLeading,
+                    // The row runs past the window's edge, so it says where the rest
+                    // of the shelf is.
+                    trailingCard = onOpenQuickPicks?.let { open -> { ShelfEndTile(onClick = open) } },
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
@@ -1011,7 +1026,9 @@ private fun HeroCard(
 /**
  * [leadingCard] rides at the head of the row, ahead of the content — the
  * Library tab's "New playlist" tile, which belongs among the playlists rather
- * than in a bar somewhere above them. [onItemLongPress] opens the album /
+ * than in a bar somewhere above them. [trailingCard] rides at its end — the
+ * chevron that opens the whole of a shelf a row only samples.
+ * [onItemLongPress] opens the album /
  * playlist menu, and is null only where a card points at something with no
  * track list behind it to act on.
  */
@@ -1022,6 +1039,7 @@ internal fun Shelf(
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
     leadingCard: (@Composable () -> Unit)? = null,
+    trailingCard: (@Composable () -> Unit)? = null,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
 ) {
@@ -1041,7 +1059,37 @@ internal fun Shelf(
                     isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                 )
             }
+            trailingCard?.let { card -> item(key = "trailing") { card() } }
         }
+    }
+}
+
+/**
+ * The tile at the end of a row that opens the rest of it.
+ *
+ * A row of cards that runs past the window's edge has to say so, and this is how: a
+ * chevron, the width of a card, that opens the whole of the shelf the row is a sample
+ * of. It is the end of the row, not another thing in it.
+ */
+@Composable
+internal fun ShelfEndTile(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
+) {
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = AurisIcons.ChevronRight,
+            contentDescription = stringResource(Res.string.show_all),
+            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
+            modifier = Modifier.size(30.dp),
+        )
     }
 }
 

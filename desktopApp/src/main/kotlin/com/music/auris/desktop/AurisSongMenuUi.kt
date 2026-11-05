@@ -29,13 +29,20 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -85,6 +92,14 @@ internal data class AurisSongActions(
     val onSleepTimer: (Int?) -> Unit,
     val onSleepAfterTrack: () -> Unit,
     val onShare: (Song) -> Unit,
+    /**
+     * Saves the cover art.
+     *
+     * Not a player-only verb: the phone offers it from every row that has art on it, beside
+     * Share, and the row's own art is a thumbnail — so this fetches the largest rendition
+     * first.
+     */
+    val onSaveArtwork: (Song) -> Unit,
 )
 
 /** The "…" beside the player's heart, and the menu it opens. */
@@ -96,6 +111,8 @@ internal fun AurisSongMenuAnchor(
     onToggleLike: () -> Unit,
     onRevertToOriginal: (() -> Unit)?,
     onUpgradeQuality: (() -> Unit)?,
+    onToggleAudioVersion: (() -> Unit)? = null,
+    isAudioVersion: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var open by remember(song.videoId) { mutableStateOf(false) }
@@ -109,6 +126,8 @@ internal fun AurisSongMenuAnchor(
                 onToggleLike = onToggleLike,
                 onRevertToOriginal = onRevertToOriginal,
                 onUpgradeQuality = onUpgradeQuality,
+                onToggleAudioVersion = onToggleAudioVersion,
+                isAudioVersion = isAudioVersion,
                 onDismiss = { open = false },
             )
         }
@@ -124,6 +143,15 @@ internal fun AurisSongMenuFor(
     onToggleLike: () -> Unit,
     onRevertToOriginal: (() -> Unit)?,
     onUpgradeQuality: (() -> Unit)?,
+    onToggleAudioVersion: (() -> Unit)? = null,
+    isAudioVersion: Boolean = false,
+    onOpenLyricsOffset: (() -> Unit)? = null,
+    onOpenReplay: (() -> Unit)? = null,
+    spatialAudioOn: Boolean? = null,
+    onToggleSpatialAudio: (() -> Unit)? = null,
+    onOpenListenTogether: (() -> Unit)? = null,
+    listenTogetherMembers: Int? = null,
+    onCopyLog: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val close = onDismiss
@@ -141,6 +169,15 @@ internal fun AurisSongMenuFor(
         sleepAfterTrack = actions.sleepAfterTrack,
         onRevertToOriginal = onRevertToOriginal?.let { { it(); close() } },
         onUpgradeQuality = onUpgradeQuality?.let { { it(); close() } },
+        onToggleAudioVersion = onToggleAudioVersion?.let { { it(); close() } },
+        isAudioVersion = isAudioVersion,
+        onOpenLyricsOffset = onOpenLyricsOffset?.let { { it(); close() } },
+        onOpenReplay = onOpenReplay?.let { { it(); close() } },
+        spatialAudioOn = spatialAudioOn,
+        onToggleSpatialAudio = onToggleSpatialAudio?.let { { it(); close() } },
+        onOpenListenTogether = onOpenListenTogether?.let { { it(); close() } },
+        listenTogetherMembers = listenTogetherMembers,
+        onCopyLog = onCopyLog?.let { { it(); close() } },
         // Rating stays open: the menu says what the rating now is, and closing it is the
         // one way to not see that it worked.
         onToggleLike = onToggleLike,
@@ -156,6 +193,7 @@ internal fun AurisSongMenuFor(
         onSleepTimer = { actions.onSleepTimer(it); close() },
         onSleepAfterTrack = { actions.onSleepAfterTrack(); close() },
         onShare = { actions.onShare(song); close() },
+        onSaveArtwork = { actions.onSaveArtwork(song); close() },
         onDismiss = close,
     )
 }
@@ -175,6 +213,24 @@ internal fun AurisSongMenu(
     onRevertToOriginal: (() -> Unit)?,
     /** The way back from a revert, for a track pinned to YouTube's own upload. */
     onUpgradeQuality: (() -> Unit)?,
+    /**
+     * The other recording of the track: the catalogue's own song for a video upload, the
+     * music video for a catalogue song.
+     */
+    onToggleAudioVersion: (() -> Unit)?,
+    /** Whether the track playing now is the catalogue's own song rather than the video. */
+    isAudioVersion: Boolean,
+    /**
+     * The player's own rows: about the session in progress rather than the song as a library
+     * entry, and offered only from the player's own menu, as on the phone.
+     */
+    onOpenLyricsOffset: (() -> Unit)? = null,
+    onOpenReplay: (() -> Unit)? = null,
+    spatialAudioOn: Boolean? = null,
+    onToggleSpatialAudio: (() -> Unit)? = null,
+    onOpenListenTogether: (() -> Unit)? = null,
+    listenTogetherMembers: Int? = null,
+    onCopyLog: (() -> Unit)? = null,
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
     onAddToPlaylist: () -> Unit,
@@ -187,6 +243,8 @@ internal fun AurisSongMenu(
     onSleepTimer: (Int?) -> Unit,
     onSleepAfterTrack: () -> Unit,
     onShare: () -> Unit,
+    /** Saves the cover art, when the row has any. */
+    onSaveArtwork: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
@@ -220,13 +278,38 @@ internal fun AurisSongMenu(
             return@AurisMenuSurface
         }
 
-        // The two are never both offered.
-        (onRevertToOriginal ?: onUpgradeQuality)?.let { action ->
-            AurisMenuRow(
-                icon = if (onRevertToOriginal != null) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.HighQuality,
-                label = if (onRevertToOriginal != null) "Revert to original" else "Upgrade quality",
-                onClick = action,
-            )
+        // Which recording is playing is the one question that has to be answered before any
+        // of the rows below mean anything — there is no point rating, queueing or downloading
+        // the wrong version of a song. The phone leads the list with it, and so does this.
+        //
+        // The two are never both offered: one is for a track playing a substituted copy, the
+        // other for a track held on YouTube's own.
+        if (onRevertToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null) {
+            (onRevertToOriginal ?: onUpgradeQuality)?.let { action ->
+                AurisMenuRow(
+                    icon = if (onRevertToOriginal != null) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.HighQuality,
+                    label = if (onRevertToOriginal != null) {
+                        AurisStrings["revert_to_original", "Revert to original"]
+                    } else {
+                        AurisStrings["upgrade_quality", "Upgrade quality"]
+                    },
+                    onClick = action,
+                )
+            }
+            // Which recording, not which quality — a different question from the row above,
+            // so it sits right under it rather than merged into it, and still ahead of the
+            // divider they share.
+            onToggleAudioVersion?.let { action ->
+                AurisMenuRow(
+                    icon = if (isAudioVersion) Icons.Rounded.Videocam else AurisIcons.MusicNote,
+                    label = if (isAudioVersion) {
+                        AurisStrings["convert_to_video", "Convert to video"]
+                    } else {
+                        AurisStrings["convert_to_audio", "Convert to audio"]
+                    },
+                    onClick = action,
+                )
+            }
             AurisMenuDivider()
         }
 
@@ -294,8 +377,62 @@ internal fun AurisSongMenu(
             label = AurisStrings["sleep_timer", "Sleep timer"],
             value = sleepTimerLabel(sleepTimerMinutes, sleepAfterTrack),
         ) { pickingSleepTimer = true }
+
+        // The rows below are about the listening session in progress rather than the song as
+        // a library entry, and they are the player's own — a local file and a finished
+        // download use the same lyric clock, so they need the offset just as much.
+        onOpenLyricsOffset?.let { action ->
+            AurisMenuRow(
+                icon = Icons.Rounded.Tune,
+                label = AurisStrings["lyrics_offset", "Lyrics offset"],
+                onClick = action,
+            )
+        }
+        onOpenReplay?.let { action ->
+            AurisMenuRow(
+                icon = Icons.Rounded.History,
+                label = AurisStrings["your_replay", "Your Replay"],
+                onClick = action,
+            )
+        }
+        if (spatialAudioOn != null && onToggleSpatialAudio != null) {
+            AurisMenuRow(
+                icon = Icons.Rounded.SurroundSound,
+                label = AurisStrings["spatial_audio", "Spatial audio"],
+                value = AurisStrings[if (spatialAudioOn) "on" else "off", if (spatialAudioOn) "On" else "Off"],
+                onClick = onToggleSpatialAudio,
+            )
+        }
+        onOpenListenTogether?.let { action ->
+            AurisMenuRow(
+                icon = Icons.Rounded.Groups,
+                label = AurisStrings["listen_together", "Listen together"],
+                value = listenTogetherMembers?.toString().orEmpty(),
+                onClick = action,
+            )
+        }
+
         if (!isOffline) {
             AurisMenuRow(Icons.Rounded.Share, AurisStrings["share", "Share"], onClick = onShare)
+        }
+        // Beside Share: the row's own art is a thumbnail, so this fetches the largest
+        // rendition first. Hidden only when there is no art to save.
+        if (song.thumbnailUrl != null) {
+            AurisMenuRow(
+                icon = Icons.Rounded.Image,
+                label = AurisStrings["save_cover_art", "Save cover art"],
+                onClick = onSaveArtwork,
+            )
+        }
+        // Last, and only from the player: it is about the track playing right now rather
+        // than about the song as a thing in a library, and it is the one row here nobody
+        // reaches for by accident.
+        onCopyLog?.let { action ->
+            AurisMenuRow(
+                icon = Icons.Rounded.BugReport,
+                label = AurisStrings["copy_log", "Copy log"],
+                onClick = action,
+            )
         }
     }
 }

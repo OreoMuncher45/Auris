@@ -652,6 +652,14 @@ fun LibraryGridPage(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     onNewPlaylist: (() -> Unit)? = null,
+    /**
+     * Whether the shelf keeps the order it came in.
+     *
+     * A Library shelf is the listener's own, and the sort they chose is the one that applies
+     * to it. A shelf off the Home feed is the feed's: its order is the order the feed chose,
+     * and a sort would be the app second-guessing it.
+     */
+    keepOrder: Boolean = false,
 ) {
     // Re-read live rather than trusting [shelf] to already be sorted: this page
     // is opened from a snapshot (see `libraryShowAll` in MainActivity), and a
@@ -662,7 +670,11 @@ fun LibraryGridPage(
     // Pinning wins over the default order, but an explicit sort is a stronger,
     // more deliberate signal than a pin and is left to reorder the whole grid,
     // pinned cards included.
-    val sortedShelf = shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    val sortedShelf = if (keepOrder) {
+        shelf
+    } else {
+        shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    }
     BoxWithConstraints(modifier.fillMaxSize()) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         LazyVerticalGrid(

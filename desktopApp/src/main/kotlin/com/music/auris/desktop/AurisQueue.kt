@@ -73,6 +73,18 @@ internal data class AurisQueue(
     )
 
     /**
+     * The playing row, replaced by [song].
+     *
+     * The phone's version switch: the other recording of the same track takes the place of
+     * the one that was playing, so the queue keeps its shape and the listener's place in it.
+     * The row that was there is not lost - the switch keeps it, and the menu can put it back.
+     */
+    fun replaceCurrent(song: Song): AurisQueue {
+        if (index !in songs.indices) return this
+        return copy(songs = songs.toMutableList().apply { set(index, song) })
+    }
+
+    /**
      * Queues [song] by hand, as the phone does: "Play next" heads the listener's own section,
      * "Add to queue" ends it — above the album and above AutoPlay either way.
      */

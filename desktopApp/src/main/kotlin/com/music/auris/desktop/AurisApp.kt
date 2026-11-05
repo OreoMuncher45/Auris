@@ -25,6 +25,7 @@ import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.RadioScreen
 import com.music.bitchord.ui.screens.PodcastsScreen
 import com.music.bitchord.ui.screens.HomeScreen
+import com.music.bitchord.ui.screens.isQuickPicksShelf
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.CompactTrackRow
@@ -553,6 +554,9 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     var searchCommitted by remember { mutableStateOf(false) }
     var searchScrollReset by remember { mutableStateOf(0) }
     var searchFocusRequested by remember { mutableStateOf(false) }
+    // Whether the window is too narrow for the sidebar. The Search page needs to know: with no
+    // sidebar there is no search field beside the page, so it draws the phone's own field.
+    var compactWindow by remember { mutableStateOf(false) }
     var searchSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     // Playable rows for the half-typed query, shown under the text completions.
     var searchTypeahead by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
@@ -605,8 +609,14 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     val libraryGridState = rememberLazyGridState()
     // The phone's History page keeps its own place, like the others.
     val historyListState = rememberLazyListState()
-    /** A Library shelf's "Show all", open as a grid in place of the page. */
-    var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
+    /**
+     * The shelf opened as a page of its own, or none.
+     *
+     * The Library's "Show all" opens a shelf this way, and so does the chevron at the end of
+     * the Home page's Quick Picks row: a row is a sample of a shelf, and this is the whole of
+     * it.
+     */
+    var shelfAsPage by remember { mutableStateOf<HomeShelf?>(null) }
     /** Where the one back button in the top bar goes: every place visited, oldest first. */
     val navHistory = remember { mutableStateListOf<AurisNavEntry>() }
     /** Set while [goBack] puts a place back, so that move is not itself recorded as a visit. */
@@ -624,6 +634,26 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     var moodGenreReloads by remember { mutableStateOf(0) }
     var moodGenreShelves by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
     var selectedSong by remember { mutableStateOf<Song?>(null) }
+    // Which recording of the playing track the menu can offer the other of: the catalogue's
+    // own song for a video upload, the music video for a catalogue song. The phone asks the
+    // same catalogue and answers the same way — see [AurisVersionSwitch].
+    var alternateVersion by remember { mutableStateOf(false) }
+    /** Set while the catalogue is being asked, so the menu cannot ask it twice at once. */
+    var versionSwitchBusy by remember { mutableStateOf(false) }
+    /**
+     * The row the playing track was swapped from, and the row it was swapped for.
+     *
+     * Kept so the menu can put the listener's own version back, which is the way the phone
+     * offers it too: the original is never thrown away by the switch.
+     */
+    var versionSwap by remember { mutableStateOf<AurisVersionSwitch.Swap?>(null) }
+    /**
+     * The track the listener asked to keep as a video.
+     *
+     * The automatic upgrade leaves it alone: a video asked for by hand is not going to be
+     * swapped behind their back on the next track.
+     */
+    var keepVideoId by remember { mutableStateOf<String?>(null) }
     // The live queue: what is playing, what played before it, what is next.
     var liveQueue by remember {
         mutableStateOf(
@@ -704,6 +734,9 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     var playbackSpeed by remember { mutableStateOf(persistence.string("playback_speed", "1.0").toFloatOrNull() ?: 1.0f) }
     var volume by remember { mutableStateOf(persistence.string("volume", "1.0").toFloatOrNull()?.coerceIn(0.0f, 1.0f) ?: 1.0f) }
     var crossfadeSeconds by remember { mutableStateOf(persistence.string("crossfade_seconds", "0").toIntOrNull()?.coerceIn(0, 12) ?: 0) }
+    // A video upload is played as the catalogue's own song instead — the phone's "Prefer
+    // music only", and the automatic upgrade that goes with it.
+    var preferMusicOnly by remember { mutableStateOf(persistence.boolean(KEY_PREFER_MUSIC_ONLY, false)) }
     var downloadQuality by remember { mutableStateOf(persistence.string("download_quality", "LOSSLESS")) }
     var trayIconEnabled by remember { mutableStateOf(persistence.boolean("tray_icon", true)) }
     var closeToTray by remember { mutableStateOf(persistence.boolean("close_to_tray", true)) }
@@ -870,6 +903,83 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         if (!AurisListenTogether.state.value.controlsLocked) return false
         AurisPlayerHost.showMessage("Only the party host can change playback")
         return true
+    }
+
+    /**
+     * Puts the other recording of the playing track where it is, and keeps the one that was
+     * playing so the menu can put it back.
+     *
+     * The phone's version switch. A video upload has the catalogue's own song behind it, and
+     * a catalogue song has a music video behind it; the listener picks, and the pick is not
+     * made for them — a video can be another recording altogether.
+     */
+    fun switchVersion(song: Song) {
+        if (versionSwitchBusy) return
+        // In a party the running order is shared, and a per-listener version switch would put
+        // each member on their own cut of what is meant to be one song — the phone's guard.
+        if (AurisListenTogether.state.value.inParty) return
+        versionSwitchBusy = true
+        val snapshot = playbackEngine.state.value
+        val position = snapshot.positionMs
+        val wasPlaying = snapshot.isPlaying
+        scope.launch {
+            try {
+                val other = AurisVersionSwitch.theOtherVersion(song, versionSwap)
+                if (other == null) {
+                    AurisPlayerHost.showMessage("There is no other version of this track")
+                    return@launch
+                }
+                // Going back is not a second swap: the row that was left behind is the one to
+                // return to, and there is nothing left to remember afterwards.
+                val goingBack = versionSwap?.to?.videoId == song.videoId
+                versionSwap = if (goingBack) null else AurisVersionSwitch.Swap(from = song, to = other)
+                // A video asked for by hand is not going to be upgraded behind their back.
+                keepVideoId = if (other.isVideo) other.videoId else null
+                liveQueue = liveQueue.replaceCurrent(other)
+                selectedSong = other
+                playbackEngine.load(other, wasPlaying, position)
+                saveQueue()
+                AurisTrackLog.log(
+                    "version switch: '${song.title}' -> '${other.title}' (${other.videoId})",
+                )
+            } finally {
+                versionSwitchBusy = false
+            }
+        }
+    }
+
+    /**
+     * Whether the other version of the playing track exists, asked of the catalogue once per
+     * track — the phone asks the same question the same way, and caches the answer with it.
+     */
+    LaunchedEffect(selectedSong?.videoId, versionSwap?.to?.videoId) {
+        val song = selectedSong ?: return@LaunchedEffect
+        if (AurisListenTogether.state.value.inParty) {
+            alternateVersion = false
+            return@LaunchedEffect
+        }
+        // A track that was already swapped knows its other version without asking.
+        val swapped = versionSwap
+        alternateVersion = if (swapped != null && swapped.to.videoId == song.videoId) {
+            true
+        } else {
+            withContext(Dispatchers.IO) { AurisVersionSwitch.hasAlternate(song) }
+        }
+    }
+
+    /**
+     * "Prefer music only": a video upload is played as the catalogue's own song.
+     *
+     * The phone's automatic upgrade. The track starts as it was found and the catalogue's
+     * row is resolved behind it — a match that fails or finds nothing simply leaves the
+     * video playing, and the listener can still swap it by hand from the player's menu.
+     */
+    LaunchedEffect(selectedSong?.videoId, preferMusicOnly) {
+        val song = selectedSong ?: return@LaunchedEffect
+        if (!preferMusicOnly || !song.isVideo) return@LaunchedEffect
+        if (song.videoId == keepVideoId) return@LaunchedEffect
+        if (AurisListenTogether.state.value.inParty) return@LaunchedEffect
+        switchVersion(song)
     }
 
     /**
@@ -1136,6 +1246,37 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     fun shareSong(song: Song) {
         AurisExternalLinks.copy("https://music.youtube.com/watch?v=${song.videoId}")
         AurisTrackLog.log("copied a link to '${song.title}'")
+    }
+
+    /**
+     * The cover art, saved as a file.
+     *
+     * The phone files it in Pictures/Auris through the gallery; a desktop has no gallery to
+     * ask, so it goes where a desktop keeps pictures.
+     */
+    fun saveArtwork(song: Song) {
+        scope.launch {
+            AurisArtworkSave.save(song).fold(
+                onSuccess = { file ->
+                    AurisPlayerHost.showMessage("Cover art saved to ${file.fileName}")
+                },
+                onFailure = { failure ->
+                    AurisPlayerHost.showMessage("Could not save the cover art: ${failure.message}")
+                },
+            )
+        }
+    }
+
+    /** The log on the clipboard, for a bug report. */
+    fun copyLog() {
+        val text = AurisTrackLog.read()
+        if (text.isBlank()) {
+            AurisPlayerHost.showMessage("There is no log yet")
+            return
+        }
+        AurisExternalLinks.copy(text)
+        AurisTrackLog.log("copied the log to the clipboard")
+        AurisPlayerHost.showMessage("Log copied")
     }
 
     /**
@@ -1962,6 +2103,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         },
         onSleepAfterTrack = { AurisSleepTimer.startAfterTrack() },
         onShare = ::shareSong,
+        onSaveArtwork = ::saveArtwork,
     )
 
     /** The "…" a song row hangs off, built the same way on every page that offers one. */
@@ -2177,7 +2319,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         overlays.replay = false
         overlays.settingsPage = null
         selectedMoodGenre = null
-        libraryShowAll = null
+        shelfAsPage = null
         if (next == AurisDestination.SEARCH) searchFocusRequested = true
         destination = next
     }
@@ -2711,7 +2853,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         artist = openedArtist,
         collection = openedCollection,
         mood = selectedMoodGenre,
-        showAll = libraryShowAll,
+        showAll = shelfAsPage,
         replay = overlays.replay,
         settings = overlays.settingsPage,
     )
@@ -2747,7 +2889,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         overlays.settingsPage = entry.settings
         collectionError = null
         openedCollection = entry.collection
-        libraryShowAll = entry.showAll
+        shelfAsPage = entry.showAll
         if (entry.mood != selectedMoodGenre) {
             selectedMoodGenre = entry.mood
             moodGenreShelves = UiState.Loading
@@ -2983,6 +3125,15 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
     // The menu the shared player's "…" opens.
     var playerMenuOpen by remember(selectedSong?.videoId) { mutableStateOf(false) }
 
+    /**
+     * The lyrics-offset drawer, open over the player.
+     *
+     * The sheet itself is the phone's, drawn by the shared player: this only says that it is
+     * open. The offset it changes is the player's own setting, so it is kept between the
+     * tracks the way the phone keeps it.
+     */
+    var lyricsOffsetOpen by remember { mutableStateOf(false) }
+
     /** The song menu's verbs for [song], as the player sheet offers them. */
     fun playerSongActions(song: Song) = AurisSongActions(
         signedIn = youtubeSignedIn,
@@ -3012,6 +3163,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
         },
         onSleepAfterTrack = { AurisSleepTimer.startAfterTrack() },
         onShare = ::shareSong,
+        onSaveArtwork = ::saveArtwork,
     )
 
     // What the shared player reads as settings, kept in step with the window's own.
@@ -3222,6 +3374,12 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                         else -> false
                     }
                 },
+                // The Search page keeps the mini player up while you search, the way the phone
+                // does, so it brings the bottom bar back even with the sidebar up.
+                showBottomBar = destination == AurisDestination.SEARCH,
+                // With no sidebar there is no search field beside the page, so the Search page
+                // draws the phone's own field instead.
+                onCompact = { compactWindow = it },
                 topBar = { compact ->
                     AurisTopBar(
                         compact = compact,
@@ -3256,6 +3414,8 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                         onOpenLyrics = { overlays.toggleSidePanel(AurisSidePanel.LYRICS) },
                         onOpenQueue = { overlays.toggleSidePanel(AurisSidePanel.QUEUE) },
                         sidePanel = overlays.sidePanel,
+                        // The Search page carries the mini player at the bottom instead.
+                        showNowPlaying = destination != AurisDestination.SEARCH,
                         accountAvatar = activeAccount?.avatar
                             ?: activeAccount?.profiles?.firstOrNull()?.avatar,
                         onOpenAccounts = { AurisTrackLog.log("accounts: opening the switcher"); overlays.accounts = true },
@@ -3459,8 +3619,8 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                             lyricsProviderStates = providerStates,
                             onSelectLyricsProvider = { source -> lyricsOnly = source.label },
                             lyricsUnavailable = sharedLyricsUnavailable,
-                            lyricsOffsetOpen = false,
-                            onDismissLyricsOffset = {},
+                            lyricsOffsetOpen = lyricsOffsetOpen,
+                            onDismissLyricsOffset = { lyricsOffsetOpen = false },
                             windowWidth = windowWidth,
                             windowHeight = windowHeight,
                         )
@@ -3492,6 +3652,32 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                                         AurisOriginalVersion.clear(current.videoId)
                                         playbackEngine.reloadCurrent(forceSourceRefresh = true)
                                     }.takeIf { AurisOriginalVersion.isPinned(current.videoId) },
+                                    // Which recording is playing — the catalogue's own song
+                                    // for a video upload, the music video for a song.
+                                    onToggleAudioVersion = {
+                                        switchVersion(current)
+                                    }.takeIf { alternateVersion && !versionSwitchBusy },
+                                    isAudioVersion = !current.isVideo,
+                                    // The player's own rows: about the session in progress
+                                    // rather than the song as a library entry, and offered
+                                    // from here only, as on the phone.
+                                    onOpenLyricsOffset = {
+                                        lyricsOffsetOpen = true
+                                    },
+                                    onOpenReplay = {
+                                        overlays.replay = true
+                                    },
+                                    spatialAudioOn = spatialAudio,
+                                    onToggleSpatialAudio = {
+                                        spatialAudio = !spatialAudio
+                                        persistence.saveBoolean("spatial_audio", spatialAudio)
+                                    },
+                                    onOpenListenTogether = {
+                                        overlays.listenTogether = true
+                                    },
+                                    listenTogetherMembers = partyState.members.size
+                                        .takeIf { partyState.inParty },
+                                    onCopyLog = ::copyLog,
                                     onDismiss = { playerMenuOpen = false },
                                 )
                             }
@@ -3750,6 +3936,11 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                                     onCrossfadeSecondsChange = {
                                         crossfadeSeconds = it
                                         persistence.saveString("crossfade_seconds", it.toString())
+                                    },
+                                    preferMusicOnly = preferMusicOnly,
+                                    onPreferMusicOnlyChange = {
+                                        preferMusicOnly = it
+                                        persistence.saveBoolean(KEY_PREFER_MUSIC_ONLY, it)
                                     },
                                     animatedCanvas = animatedCanvas,
                                     showNerdStats = showNerdStats,
@@ -4090,6 +4281,13 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentsLoading,
                             leadHero = false,
+                            // The chevron at the end of the Quick Picks row: the row is a sample
+                            // of the shelf, and this opens the whole of it.
+                            onOpenQuickPicks = {
+                                (homeState as? UiState.Success)?.data
+                                    ?.firstOrNull { isQuickPicksShelf(it.title) }
+                                    ?.let { shelfAsPage = it }
+                            },
                         )
                         destination == AurisDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
                             MoodGenrePlaylistsScreen(
@@ -4265,24 +4463,45 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                             onTypeaheadLongPress = ::openMenu,
                             contentPadding = sharedPagePadding,
                             topPadding = 0.dp,
-                            showField = false,
+                            // The sidebar carries the search field in a wide window; a narrow one
+                            // has no sidebar, so the page draws the phone's own field.
+                            showField = compactWindow,
                         )
-                        destination == AurisDestination.LIBRARY && libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
-                            // The phone keeps the grid's sort beside it, in the bar above; here it sits
-                            // at the end of the row the way back is on.
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = 8.dp, end = 12.dp),
-                                horizontalArrangement = Arrangement.End,
-                            ) { AurisLibrarySortMenu() }
+                        // A shelf opened as a page of its own: the Library's "Show all", and the
+                        // chevron at the end of the Home page's Quick Picks row.
+                        shelfAsPage != null -> Column(Modifier.fillMaxSize()) {
+                            val shelf = shelfAsPage!!
+                            if (destination == AurisDestination.LIBRARY) {
+                                // The phone keeps the grid's sort beside it, in the bar above; here it sits
+                                // at the end of the row the way back is on.
+                                Row(
+                                    Modifier.fillMaxWidth().padding(top = 8.dp, end = 12.dp),
+                                    horizontalArrangement = Arrangement.End,
+                                ) { AurisLibrarySortMenu() }
+                            }
                             LibraryGridPage(
-                                shelf = libraryShowAll!!,
+                                shelf = shelf,
                                 gridState = libraryGridState,
-                                onItemClick = ::openLibraryItem,
+                                // A Home shelf's card is a track to start a station from, the way it
+                                // is on the feed; a Library card is the thing itself.
+                                onItemClick = { item ->
+                                    if (destination == AurisDestination.LIBRARY) {
+                                        openLibraryItem(item)
+                                    } else {
+                                        openShelfItem(item, shelf.title)
+                                    }
+                                },
                                 onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                                 contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
                                 modifier = Modifier.weight(1f),
+                                // A Home shelf keeps the feed's order; the Library's is the
+                                // listener's own and takes their sort.
+                                keepOrder = destination != AurisDestination.LIBRARY,
                                 onNewPlaylist = { overlays.playlistDialog = true }
-                                    .takeIf { libraryShowAll?.title == PLAYLISTS_SHELF },
+                                    .takeIf {
+                                        destination == AurisDestination.LIBRARY &&
+                                            shelf.title == PLAYLISTS_SHELF
+                                    },
                             )
                         }
                         destination == AurisDestination.LIBRARY -> LibraryScreen(
@@ -4292,7 +4511,7 @@ fun AurisDesktopApp(onRequestExit: () -> Unit = {}) {
                             onShelfItemClick = ::openLibraryItem,
                             onShelfItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                             onNewPlaylist = { overlays.playlistDialog = true },
-                            onShowAll = { shelf -> libraryShowAll = shelf },
+                            onShowAll = { shelf -> shelfAsPage = shelf },
                             replay = {
                                 // The phone's wallet of Replay cards, or nothing until there is
                                 // listening to deal them from.
@@ -4410,6 +4629,14 @@ private fun AurisTopBar(
     onOpenQueue: () -> Unit,
     /** Which of the two the column beside the page is showing, lit on its button. */
     sidePanel: AurisSidePanel?,
+    /**
+     * Whether the now-playing strip is drawn.
+     *
+     * The Search page carries the mini player at the bottom instead — the phone keeps its mini
+     * player up while you search — so the strip gives way there rather than showing the same
+     * track twice.
+     */
+    showNowPlaying: Boolean = true,
     accountAvatar: String?,
     onOpenAccounts: () -> Unit,
     /** The app's one way back — every page's own arrow was folded into this. */
@@ -4541,6 +4768,11 @@ private fun AurisTopBar(
                         Modifier.weight(1f).padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center,
                     ) {
+                        if (!showNowPlaying) {
+                            // The mini player at the foot of the Search page says what is
+                            // playing; a second copy of it here would say it twice.
+                            Spacer(Modifier.fillMaxWidth())
+                        } else {
                         Surface(
                             modifier = Modifier
                                 .widthIn(min = 300.dp, max = 520.dp)
@@ -4610,6 +4842,7 @@ private fun AurisTopBar(
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 } else {
@@ -4887,6 +5120,9 @@ private fun AurisBottomChrome(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
 ) {
+    // The sidebar carries the way around when it is up; the floating bar only takes over when
+    // there is no sidebar, or when the window is too narrow to hold one.
+    val sidebarVisible by AurisSidebarSetting.enabled.collectAsState()
     Column(
         Modifier
             .fillMaxWidth()
@@ -4894,7 +5130,11 @@ private fun AurisBottomChrome(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (compact && song != null) {
+        // The mini player stays up while you search, the way it does on the phone: the search
+        // field is its own thing there, and the music keeps playing underneath it. A wide
+        // window's search page therefore carries this at the bottom rather than a strip in the
+        // top bar — one now-playing, not two.
+        if ((compact || destination == AurisDestination.SEARCH) && song != null) {
             AurisMiniPlayer(
                 song = song,
                 isPlaying = isPlaying,
@@ -4903,7 +5143,9 @@ private fun AurisBottomChrome(
                 onNext = onNext,
             )
         }
-        AurisFloatingNavigation(destination, onDestinationSelected)
+        if (compact || !sidebarVisible) {
+            AurisFloatingNavigation(destination, onDestinationSelected)
+        }
     }
 }
 
@@ -5068,6 +5310,19 @@ private fun AurisFrame(
     /** The strip of open tabs, between the top bar and the page. */
     tabStrip: @Composable () -> Unit = {},
     sidebar: @Composable () -> Unit,
+    /**
+     * The bottom bar is drawn when the window has no sidebar to carry the way around — but the
+     * Search page keeps its own mini player even with the sidebar up, because on the phone the
+     * mini player stays while you search. This says so.
+     */
+    showBottomBar: Boolean = false,
+    /**
+     * Whether the window is too narrow for the sidebar.
+     *
+     * The page needs to know: with no sidebar there is no search field beside the page either,
+     * so the Search page draws the phone's own field instead.
+     */
+    onCompact: (Boolean) -> Unit = {},
     bottomBar: @Composable (Boolean) -> Unit,
     /** The column on the far side of the page — the lyrics or the queue, when one is open. */
     trailing: @Composable () -> Unit = {},
@@ -5095,12 +5350,16 @@ private fun AurisFrame(
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     BoxWithConstraints(Modifier.fillMaxSize()) {
                         val compact = maxWidth < 980.dp
+                        // The sidebar can be put away in Settings; the floating navigation
+                        // along the bottom then carries the way around.
+                        val sidebarVisible by AurisSidebarSetting.enabled.collectAsState()
+                        // The bar is there when nothing else carries the way around, and on the
+                        // Search page, which keeps the mini player up the way the phone does.
+                        val bottomBarVisible = compact || !sidebarVisible || showBottomBar
+                        SideEffect { onCompact(compact) }
                         // The sidebar runs the full height of the window, its head the window's
                         // caption; the player's bar and the page share the column beside it.
                         Row(Modifier.fillMaxSize()) {
-                            // The sidebar can be put away in Settings; the floating
-                            // navigation along the bottom then carries the way around.
-                            val sidebarVisible by AurisSidebarSetting.enabled.collectAsState()
                             if (!compact && sidebarVisible) sidebar()
                             Column(Modifier.weight(1f).fillMaxHeight()) {
                             topBar(compact)
@@ -5126,14 +5385,15 @@ private fun AurisFrame(
                                                 end = 0.dp,
                                                 // Room for the bar that floats over this, so the
                                                 // last row can still be scrolled clear of it.
-                                                bottom = if (compact || !sidebarVisible) 128.dp else 16.dp,
+                                                bottom = if (bottomBarVisible) 128.dp else 16.dp,
                                             ),
                                         )
                                     }
                                     // The floating navigation is the window's way around when
                                     // there is no sidebar to carry one, or when the window is
-                                    // too narrow to hold a column down the side.
-                                    if (compact || !sidebarVisible) {
+                                    // too narrow to hold a column down the side. The Search
+                                    // page brings the bar back for its mini player.
+                                    if (bottomBarVisible) {
                                         Box(Modifier.align(Alignment.BottomCenter)) { bottomBar(compact) }
                                     }
                                 }
@@ -5191,6 +5451,12 @@ private fun AurisPageBackdrop(artworkUrl: String?, transparentBase: Boolean) {
 /** What the mesh is averaged from — coarse by design. */
 /** Whether AutoPlay may offer a song this session has already played or suggested. */
 internal const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
+
+/**
+ * Whether a video upload is played as the catalogue's own song — the phone's "Prefer music
+ * only", under the same name it has there.
+ */
+internal const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
 
 internal const val KEY_LIBRARY_SORT = "library_sort"
 
@@ -5594,6 +5860,8 @@ private fun AurisSettingsScreen(
     onPlaybackSpeedChange: (Float) -> Unit,
     crossfadeSeconds: Int,
     onCrossfadeSecondsChange: (Int) -> Unit,
+    preferMusicOnly: Boolean,
+    onPreferMusicOnlyChange: (Boolean) -> Unit,
     animatedCanvas: Boolean,
     onAnimatedCanvasChange: (Boolean) -> Unit,
     spotifyCanvasReady: Boolean,
@@ -5710,6 +5978,14 @@ private fun AurisSettingsScreen(
                             )
                         }
                         }
+                    }
+                    if (settingsRowVisible(AurisStrings["prefer_music_only", "Prefer music only"], AurisStrings["prefer_music_only_subtitle", "Play a video's own song instead of the video"])) {
+                        SettingsToggle(
+                            AurisStrings["prefer_music_only", "Prefer music only"],
+                            AurisStrings["prefer_music_only_subtitle", "Play a video's own song instead of the video"],
+                            preferMusicOnly,
+                            onPreferMusicOnlyChange,
+                        )
                     }
                     SettingsToggle(
                         AurisStrings["automix", "Automix [BETA]"],

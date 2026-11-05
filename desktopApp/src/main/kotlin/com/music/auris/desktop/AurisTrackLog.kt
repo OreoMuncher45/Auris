@@ -35,4 +35,16 @@ internal object AurisTrackLog {
             )
         }
     }
+
+    /**
+     * The log, for the clipboard.
+     *
+     * The phone's "Copy log" row is the one nobody reaches for by accident: it is about the
+     * track playing right now rather than about the song as a thing in a library, and it is
+     * what a bug report is built from.
+     */
+    fun read(): String {
+        val target = file ?: return ""
+        return runCatching { Files.readString(target) }.getOrDefault("")
+    }
 }
