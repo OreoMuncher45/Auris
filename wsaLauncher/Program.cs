@@ -46,10 +46,10 @@ internal static class Program
             if (!WsaInstalled())
             {
                 Say("Windows Subsystem for Android is not installed on this machine.");
-                Say("Install it, then run this again:");
-                Say("  https://github.com/microsoft/WSA/releases");
-                Say("  (the community builds at https://github.com/Sjj1024/WSA_Install do the same job)");
-                OpenUrl("https://github.com/microsoft/WSA/releases");
+                Say("Install it, then run this again. WSA-Pacman does the whole job:");
+                Say("  https://github.com/alesimula/wsa_pacman");
+                Say("(it can install the APK itself too, if you would rather not run this).");
+                OpenUrl("https://github.com/alesimula/wsa_pacman");
                 return 2;
             }
 
@@ -60,7 +60,8 @@ internal static class Program
             {
                 Say("WSA is running, but its adb bridge is not answering.");
                 Say("Turn it on once: WSA → Settings → Developer → ADB bridge.");
-                Say("(It listens on a port the Settings page shows; this launcher finds it by itself.)");
+                Say("(The Settings page shows the port it listens on; this launcher finds it by itself.)");
+                Say("WSA-Pacman turns it on for you: https://github.com/alesimula/wsa_pacman");
                 return 3;
             }
 
@@ -78,7 +79,7 @@ internal static class Program
             Say("");
             Say("Auris is running on Windows.");
 
-            MakeShortcut();
+            MakeShortcut(package);
             return 0;
         }
         catch (Exception e)
@@ -251,11 +252,31 @@ internal static class Program
     private static void Launch(string adb, string serial, string package)
     {
         Say("Starting Auris...");
+
+        // WSA's own client starts the app without needing the adb bridge, which is how the
+        // Start-menu entry WSA creates works. It is the better path when it is there.
+        var client = WsaClientPath();
+        if (client is not null)
+        {
+            Run(client, $"/launch wsa://{package}", 30_000);
+            return;
+        }
+
         Run(adb, $"-s {serial} shell monkey -p {package} -c android.intent.category.LAUNCHER 1", 60_000);
     }
 
+    /// <summary>WSA's client, which is what launches an Android app from Windows.</summary>
+    private static string? WsaClientPath()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft", "WindowsApps", WsaPackageFamily, "WsaClient.exe");
+
+        return File.Exists(path) ? path : null;
+    }
+
     /// <summary>Puts a shortcut in the Start menu, so the next run is one click.</summary>
-    private static void MakeShortcut()
+    private static void MakeShortcut(string package)
     {
         try
         {
@@ -265,6 +286,7 @@ internal static class Program
                 return;
             }
 
+            // The launcher keeps a copy of itself, so it can be run again to update the app.
             var target = Path.Combine(WorkDir, "Auris.exe");
             if (!string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
             {
@@ -286,7 +308,7 @@ internal static class Program
             dynamic shortcut = shell.CreateShortcut(Path.Combine(programs, "Auris.lnk"));
             shortcut.TargetPath = target;
             shortcut.WorkingDirectory = WorkDir;
-            shortcut.IconLocation = Path.Combine(WorkDir, "Auris.ico") + ",0";
+            shortcut.IconLocation = IconFor(package);
             shortcut.Description = "Auris";
             shortcut.Save();
             Say("A shortcut is in the Start menu.");
@@ -295,6 +317,19 @@ internal static class Program
         {
             Log("shortcut: " + e.Message);
         }
+    }
+
+    /// <summary>
+    /// The icon WSA writes for an installed app, when it has written one; the one carried
+    /// inside this executable otherwise.
+    /// </summary>
+    private static string IconFor(string package)
+    {
+        var written = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Packages", WsaPackageFamily, "LocalState", package + ".ico");
+
+        return File.Exists(written) ? written + ",0" : Path.Combine(WorkDir, "Auris.ico") + ",0";
     }
 
     /// <summary>Runs a program and returns what it printed.</summary>
