@@ -58,6 +58,24 @@ internal static class Program
             var serial = FindAdbDevice(adb);
             if (serial is null)
             {
+                // The bridge is off, but if Auris is already in WSA it can still be started:
+                // WSA's client does not need the bridge for that.
+                var client = WsaClientPath();
+                if (client is not null)
+                {
+                    foreach (var package in CandidatePackages)
+                    {
+                        Run(client, $"/launch wsa://{package}", 30_000, quiet: true);
+                    }
+
+                    Say("WSA is running, but its adb bridge is not answering.");
+                    Say("Tried to start Auris anyway, through WSA. If it did not open:");
+                    Say("  WSA → Settings → Developer → ADB bridge, on.");
+                    Say("  (The Settings page shows the port; this launcher finds it by itself.)");
+                    Say("  WSA-Pacman turns it on for you: https://github.com/alesimula/wsa_pacman");
+                    return 3;
+                }
+
                 Say("WSA is running, but its adb bridge is not answering.");
                 Say("Turn it on once: WSA → Settings → Developer → ADB bridge.");
                 Say("(The Settings page shows the port it listens on; this launcher finds it by itself.)");
