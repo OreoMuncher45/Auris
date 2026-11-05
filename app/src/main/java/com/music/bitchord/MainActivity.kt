@@ -799,10 +799,13 @@ private fun BitChordApp(
     // is still in flight — read by the long-press sheet so it can show a
     // loading row instead of the two just being absent while it waits.
     var linksLoading by remember { mutableStateOf(false) }
-    // Which track the playlist picker is adding, or null when it's closed.
+    // What the playlist picker is adding, or null when it's closed: the
+    // tracks, and the release's own name when the flow started from one.
     // Separate from [songActions] so the menu can close behind it — the picker
     // is the next step, not a second sheet stacked on the first.
-    var playlistTarget by remember { mutableStateOf<Song?>(null) }
+    var playlistTarget by remember { mutableStateOf<List<Song>?>(null) }
+    var playlistTargetTitle by remember { mutableStateOf<String?>(null) }
+    var playlistTargetArtwork by remember { mutableStateOf<String?>(null) }
     // The picker opened from the Library tab, where there is no track and
     // creating the playlist is the whole errand.
     var creatingPlaylist by remember { mutableStateOf(false) }
@@ -3442,7 +3445,9 @@ private fun BitChordApp(
                 onAddToPlaylist = {
                     songActions = null
                     viewModel.loadPlaylists()
-                    playlistTarget = song
+                    playlistTarget = listOf(song)
+                    playlistTargetTitle = null
+                    playlistTargetArtwork = null
                 },
                 onRemoveFromPlaylist = editable?.let {
                     {
@@ -4669,7 +4674,9 @@ private fun BitChordApp(
                                     entityType = EntityType.TRACK,
                                 ))
                                 viewModel.loadPlaylists()
-                                playlistTarget = song
+                                playlistTarget = listOf(song)
+                                playlistTargetTitle = null
+                                playlistTargetArtwork = null
                             },
                             onBrowseClick = { item ->
                                 if (item.browseId.startsWith("itunes:")) {
@@ -5738,9 +5745,11 @@ private fun BitChordApp(
         // playlists with a way to make another. `creatingPlaylist` opens it
         // straight onto the form, which is what the Library tile means.
         if (playlistTarget != null || creatingPlaylist) {
-            val target = playlistTarget
+            val target = playlistTarget.orEmpty()
             val dismiss = {
                 playlistTarget = null
+                playlistTargetTitle = null
+                playlistTargetArtwork = null
                 creatingPlaylist = false
             }
             ModalBottomSheet(
@@ -5750,11 +5759,14 @@ private fun BitChordApp(
                 PlaylistPickerSheet(
                     playlists = playlists,
                     loading = playlistsLoading,
-                    song = target,
-                    startCreating = target == null,
+                    tracks = target,
+                    collectionTitle = playlistTargetTitle,
+                    collectionThumbnailUrl = playlistTargetArtwork,
+                    startCreating = target.isEmpty(),
                     onAdd = { picked ->
-                        target?.let { song ->
-                            viewModel.addToPlaylists(picked, song) { added, alreadyThere, failed ->
+                        when (target.size) {
+                            // One track: the ordinary row.
+                            1 -> viewModel.addToPlaylists(picked, target.first()) { added, alreadyThere, failed ->
                                 // One line for the whole batch, saying the
                                 // outcome that matters most: what went in, else
                                 // that it was all there already, else that it
@@ -5771,11 +5783,31 @@ private fun BitChordApp(
                                     },
                                 )
                             }
+                            // A whole release: every track of it, filed.
+                            else -> viewModel.addSongsToPlaylists(picked, target) { added, tracks, _, failed ->
+                                showQueueNotice(
+                                    when {
+                                        added > 0 && tracks > 0 -> context.resources.getQuantityString(
+                                            R.plurals.added_tracks_to_playlists_notice, tracks, tracks, added,
+                                        )
+                                        failed > 0 -> context.getString(R.string.failed)
+                                        else -> context.getString(R.string.song_already_in_playlist)
+                                    },
+                                )
+                            }
                         }
                         dismiss()
                     },
                     onCreate = { title, privacy ->
-                        viewModel.createPlaylist(title, privacy, target)
+                        when (target.size) {
+                            1 -> viewModel.createPlaylist(title, privacy, target.first())
+                            else -> viewModel.createPlaylistWithVideoIds(
+                                title,
+                                privacy,
+                                target.mapNotNull { it.videoId },
+                                target,
+                            )
+                        }
                         dismiss()
                     },
                 )
@@ -5947,6 +5979,19 @@ private fun BitChordApp(
                     QueueShuffle.enableForNextQueue()
                     play(songs, songs.indices.random())
                 }.takeIf { target.fromCard },
+                // The whole release into one of the account's playlists — an
+                // album filed, a playlist copied into another one. Offered on
+                // the long-press menu and on the release page's own three-dot
+                // menu, which is the same sheet either way.
+                onAddToPlaylist = act { songs ->
+                    viewModel.loadPlaylists()
+                    playlistTarget = songs
+                    playlistTargetTitle = target.title
+                    playlistTargetArtwork = target.thumbnailUrl
+                }.takeIf {
+                    signedIn && remote &&
+                        (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST)
+                },
                 onOpen = target.browseId
                     ?.takeIf { target.fromCard }
                     ?.let { id ->

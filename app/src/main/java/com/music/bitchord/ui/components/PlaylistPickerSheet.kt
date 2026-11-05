@@ -67,7 +67,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import java.util.Locale
 
 /**
- * Where a track goes: one of the account's playlists, or a new one.
+ * Where tracks go: one of the account's playlists, or a new one.
  *
  * Two panels in one sheet rather than a sheet that opens a dialog. Creating a
  * playlist here is nearly always in service of adding the track that opened
@@ -75,9 +75,11 @@ import java.util.Locale
  * carries the track with it instead of leaving a new empty playlist behind
  * for the user to add to a second time.
  *
- * [song] is null when the flow started from the Library tab rather than from a
- * track, which is the one case where the header has no track to draw and
- * "New playlist" is the whole point of the sheet.
+ * [tracks] is empty when the flow started from the Library tab rather than
+ * from a track, which is the one case where the header has nothing to draw
+ * and "New playlist" is the whole point of the sheet. It carries more than
+ * one track when the flow started from a release — an album or a playlist
+ * added whole — and the header then draws the release rather than a track.
  *
  * Playlists are ticked rather than picked: one track often belongs in more
  * than one list, and a sheet that closed on the first tap meant opening it
@@ -90,7 +92,14 @@ fun PlaylistPickerSheet(
     onAdd: (List<UserPlaylist>) -> Unit,
     onCreate: (String, PlaylistPrivacy) -> Unit,
     modifier: Modifier = Modifier,
-    song: Song? = null,
+    tracks: List<Song> = emptyList(),
+    /**
+     * The release's own name, when the flow started from one — the header
+     * says what is being added, and a hundred tracks have no name of their
+     * own.
+     */
+    collectionTitle: String? = null,
+    collectionThumbnailUrl: String? = null,
     startCreating: Boolean = false,
 ) {
     var creating by remember { mutableStateOf(startCreating) }
@@ -110,12 +119,22 @@ fun PlaylistPickerSheet(
     }
 
     Column(modifier.fillMaxWidth()) {
-        if (song != null) {
-            SheetTrackHeader(song)
-            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+        when {
+            tracks.size == 1 -> {
+                SheetTrackHeader(tracks.first())
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+            }
+            tracks.size > 1 -> {
+                SheetCollectionHeader(
+                    title = collectionTitle ?: stringResource(R.string.add_to_playlist),
+                    count = tracks.size,
+                    thumbnailUrl = collectionThumbnailUrl,
+                )
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+            }
         }
         SheetHeading(
-            stringResource(if (song != null) R.string.add_to_playlist else R.string.your_playlists)
+            stringResource(if (tracks.isNotEmpty()) R.string.add_to_playlist else R.string.your_playlists)
                 .uppercase(Locale.getDefault()),
         )
 
@@ -176,16 +195,73 @@ fun PlaylistPickerSheet(
                         .padding(horizontal = 22.dp),
                 ) {
                     Text(
-                        if (selected.isEmpty()) {
-                            stringResource(R.string.add_to_playlist)
-                        } else {
-                            pluralStringResource(R.plurals.add_to_playlists_count, selected.size, selected.size)
+                        when {
+                            selected.isEmpty() -> stringResource(R.string.add_to_playlist)
+                            tracks.size > 1 -> pluralStringResource(
+                                R.plurals.add_tracks_to_playlists_count,
+                                tracks.size,
+                                tracks.size,
+                                selected.size,
+                            )
+                            else -> pluralStringResource(
+                                R.plurals.add_to_playlists_count,
+                                selected.size,
+                                selected.size,
+                            )
                         },
                     )
                 }
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * The header for a release being added whole — an album, a playlist.
+ *
+ * A hundred tracks have no name of their own, so the release's own name and
+ * cover stand in, with the count underneath.
+ */
+@Composable
+private fun SheetCollectionHeader(
+    title: String,
+    count: Int,
+    thumbnailUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = thumbnailUrl.artworkAt(ROW_ART_PX),
+            contentDescription = null,
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .thumbnailBorder(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = pluralStringResource(R.plurals.track_count_plural, count, count),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

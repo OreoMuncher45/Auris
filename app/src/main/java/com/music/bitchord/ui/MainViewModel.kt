@@ -1256,6 +1256,77 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private enum class AddOutcome { ADDED, ALREADY_THERE, FAILED }
 
+    /**
+     * Adds every track of a release — an album, a playlist — to the playlists
+     * the picker ticked.
+     *
+     * A release is a hundred tracks at a time, and YouTube's edit endpoint
+     * takes them in batches of fifty, so a long release is sent in several
+     * batches. One playlist at a time: a burst of parallel edits is exactly
+     * what the endpoint answers with a rate limit.
+     *
+     * The tracks the playlist already has are left out. YouTube has no
+     * objection to a duplicate row, and a copy of one playlist inside another
+     * is not what anyone meant.
+     */
+    fun addSongsToPlaylists(
+        playlists: List<UserPlaylist>,
+        songs: List<Song>,
+        onResult: (playlistsAdded: Int, tracksAdded: Int, alreadyThere: Int, failed: Int) -> Unit =
+            { _, _, _, _ -> },
+    ) {
+        if (!requireSignIn() || playlists.isEmpty() || songs.isEmpty()) return
+        viewModelScope.launch {
+            val outcomes = playlists.map { addReleaseTo(it, songs) }
+            onResult(
+                outcomes.count { it.first == AddOutcome.ADDED },
+                outcomes.sumOf { it.second },
+                outcomes.count { it.first == AddOutcome.ALREADY_THERE },
+                outcomes.count { it.first == AddOutcome.FAILED },
+            )
+        }
+    }
+
+    /**
+     * Files a release into one playlist, and says how many tracks went in.
+     */
+    private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
+        val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
+            ?.songs as? UiState.Success)?.data
+        val known = openSongs
+            ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
+        val existing = known?.mapNotNull { it.videoId }?.toSet()
+        val ids = songs.mapNotNull { it.videoId }
+            .filter { id -> existing == null || id !in existing }
+            .distinct()
+        if (ids.isEmpty()) return AddOutcome.ALREADY_THERE to 0
+        var failed = false
+        val addedIds = mutableListOf<String>()
+        ids.chunked(ADD_TO_PLAYLIST_BATCH).forEach { batch ->
+            val result = YtMusicRepository.addToPlaylist(playlist.playlistId, batch)
+            if (result.isFailure) {
+                failed = true
+            } else {
+                addedIds += batch
+            }
+        }
+        libraryStale = true
+        // The playlist's own page may be open behind the picker.
+        appendToOpenPlaylist(
+            playlist.browseId,
+            songs.filter { it.videoId in addedIds.toSet() },
+        )
+        // A playlist that was downloaded whole is a promise about a moving
+        // thing: these tracks are now part of it, so they belong on the device
+        // too.
+        com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+            getApplication(),
+            playlist.browseId,
+            force = true,
+        )
+        return (if (failed) AddOutcome.FAILED else AddOutcome.ADDED) to addedIds.size
+    }
+
     private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
         val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
             ?.songs as? UiState.Success)?.data
@@ -1493,7 +1564,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * flight is newer than this and will land with the addition already in it.
      */
     private fun appendToOpenPlaylist(browseId: String, song: Song, setVideoId: String?) {
-        val added = song.copy(setVideoId = setVideoId)
+        appendToOpenPlaylist(browseId, listOf(song.copy(setVideoId = setVideoId)))
+    }
+
+    /**
+     * Puts tracks into the playlist's page if it is open, so the page behind
+     * the picker shows what the picker just did.
+     */
+    private fun appendToOpenPlaylist(browseId: String, added: List<Song>) {
+        if (added.isEmpty()) return
         _detailStack.value = _detailStack.value.map { page ->
             if (page.browseId != browseId) return@map page
             val songs = when (val state = page.songs) {
@@ -1504,12 +1583,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Already there — a track added twice is two real entries on
             // YouTube's side, but a duplicate row from a double tap is not
             // something the user asked for.
-            if (songs.any { it.videoId == song.videoId }) return@map page
+            val fresh = added.filter { song -> songs.none { it.videoId == song.videoId } }
+            if (fresh.isEmpty()) return@map page
             page.copy(
                 songs = UiState.Success(
-                    songs + added.copy(
-                        thumbnailUrl = added.thumbnailUrl ?: page.thumbnailUrl,
-                    ),
+                    songs + fresh.map { song ->
+                        song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
+                    },
                 ),
             )
         }
@@ -2968,6 +3048,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** How many tracks YouTube's edit endpoint takes in one request. */
+        private const val ADD_TO_PLAYLIST_BATCH = 50
+
         /** How many Spotify tracks are looked up on YouTube Music at once. */
         private const val SPOTIFY_MATCH_PARALLELISM = 6
 

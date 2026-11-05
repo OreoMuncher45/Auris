@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Delete
@@ -157,6 +158,15 @@ fun BrowseActionsSheet(
     onOpen: (() -> Unit)? = null,
     onDownloadAll: (() -> Unit)? = null,
     /**
+     * Files the whole release into one of the account's playlists — an album
+     * added to a playlist, a playlist copied into another one.
+     *
+     * Null where there is nothing to file: an artist card, whose tracks are a
+     * page of suggestions rather than a release, and anything local, whose
+     * tracks are already on this device.
+     */
+    onAddToPlaylist: (() -> Unit)? = null,
+    /**
      * Shares the release's own YouTube Music link — the album/playlist
      * counterpart to a track's own Share row in [SongActionsSheet]. Null for
      * anything with no such link to share: an artist card, or a page built
@@ -298,6 +308,13 @@ fun BrowseActionsSheet(
                         else -> null
                     },
                     onClick = download,
+                )
+            }
+            onAddToPlaylist?.let {
+                ActionRow(
+                    Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    stringResource(R.string.add_to_playlist),
+                    onClick = it,
                 )
             }
             onOpen?.let {
