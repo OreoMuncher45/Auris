@@ -22,6 +22,53 @@ handful of pages whose phone counterparts have not been moved into `:sharedUi`
 yet: the artist and collection pages, Settings, History, Downloads and Local
 Music. Those are the pages the conversion replaces.
 
+### What that gap costs, measured
+
+An audit of the three pages that are still duplicated — Settings, the active
+download manager, and Local Music/Downloads — found:
+
+- **31 of the phone's 82 Settings rows** have a desktop row today. 6 more have
+  something related but not the same row. **45 have none**: themes, fonts,
+  liquid glass, blocked artists, offline mode, loudness, bit-perfect, JamesDSP,
+  concurrent downloads, the custom home/library/now-playing screens, and the
+  rest.
+- The phone's Settings needs three seams before it can move: an editable
+  settings host, a platform host (pickers, intents, locale, refresh rate), and
+  the resource conversion from `R.string` to Compose Resources.
+- The two download queues do not agree: the phone keeps a finished row until
+  it has been seen, and remembers where the song came from; the desktop drops
+  a finished row at once and keeps neither. One of them has to change before
+  there can be one queue.
+- Local Music and Downloads need `LocalMusicSort` and `DownloadedCollection`
+  moved into `:shared`, and a preferences host, before the phone's screen can
+  move. The desktop has no equivalent of the phone's downloaded-album
+  collections, and no bulk delete or WebDAV upload.
+
+So the desktop is the old app with the phone's screens inside it, not yet the
+phone's app. The Windows release that the desktop workflow builds should be
+read as exactly that.
+
+## Windows: the app itself, through WSA
+
+There is a second Windows path, and it is not the desktop at all: the phone's
+APK, running on the Windows Subsystem for Android.
+
+`wsaLauncher/` holds a small C# program that carries the APK and an `adb`
+client inside one `Auris.exe`. It starts WSA if it is asleep, finds WSA's adb
+bridge (WSA picks its own port, so the launcher looks for it rather than
+assuming one), installs the app with `adb install -r -g -d`, starts it through
+`WsaClient.exe /launch wsa://<package>`, and leaves a Start-menu shortcut
+pointing at WSA.
+
+`.github/workflows/wsa-draft-release.yml` builds it: the APK, then the
+executable, then a **draft** release with the executable and the bare APK in
+it. Nothing is published — `draft: true`, `prerelease: true`,
+`make_latest: false`.
+
+What it needs on the machine: WSA installed, and **WSA → Settings → Developer
+→ ADB bridge** on. WSA-Pacman installs WSA and can install the APK itself, for
+the people who would rather not run anything.
+
 ## Why the phone's remaining screens are not on the desktop yet
 
 Three things stand between them, and all three are the same problem: the

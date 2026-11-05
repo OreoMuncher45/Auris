@@ -114,17 +114,20 @@ object CastController {
         if (started) return
         started = true
         val app = context.applicationContext
-        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(app) != ConnectionResult.SUCCESS) {
-            Log.i(TAG, "Play Services unavailable; casting disabled")
-            return
-        }
         try {
+            if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(app) != ConnectionResult.SUCCESS) {
+                Log.i(TAG, "Play Services unavailable; casting disabled")
+                return
+            }
             // The task form, so the framework's start-up work is not on the
             // main thread of whichever screen happened to ask first.
             CastContext.getSharedInstance(app, Executors.newSingleThreadExecutor())
                 .addOnSuccessListener { ctx -> onReady(app, ctx) }
                 .addOnFailureListener { Log.w(TAG, "Cast framework unavailable", it) }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // A machine with no Google Play Services at all — a Windows machine running the
+            // app under WSA, a phone that never had them — is a place to cast from nowhere,
+            // not a crash on the way to the first screen.
             Log.w(TAG, "Cast framework unavailable", e)
         }
     }
