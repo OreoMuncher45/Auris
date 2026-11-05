@@ -494,7 +494,12 @@ object YtMusicRepository {
             val shelves = LIBRARY_FEEDS
                 .map { (title, browseId) ->
                     async {
-                        HomeShelf(title, runCatching { libraryItemsPaged(browseId) }.getOrDefault(emptyList()))
+                        HomeShelf(
+                            title,
+                            runCatching { libraryItemsPaged(browseId) }
+                                .getOrDefault(emptyList())
+                                .let(::withoutYoutubeEpisodesForLater),
+                        )
                     }
                 }
                 .awaitAll()
@@ -909,7 +914,28 @@ object YtMusicRepository {
      */
     suspend fun libraryPlaylists(): Result<List<ShelfItem>> = call("libraryPlaylists") {
         InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PLAYLISTS))
+            .let(::withoutYoutubeEpisodesForLater)
     }
+
+    /**
+     * YouTube Music's own "Episodes for later", dropped from every feed.
+     *
+     * YouTube keeps the podcast episodes a listener saved in an auto-playlist
+     * of its own, and that card turns up in the library's playlist feed. It is
+     * not ours: Auris takes its podcasts from Apple's catalogue, so YouTube's
+     * list is always empty here, and it sits next to our own shelf of the
+     * same name wearing the same words — two lists, one of them a dead end.
+     *
+     * Matched by the browse id YouTube gives it (`VLSE…`) and by the title it
+     * is filed under, because either one alone is a guess: the id is what
+     * YouTube calls the auto-playlist today, and the title is what it was
+     * called when the id was something else.
+     */
+    internal fun withoutYoutubeEpisodesForLater(items: List<ShelfItem>): List<ShelfItem> =
+        items.filterNot { item ->
+            item.browseId?.startsWith("VLSE") == true ||
+                item.title.trim().equals("Episodes for later", ignoreCase = true)
+        }
 
     /**
      * The podcast shows the account follows, as library cards.
@@ -920,6 +946,7 @@ object YtMusicRepository {
      */
     suspend fun podcastShows(): Result<List<ShelfItem>> = call("podcastShows") {
         InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PODCASTS))
+            .let(::withoutYoutubeEpisodesForLater)
     }
 
     /**

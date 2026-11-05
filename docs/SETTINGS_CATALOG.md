@@ -26,6 +26,7 @@ at once.
 | Downloads | `downloads` | What is kept offline, and how it is fetched |
 | Now Playing | `now_playing` | The player itself: artwork, lyrics, colours, badges |
 | Home & library | `home_library` | What Home and Library show and in what order |
+| Podcasts | `podcasts` | Whether podcasts are part of the app at all |
 | Appearance | `appearance` | Theme, shell, type, glass and motion |
 | Performance | `performance` | Frame rate and the high-performance mode |
 | Storage | `storage` | Caches, local files, non-music filtering |
@@ -102,6 +103,9 @@ at once.
 - [x] `home_library.sort` — Show-all order
 - [x] `home_library.blocked_artists` — Blocked artists
 - [x] `home_library.block_ai_music` — Block AI music
+
+### Podcasts
+- [x] `podcasts.enabled` — Podcasts
 
 ### Appearance
 - [x] `appearance.theme` — Theme

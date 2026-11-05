@@ -32,6 +32,7 @@ enum class SettingsCategory(
     DOWNLOADS("downloads", R.string.settings_category_downloads),
     NOW_PLAYING("now_playing", R.string.settings_category_now_playing),
     HOME_LIBRARY("home_library", R.string.settings_category_home_library),
+    PODCASTS("podcasts", R.string.settings_category_podcasts),
     APPEARANCE("appearance", R.string.settings_category_appearance),
     PERFORMANCE("performance", R.string.settings_category_performance),
     STORAGE("storage", R.string.settings_category_storage),
@@ -127,6 +128,9 @@ object SettingsCatalog {
             "home_library.sort",
             "home_library.blocked_artists",
             "home_library.block_ai_music",
+        ),
+        SettingsCategory.PODCASTS to listOf(
+            "podcasts.enabled",
         ),
         SettingsCategory.APPEARANCE to listOf(
             "appearance.theme",

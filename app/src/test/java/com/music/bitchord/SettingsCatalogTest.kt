@@ -134,6 +134,7 @@ class SettingsCatalogTest {
             "now_playing.lossless_badge", "now_playing.hires_badge", "now_playing.transport_smoothness",
             "home_library.show_flow_on_home", "home_library.shelf_order", "home_library.show_replay",
             "home_library.sort", "home_library.blocked_artists", "home_library.block_ai_music",
+            "podcasts.enabled",
             "appearance.theme", "appearance.app_ui", "appearance.fonts", "appearance.script_fonts",
             "appearance.liquid_glass", "appearance.liquid_glass_intensity", "appearance.folding_nav_bar",
             "appearance.reduce_animation", "appearance.reduce_dynamic_blur",

@@ -72,6 +72,7 @@ import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Podcasts
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
@@ -242,6 +243,7 @@ fun SettingsScreen(
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+    val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
     val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
     val blockedArtists by AppSettings.blockedArtists.collectAsStateWithLifecycle()
@@ -1513,6 +1515,29 @@ fun SettingsScreen(
                     selectedIndex = LibrarySort.entries.indexOf(librarySort),
                     onSelect = { AppSettings.setLibrarySort(LibrarySort.entries[it]) },
                     modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+            }
+        }
+        }
+        if (openCategory == SettingsCategory.PODCASTS || (openCategory == null && searchActive)) {
+        SearchableSettingsGroup(search, SettingsCategory.PODCASTS) {
+            val podcastsTitle = stringResource(R.string.podcasts)
+            row(podcastsTitle, "podcast", "episodes", "episodes for later", "continue listening", "hide", "off") {
+                SettingsRow(
+                    icon = Icons.Rounded.Podcasts,
+                    title = podcastsTitle,
+                    subtitle = stringResource(R.string.podcasts_enabled_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = podcastsEnabled,
+                            onCheckedChange = AppSettings::setPodcastsEnabled,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setPodcastsEnabled(!podcastsEnabled) },
                 )
             }
         }
@@ -3024,6 +3049,7 @@ private val SettingsCategory.icon: ImageVector
         SettingsCategory.DOWNLOADS -> Icons.Rounded.Download
         SettingsCategory.NOW_PLAYING -> Icons.Rounded.MusicNote
         SettingsCategory.HOME_LIBRARY -> Icons.Rounded.Home
+        SettingsCategory.PODCASTS -> Icons.Rounded.Podcasts
         SettingsCategory.APPEARANCE -> Icons.Rounded.Palette
         SettingsCategory.PERFORMANCE -> Icons.Rounded.Speed
         SettingsCategory.STORAGE -> Icons.Rounded.Storage

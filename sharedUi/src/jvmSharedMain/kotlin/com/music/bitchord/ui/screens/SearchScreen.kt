@@ -96,6 +96,14 @@ fun SearchScreen(
     currentSong: Song?,
     isPlaying: Boolean,
     onFilterChange: (SearchFilter) -> Unit,
+    /**
+     * The filters this build offers.
+     *
+     * All of them by default. An app that can switch podcasts off takes the
+     * podcasts filter out of the list rather than leaving a pill that leads
+     * to an empty answer.
+     */
+    availableFilters: List<SearchFilter> = SearchFilter.entries,
     results: UiState<List<SearchResult>>?,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
@@ -228,7 +236,11 @@ fun SearchScreen(
             // that finds nothing would take away the control needed to leave it.
             // They are YouTube's categories, so the Library source has none.
             if (results != null && !suggesting && !searchingLibrary) {
-                SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
+                SearchFilterTabs(
+                    filter = filter,
+                    onFilterChange = onFilterChange,
+                    availableFilters = availableFilters,
+                )
             }
         }
 
@@ -879,7 +891,11 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
  * text, and the gutter padding sits inside the scroll so it scrolls with them.
  */
 @Composable
-private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter) -> Unit) {
+private fun SearchFilterTabs(
+    filter: SearchFilter,
+    onFilterChange: (SearchFilter) -> Unit,
+    availableFilters: List<SearchFilter> = SearchFilter.entries,
+) {
     val haptics = rememberHaptics()
     Row(
         modifier = Modifier
@@ -889,7 +905,7 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SearchFilter.entries.forEach { entry ->
+        availableFilters.forEach { entry ->
             val selected = entry == filter
             Box(
                 modifier = Modifier

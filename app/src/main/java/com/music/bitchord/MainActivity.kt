@@ -612,6 +612,9 @@ private fun BitChordApp(
     // below goes with them, which is the part that costs a draw pass.
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+    // Podcasts can be switched off entirely — no tab, no shelves, no search
+    // filter. See AppSettings.podcastsEnabled.
+    val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val useFoldingNav = foldingNavBar && glassActive
     val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
     // What folds [GlassNavBar] between its expanded and inline shapes. Held here
@@ -882,6 +885,23 @@ private fun BitChordApp(
     var showQuickPicks by remember { mutableStateOf(false) }
     // The podcast pages that sit over the feed — see [PodcastUiState].
     val podcastUi = remember { PodcastUiState() }
+    // Podcasts switched off while their page is open: the tab is gone, so the
+    // page it led to goes with it. Home is where the app starts, and a tab
+    // that cannot be reached is not a tab anybody can stay on.
+    LaunchedEffect(podcastsEnabled) {
+        if (!podcastsEnabled) {
+            if (selectedTab == TAB_PODCASTS) {
+                selectedTab = TAB_HOME
+                podcastUi.showContinueListening = false
+                podcastUi.episodeMenu = null
+            }
+            // A search left on the podcasts filter would keep asking Apple's
+            // catalogue for an answer nobody can see any more.
+            if (viewModel.filter.value == SearchFilter.PODCASTS) {
+                viewModel.onFilterChange(SearchFilter.ALL)
+            }
+        }
+    }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
     val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
@@ -1469,18 +1489,31 @@ private fun BitChordApp(
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
     val quickPicksLabel = stringResource(R.string.quick_picks)
-    val tabs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
+    // The tabs, each with the constant that names it.
+    //
+    // The constant travels with the tab because the navbar can hold fewer
+    // tabs than it used to: podcasts can be switched off entirely, and then
+    // the tab is not drawn at all. The bar works in positions — the second
+    // tab is the second tab — so what the bar is given is the visible list,
+    // and what comes back from a tap is an index into that list, which is
+    // turned back into the tab it stands for here.
+    val tabDefs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
-            BottomTab(homeLabel, BitChordIcons.Home),
+            TAB_HOME to BottomTab(homeLabel, BitChordIcons.Home),
             // Quick Picks is not a tab: it is a section of Home, with the
             // arrow at the end of its heading opening the whole set. The
             // navbar was crowded enough already.
-            BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
-            BottomTab(radioLabel, Icons.Rounded.Radio),
-            BottomTab(libraryLabel, BitChordIcons.TabLibrary),
-            BottomTab(searchLabel, BitChordIcons.TabSearch),
+            TAB_PODCASTS to BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
+            TAB_RADIO to BottomTab(radioLabel, Icons.Rounded.Radio),
+            TAB_LIBRARY to BottomTab(libraryLabel, BitChordIcons.TabLibrary),
+            TAB_SEARCH to BottomTab(searchLabel, BitChordIcons.TabSearch),
         )
     }
+    // Podcasts off means the tab is gone, not greyed out: a tab that leads
+    // nowhere is a tab that lies.
+    val visibleTabDefs = tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
+    val tabs = visibleTabDefs.map { it.second }
+    val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
 
     val scope = rememberCoroutineScope()
 
@@ -4605,9 +4638,9 @@ private fun BitChordApp(
                             searchQuery = itunesSearchQuery,
                             onSearchQueryChange = viewModel::setItunesSearchQuery,
                             searchResults = itunesSearchResults,
-                            continueShelf = podcastContinueShelf,
-                            likedShelf = podcastLikedShelf,
-                            laterShelf = podcastLaterShelf,
+                            continueShelf = podcastContinueShelf.takeIf { podcastsEnabled },
+                            likedShelf = podcastLikedShelf.takeIf { podcastsEnabled },
+                            laterShelf = podcastLaterShelf.takeIf { podcastsEnabled },
                             // The arrow at the end of the shelf's heading opens
                             // the whole set, the way Quick Picks' does on Home.
                             onOpenContinueListening = { podcastUi.showContinueListening = true },
@@ -4725,6 +4758,14 @@ private fun BitChordApp(
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
                             onFilterChange = viewModel::onFilterChange,
+                            // The podcasts filter goes with podcasts: a pill
+                            // that only ever answers "nothing" is noise.
+                            availableFilters = if (podcastsEnabled) {
+                                com.music.bitchord.data.model.SearchFilter.entries
+                            } else {
+                                com.music.bitchord.data.model.SearchFilter.entries
+                                    .filter { it != com.music.bitchord.data.model.SearchFilter.PODCASTS }
+                            },
                             results = results,
                             loadingMore = searchLoadingMore,
                             onLoadMore = viewModel::loadMoreSearchResults,
@@ -4927,7 +4968,11 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             links = libraryLinks(),
                             deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
-                            podcastShelves = listOfNotNull(podcastLikedShelf, podcastLaterShelf),
+                            podcastShelves = if (podcastsEnabled) {
+                                listOfNotNull(podcastLikedShelf, podcastLaterShelf)
+                            } else {
+                                emptyList()
+                            },
                         )
                     }
                 }
@@ -5008,7 +5053,7 @@ private fun BitChordApp(
                         detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
                         selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                        else -> tabs[selectedTab].label
+                        else -> tabs[selectedTabIndex].label
                     },
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
@@ -5330,7 +5375,13 @@ private fun BitChordApp(
                 )
 
                 // One tab handler, whichever bar is drawing it.
+                //
+                // The bar reports a position, and the position is turned back
+                // into the tab it stands for: the navbar can be shorter than
+                // it used to be — podcasts can be switched off — so the
+                // second tab is not always the second tab.
                 val onTabSelected: (Int) -> Unit = { index ->
+                    val tab = visibleTabDefs.getOrNull(index)?.first ?: TAB_HOME
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
                     showSettings = false
@@ -5351,7 +5402,7 @@ private fun BitChordApp(
                     showFlow = false
                     libraryShowAll = null
 
-                    if (index == TAB_SEARCH) {
+                    if (tab == TAB_SEARCH) {
                         if (useFoldingNav) {
                             if (selectedTab != TAB_SEARCH) {
                                 lastSearchTab = selectedTab
@@ -5369,7 +5420,7 @@ private fun BitChordApp(
                     } else {
                         searchVisualActive = false
                         searchKeyboardActive = false
-                        selectedTab = index
+                        selectedTab = tab
                     }
                 }
 
@@ -5399,7 +5450,7 @@ private fun BitChordApp(
                         AppGlassNav(
                             useFoldingNav = useFoldingNav,
                             tabs = tabs,
-                            selectedIndex = selectedTab,
+                            selectedIndex = selectedTabIndex,
                             onTabSelected = onTabSelected,
                             scrollConnection = navBarScroll,
                             search = navSearchState,
@@ -5479,7 +5530,7 @@ private fun BitChordApp(
                         }
                         FloatingBottomBar(
                             tabs = tabs,
-                            selectedIndex = selectedTab,
+                            selectedIndex = selectedTabIndex,
                             hazeState = hazeState,
                             onTabSelected = onTabSelected,
                         )

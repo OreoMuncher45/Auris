@@ -115,10 +115,20 @@ object PodcastLibrary {
      * A show can be liked from its own page and an episode can be liked from
      * the episode's menu; both are worth keeping, and neither is the other's
      * business — a listener can love a show and skip every episode in it.
+     *
+     * A liked episode is also an episode put aside: starring it is how a
+     * listener says "this one, later", and the shelf that answers that is
+     * "Episodes for later". So the star and the shelf are the same act, and
+     * unstarring takes the episode back out of the shelf.
      */
     @Synchronized fun toggleEpisodeLiked(song: Song) {
-        if (likedEps.containsKey(song.videoId)) likedEps.remove(song.videoId)
-        else likedEps[song.videoId] = episodeRecord(song)
+        if (likedEps.containsKey(song.videoId)) {
+            likedEps.remove(song.videoId)
+            later.remove(song.videoId)
+        } else {
+            likedEps[song.videoId] = episodeRecord(song)
+            later[song.videoId] = episodeRecord(song)
+        }
         save()
     }
     fun isEpisodeLiked(url: String): Boolean = likedEps.containsKey(url)

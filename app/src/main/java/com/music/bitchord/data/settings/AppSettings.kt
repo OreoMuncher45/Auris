@@ -657,6 +657,20 @@ object AppSettings {
     val foldingNavBar = MutableStateFlow(true)
 
     /**
+     * Whether podcasts are part of the app at all.
+     *
+     * Off means off: the tab goes out of the navbar, the podcast shelves
+     * ("Continue listening", "Liked podcasts", "Episodes for later") go off
+     * the Home and Library pages, and the podcasts filter leaves the search
+     * screen. Nothing is deleted — the shelves are still there when podcasts
+     * come back, and the episodes already downloaded stay on the device.
+     *
+     * The switch is there for the listener who never wanted podcasts and
+     * would rather not have the app carry them at all.
+     */
+    val podcastsEnabled = MutableStateFlow(true)
+
+    /**
      * How strong the [liquidGlass] material is,
      * [MIN_LIQUID_GLASS_INTENSITY]..[MAX_LIQUID_GLASS_INTENSITY], multiplied
      * onto the glass engine's blur, refraction and vibrancy where the config
@@ -1473,6 +1487,7 @@ object AppSettings {
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, lowEndDevice)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         foldingNavBar.value = prefs.getBoolean(KEY_FOLDING_NAV_BAR, true)
+        podcastsEnabled.value = prefs.getBoolean(KEY_PODCASTS_ENABLED, true)
         liquidGlassIntensity.value = prefs.getFloat(KEY_LIQUID_GLASS_INTENSITY, 1f)
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
@@ -2146,6 +2161,11 @@ object AppSettings {
     fun setFoldingNavBar(value: Boolean) {
         foldingNavBar.value = value
         prefs.edit().putBoolean(KEY_FOLDING_NAV_BAR, value).apply()
+    }
+
+    fun setPodcastsEnabled(value: Boolean) {
+        podcastsEnabled.value = value
+        prefs.edit().putBoolean(KEY_PODCASTS_ENABLED, value).apply()
     }
 
     fun setLiquidGlassIntensity(value: Float) {
@@ -3033,6 +3053,7 @@ object AppSettings {
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_FOLDING_NAV_BAR = "folding_nav_bar"
+    private const val KEY_PODCASTS_ENABLED = "podcasts_enabled"
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_TEXT_GLOW = "text_glow"

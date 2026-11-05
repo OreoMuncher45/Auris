@@ -104,6 +104,7 @@
     <string name="settings_category_downloads">Downloads</string>
     <string name="settings_category_now_playing">Now Playing</string>
     <string name="settings_category_home_library">Home &amp; library</string>
+    <string name="settings_category_podcasts">Podcasts</string>
     <string name="settings_category_appearance">Appearance</string>
     <string name="settings_category_performance">Performance</string>
     <string name="settings_category_storage">Storage</string>
@@ -1415,6 +1416,7 @@
     <string name="media_listened">Listened</string>
     <string name="media_resume">Resume %1$s</string>
     <string name="podcasts">Podcasts</string>
+    <string name="podcasts_enabled_subtitle">Turn off the tab, the shelves and the search filter. Downloads already on the device stay.</string>
     <string name="liquid_glass_haptics">Liquid glass haptics</string>
     <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
     <string name="hide_status_bar_in_player">Hide status bar in player</string>
