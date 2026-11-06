@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit
  */
 class NeuralVocalSeparator(
     /** The model this separator runs on. Shared between players. */
-    private val model: NeuralModel,
+    private val model: VocalModel,
 ) {
 
     /**

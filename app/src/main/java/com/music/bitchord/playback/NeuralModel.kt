@@ -9,6 +9,32 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
+ * What the separator needs of a model: to be open, and to answer.
+ *
+ * The interface is here so the separator's own arithmetic — the part that
+ * decides what the listener hears and when — can be measured without a
+ * thirty-megabyte network in the way. The arithmetic is where the bugs
+ * were: a cursor that did not advance made the song repeat, and a cursor
+ * that skipped made it jump.
+ */
+interface VocalModel {
+
+    /** Whether the model is open and can answer. */
+    val ready: Boolean
+
+    /**
+     * The vocal in one window of song.
+     *
+     * [modelAudio] is interleaved stereo at [NeuralVocalSeparator.MODEL_RATE]
+     * and holds one whole window. The answer comes back in the same shape:
+     * the vocal, at the same rate, sample for sample with the song it came
+     * from. Null when the model cannot answer, and the separator plays that
+     * stretch dry rather than not playing it at all.
+     */
+    fun separate(modelAudio: FloatArray, frames: Int): FloatArray?
+}
+
+/**
  * The separator's model: one ONNX graph, opened once and shared.
  *
  * A model is thirty megabytes of weights and takes long enough to open that
@@ -31,7 +57,7 @@ import java.nio.ByteOrder
 class NeuralModel(
     /** Where the model is, or null when none has been downloaded. */
     private val modelPath: () -> String?,
-) {
+) : VocalModel {
 
     private val lock = Any()
     private var session: OrtSession? = null
@@ -39,7 +65,7 @@ class NeuralModel(
 
     /** Whether a model is open and the separator can do anything. */
     @Volatile
-    var ready: Boolean = false
+    override var ready: Boolean = false
         private set
 
     /** Set when the model could not be opened, for the log and the screen. */
@@ -121,7 +147,7 @@ class NeuralModel(
      * the vocal, at the same rate, sample for sample with the song it came
      * from.
      */
-    fun separate(modelAudio: FloatArray, frames: Int): FloatArray? {
+    override fun separate(modelAudio: FloatArray, frames: Int): FloatArray? {
         val active = synchronized(lock) { session } ?: return null
         val tensor = MdxStft.forward(modelAudio, frames)
         if (tensor.isEmpty()) return null
