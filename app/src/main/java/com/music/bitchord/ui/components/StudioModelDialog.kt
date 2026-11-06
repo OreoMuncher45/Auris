@@ -475,10 +475,13 @@ private fun StudioQualityCard(
         Text(
             text = stringResource(R.string.studio_diagnostics_model, diagnostics.modelState),
             style = MaterialTheme.typography.bodySmall,
-            color = if (diagnostics.modelState == "open") {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
+            // "none" is the model being closed, which is what happens when
+            // Studio is off; only a model that could not be opened is a
+            // failure, and only that one is worth colouring in.
+            color = if (diagnostics.modelState == "failed") {
                 MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
         if (diagnostics.windowsFailed > 0) {
