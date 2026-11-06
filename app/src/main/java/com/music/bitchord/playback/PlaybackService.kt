@@ -7966,6 +7966,16 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
+            // A model that is downloaded or rewritten while a song is
+            // already playing is a model that is ready and shut: the file
+            // was not there when the song started, so nothing opened it.
+            // The states change when it is ready, and that is the moment to
+            // look again.
+            SingModelManager.states.collect {
+                updateNeuralActivity()
+            }
+        }
+        scope.launch {
             // Edge-triggered: the work is only wanted on the edges, not on
             // every emission of a value the player already follows. Both
             // directions matter — coming back online returns the queue to
