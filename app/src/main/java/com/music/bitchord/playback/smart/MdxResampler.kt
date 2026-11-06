@@ -19,6 +19,21 @@ package com.music.bitchord.playback.smart
  *
  * Interleaved stereo, because the separator works on a stereo pair and both
  * channels have to be converted the same way.
+ *
+ * ## The library has to be loaded first
+ *
+ * A native method is found by name in the libraries the process has loaded,
+ * and `System.loadLibrary` is what puts them there. Nothing else in the
+ * Studio path does it: the STFT front end loads the library when it is
+ * first asked for a spectrogram, and the spectrogram is computed *after* the
+ * converter has already been made. So a converter that did not load the
+ * library itself asked for a symbol that was not in memory, and the runtime
+ * answered with an `UnsatisfiedLinkError` -- on the thread that plays the
+ * music, which is the worst place for one.
+ *
+ * So the class loads the library itself, before anything asks it for a
+ * symbol, and every call into it is guarded: a converter that cannot be
+ * made is a converter that says so, rather than a crash.
  */
 class MdxResampler private constructor(
     private var handle: Long,
@@ -38,7 +53,7 @@ class MdxResampler private constructor(
      */
     fun process(input: FloatArray, frames: Int): FloatArray {
         if (handle == 0L || frames <= 0) return FloatArray(0)
-        return nativeProcess(handle, input, frames)
+        return runCatching { nativeProcess(handle, input, frames) }.getOrDefault(FloatArray(0))
     }
 
     /**
@@ -47,22 +62,34 @@ class MdxResampler private constructor(
      */
     fun flush(): FloatArray {
         if (handle == 0L) return FloatArray(0)
-        return nativeFlush(handle)
+        return runCatching { nativeFlush(handle) }.getOrDefault(FloatArray(0))
     }
 
     /** Forgets everything, as though the stream had just started. */
     fun reset() {
-        if (handle != 0L) nativeReset(handle)
+        if (handle != 0L) runCatching { nativeReset(handle) }
     }
 
     override fun close() {
         if (handle != 0L) {
-            nativeDestroy(handle)
+            runCatching { nativeDestroy(handle) }
             handle = 0L
         }
     }
 
     companion object {
+
+        /**
+         * Loads the native library before anyone asks it for a symbol.
+         *
+         * The load itself cannot fail loudly: a phone without the library
+         * is a phone that plays the song unseparated, and that is a far
+         * better outcome than a crash on the music thread.
+         */
+        init {
+            NativeAnalysisLibrary.available
+        }
+
         /**
          * Makes a converter, or one that cannot convert anything when the
          * rates are ones it cannot do exactly.
@@ -71,9 +98,15 @@ class MdxResampler private constructor(
             if (inputRate <= 0 || outputRate <= 0) {
                 return MdxResampler(0L, 0)
             }
-            val handle = nativeCreate(inputRate, outputRate, channels)
+            // Without the library there is no converter, and a converter
+            // that does not exist must not look like one that does.
+            if (!NativeAnalysisLibrary.available) return MdxResampler(0L, 0)
+            val handle = runCatching {
+                nativeCreate(inputRate, outputRate, channels)
+            }.getOrDefault(0L)
             if (handle == 0L) return MdxResampler(0L, 0)
-            return MdxResampler(handle, nativeLookahead(handle))
+            val lookahead = runCatching { nativeLookahead(handle) }.getOrDefault(0)
+            return MdxResampler(handle, lookahead)
         }
 
         @JvmStatic private external fun nativeCreate(

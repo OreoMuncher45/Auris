@@ -5,6 +5,7 @@ import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.audio.PcmBoundary
 import com.music.bitchord.playback.smart.MdxResampler
 import java.nio.ByteBuffer
@@ -99,7 +100,24 @@ class NeuralSingProcessor(
      */
     private var tailFlushed: Boolean = false
 
-    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+    /**
+     * Sets the processor up for the format the sink is handing it.
+     *
+     * Nothing in here may throw: this runs on the thread that plays the
+     * music, and an exception here is an exception that ends the app.
+     * A processor that cannot be set up stands down instead — the song
+     * plays as it is, at its own rate, and the reason is written down
+     * where the log can be read.
+     */
+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
+        try {
+            configureFor(inputAudioFormat)
+        } catch (error: Throwable) {
+            TrackLog.i("STUDIO", "Studio could not configure itself: ${error.message}")
+            AudioProcessor.AudioFormat.NOT_SET
+        }
+
+    private fun configureFor(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         // Stereo, sixteen-bit only. The chain this processor lives in only
         // ever sees sixteen-bit audio, and a mono track has no vocal to
         // take out of it anyway.
@@ -129,6 +147,10 @@ class NeuralSingProcessor(
         if (to != null && !to.supported || from != null && !from.supported) {
             to?.close()
             from?.close()
+            TrackLog.i(
+                "STUDIO",
+                "No converter for ${rate} Hz -> ${target} Hz; the song plays as it is",
+            )
             return AudioProcessor.AudioFormat.NOT_SET
         }
 
