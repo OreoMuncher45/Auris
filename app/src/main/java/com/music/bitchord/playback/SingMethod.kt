@@ -74,6 +74,20 @@ enum class SingMethod {
          * has not been asked about yet.
          */
         val offered: List<SingMethod> = listOf(ORIGINAL, BAND_LIMITED, NEURAL)
+
+        /**
+         * Whether Studio is being asked to separate anything right now.
+         *
+         * The method alone is not enough: the slider says how much voice to
+         * take out, and a slider at zero asks for no voice to be taken out.
+         * A model left open for a method that is asking for nothing is a
+         * phone running at full speed for no reason -- ONNX Runtime's
+         * threads spin rather than sleep while a session is open.
+         *
+         * This is what decides whether the model is opened at all.
+         */
+        fun studioAskedFor(method: SingMethod, level: Float): Boolean =
+            method == NEURAL && level > 0.001f
     }
 }
 

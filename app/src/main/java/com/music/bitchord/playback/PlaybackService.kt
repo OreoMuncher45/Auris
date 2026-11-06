@@ -729,6 +729,9 @@ class PlaybackService : MediaLibraryService() {
     /** The last drop count that was said in the log, so it is said once. */
     private var lastReportedDrops = 0L
 
+    /** The last failure count that was said in the log, so it is said once. */
+    private var lastReportedFailures = 0L
+
     /** When the last Studio line was written to the log. */
     private var lastDiagnosticsLogAt = 0L
 
@@ -8110,6 +8113,10 @@ class PlaybackService : MediaLibraryService() {
         singProcessorB.level = level
         neuralSingProcessorA.level = level
         neuralSingProcessorB.level = level
+        // A slider at zero is Studio turned off, and Studio turned off is a
+        // model that is closed: the session's threads spin while it is open,
+        // and there is nothing for them to do.
+        updateNeuralActivity()
     }
 
     /**
@@ -8148,7 +8155,10 @@ class PlaybackService : MediaLibraryService() {
         // players are rebuilt, which is the only way to change what the sink
         // was built with.
         requestOutputReconfiguration(force = true)
-        openNeuralModel()
+        // The model is opened only when Studio is being asked to do
+        // something: the method can be Studio while the slider is at zero,
+        // and a slider at zero asks for no voice to be taken out.
+        updateNeuralActivity()
     }
 
     /**
@@ -8167,10 +8177,26 @@ class PlaybackService : MediaLibraryService() {
         val playing = listOfNotNull(player, spare).any { it.isPlaying }
         if (!playing) return
         scope.launch(Dispatchers.IO) {
+            val before = neuralModel.state
             neuralModel.ensureSession()
             // A pause that landed while the model was opening would otherwise
             // leave it open with nothing playing.
-            if (!neuralModelWanted) neuralModel.close()
+            if (!neuralModelWanted) {
+                neuralModel.close()
+                return@launch
+            }
+            // The state is said out loud because "the model is open" and
+            // "the model is there but could not be opened" look exactly the
+            // same from the outside, and only one of them separates anything.
+            when (neuralModel.state) {
+                NeuralModel.State.OPEN -> if (before != NeuralModel.State.OPEN) {
+                    noteStudio("the model is open")
+                }
+                NeuralModel.State.FAILED -> noteStudio(
+                    "the model could not be opened: ${neuralModel.failure ?: "unknown reason"}",
+                )
+                else -> Unit
+            }
         }
     }
 
@@ -8182,14 +8208,23 @@ class PlaybackService : MediaLibraryService() {
      * the background is a phone doing work for nobody: the model's threads
      * spin while it is open. So the session is closed when the music stops
      * and opened again when it starts.
+     *
+     * "Nothing to separate" has two halves. The music has to be playing,
+     * and Studio has to be asked for: a model left open because the method
+     * is still Studio while the slider is at zero is a model doing nothing
+     * at full speed. Turning the sing off is turning the level to zero, and
+     * zero is not asking for anything.
      */
     private fun updateNeuralActivity() {
-        if (AppSettings.singMethod.value != SingMethod.NEURAL) return
+        val studio = studioWanted()
         val playing = listOfNotNull(player, spare).any { it.isPlaying }
-        if (playing) {
+        if (studio && playing) {
             neuralModelWanted = true
             openNeuralModel()
         } else {
+            if (neuralModelWanted || neuralModel.ready) {
+                StudioDiagnostics.note("Studio is off; the model is closed")
+            }
             neuralModelWanted = false
             neuralModel.close()
             // Whatever the separator was holding is from a song that is not
@@ -8199,6 +8234,16 @@ class PlaybackService : MediaLibraryService() {
             StudioDiagnostics.clear()
         }
     }
+
+    /**
+     * Whether Studio is being asked to do anything.
+     *
+     * The method has to be Studio and the slider has to be off zero: the
+     * slider says how much voice to take out, and a slider at zero asks for
+     * no voice to be taken out.
+     */
+    private fun studioWanted(): Boolean =
+        SingMethod.studioAskedFor(AppSettings.singMethod.value, AppSettings.singLevel.value)
 
     /**
      * Writes down what Studio is doing, and says it in the log.
@@ -8212,7 +8257,7 @@ class PlaybackService : MediaLibraryService() {
      * side of the glass.
      */
     private fun publishStudioDiagnostics() {
-        val studio = AppSettings.singMethod.value == SingMethod.NEURAL
+        val studio = studioWanted()
         val playing = studio && listOfNotNull(player, spare).any { it.isPlaying }
         if (!playing) {
             if (StudioDiagnostics.current.value.running || StudioDiagnostics.current.value.modelOpen) {
@@ -8224,11 +8269,14 @@ class PlaybackService : MediaLibraryService() {
         val snapshot = StudioDiagnostics.publish(
             running = true,
             modelOpen = neuralModel.ready,
+            modelState = neuralModel.state.name.lowercase(),
             windowMs = separator.lastWindowMs,
             windowsSeparated = separator.windowsSeparated,
+            windowsFailed = separator.windowsFailed,
             framesIn = separator.framesIn,
             framesOut = separator.framesOut,
             droppedFrames = separator.droppedFrames,
+            lastError = separator.lastFailure ?: neuralModel.lastError,
         )
         // One line every few seconds, and one line whenever something goes
         // wrong: a phone that has begun dropping the song should say so
@@ -8237,15 +8285,30 @@ class PlaybackService : MediaLibraryService() {
         if (dropped != lastReportedDrops) {
             lastReportedDrops = dropped
             Log.w("Studio", "Studio dropped $dropped frames")
+            noteStudio("dropped $dropped frames")
+        }
+        // A model that cannot answer is the failure worth shouting about:
+        // the song plays, the counters climb, and nothing about the music
+        // changes. The line says which of the two it is.
+        val failed = snapshot.windowsFailed
+        if (failed != lastReportedFailures) {
+            lastReportedFailures = failed
+            val why = snapshot.lastError ?: "the model could not answer"
+            noteStudio("failed to separate $failed windows: $why")
         }
         if (SystemClock.elapsedRealtime() - lastDiagnosticsLogAt > DIAGNOSTICS_LOG_EVERY_MS) {
             lastDiagnosticsLogAt = SystemClock.elapsedRealtime()
-            TrackLog.i(
-                "STUDIO",
-                "window ${snapshot.windowMs} ms · ${snapshot.windowsSeparated} windows · " +
-                    "${snapshot.inputRateHz} -> ${snapshot.outputRateHz} Hz · dropped $dropped",
-            )
+            val line = "window ${snapshot.windowMs} ms · ${snapshot.windowsSeparated} windows · " +
+                "${snapshot.windowsFailed} failed · " +
+                "${snapshot.inputRateHz} -> ${snapshot.outputRateHz} Hz · dropped $dropped"
+            TrackLog.i("STUDIO", line)
+            noteStudio(line)
         }
+    }
+
+    /** Writes a line into Studio's own log, where the settings screen sees it. */
+    private fun noteStudio(message: String) {
+        StudioDiagnostics.note(message)
     }
 
     /**

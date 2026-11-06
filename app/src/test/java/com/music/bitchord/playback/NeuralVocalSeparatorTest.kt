@@ -247,4 +247,28 @@ class NeuralVocalSeparatorTest {
             )
         }
     }
+
+    @Test
+    fun `a model that cannot answer is counted, not hidden`() {
+        // A separator that fails quietly is a separator that looks like it
+        // is working: the song plays, the counter says windows are being
+        // separated, and nothing about the music changes. The failure has
+        // to be counted and its reason kept.
+        val model = object : VocalModel {
+            override val ready: Boolean = true
+            override val lastError: String? = "the model refused the window"
+            override fun separate(modelAudio: FloatArray, frames: Int): FloatArray? = null
+        }
+        val separator = NeuralVocalSeparator(model)
+        separator.cut = 1f
+
+        separator.push(song(window), window)
+        val until = System.currentTimeMillis() + 5_000
+        while (separator.windowsFailed == 0L && System.currentTimeMillis() < until) {
+            Thread.sleep(5)
+        }
+
+        assertTrue("the failure was not counted", separator.windowsFailed > 0)
+        assertEquals("the model refused the window", separator.lastFailure)
+    }
 }

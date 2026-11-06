@@ -89,6 +89,23 @@ class NeuralVocalSeparator(
         private set
 
     /**
+     * How many windows the model could not answer for.
+     *
+     * A failed window is played dry, so the song keeps going and the voice
+     * comes back for that stretch. Zero is the only good answer, and a
+     * number that keeps climbing while "windows separated" climbs too is
+     * the model failing rather than the phone being slow.
+     */
+    @Volatile
+    var windowsFailed: Long = 0L
+        private set
+
+    /** Why the last window failed, if one did. */
+    @Volatile
+    var lastFailure: String? = null
+        private set
+
+    /**
      * How much audio has gone in, and how much has come out, in model-rate
      * frames.
      *
@@ -244,6 +261,8 @@ class NeuralVocalSeparator(
             separatedYet = false
             droppedFrames = 0
             windowsSeparated = 0
+            windowsFailed = 0
+            lastFailure = null
             framesIn = 0
             framesOut = 0
             inFlight.clear()
@@ -453,7 +472,13 @@ class NeuralVocalSeparator(
             windowsSeparated++
             // A window the network could not answer for is played dry rather
             // than not played at all: the song keeps going and the vocal
-            // comes back for that stretch.
+            // comes back for that stretch. The failure is counted and its
+            // reason kept, because a separator that fails quietly is a
+            // separator that looks like it is working.
+            if (stem == null) {
+                windowsFailed++
+                lastFailure = model.lastError ?: "the model could not answer"
+            }
             window.stem = stem ?: FloatArray(window.dry.size)
         }
     }

@@ -255,6 +255,12 @@
     <string name="studio_diagnostics_idle">Not running</string>
     <string name="studio_diagnostics_keeping_up">Keeping up with the song</string>
     <string name="studio_diagnostics_dropped">%1$d frames dropped</string>
+    <string name="studio_diagnostics_model">Model: %1$s</string>
+    <string name="studio_diagnostics_failed">%1$d windows failed</string>
+    <string name="studio_diagnostics_error">Last error: %1$s</string>
+    <string name="studio_log_title">Studio log</string>
+    <string name="studio_log_copy">Copy</string>
+    <string name="studio_log_empty">Nothing yet. Play something with Studio on.</string>
     <string name="offline_mode_detected">No connection</string>
     <string name="offline_mode_subtitle">Play downloaded files only. Stays on until you turn it off.</string>
     <string name="dolby_atmos">Dolby Atmos</string>

@@ -30,6 +30,19 @@ package com.music.bitchord.data.sing
  *   TypeProto.tensor_type = 1      Tensor.shape        = 2
  *   TensorShapeProto.dim  = 1      Dimension.dim_value = 1
  *   Dimension.dim_param   = 2
+ *
+ * The shape's dimensions are *messages*, not numbers: `dim` holds either
+ * the size of the axis or its name, and only one of the two at a time. The
+ * size is what has to change, so the walk goes
+ *
+ *   shape -> dim (a message) -> dim_value (the number)
+ *
+ * and stops at the first level. Stopping one level short is what this
+ * patch used to do, and it is why it never matched anything: the shape's
+ * own field 1 is the `dim` message, not the `dim_value` number inside it,
+ * so every dimension was skipped and the rewrite quietly did nothing --
+ * and the model on the phone was left asking for 256 frames while the
+ * separator asked it for 32.
  */
 object OnnxFramePatch {
 
@@ -136,7 +149,7 @@ object OnnxFramePatch {
      * The `dim_value` fields inside one ValueInfoProto.
      *
      * The path down is fixed by the proto: type, then tensor_type, then
-     * shape, then each dimension.
+     * shape, then each dimension, and inside each dimension the number.
      */
     private fun dimValueFields(data: ByteArray, start: Int, end: Int): List<Field> {
         val found = ArrayList<Field>()
@@ -147,8 +160,11 @@ object OnnxFramePatch {
                 for (shape in fields(data, tensor.valueStart, tensor.valueEnd)) {
                     if (shape.number != TENSOR_SHAPE || shape.wireType != WIRE_LENGTH) continue
                     for (dimension in fields(data, shape.valueStart, shape.valueEnd)) {
-                        if (dimension.number != DIM_VALUE || dimension.wireType != WIRE_VARINT) continue
-                        found += dimension
+                        if (dimension.number != DIMENSION || dimension.wireType != WIRE_LENGTH) continue
+                        for (value in fields(data, dimension.valueStart, dimension.valueEnd)) {
+                            if (value.number != DIM_VALUE || value.wireType != WIRE_VARINT) continue
+                            found += value
+                        }
                     }
                 }
             }
@@ -181,6 +197,11 @@ object OnnxFramePatch {
     private const val VALUE_TYPE = 2
     private const val TENSOR_TYPE = 1
     private const val TENSOR_SHAPE = 2
+
+    /** The shape's dimension messages: one per axis. */
+    private const val DIMENSION = 1
+
+    /** The number inside a dimension, as opposed to its name. */
     private const val DIM_VALUE = 1
 
     /**

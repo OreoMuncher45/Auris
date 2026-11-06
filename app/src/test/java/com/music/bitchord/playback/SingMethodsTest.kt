@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -211,6 +212,20 @@ class SingMethodsTest {
             "Smart is no longer offered",
             !SingMethod.offered.contains(SingMethod.VOICE_GATE),
         )
+    }
+
+    @Test
+    fun `studio is asked for only when the method is studio and the slider is off zero`() {
+        // The method alone is not enough: the slider says how much voice to
+        // take out, and a slider at zero asks for no voice to be taken out.
+        // A model left open for that is a phone running at full speed for
+        // nothing, because ONNX Runtime's threads spin while it is open.
+        assertTrue(SingMethod.studioAskedFor(SingMethod.NEURAL, 0.5f))
+        assertTrue(SingMethod.studioAskedFor(SingMethod.NEURAL, 1f))
+        assertFalse(SingMethod.studioAskedFor(SingMethod.NEURAL, 0f))
+        assertFalse(SingMethod.studioAskedFor(SingMethod.ORIGINAL, 0.5f))
+        assertFalse(SingMethod.studioAskedFor(SingMethod.BAND_LIMITED, 0.5f))
+        assertFalse(SingMethod.studioAskedFor(SingMethod.VOICE_GATE, 0.5f))
     }
 
     @Test

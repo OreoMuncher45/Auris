@@ -43,6 +43,20 @@ object MdxStft {
      */
     const val FRAMES = 32
 
+    /**
+     * How many STFT frames a block of audio holds.
+     *
+     * The two counts are easy to confuse and must never be: the audio is
+     * counted in samples, the transform and the model's tensor are counted
+     * in hops of [HOP] samples. A window of 32 hops is 32_768 samples, and
+     * asking the transform for 32_768 frames of it gets an empty tensor
+     * back -- which looks exactly like a model that is not doing anything.
+     *
+     * [samples] is the number of samples per channel, so interleaved stereo
+     * holds twice as many floats.
+     */
+    fun framesFor(samples: Int): Int = samples / HOP
+
     /** Whether the native library is there to answer. */
     val available: Boolean get() = NativeAnalysisLibrary.available
 

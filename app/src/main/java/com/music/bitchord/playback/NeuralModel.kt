@@ -23,13 +23,28 @@ interface VocalModel {
     val ready: Boolean
 
     /**
+     * Why the last attempt failed, if it did.
+     *
+     * The separation failing quietly is the worst kind of failure: the
+     * song plays, the counter says windows are being separated, and
+     * nothing is different about the music. So the reason is kept where
+     * the screen and the log can both read it.
+     */
+    val lastError: String?
+        get() = null
+
+    /**
      * The vocal in one window of song.
      *
      * [modelAudio] is interleaved stereo at [NeuralVocalSeparator.MODEL_RATE]
-     * and holds one whole window. The answer comes back in the same shape:
-     * the vocal, at the same rate, sample for sample with the song it came
-     * from. Null when the model cannot answer, and the separator plays that
-     * stretch dry rather than not playing it at all.
+     * and holds one whole window. [frames] counts the *audio* frames in it,
+     * not the transform's: the transform and the model's tensor are counted
+     * in hops, and the two are not the same number.
+     *
+     * The answer comes back in the same shape: the vocal, at the same rate,
+     * sample for sample with the song it came from. Null when the model
+     * cannot answer, and the separator plays that stretch dry rather than
+     * not playing it at all.
      */
     fun separate(modelAudio: FloatArray, frames: Int): FloatArray?
 }
@@ -59,6 +74,21 @@ class NeuralModel(
     private val modelPath: () -> String?,
 ) : VocalModel {
 
+    /** What the model is doing, for the screen that asks. */
+    enum class State {
+        /** No model on the phone. */
+        NONE,
+
+        /** A model is being opened. */
+        OPENING,
+
+        /** A model is open and can answer. */
+        OPEN,
+
+        /** A model is there but could not be opened. */
+        FAILED,
+    }
+
     private val lock = Any()
     private var session: OrtSession? = null
     private var sessionPath: String? = null
@@ -71,6 +101,22 @@ class NeuralModel(
     /** Set when the model could not be opened, for the log and the screen. */
     @Volatile
     var failure: String? = null
+        private set
+
+    /** What the model is doing at the moment. */
+    @Volatile
+    var state: State = State.NONE
+        private set
+
+    /**
+     * Why the last separation failed, if it did.
+     *
+     * Empty when the last one worked. This is the difference between "the
+     * model is quiet" and "the model is broken", and there is no other way
+     * to tell them apart from the outside.
+     */
+    @Volatile
+    override var lastError: String? = null
         private set
 
     /**
@@ -88,6 +134,7 @@ class NeuralModel(
         synchronized(lock) {
             if (session != null && sessionPath == path) {
                 ready = true
+                state = State.OPEN
                 return
             }
             close()
@@ -95,8 +142,10 @@ class NeuralModel(
             val file = File(path)
             if (!file.exists()) {
                 ready = false
+                state = State.NONE
                 return
             }
+            state = State.OPENING
             runCatching {
                 val options = OrtSession.SessionOptions().apply {
                     // One thread per core, but no more: the separation runs on
@@ -116,9 +165,12 @@ class NeuralModel(
                 session = it
                 sessionPath = path
                 ready = true
+                state = State.OPEN
+                lastError = null
             }.onFailure {
                 failure = it.message ?: it.javaClass.simpleName
                 ready = false
+                state = State.FAILED
             }
         }
     }
@@ -136,6 +188,7 @@ class NeuralModel(
             session = null
             sessionPath = null
             ready = false
+            if (state != State.FAILED) state = State.NONE
         }
     }
 
@@ -143,18 +196,25 @@ class NeuralModel(
      * Runs the model over one window and returns the vocal it found.
      *
      * [modelAudio] is interleaved stereo at [NeuralVocalSeparator.MODEL_RATE]
-     * and holds one whole window. The answer comes back in the same shape:
-     * the vocal, at the same rate, sample for sample with the song it came
-     * from.
+     * and holds one whole window; [frames] counts the audio frames in it.
+     * The answer comes back in the same shape: the vocal, at the same rate,
+     * sample for sample with the song it came from.
      */
     override fun separate(modelAudio: FloatArray, frames: Int): FloatArray? {
-        val active = synchronized(lock) { session } ?: return null
-        val tensor = MdxStft.forward(modelAudio, frames)
-        if (tensor.isEmpty()) return null
+        val active = synchronized(lock) { session } ?: return failed("the model is not open")
+        // The audio is counted in samples; the transform and the tensor are
+        // counted in hops of 1024. A window is 32 hops and 32_768 samples,
+        // and asking the transform for 32_768 frames of a window that holds
+        // 32 gets an empty tensor back -- which is a model that appears to
+        // do nothing at all, and very nearly was one.
+        val stftFrames = MdxStft.framesFor(frames)
+        if (stftFrames <= 0) return failed("the window is empty")
+        val tensor = MdxStft.forward(modelAudio, stftFrames)
+        if (tensor.isEmpty()) return failed("the transform returned nothing")
 
-        return runCatching {
+        return try {
             val environment = OrtEnvironment.getEnvironment()
-            val shape = longArrayOf(1, 4, MdxStft.BINS.toLong(), frames.toLong())
+            val shape = tensorShape(stftFrames)
             // Straight into native memory: two megabytes of tensor on the
             // Java heap is two megabytes the phone does not need to keep.
             val backing = ByteBuffer.allocateDirect(tensor.size * Float.SIZE_BYTES)
@@ -169,9 +229,36 @@ class NeuralModel(
                     // something to depend on.
                     val source = outputTensor.floatBuffer
                     for (index in values.indices) values[index] = source.get(index)
-                    MdxStft.inverse(values, frames)
+                    val pcm = MdxStft.inverse(values, stftFrames)
+                    if (pcm.isEmpty()) failed("the inverse transform returned nothing")
+                    else {
+                        lastError = null
+                        pcm
+                    }
                 }
             }
-        }.getOrNull()
+        } catch (error: Throwable) {
+            failed("the model refused the window: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    /** Records why the last window could not be separated. */
+    private fun failed(reason: String): FloatArray? {
+        lastError = reason
+        return null
+    }
+
+    companion object {
+
+        /**
+         * The tensor the model reads: one song, four channels, the bins,
+         * and the frames.
+         *
+         * The last number is the one that matters: it is the transform's
+         * frame count, not the window's sample count, and the two differ by
+         * a factor of the hop.
+         */
+        internal fun tensorShape(stftFrames: Int): LongArray =
+            longArrayOf(1, 4, MdxStft.BINS.toLong(), stftFrames.toLong())
     }
 }

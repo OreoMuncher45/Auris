@@ -134,6 +134,20 @@ object SingModelManager {
     private const val PREFS = "bitchord_sing_models"
     private const val KEY_SELECTED = "selected_model"
 
+    /**
+     * The suffix of the file the separator opens.
+     *
+     * It carries the version of the rewrite, because the rewrite has been
+     * wrong once: the files with the older suffix are the published models
+     * with their time axis still frozen at 256 frames, which is a model the
+     * separator cannot use at the window it asks for. The download itself
+     * is still on the phone, so those are redone rather than fetched again.
+     */
+    private const val PREPARED_SUFFIX = ".frames2"
+
+    /** The suffix the broken rewrite wrote. */
+    private const val STALE_PREPARED_SUFFIX = ".frames"
+
     /** What is happening with one model. */
     sealed interface State {
         /** Not on the phone. */
@@ -165,6 +179,27 @@ object SingModelManager {
         this.context = context.applicationContext
         _selected.value = prefs().getString(KEY_SELECTED, null)
         refreshAll()
+        // A model prepared by an older build may not be a model the
+        // separator can use: the rewrite that frees the time axis was
+        // broken, so those files are the published models with 256 frames
+        // still frozen into them. The download is still on the phone, so
+        // the rewrite is done again here rather than fetched again.
+        scope.launch { reprepare() }
+    }
+
+    /**
+     * Rewrites every model that has a download but no usable copy.
+     *
+     * No network: the file is already here, and the rewrite is a byte
+     * edit rather than a download.
+     */
+    private suspend fun reprepare() = withContext(Dispatchers.IO) {
+        for (model in SingModels.catalogue) {
+            if (preparedFile(model).exists()) continue
+            if (!downloadFile(model).exists()) continue
+            publish(model.id, State.Preparing)
+            prepare(model)
+        }
     }
 
     private fun prefs() =
@@ -187,7 +222,7 @@ object SingModelManager {
      * redone if the front end ever changes.
      */
     fun preparedFile(model: SingModels.Model): File =
-        File(directory(), model.fileName + ".frames")
+        File(directory(), model.fileName + PREPARED_SUFFIX)
 
     /** Whether a model is on the phone and ready to use. */
     fun isReady(model: SingModels.Model): Boolean = preparedFile(model).exists()
@@ -292,6 +327,7 @@ object SingModelManager {
         cancel(model)
         downloadFile(model).delete()
         preparedFile(model).delete()
+        File(directory(), model.fileName + STALE_PREPARED_SUFFIX).delete()
         if (_selected.value == model.id) {
             _selected.value = null
             prefs().edit().remove(KEY_SELECTED).apply()
@@ -315,6 +351,10 @@ object SingModelManager {
         }.getOrNull()
         if (patched != null) {
             prepared.writeBytes(patched)
+            // The copy the broken rewrite made is the published model with
+            // its time axis frozen: thirty megabytes of a file that cannot
+            // be used, and no reason to keep it.
+            File(directory(), model.fileName + STALE_PREPARED_SUFFIX).delete()
         } else {
             // Fall back to the model as published, by linking the original
             // into place so the separator has one path to open.

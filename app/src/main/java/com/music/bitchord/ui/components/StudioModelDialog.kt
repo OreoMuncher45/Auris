@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,8 +39,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -369,6 +373,8 @@ fun StudioModelsList(
             onQuality = { AppSettings.setStudioQuality(it) },
         )
         Spacer(Modifier.height(12.dp))
+        StudioLogCard()
+        Spacer(Modifier.height(12.dp))
         SingModels.catalogue.forEach { model ->
             StudioModelRow(
                 model = model,
@@ -467,6 +473,29 @@ private fun StudioQualityCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
+            text = stringResource(R.string.studio_diagnostics_model, diagnostics.modelState),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (diagnostics.modelState == "open") {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.error
+            },
+        )
+        if (diagnostics.windowsFailed > 0) {
+            Text(
+                text = stringResource(R.string.studio_diagnostics_failed, diagnostics.windowsFailed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        diagnostics.lastError?.let { why ->
+            Text(
+                text = stringResource(R.string.studio_diagnostics_error, why),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Text(
             text = if (diagnostics.droppedFrames > 0) {
                 stringResource(R.string.studio_diagnostics_dropped, diagnostics.droppedFrames)
             } else {
@@ -479,6 +508,71 @@ private fun StudioQualityCard(
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
+    }
+}
+
+/**
+ * Studio's own log, on the screen where the settings live.
+ *
+ * A release build has no logcat — the lines are stripped out of it — so
+ * the lines that would have been printed are kept here instead, where they
+ * can be read and copied. This is the logcat for this build of the app:
+ * the same information, in the same shape, on the phone.
+ */
+@Composable
+private fun StudioLogCard(modifier: Modifier = Modifier) {
+    val lines by StudioDiagnostics.log.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.studio_log_title),
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(lines.joinToString("\n")))
+                },
+                enabled = lines.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.studio_log_copy))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        if (lines.isEmpty()) {
+            Text(
+                text = stringResource(R.string.studio_log_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                lines.forEach { line ->
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 
