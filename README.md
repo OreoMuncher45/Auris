@@ -37,7 +37,8 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 ## Features
 
 ### Audio engine
-- **JamesDSP** — reverb, bass boost, stereo width, tube warmth and a safety limiter, by **James Fung**, running inside the app's own playback stream. Used with permission; GPL-licensed, with its source and notices shipped in the app.
+- **JamesDSP** — reverb, bass boost, stereo width, tube warmth and a safety limiter, by **James Fung**, running inside the app's own playback stream: no root, no system-wide capture, no companion service. Used with permission; GPL-licensed, with its source and notices shipped in the app.
+- **Half the size** — the universal APK is **85 MB** against **167 MB** in 2.2.x, and the arm64 build is **46 MB** against **67 MB**. One app, split per architecture, with nothing extra bundled inside it.
 
 ### Interface
 - **Apple Music–style layout** — full-bleed Now Playing, large artwork, and a seeded palette that follows the current cover.
@@ -49,7 +50,7 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 - **Flow** — an endless personal mix that unlocks at 16 favourites, trains on skips and bans, refreshes hourly, survives restarts, and never autoplays until you press play.
 - **Classipod** — a full iPod Classic theme with click-wheel navigation and Cover Flow.
 - **Automix V2** — DJ-style transitions with beat locking, entrance rescoring and vocal gating.
-- **Sing** — karaoke mode that turns the lead vocal down so you can sing over the track.
+- **Sing** — karaoke mode that turns the lead vocal down so you can sing over the track: the original centre cut, a band-limited cut, and **Studio**, which lifts the lead voice out with an on-device neural separator. The model is downloaded when you want it, never bundled into the APK.
 - **Honest lossless numbers** — stats and Discord presence report the decoded PCM rate (1411 / 4608 kbps), never a container guess.
 - **AI badge with strict mode** — flags AI-generated uploads and can skip them.
 
@@ -72,16 +73,29 @@ Auris ranks sources itself: the ones you add first, then JioSaavn if you opt in,
 
 ## Download
 
-Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **2.2.20** (`versionCode 82`, package `com.dev.bitchord`).
+Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **3.0** (`versionCode 100`, package `com.dev.bitchord`).
+
+<div align="center">
+
+<a href="https://rookieenough.github.io/Orion-Data/app/?id=auris">
+  <img src="docs/orion-store-badge.png" alt="Download on Orion Store" height="80" />
+</a>
+
+<br/>
+
+*Check out Auris on [Orion Store](https://rookieenough.github.io/Orion-Data/app/?id=auris) — the release list, the signature check and the install, in one app.*
+
+</div>
 
 | APK | Use it for |
 |---|---|
-| `Auris-v8a-release.apk` | Almost every modern phone (recommended). |
-| `Auris-v7a-release.apk` | Older 32-bit devices. |
-| `Auris-x86_64-release.apk` | Emulators and x86 Chromebooks. |
-| `Auris-universal-release.apk` | If you aren't sure which one you need. |
+| `app-dev-arm64-v8a-release.apk` | Almost every modern phone (recommended). |
+| `app-dev-armeabi-v7a-release.apk` | Older 32-bit devices. |
+| `app-dev-x86_64-release.apk` | Emulators and x86 Chromebooks. |
+| `app-dev-universal-release.apk` | If you aren't sure which one you need. |
 
-- Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+- **About half the size** — universal **85 MB** (was 167 MB), arm64 **46 MB** (was 67 MB).
+- Sideloading requires enabling "Install unknown apps" for whichever app you download it with. Orion Store hands the APK to the system installer itself, so there is nothing to enable by hand.
 - Every release is signed with the same key, so updates install over the old build. Your library, downloads and settings carry over.
 - Requires Android 8.0 (API 26) or newer.
 
