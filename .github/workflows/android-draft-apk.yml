@@ -1,0 +1,148 @@
+name: Android Draft APK
+
+# The phone build for a private draft. Android only: the desktop builds live
+# in release.yml and desktop-windows.yml, and nothing here touches them — a
+# draft is a sideloaded APK, signed with the fork's key so it installs over
+# the last one without touching the prod app.
+#
+# Manual dispatch on purpose. A draft is not cut by a tag: the tag and the
+# desktop release workflow are tied to published releases, and a private
+# preview should not be able to start either by accident.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version stamped into the APK, verbatim"
+        required: true
+        default: "3.0.3"
+      version_code:
+        description: "versionCode stamped into the APK"
+        required: true
+        default: "103"
+      tag:
+        description: "Tag of the private draft release"
+        required: true
+        default: "v3.0.3-draft"
+      title:
+        description: "Title of the private draft release"
+        required: true
+        default: "Auris 3.0.3 — private preview"
+      notes:
+        description: "Release notes for the draft"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-draft-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - run: chmod +x gradlew
+
+      - name: Write local.properties
+        run: |
+          {
+            echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}"
+            echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}"
+          } > local.properties
+
+      # The fork's key, the same one every private draft since 2.3.x was
+      # signed with — so a tester installs this over the last one without
+      # uninstalling first, and without touching the prod package.
+      - name: Fork signing
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > bitchord-fork.jks
+          {
+            echo "storeFile=bitchord-fork.jks"
+            echo "storePassword=android"
+            echo "keyAlias=forkdebug"
+            echo "keyPassword=android"
+          } > keystore.properties
+
+      # The version is stamped from the input rather than read out of the
+      # build file, so the number in the dispatch and the number inside the
+      # APK cannot drift apart. The build file is the fallback; both are
+      # checked before anything is compiled.
+      - name: Stamp the version
+        run: |
+          set -euo pipefail
+          v="${{ inputs.version }}"
+          vc="${{ inputs.version_code }}"
+          sed -i -E "s/^(\s*)versionCode = [0-9]+/\1versionCode = $vc/" app/build.gradle.kts
+          sed -i -E "s/^(\s*)versionName = \"[^\"]*\"/\1versionName = \"$v\"/" app/build.gradle.kts
+          grep -E "versionCode = |versionName = " app/build.gradle.kts | head -4
+          grep -q "versionCode = $vc" app/build.gradle.kts
+          grep -q "versionName = \"$v\"" app/build.gradle.kts
+
+      # The dev flavour, release build type: R8, no debuggable runtime, signed.
+      # The ABI splits give one APK per architecture plus a universal one.
+      - name: Build the APKs
+        run: ./gradlew :app:assembleDevRelease
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/dev/release/*.apk dist/
+          ls -lh dist
+
+      # The Studio separator's front end lives in the analyser library, so
+      # its presence is the proof that this build carries the neural path
+      # and is not an older APK wearing a newer version name.
+      - name: The Studio front end is in the APK
+        run: |
+          set -euo pipefail
+          for apk in dist/*.apk; do
+            echo "== $apk"
+            unzip -l "$apk" | grep -E "lib/.*/libbitchord_analysis.so" || {
+              echo "no analyser library in $apk" >&2
+              exit 1
+            }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-draft-apk
+          path: dist/*.apk
+
+      # The draft itself: private, untagged, no publish. GitHub creates the
+      # tag only when a draft is published, so nothing is cut here — the
+      # draft is a download, not a release.
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.apk --repo "$GITHUB_REPOSITORY" --clobber
+            if [ -n "$NOTES" ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES"
+            fi
+          else
+            gh release create "$TAG" dist/*.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$TITLE" \
+              --notes "$NOTES"
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,assets \
+            --jq '{tag: .tagName, name: .name, draft: .isDraft, assets: [.assets[].name]}'
