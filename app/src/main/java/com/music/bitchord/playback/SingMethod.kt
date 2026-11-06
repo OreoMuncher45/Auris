@@ -38,13 +38,42 @@ enum class SingMethod {
      * instrumental passages are left alone, and side makeup to replace the
      * energy the cut removes. The most moving parts, and the only one of the
      * three that lets a solo through untouched.
+     *
+     * No longer offered in the sheet — Studio has taken its place — but kept
+     * here because an install that chose it keeps running it until the
+     * listener picks something else, and because the engine behind it is
+     * still the one that handles a mono track.
      */
     VOICE_GATE,
+
+    /**
+     * Studio: a neural separator that takes the lead vocal out with a model
+     * that has learned what a voice is.
+     *
+     * The three filters above look for the vocal in the middle of the stereo
+     * image and take out whatever is there. This one is taught: it hears the
+     * song and writes back the part that is singing, and the song is played
+     * without it. Nothing else in the chain can do that — a snare and a vocal
+     * sit in the same place, and only the network knows which is which.
+     *
+     * The model is not part of the app: it is downloaded from Settings, and
+     * until one is on the phone there is nothing for this to run on.
+     */
+    NEURAL,
     ;
 
     companion object {
         fun fromName(value: String?): SingMethod =
             entries.firstOrNull { it.name == value } ?: VOICE_GATE
+
+        /**
+         * The methods the Sing sheet offers, in the order it shows them.
+         *
+         * Studio stands where Smart used to: it is the one that does the job
+         * properly, and the two filters beside it are there for the songs it
+         * has not been asked about yet.
+         */
+        val offered: List<SingMethod> = listOf(ORIGINAL, BAND_LIMITED, NEURAL)
     }
 }
 
@@ -59,5 +88,8 @@ interface SingEngine {
 internal fun engineFor(method: SingMethod): SingEngine = when (method) {
     SingMethod.ORIGINAL -> VocalCutOriginal()
     SingMethod.BAND_LIMITED -> VocalCutBandLimited()
-    SingMethod.VOICE_GATE -> VocalCutDsp()
+    // Studio is not a filter: it is a network, and it runs in its own
+    // processor further down the chain. The filter that stands in for it
+    // here does nothing at all.
+    SingMethod.VOICE_GATE, SingMethod.NEURAL -> VocalCutDsp()
 }

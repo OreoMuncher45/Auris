@@ -45,10 +45,25 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
     @Volatile
     private var engine: SingEngine = engineFor(AppSettings.singMethod.value)
 
+    /** Which method is running, kept beside the engine it chose. */
+    @Volatile
+    private var method: SingMethod = AppSettings.singMethod.value
+
     private var configuredSampleRate: Int = VocalCutDsp.DEFAULT_SAMPLE_RATE
 
     /** Whether the engine has already been cleared since the last active block. */
     private var idle = true
+
+    /**
+     * The level this processor is actually applying.
+     *
+     * Studio takes the vocal out further down the chain, so the filter here
+     * stands down entirely while it runs: the two would otherwise both cut
+     * the same voice, and the chain's own "nothing is happening" check would
+     * never be true.
+     */
+    val effectiveLevel: Float
+        get() = if (method == SingMethod.NEURAL) 0f else level
 
     /**
      * Switch engines, configured for the rate this processor is already
@@ -59,18 +74,22 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
      * swap happens between callbacks and never mid-buffer.
      */
     fun setMethod(method: SingMethod) {
-        if (method == currentMethod()) return
+        if (method == this.method) return
+        this.method = method
+        if (method == SingMethod.NEURAL) {
+            // The network does the cutting from here on; this filter keeps
+            // its state clean and stays out of the way.
+            idle = true
+            engine.reset()
+            return
+        }
         engine = engineFor(method).apply {
             configure(configuredSampleRate)
             reset()
         }
     }
 
-    private fun currentMethod(): SingMethod = when (engine) {
-        is VocalCutOriginal -> SingMethod.ORIGINAL
-        is VocalCutBandLimited -> SingMethod.BAND_LIMITED
-        else -> SingMethod.VOICE_GATE
-    }
+    private fun currentMethod(): SingMethod = method
 
     override fun configure(sampleRate: Int, channelCount: Int) {
         configuredSampleRate = sampleRate
@@ -89,6 +108,14 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
      */
     override fun process(block: AudioBlock) {
         if (block.channelCount != 2 || block.frameCount == 0) return
+        if (method == SingMethod.NEURAL) {
+            // Studio runs later in the chain; nothing for this filter to do.
+            if (!idle) {
+                idle = true
+                engine.reset()
+            }
+            return
+        }
         val cut = level
         if (cut <= 0.001f) {
             if (!idle) {
@@ -125,7 +152,7 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
         if (frameCount == 0) return
         val outputBuffer = replaceOutputBuffer(frameCount * BYTES_PER_FRAME)
 
-        val cut = level
+        val cut = if (method == SingMethod.NEURAL) 0f else level
         if (cut <= 0.001f) {
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()

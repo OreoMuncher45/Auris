@@ -68,6 +68,7 @@ import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material.icons.rounded.MusicOff
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Person
@@ -206,6 +207,7 @@ fun SettingsScreen(
     onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
     onListenTogether: () -> Unit,
+    onStudioModels: () -> Unit = {},
     onSpotifyCanvasAuth: () -> Unit,
     onAppLanguage: () -> Unit,
     homeShelfTitles: List<String> = emptyList(),
@@ -751,6 +753,19 @@ fun SettingsScreen(
                     title = jamesDspTitle,
                     subtitle = stringResource(R.string.jamesdsp_subtitle),
                     onClick = { showJamesDsp = true },
+                )
+            }
+            // The model Studio runs on is a file on the phone, so it is
+            // managed where files are managed — but it sits with the sound
+            // rather than with storage, because the only reason to keep it
+            // is to hear the song without the voice.
+            val studioModelsTitle = stringResource(R.string.studio_models)
+            row(studioModelsTitle, "studio", "model", "karaoke", "vocal", "neural") {
+                SettingsRow(
+                    icon = Icons.Rounded.Mic,
+                    title = studioModelsTitle,
+                    subtitle = stringResource(R.string.studio_models_subtitle),
+                    onClick = onStudioModels,
                 )
             }
         }

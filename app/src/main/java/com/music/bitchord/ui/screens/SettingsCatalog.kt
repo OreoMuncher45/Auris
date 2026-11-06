@@ -79,6 +79,7 @@ object SettingsCatalog {
             "audio.seamless_quality_upgrades",
             "audio.equalizer",
             "audio.jamesdsp",
+            "audio.studio_models",
         ),
         SettingsCategory.PLAYBACK to listOf(
             "playback.prefer_music_only",

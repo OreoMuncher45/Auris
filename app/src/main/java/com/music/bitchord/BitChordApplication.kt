@@ -51,6 +51,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @kotlin.OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
+        // The karaoke models are not part of the app: they are downloaded
+        // when the listener asks for them, and the manager has to know
+        // where to keep them before anything asks what is on the phone.
+        com.music.bitchord.data.sing.SingModelManager.install(this)
         // One system-service probe needs a context; answered once, cached for
         // the process. See DeviceCodecs for what it is and is not.
         com.music.bitchord.data.sources.DeviceCodecs.init(this)

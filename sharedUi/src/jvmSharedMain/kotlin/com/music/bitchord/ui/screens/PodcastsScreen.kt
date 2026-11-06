@@ -87,6 +87,14 @@ fun PodcastsScreen(
      * the way the arrow at the end of Quick Picks' heading opens that one.
      */
     onOpenContinueListening: (() -> Unit)? = null,
+    /**
+     * The arrow at the end of the "Episodes for later" heading.
+     *
+     * That list is the listener's own playlist: the shelf shows what fits on
+     * a screen, and the arrow opens the whole thing, where it can be played
+     * from the top or shuffled.
+     */
+    onOpenEpisodesForLater: (() -> Unit)? = null,
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -165,14 +173,19 @@ fun PodcastsScreen(
                 listOfNotNull(continueShelf, likedShelf, laterShelf).forEach { shelf ->
                     item(key = "own:${shelf.title}") {
                         val isContinue = shelf === continueShelf
+                        val isLater = shelf === laterShelf
                         Shelf(
                             shelf = shelf,
                             onItemClick = onShowClick,
                             onItemLongPress = onOwnShelfItemLongPress?.let { { item -> it(item) } },
-                            // Only the shelf that stands for a whole list of
-                            // the listener's own gets the arrow; the other two
-                            // are short enough to read on the page.
-                            onHeaderNavigate = if (isContinue) onOpenContinueListening else null,
+                            // Only the shelves that stand for a whole list of
+                            // the listener's own get the arrow; "Liked
+                            // podcasts" is short enough to read on the page.
+                            onHeaderNavigate = when {
+                                isContinue -> onOpenContinueListening
+                                isLater -> onOpenEpisodesForLater
+                                else -> null
+                            },
                         )
                     }
                 }

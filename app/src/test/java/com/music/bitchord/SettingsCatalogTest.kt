@@ -119,6 +119,7 @@ class SettingsCatalogTest {
             "audio.output_precision", "audio.bit_perfect", "audio.prefer_usb_dac",
             "audio.loudness_normalization", "audio.loudness_off_on_speaker",
             "audio.seamless_quality_upgrades", "audio.equalizer", "audio.jamesdsp",
+            "audio.studio_models",
             "playback.prefer_music_only", "playback.crossfade", "playback.automix",
             "playback.automix_engine", "playback.automix_performance", "playback.skip_silence",
             "playback.spatial_audio", "playback.simulated_atmos", "playback.smart_version_alignment",

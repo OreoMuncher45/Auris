@@ -384,6 +384,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         })
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /**
+     * The episodes put aside, in the order they were put aside.
+     *
+     * The whole list, not the shelf's handful: the shelf is what fits on a
+     * screen and this is what the arrow behind it opens — a playlist the
+     * listener can play from the top, shuffle, or trim.
+     */
+    val podcastLaterEpisodes: StateFlow<List<Song>> = _podcastShelfVersion.map {
+        com.music.bitchord.data.settings.PodcastLibrary.laterEpisodes()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     /** Live iTunes podcast search for the podcasts page's own search bar. */
     private val _itunesSearchQuery = MutableStateFlow("")
     val itunesSearchQuery: StateFlow<String> = _itunesSearchQuery.asStateFlow()

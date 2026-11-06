@@ -165,6 +165,8 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.SingSheet
+import com.music.bitchord.ui.components.StudioModelDialog
+import com.music.bitchord.ui.components.StudioModelsList
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.AccountProfileSelector
@@ -186,6 +188,7 @@ import com.music.bitchord.data.audiobook.Audiobook
 import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.ui.screens.QuickPicksScreen
 import com.music.bitchord.ui.screens.ContinueListeningScreen
+import com.music.bitchord.ui.screens.EpisodesForLaterScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -763,6 +766,10 @@ private fun BitChordApp(
     var songActions by remember { mutableStateOf<Song?>(null) }
     var showLyricsOffset by remember { mutableStateOf(false) }
     var showSing by remember { mutableStateOf(false) }
+    /** The popup that asks for a Studio model, the way the update notice does. */
+    var showStudioModelDialog by remember { mutableStateOf(false) }
+    /** The list of Studio models: download, delete, choose. */
+    var showStudioModels by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
      *
@@ -889,6 +896,7 @@ private fun BitChordApp(
             if (selectedTab == TAB_PODCASTS) {
                 selectedTab = TAB_HOME
                 podcastUi.showContinueListening = false
+                podcastUi.showEpisodesForLater = false
                 podcastUi.episodeMenu = null
             }
             // A search left on the podcasts filter would keep asking Apple's
@@ -983,6 +991,7 @@ private fun BitChordApp(
     val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
     val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
     val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
+    val podcastLaterEpisodes by viewModel.podcastLaterEpisodes.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
     val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
     val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
@@ -1364,6 +1373,7 @@ private fun BitChordApp(
     val libraryListState = rememberLazyListState()
     val quickPicksListState = rememberLazyListState()
     val continueListeningListState = rememberLazyListState()
+    val episodesForLaterListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
@@ -2394,6 +2404,38 @@ private fun BitChordApp(
     }
 
     /**
+     * Plays the episodes put aside, as a queue.
+     *
+     * The list is the listener's own, in the order they built it, so it is
+     * a playlist rather than a shelf of one-off rows: play it from the top
+     * or shuffle it, and the whole thing goes into the queue behind the
+     * first episode rather than each row being a separate start.
+     */
+    val playEpisodesForLater: (Boolean) -> Unit = { shuffled ->
+        val songs = podcastLaterEpisodes
+        if (songs.isNotEmpty()) {
+            playRequestGeneration++
+            activeRadioSeed = null
+            scope.launch {
+                if (refusedByHost()) return@launch
+                val c = controller ?: return@launch
+                val ordered = if (shuffled) songs.shuffled() else songs
+                val source = QueueSource(
+                    title = "Episodes for later",
+                    type = PlaybackSourceType.QUEUE,
+                )
+                val queue = ordered.map { entry ->
+                    entry.copy(
+                        playbackSource = source.title,
+                        playbackSourceType = source.type,
+                    ).asQueueEntry(QueueTier.CONTEXT)
+                }
+                c.playSongs(queue, 0)
+            }
+        }
+    }
+
+    /**
      * The smart download for the show on screen.
      *
      * The episodes of it the listener has already played, and the few that
@@ -3334,6 +3376,7 @@ private fun BitChordApp(
         BackHandler(enabled = showFlow) { showFlow = false }
         BackHandler(enabled = showQuickPicks) { showQuickPicks = false }
         BackHandler(enabled = podcastUi.showContinueListening) { podcastUi.showContinueListening = false }
+        BackHandler(enabled = podcastUi.showEpisodesForLater) { podcastUi.showEpisodesForLater = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
@@ -3814,6 +3857,7 @@ private fun BitChordApp(
                     showFlow -> "flow"
                     showQuickPicks -> "quick_picks"
                     podcastUi.showContinueListening -> "continue_listening"
+                    podcastUi.showEpisodesForLater -> "episodes_for_later"
                     // `&& detail == null`: a card opened from the grid
                     // stacks a detail page over it exactly as one opened
                     // from the Library tab does — see
@@ -4078,6 +4122,26 @@ private fun BitChordApp(
                             },
                             onMore = { episode -> podcastUi.episodeMenu = episode },
                             listState = continueListeningListState,
+                            contentPadding = listPadding,
+                        )
+                    } else if (key == "episodes_for_later") {
+                        EpisodesForLaterScreen(
+                            episodes = podcastLaterEpisodes,
+                            onPlay = { episode ->
+                                playWithResume(listOf(episode), 0)
+                            },
+                            onPlayAll = { playEpisodesForLater(false) },
+                            onShuffle = { playEpisodesForLater(true) },
+                            onRemove = { episode ->
+                                viewModel.removeLaterEpisode(episode.videoId)
+                                Toast.makeText(
+                                    context,
+                                    R.string.episodes_for_later_removed,
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                            onMore = { episode -> podcastUi.episodeMenu = episode },
+                            listState = episodesForLaterListState,
                             contentPadding = listPadding,
                         )
                     } else if (key == "library_show_all") {
@@ -4354,6 +4418,7 @@ private fun BitChordApp(
                                 settingsSubScreen = "listen_together"
                                 showListenTogether = true
                             },
+                            onStudioModels = { showStudioModels = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
                             // Bringing a Spotify playlist in is a setting of the
@@ -4657,6 +4722,10 @@ private fun BitChordApp(
                             // The arrow at the end of the shelf's heading opens
                             // the whole set, the way Quick Picks' does on Home.
                             onOpenContinueListening = { podcastUi.showContinueListening = true },
+                            // The listener's own playlist: the whole list
+                            // behind the shelf's arrow, playable from the
+                            // top and shuffleable.
+                            onOpenEpisodesForLater = { podcastUi.showEpisodesForLater = true },
                             // Held on an episode of one of the listener's own
                             // shelves: the same menu an episode's own row has.
                             onOwnShelfItemLongPress = { item ->
@@ -5050,6 +5119,7 @@ private fun BitChordApp(
                         showFlow -> stringResource(R.string.flow)
                         showQuickPicks -> quickPicksLabel
                         podcastUi.showContinueListening -> stringResource(R.string.continue_listening)
+                        podcastUi.showEpisodesForLater -> stringResource(R.string.episodes_for_later)
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> stringResource(R.string.account_scrobbling)
                         showSources -> stringResource(R.string.sources)
@@ -5081,6 +5151,7 @@ private fun BitChordApp(
                             showEqualizer ||
                             showDiscord || showHistory || showFlow || showQuickPicks ||
                             podcastUi.showContinueListening ||
+                            podcastUi.showEpisodesForLater ||
                             (libraryShowAll != null && detail == null) ||
                             (detail != null && detailActiveShelf != null) ||
                             selectedMoodGenre != null -> true
@@ -5099,6 +5170,7 @@ private fun BitChordApp(
                         showFlow -> ({ showFlow = false })
                         showQuickPicks -> ({ showQuickPicks = false })
                         podcastUi.showContinueListening -> ({ podcastUi.showContinueListening = false })
+                        podcastUi.showEpisodesForLater -> ({ podcastUi.showEpisodesForLater = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({
                             showAccountScrobbling = false
@@ -6649,8 +6721,51 @@ private fun BitChordApp(
                 onDismissRequest = { showSing = false },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
-                SingSheet(onDismiss = { showSing = false })
+                SingSheet(
+                    onDismiss = { showSing = false },
+                    // Studio was picked and there is no model on the phone:
+                    // the model is what Studio is made of, so the sheet that
+                    // fetches one is what comes next.
+                    onNeedModel = {
+                        showSing = false
+                        showStudioModelDialog = true
+                    },
+                )
             }
+        }
+
+        // ---- Studio models ----
+        // The list of the models Studio can run on, and the popup that asks
+        // for one. Both are about the same file: the popup fetches it, the
+        // list is where it is kept.
+        if (showStudioModels) {
+            BackHandler { showStudioModels = false }
+            ModalBottomSheet(
+                onDismissRequest = { showStudioModels = false },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                Column {
+                    Text(
+                        text = stringResource(R.string.studio_models),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 4.dp),
+                    )
+                    StudioModelsList()
+                }
+            }
+        }
+
+        if (showStudioModelDialog) {
+            StudioModelDialog(
+                hazeState = hazeState,
+                onDismiss = { showStudioModelDialog = false },
+                onOpenSettings = {
+                    showStudioModelDialog = false
+                    showSettings = true
+                    showStudioModels = true
+                },
+            )
         }
 
         if (showSmbEditor) {
@@ -6962,6 +7077,13 @@ private fun DiscordLoginHost(
 private class PodcastUiState {
     /** The whole "Continue listening" page, behind the shelf's arrow. */
     var showContinueListening by mutableStateOf(false)
+    /**
+     * The whole "Episodes for later" page, behind that shelf's arrow.
+     *
+     * A playlist of the listener's own: playable from the top, shuffleable,
+     * and trimable row by row.
+     */
+    var showEpisodesForLater by mutableStateOf(false)
     /** The episode whose menu is open, or null when it is shut. */
     var episodeMenu by mutableStateOf<Song?>(null)
     /** What the page's search is looking for. */

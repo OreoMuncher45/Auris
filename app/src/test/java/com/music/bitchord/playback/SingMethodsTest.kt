@@ -189,8 +189,27 @@ class SingMethodsTest {
         // session, not to the row. Asserting the row has no such field keeps a
         // future "just remember it per track" from quietly forking the setting.
         assertEquals(
-            listOf("ORIGINAL", "BAND_LIMITED", "VOICE_GATE"),
+            listOf("ORIGINAL", "BAND_LIMITED", "VOICE_GATE", "NEURAL"),
             SingMethod.entries.map { it.name },
+        )
+    }
+
+    @Test
+    fun `the sheet offers three, and Studio is one of them`() {
+        // Studio took Smart's place in the sheet. Smart itself stays in the
+        // enum — an install that chose it keeps running it — but it is no
+        // longer offered.
+        assertEquals(
+            listOf("ORIGINAL", "BAND_LIMITED", "NEURAL"),
+            SingMethod.offered.map { it.name },
+        )
+        assertTrue(
+            "Studio has to be one of the offered methods",
+            SingMethod.offered.contains(SingMethod.NEURAL),
+        )
+        assertTrue(
+            "Smart is no longer offered",
+            !SingMethod.offered.contains(SingMethod.VOICE_GATE),
         )
     }
 }

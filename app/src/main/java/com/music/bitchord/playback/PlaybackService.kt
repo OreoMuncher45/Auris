@@ -152,6 +152,7 @@ import com.music.bitchord.data.scrobbling.ScrobbleManager
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.EqualizerMode
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.data.sing.SingModelManager
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -679,6 +680,22 @@ class PlaybackService : MediaLibraryService() {
      */
     private val singProcessorA = VocalCutProcessor()
     private val singProcessorB = VocalCutProcessor()
+
+    /**
+     * The neural karaoke stage — one per player, for the same reason the
+     * filters above are: the vocal level has to survive the handoff from one
+     * player to the other mid-song.
+     *
+     * The separator is shared between the two processors, because a model is
+     * a model: opening the same thirty megabytes twice would cost twice the
+     * memory and twice the time for nothing. Only one player is ever
+     * processing at a time, so the one engine can serve both.
+     */
+    private val neuralSeparator = NeuralVocalSeparator(
+        modelPath = { SingModelManager.selectedFile()?.absolutePath },
+    )
+    private val neuralSingProcessorA = NeuralSingProcessor(neuralSeparator)
+    private val neuralSingProcessorB = NeuralSingProcessor(neuralSeparator)
 
     /** The platform audio session currently advertised to system audio tools. */
     private var advertisedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
@@ -1846,6 +1863,7 @@ class PlaybackService : MediaLibraryService() {
         configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(
             singProcessorA,
+            neuralSingProcessorA,
             spatialAudioProcessorA,
             simAtmosProcessorA,
             equalizerProcessorA,
@@ -1856,6 +1874,7 @@ class PlaybackService : MediaLibraryService() {
         )
         val sparePlayer = buildPlayer(
             singProcessorB,
+            neuralSingProcessorB,
             spatialAudioProcessorB,
             simAtmosProcessorB,
             equalizerProcessorB,
@@ -3827,6 +3846,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun buildPlayer(
         sing: VocalCutProcessor,
+        neural: NeuralSingProcessor,
         spatial: SpatialAudioProcessor,
         simAtmos: SimulatedAtmosProcessor,
         equalizer: EqualizerProcessor,
@@ -3835,7 +3855,18 @@ class PlaybackService : MediaLibraryService() {
         loudness: LoudnessProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, simAtmos, equalizer, jamesDsp, filter, loudness))
+        .setRenderersFactory(
+            silenceSkippingRenderers(
+                sing,
+                neural,
+                spatial,
+                simAtmos,
+                equalizer,
+                jamesDsp,
+                filter,
+                loudness,
+            ),
+        )
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -7116,6 +7147,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun silenceSkippingRenderers(
         sing: VocalCutProcessor,
+        neural: NeuralSingProcessor,
         spatial: SpatialAudioProcessor,
         simAtmos: SimulatedAtmosProcessor,
         equalizer: EqualizerProcessor,
@@ -7281,7 +7313,11 @@ class PlaybackService : MediaLibraryService() {
                 )
                 .setAudioProcessorChain(
                     DefaultAudioSink.DefaultAudioProcessorChain(
-                        emptyArray<AudioProcessor>(),
+                        // The neural karaoke stage runs first, on the audio as
+                        // it comes off the decoder: it is the only stage that
+                        // has to see the song whole rather than a piece of
+                        // it, and it is the only one that holds anything back.
+                        arrayOf<AudioProcessor>(neural),
                         SilenceSkippingAudioProcessor(
                             MIN_SILENCE_US,
                             SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
@@ -7554,13 +7590,26 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun requestOutputReconfiguration() {
+        requestOutputReconfiguration(force = false)
+    }
+
+    /**
+     * Rebuilds the players when the output they were built with no longer
+     * matches what is wanted.
+     *
+     * [force] rebuilds even when the float setting has not moved, which is
+     * what a change of Sing method needs: the chain inside the sink is
+     * fixed when the sink is built, so a processor that has just joined the
+     * party needs a new sink to join.
+     */
+    private fun requestOutputReconfiguration(force: Boolean) {
         outputReconfigureJob?.cancel()
         outputReconfigureJob = scope.launch {
             // Replacing two renderers during a blend would cut one half of it.
             // Wait for the short transition to settle, then swap the engine.
             while (crossfade?.isTransitioning() == true) delay(50)
             val requestedFloat = shouldEnableFloatOutput()
-            if (requestedFloat == configuredFloatOutput) {
+            if (requestedFloat == configuredFloatOutput && !force) {
                 applyOutputRoute()
             } else {
                 rebuildPlayersForOutput(requestedFloat)
@@ -7594,6 +7643,7 @@ class PlaybackService : MediaLibraryService() {
         spareFilter = transitionFilterB
         val newActive = buildPlayer(
             singProcessorA,
+            neuralSingProcessorA,
             spatialAudioProcessorA,
             simAtmosProcessorA,
             equalizerProcessorA,
@@ -7604,6 +7654,7 @@ class PlaybackService : MediaLibraryService() {
         )
         val newSpare = buildPlayer(
             singProcessorB,
+            neuralSingProcessorB,
             spatialAudioProcessorB,
             simAtmosProcessorB,
             equalizerProcessorB,
@@ -7726,6 +7777,12 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun shouldEnableFloatOutput(): Boolean {
+        // Studio needs Media3's own processor chain, and that chain is only
+        // consulted on the sixteen-bit branch of the sink: the float branch
+        // gets the format converter and nothing else. A model that cannot
+        // run is worse than a song at sixteen bits, so the float output
+        // stands down while Studio is on.
+        if (AppSettings.singMethod.value == SingMethod.NEURAL) return false
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
         // Worth knowing which way this cuts for a hi-res stream: with float
@@ -7835,6 +7892,7 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.singMethod.collect { method ->
                 singProcessorA.setMethod(method)
                 singProcessorB.setMethod(method)
+                applySingMethod(method)
             }
         }
         scope.launch {
@@ -7983,6 +8041,37 @@ class PlaybackService : MediaLibraryService() {
         val level = AppSettings.singLevel.value
         singProcessorA.level = level
         singProcessorB.level = level
+        neuralSingProcessorA.level = level
+        neuralSingProcessorB.level = level
+    }
+
+    /**
+     * Turns Studio on or off, and opens the model when it is needed.
+     *
+     * Opening a model takes long enough to be heard as a hitch, so it
+     * happens on its own thread rather than on the one that plays the
+     * music. Until the model is open the processor passes the audio
+     * through untouched, which is the right thing to do with a song that
+     * cannot be separated yet.
+     *
+     * The float output is the other half of this: Media3 only runs its
+     * processor chain on the sixteen-bit branch of the sink, so Studio
+     * needs the sink to be on that branch. When the two do not agree the
+     * players are rebuilt, which is the only way to change what the sink
+     * was built with.
+     */
+    private fun applySingMethod(method: SingMethod) {
+        val studio = method == SingMethod.NEURAL
+        neuralSingProcessorA.enabled = studio
+        neuralSingProcessorB.enabled = studio
+        if (!studio) {
+            neuralSeparator.reset()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            neuralSeparator.ensureSession()
+        }
+        requestOutputReconfiguration(force = true)
     }
 
     /**

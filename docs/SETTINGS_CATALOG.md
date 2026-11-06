@@ -54,6 +54,7 @@ at once.
 - [x] `audio.seamless_quality_upgrades` — Seamless quality upgrades
 - [x] `audio.equalizer` — Equalizer
 - [x] `audio.jamesdsp` — JamesDSP
+- [x] `audio.studio_models` — Studio models
 
 ### Playback
 - [x] `playback.prefer_music_only` — Prefer music only

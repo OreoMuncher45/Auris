@@ -78,7 +78,7 @@ class DspChain(
      */
     fun isBypassed(): Boolean =
         currentSampleRate > 0 &&
-            sing.level <= 0.001f &&
+            sing.effectiveLevel <= 0.001f &&
             !spatial.enabled &&
             !simAtmos.enabled &&
             !equalizer.isEnabled &&

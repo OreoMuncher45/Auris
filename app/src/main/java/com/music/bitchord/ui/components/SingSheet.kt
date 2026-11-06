@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sing.SingModelManager
 import kotlin.math.roundToInt
 
 /**
@@ -39,11 +40,22 @@ import kotlin.math.roundToInt
  * spares bass, air and drum transients, live in ExoPlayer's pipeline. Backing vocals mixed off
  * center survive longer than the lead, which is what makes a mid-slider
  * position read as a duet rather than as everything getting quieter.
+ *
+ * Studio is the third way of doing it, and the only one that is not a
+ * filter: it hands the song to a model that knows what a voice is. It needs
+ * a model on the phone, and when there is none the sheet asks for one
+ * rather than pretending the mode is there.
  */
 @Composable
-fun SingSheet(onDismiss: () -> Unit) {
+fun SingSheet(
+    onDismiss: () -> Unit,
+    /** Studio was picked but no model is on the phone yet. */
+    onNeedModel: () -> Unit = {},
+) {
     val level by AppSettings.singLevel.collectAsStateWithLifecycle()
     val method by AppSettings.singMethod.collectAsStateWithLifecycle()
+    val modelStates by SingModelManager.states.collectAsStateWithLifecycle()
+    val modelReady = modelStates.values.any { it is SingModelManager.State.Ready }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -71,11 +83,19 @@ fun SingSheet(onDismiss: () -> Unit) {
         // Which remover, above how hard. The order is worst-case to best-case
         // for a dense modern mix, which is also the order a listener meets
         // them: the plain one first because it is what most karaoke does and
-        // what a clean recording rewards, the current one last because it is
-        // the default and the safest on anything busy.
+        // what a clean recording rewards, Studio last because it is the one
+        // that does the job properly.
         MethodSelector(
             selected = method,
-            onSelect = AppSettings::setSingMethod,
+            onSelect = { option ->
+                if (option == SingMethod.NEURAL && !modelReady) {
+                    // Nothing to run yet: the model is what Studio is made
+                    // of, and the model is not here.
+                    onNeedModel()
+                    return@MethodSelector
+                }
+                AppSettings.setSingMethod(option)
+            },
         )
         Spacer(Modifier.height(4.dp))
         Text(
@@ -83,7 +103,8 @@ fun SingSheet(onDismiss: () -> Unit) {
                 when (method) {
                     SingMethod.ORIGINAL -> R.string.sing_method_original_note
                     SingMethod.BAND_LIMITED -> R.string.sing_method_band_note
-                    SingMethod.VOICE_GATE -> R.string.sing_method_gate_note
+                    SingMethod.VOICE_GATE -> R.string.sing_method_legacy_note
+                    SingMethod.NEURAL -> R.string.sing_method_studio_note
                 },
             ),
             style = MaterialTheme.typography.bodySmall,
@@ -91,7 +112,10 @@ fun SingSheet(onDismiss: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = stringResource(R.string.sing_level_percent, (level * 100).roundToInt()),
+            // What is left of the voice, not what was taken out of it: the
+            // slider runs from full vocals to none, so the number under it
+            // has to run the same way round.
+            text = stringResource(R.string.sing_level_percent, ((1f - level) * 100f).roundToInt()),
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
         )
@@ -132,7 +156,7 @@ fun SingSheet(onDismiss: () -> Unit) {
 }
 
 /**
- * Three ways to take a vocal out, as a row of chips rather than a dropdown:
+ * The ways to take a vocal out, as a row of chips rather than a dropdown:
  * three options, and the difference between them is audible within seconds of
  * switching, which makes the choice worth making in front of the listener
  * rather than buried in settings.
@@ -147,7 +171,7 @@ private fun MethodSelector(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SingMethod.entries.forEach { option ->
+        SingMethod.offered.forEach { option ->
             val isSelected = option == selected
             Surface(
                 onClick = { onSelect(option) },
@@ -164,6 +188,7 @@ private fun MethodSelector(
                         when (option) {
                             SingMethod.ORIGINAL -> R.string.sing_method_original
                             SingMethod.BAND_LIMITED -> R.string.sing_method_band
+                            SingMethod.NEURAL -> R.string.sing_method_studio
                             SingMethod.VOICE_GATE -> R.string.sing_method_gate
                         },
                     ),
