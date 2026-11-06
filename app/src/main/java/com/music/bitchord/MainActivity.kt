@@ -165,7 +165,7 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.SingSheet
-import com.music.bitchord.ui.components.StudioModelDialog
+import com.music.bitchord.ui.components.StudioModelPopup
 import com.music.bitchord.ui.components.StudioModelsList
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
@@ -6757,7 +6757,9 @@ private fun BitChordApp(
         }
 
         if (showStudioModelDialog) {
-            StudioModelDialog(
+            // A window of its own, so the popup floats above the player
+            // sheet rather than under it: the sheet is a window too.
+            StudioModelPopup(
                 hazeState = hazeState,
                 onDismiss = { showStudioModelDialog = false },
                 onOpenSettings = {

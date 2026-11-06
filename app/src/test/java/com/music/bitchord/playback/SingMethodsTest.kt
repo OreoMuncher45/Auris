@@ -212,4 +212,26 @@ class SingMethodsTest {
             !SingMethod.offered.contains(SingMethod.VOICE_GATE),
         )
     }
+
+    @Test
+    fun `studio quality survives a round trip and a bad value falls back`() {
+        for (quality in StudioQuality.entries) {
+            assertEquals(quality, StudioQuality.fromName(quality.settingName))
+        }
+        assertEquals(StudioQuality.MODEL_RATE, StudioQuality.fromName("SOMETHING_ELSE"))
+        assertEquals(StudioQuality.MODEL_RATE, StudioQuality.fromName(null))
+    }
+
+    @Test
+    fun `studio plays at the model rate or at the track's own`() {
+        // The model reads 44.1 kHz and nothing else, so that is one of the
+        // two rates a song can be played at.
+        assertEquals(44_100, StudioQuality.MODEL_RATE.outputRate(48_000))
+        assertEquals(44_100, StudioQuality.MODEL_RATE.outputRate(96_000))
+        assertEquals(44_100, StudioQuality.MODEL_RATE.outputRate(44_100))
+        // The other is the track's own rate, left exactly as it was.
+        assertEquals(48_000, StudioQuality.MATCH_TRACK.outputRate(48_000))
+        assertEquals(96_000, StudioQuality.MATCH_TRACK.outputRate(96_000))
+        assertEquals(44_100, StudioQuality.MATCH_TRACK.outputRate(44_100))
+    }
 }

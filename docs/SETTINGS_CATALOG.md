@@ -55,6 +55,7 @@ at once.
 - [x] `audio.equalizer` — Equalizer
 - [x] `audio.jamesdsp` — JamesDSP
 - [x] `audio.studio_models` — Studio models
+- [x] `audio.studio_quality` — Studio playback rate (Studio rate / Track rate)
 
 ### Playback
 - [x] `playback.prefer_music_only` — Prefer music only
