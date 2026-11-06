@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.components
 
+import android.view.View
+import android.view.Window
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -28,12 +31,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -41,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.NerdStats
@@ -176,7 +182,7 @@ fun StudioModelDialog(
                 }
                 if (state is SingModelManager.State.Failed) {
                     Text(
-                        text = (state as SingModelManager.State.Failed).message,
+                        text = state.message,
                         modifier = Modifier.padding(top = 6.dp),
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.error,
@@ -281,6 +287,17 @@ fun StudioModelPopup(
             dismissOnClickOutside = false,
         ),
     ) {
+        // The platform dims the screen behind a dialog. This popup has a
+        // scrim of its own — the same one the update notice uses — and two
+        // of them make the card sit on a darker stage than it was drawn
+        // for, so the platform's is turned off.
+        val view = LocalView.current
+        LaunchedEffect(view) {
+            dialogWindowOf(view)?.let { window ->
+                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                window.setDimAmount(0f)
+            }
+        }
         StudioModelDialog(
             hazeState = hazeState,
             onDismiss = onDismiss,
@@ -288,6 +305,23 @@ fun StudioModelPopup(
             blurred = false,
         )
     }
+}
+
+/**
+ * The window this content is drawn in, if it is a dialog's.
+ *
+ * A dialog's content lives in a view whose parent is not always the window
+ * provider itself, so the parent chain is walked. There is no context-chain
+ * fallback: the platform's dialog is not a context wrapper, it only holds
+ * one, so looking for it there finds nothing.
+ */
+private fun dialogWindowOf(view: View): Window? {
+    var parent = view.parent
+    while (parent != null) {
+        if (parent is DialogWindowProvider) return parent.window
+        parent = parent.parent
+    }
+    return null
 }
 
 /**
@@ -459,11 +493,7 @@ private fun StudioQualityOption(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onClick,
-            )
+            .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.Top,
     ) {
