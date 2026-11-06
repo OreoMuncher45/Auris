@@ -686,16 +686,51 @@ class PlaybackService : MediaLibraryService() {
      * filters above are: the vocal level has to survive the handoff from one
      * player to the other mid-song.
      *
-     * The separator is shared between the two processors, because a model is
-     * a model: opening the same thirty megabytes twice would cost twice the
-     * memory and twice the time for nothing. Only one player is ever
-     * processing at a time, so the one engine can serve both.
+     * The model is shared between the two: a model is a model, and opening
+     * the same thirty megabytes twice would cost twice the memory and twice
+     * the time for nothing. The separators are not shared — each player has
+     * its own buffers, because during a crossfade both players are playing
+     * at once and their audio must not end up in the same queue.
      */
-    private val neuralSeparator = NeuralVocalSeparator(
+    private val neuralModel = NeuralModel(
         modelPath = { SingModelManager.selectedFile()?.absolutePath },
     )
-    private val neuralSingProcessorA = NeuralSingProcessor(neuralSeparator)
-    private val neuralSingProcessorB = NeuralSingProcessor(neuralSeparator)
+    private val neuralSeparatorA = NeuralVocalSeparator(neuralModel)
+    private val neuralSeparatorB = NeuralVocalSeparator(neuralModel)
+    private val neuralSingProcessorA = NeuralSingProcessor(neuralSeparatorA) {
+        AppSettings.studioQuality.value
+    }
+    private val neuralSingProcessorB = NeuralSingProcessor(neuralSeparatorB) {
+        AppSettings.studioQuality.value
+    }
+
+    /**
+     * Whether the model should be open right now.
+     *
+     * The model is worth keeping only while there is music to separate, and
+     * it is not cheap to keep: ONNX Runtime's worker threads spin rather
+     * than sleep, so a session left open with nothing playing is a phone
+     * running at full tilt for no reason.
+     */
+    @Volatile
+    private var neuralModelWanted = false
+
+    /**
+     * Which separator belongs to the player that is playing.
+     *
+     * Swapped with [spareNeural] at every handoff, exactly as the filters
+     * are — so the numbers on the settings screen are the numbers of the
+     * song that is actually playing, and not of the one that is loaded and
+     * waiting.
+     */
+    private var activeNeural: NeuralVocalSeparator = neuralSeparatorA
+    private var spareNeural: NeuralVocalSeparator = neuralSeparatorB
+
+    /** The last drop count that was said in the log, so it is said once. */
+    private var lastReportedDrops = 0L
+
+    /** When the last Studio line was written to the log. */
+    private var lastDiagnosticsLogAt = 0L
 
     /** The platform audio session currently advertised to system audio tools. */
     private var advertisedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
@@ -956,6 +991,10 @@ class PlaybackService : MediaLibraryService() {
                 consecutiveErrorSkips = 0
             }
             if (isPlaying) registerCurrentPlay()
+            // The model is only worth keeping open while there is music to
+            // separate; its threads spin, and a phone that is warm with the
+            // app paused is a phone doing work for nobody.
+            updateNeuralActivity()
             // Nothing to read ahead for while paused, and a pause is often
             // the last thing that happens before the process goes idle.
             if (isPlaying) prefetchAround(exoPlayer) else cancelPrefetch()
@@ -2684,6 +2723,9 @@ class PlaybackService : MediaLibraryService() {
         val heldFilter = activeFilter
         activeFilter = spareFilter
         spareFilter = heldFilter
+        val heldNeural = activeNeural
+        activeNeural = spareNeural
+        spareNeural = heldNeural
 
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
@@ -3401,6 +3443,9 @@ class PlaybackService : MediaLibraryService() {
         val heldFilter = activeFilter
         activeFilter = spareFilter
         spareFilter = heldFilter
+        val heldNeural = activeNeural
+        activeNeural = spareNeural
+        spareNeural = heldNeural
 
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
@@ -3898,6 +3943,9 @@ class PlaybackService : MediaLibraryService() {
         val heldFilter = activeFilter
         activeFilter = spareFilter
         spareFilter = heldFilter
+        val heldNeural = activeNeural
+        activeNeural = spareNeural
+        spareNeural = heldNeural
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
 
@@ -7641,6 +7689,8 @@ class PlaybackService : MediaLibraryService() {
         configuredFloatOutput = enableFloat
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
+        activeNeural = neuralSeparatorA
+        spareNeural = neuralSeparatorB
         val newActive = buildPlayer(
             singProcessorA,
             neuralSingProcessorA,
@@ -7826,6 +7876,23 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            // Studio's playback rate is the rate the sink is built with: the
+            // model reads 44.1 kHz, and whether the song is played there or
+            // put back at its own rate changes the format the track is
+            // opened at. Nothing else can change it mid-track.
+            AppSettings.studioQuality.drop(1).collect {
+                requestOutputReconfiguration(force = true)
+            }
+        }
+        scope.launch {
+            // What Studio is doing, written down once a second for the
+            // settings screen and said every ten seconds in the log.
+            while (true) {
+                delay(DIAGNOSTICS_TICK_MS)
+                publishStudioDiagnostics()
+            }
         }
         scope.launch {
             AppSettings.bitPerfect.collect { enabled ->
@@ -8065,13 +8132,120 @@ class PlaybackService : MediaLibraryService() {
         neuralSingProcessorA.enabled = studio
         neuralSingProcessorB.enabled = studio
         if (!studio) {
-            neuralSeparator.reset()
+            neuralSeparatorA.reset()
+            neuralSeparatorB.reset()
+            neuralModelWanted = false
+            neuralModel.close()
+            // The float output can come back now that Studio is not asking
+            // the sink for its sixteen-bit branch.
+            requestOutputReconfiguration(force = true)
             return
         }
-        scope.launch(Dispatchers.IO) {
-            neuralSeparator.ensureSession()
-        }
+        neuralModelWanted = true
+        // The float output is the other half of this: Media3 only runs its
+        // processor chain on the sixteen-bit branch of the sink, so Studio
+        // needs the sink to be on that branch. When the two do not agree the
+        // players are rebuilt, which is the only way to change what the sink
+        // was built with.
         requestOutputReconfiguration(force = true)
+        openNeuralModel()
+    }
+
+    /**
+     * Opens the model, if there is music to separate.
+     *
+     * Opening a model takes long enough to be heard as a hitch, so it
+     * happens on its own thread rather than on the one that plays the
+     * music. Until the model is open the processor passes the audio
+     * through untouched, which is the right thing to do with a song that
+     * cannot be separated yet.
+     */
+    private fun openNeuralModel() {
+        if (!neuralModelWanted) return
+        // Nothing playing means nothing to separate, and a session left open
+        // with no music is a phone working for nobody: its threads spin.
+        val playing = listOfNotNull(player, spare).any { it.isPlaying }
+        if (!playing) return
+        scope.launch(Dispatchers.IO) {
+            neuralModel.ensureSession()
+            // A pause that landed while the model was opening would otherwise
+            // leave it open with nothing playing.
+            if (!neuralModelWanted) neuralModel.close()
+        }
+    }
+
+    /**
+     * Puts the model away when there is nothing to separate, and opens it
+     * when there is.
+     *
+     * A phone that is warm in the listener's pocket with the app paused in
+     * the background is a phone doing work for nobody: the model's threads
+     * spin while it is open. So the session is closed when the music stops
+     * and opened again when it starts.
+     */
+    private fun updateNeuralActivity() {
+        if (AppSettings.singMethod.value != SingMethod.NEURAL) return
+        val playing = listOfNotNull(player, spare).any { it.isPlaying }
+        if (playing) {
+            neuralModelWanted = true
+            openNeuralModel()
+        } else {
+            neuralModelWanted = false
+            neuralModel.close()
+            // Whatever the separator was holding is from a song that is not
+            // playing any more.
+            neuralSeparatorA.reset()
+            neuralSeparatorB.reset()
+            StudioDiagnostics.clear()
+        }
+    }
+
+    /**
+     * Writes down what Studio is doing, and says it in the log.
+     *
+     * The numbers are the only way to tell a phone that keeps up with the
+     * song from one that does not: a window that takes longer than the
+     * audio it covers is a phone that is going to drop the song, and the
+     * drop counter is where that shows. Both go to the settings screen and
+     * to the log, because a phone is a thing one has in one's hand, and a
+     * phone that is dropping audio has to be diagnosable from the other
+     * side of the glass.
+     */
+    private fun publishStudioDiagnostics() {
+        val studio = AppSettings.singMethod.value == SingMethod.NEURAL
+        val playing = studio && listOfNotNull(player, spare).any { it.isPlaying }
+        if (!playing) {
+            if (StudioDiagnostics.current.value.running || StudioDiagnostics.current.value.modelOpen) {
+                StudioDiagnostics.clear()
+            }
+            return
+        }
+        val separator = activeNeural
+        val snapshot = StudioDiagnostics.publish(
+            running = true,
+            modelOpen = neuralModel.ready,
+            windowMs = separator.lastWindowMs,
+            windowsSeparated = separator.windowsSeparated,
+            framesIn = separator.framesIn,
+            framesOut = separator.framesOut,
+            droppedFrames = separator.droppedFrames,
+        )
+        // One line every few seconds, and one line whenever something goes
+        // wrong: a phone that has begun dropping the song should say so
+        // loudly rather than quietly.
+        val dropped = snapshot.droppedFrames
+        if (dropped != lastReportedDrops) {
+            lastReportedDrops = dropped
+            Log.w("Studio", "Studio dropped $dropped frames")
+        }
+        if (SystemClock.elapsedRealtime() - lastDiagnosticsLogAt > DIAGNOSTICS_LOG_EVERY_MS) {
+            lastDiagnosticsLogAt = SystemClock.elapsedRealtime()
+            TrackLog.i(
+                "STUDIO",
+                "window ${snapshot.windowMs} ms · ${snapshot.windowsSeparated} windows · " +
+                    "${snapshot.inputRateHz} -> ${snapshot.outputRateHz} Hz · dropped $dropped",
+            )
+        }
     }
 
     /**
@@ -8706,6 +8880,12 @@ class PlaybackService : MediaLibraryService() {
         serviceLyrics = null
         cancelPrefetch()
         trackAnalyzer.release()
+        // The model goes with the service: its threads spin, and nothing is
+        // playing for them to spin about.
+        neuralModelWanted = false
+        neuralModel.close()
+        neuralSeparatorA.release()
+        neuralSeparatorB.release()
         loudnessRetryJob?.cancel()
         // The YouTube Music history entry for whatever was playing, closed out
         // on the same terms as the ListenBrainz submit below: a swipe-away never
@@ -10366,6 +10546,10 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_PLAYLISTS_ID = "playlists"
         const val MEDIA_MORE_ID = "more"
         const val MEDIA_LIKED_ID = "liked"
+        /** How often Studio's numbers are written down for the settings screen. */
+        const val DIAGNOSTICS_TICK_MS = 1_000L
+        /** How often Studio's numbers are said in the log. */
+        const val DIAGNOSTICS_LOG_EVERY_MS = 10_000L
         /** See [scheduleForeignCachePurge]: comfortably past the longest crossfade. */
         const val FOREIGN_CACHE_PURGE_DELAY_MS = 30_000L
         /** How many upcoming tracks [scheduleForeignCachePurge] leaves alone for read-ahead and Automix. */

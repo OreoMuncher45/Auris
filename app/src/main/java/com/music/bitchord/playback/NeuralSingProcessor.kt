@@ -6,6 +6,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.playback.audio.PcmBoundary
+import com.music.bitchord.playback.smart.MdxResampler
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -20,6 +21,23 @@ import java.nio.ByteOrder
  * only consulted on the sixteen-bit branch of the sink — the float branch
  * gets the format converter and nothing else — so Studio plays at sixteen
  * bits while it is on. That is Media3's rule, not this app's.
+ *
+ * ## What it owes the sink
+ *
+ * A processor in that chain has one obligation: what comes out has to be
+ * the same length as what went in. The sink counts the frames it has
+ * submitted and the frames it has written, and the gap between the two is
+ * what it believes the listener is hearing. A processor that hands back
+ * more than it was given — or that hands back a window's worth every time
+ * it is asked — makes the sink's arithmetic meaningless: the position runs
+ * away from the music, the lyrics go with it, and the song stutters.
+ *
+ * So the frames are counted here, and they are counted properly. The
+ * separator holds the song back while the network thinks about it, and what
+ * comes out is the song from a window ago with the vocal taken out of it.
+ * The sink does not need to know: it writes what it is given, and the
+ * position it reports is the position of the music that is actually being
+ * heard.
  *
  * ## The delay
  *
@@ -36,6 +54,8 @@ import java.nio.ByteOrder
 class NeuralSingProcessor(
     /** The separator this processor drives. */
     private val separator: NeuralVocalSeparator,
+    /** Which rate the song is played at. Read when the sink configures. */
+    private val quality: () -> StudioQuality,
 ) : BaseAudioProcessor() {
 
     /**
@@ -57,14 +77,27 @@ class NeuralSingProcessor(
     @Volatile
     var level: Float = 0f
 
+    /** The song's rate into the separator. */
+    private var toModel: MdxResampler? = null
+
+    /** The song's rate out of the separator. */
+    private var fromModel: MdxResampler? = null
+
     /** When the track ended, so the tail can be given a bounded wait. */
     private var endOfStreamAt: Long = 0L
 
     /** Whether the end of the stream has been signalled to this processor. */
     private var streamEnded: Boolean = false
 
-    /** The buffer the tail is written into, kept so the audio thread does not allocate. */
-    private val tailBuffer = FloatArray(MAX_TAIL_FRAMES * 2)
+    /**
+     * Whether the converter's own last frames have been handed over.
+     *
+     * A rate converter cannot know what follows the last sample it has, so
+     * it keeps those few frames back until the stream ends. They are given
+     * over with the last of the song, and the processor is not finished
+     * until they are.
+     */
+    private var tailFlushed: Boolean = false
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         // Stereo, sixteen-bit only. The chain this processor lives in only
@@ -73,10 +106,44 @@ class NeuralSingProcessor(
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT || inputAudioFormat.channelCount != 2) {
             return AudioProcessor.AudioFormat.NOT_SET
         }
-        if (inputAudioFormat.sampleRate > 0) {
-            separator.sampleRate = inputAudioFormat.sampleRate
+        if (!enabled) return AudioProcessor.AudioFormat.NOT_SET
+        val rate = inputAudioFormat.sampleRate
+        if (rate <= 0) return AudioProcessor.AudioFormat.NOT_SET
+
+        val target = quality().outputRate(rate)
+        if (target <= 0) return AudioProcessor.AudioFormat.NOT_SET
+
+        val to = if (rate == NeuralVocalSeparator.MODEL_RATE) {
+            null
+        } else {
+            MdxResampler.create(rate.toDouble(), NeuralVocalSeparator.MODEL_RATE.toDouble())
         }
-        return inputAudioFormat
+        val from = if (target == NeuralVocalSeparator.MODEL_RATE) {
+            null
+        } else {
+            MdxResampler.create(NeuralVocalSeparator.MODEL_RATE.toDouble(), target.toDouble())
+        }
+        // A rate pair the converter cannot do exactly is a reason not to
+        // play at that rate at all: a stream that drifts is worse than a
+        // song at its own rate with no separation.
+        if (to != null && !to.supported || from != null && !from.supported) {
+            to?.close()
+            from?.close()
+            return AudioProcessor.AudioFormat.NOT_SET
+        }
+
+        toModel?.close()
+        fromModel?.close()
+        toModel = to
+        fromModel = from
+        // The rates the sink was built with: what the track arrived at, and
+        // what it is being played at. The settings screen shows them, and
+        // they are the only honest answer — the decoder's rate, not the
+        // rate the file claims on its sleeve.
+        separator.inputRateHz = rate
+        separator.outputRateHz = target
+        StudioDiagnostics.setRates(rate, target)
+        return AudioProcessor.AudioFormat(target, C.ENCODING_PCM_16BIT, 2)
     }
 
     /**
@@ -88,18 +155,11 @@ class NeuralSingProcessor(
      * in the separator's own buffers instead.
      */
     override fun queueInput(inputBuffer: ByteBuffer) {
+        inputBuffer.order(ByteOrder.nativeOrder())
         val frames = inputBuffer.remaining() / BYTES_PER_FRAME
         if (frames == 0) {
-            drainTail()
-            return
-        }
-        inputBuffer.order(ByteOrder.nativeOrder())
-
-        if (!enabled || !separator.ready) {
-            val passthrough = replaceOutputBuffer(frames * BYTES_PER_FRAME)
-            passthrough.order(ByteOrder.nativeOrder())
-            passthrough.put(inputBuffer)
-            passthrough.flip()
+            // The sink is asking for more of what it has already given us.
+            emitTail()
             return
         }
 
@@ -109,17 +169,25 @@ class NeuralSingProcessor(
             song[frame * 2 + 1] = inputBuffer.short * INV_SCALE
         }
 
-        val separated = FloatArray(frames * 2)
-        val produced = separator.exchange(song, frames, separated, frames).produced
-        if (produced <= 0) return
+        // Into the rate the model reads.
+        val atModel = toModel?.let { it.process(song, frames) } ?: song
+        val modelFrames = atModel.size / 2
 
-        val output = replaceOutputBuffer(produced * BYTES_PER_FRAME)
-        output.order(ByteOrder.nativeOrder())
-        for (frame in 0 until produced) {
-            output.putShort(PcmBoundary.clamp16FromFloat(separated[frame * 2]))
-            output.putShort(PcmBoundary.clamp16FromFloat(separated[frame * 2 + 1]))
+        val mixed: FloatArray
+        if (separator.ready) {
+            separator.cut = level
+            separator.push(atModel, modelFrames)
+            mixed = separator.pull(MAX_PULL_FRAMES)
+        } else {
+            // No model: the song plays as it is, at the rate the sink was
+            // told about. It goes through the converter both ways so that
+            // the rate the sink was built with is the rate it gets.
+            mixed = atModel
         }
-        output.flip()
+
+        // Out to the rate the song is played at.
+        val out = fromModel?.let { it.process(mixed, mixed.size / 2) } ?: mixed
+        write(out)
     }
 
     /**
@@ -128,7 +196,21 @@ class NeuralSingProcessor(
      */
     override fun onQueueEndOfStream() {
         streamEnded = true
+        tailFlushed = false
         endOfStreamAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Hands over whatever there is to hand over.
+     *
+     * This is where the end of a track comes out. The sink asks for output
+     * until the processor says it has nothing left, and it asks through
+     * this method rather than by queueing more song: after the end of the
+     * stream there is no more song, only the answer to the song that was.
+     */
+    override fun getOutput(): ByteBuffer {
+        if (streamEnded) emitTail()
+        return super.getOutput()
     }
 
     /**
@@ -141,18 +223,32 @@ class NeuralSingProcessor(
     override fun isEnded(): Boolean {
         if (!super.isEnded()) return false
         if (!enabled || !separator.ready) return true
-        if (!separator.hasPendingWork) return true
-        return SystemClock.elapsedRealtime() - endOfStreamAt > TAIL_WAIT_MS
+        if (separator.hasPendingWork) {
+            return SystemClock.elapsedRealtime() - endOfStreamAt > TAIL_WAIT_MS
+        }
+        // The converter still owes its last few frames, and they are handed
+        // over with the answer to the last window.
+        return tailFlushed
     }
 
     override fun onFlush() {
         separator.reset()
+        toModel?.reset()
+        fromModel?.reset()
         streamEnded = false
+        tailFlushed = false
     }
 
     override fun onReset() {
         separator.reset()
+        // The sink is being torn down: the converters go with it, and the
+        // next configure makes new ones.
+        toModel?.close()
+        fromModel?.close()
+        toModel = null
+        fromModel = null
         streamEnded = false
+        tailFlushed = false
     }
 
     /**
@@ -161,23 +257,51 @@ class NeuralSingProcessor(
      *
      * This is how the last of a track gets out: the sink asks for output
      * after the input has ended, and the answer is whatever the network
-     * has finished by then.
+     * has finished by then. The converter's own last frames come out with
+     * it — a rate converter cannot know what comes after the last sample
+     * it has, so it waits until the stream ends before it says so.
      */
-    private fun drainTail() {
-        if (!streamEnded) return
+    private fun emitTail() {
+        if (!streamEnded) {
+            // The sink wants more and the separator may have something ready
+            // that was not asked for in time.
+            if (separator.ready) {
+                val out = separator.pull(MAX_PULL_FRAMES)
+                write(fromModel?.let { it.process(out, out.size / 2) } ?: out)
+            }
+            return
+        }
         if (!enabled || !separator.ready) {
             // Studio was turned off with a window still in the machine:
             // it is not going to be played, so it is let go.
             separator.reset()
+            tailFlushed = true
             return
         }
-        val produced = separator.finish(tailBuffer, MAX_TAIL_FRAMES)
-        if (produced <= 0) return
-        val output = replaceOutputBuffer(produced * BYTES_PER_FRAME)
+        if (separator.hasPendingWork) {
+            // The last window is still in the machine. It is played when it
+            // arrives, and until then there is nothing to hand over.
+            val tail = separator.finish(MAX_PULL_FRAMES)
+            if (tail.isNotEmpty()) {
+                write(fromModel?.let { it.process(tail, tail.size / 2) } ?: tail)
+            }
+            return
+        }
+        if (!tailFlushed) {
+            tailFlushed = true
+            val last = fromModel?.flush() ?: FloatArray(0)
+            write(last)
+        }
+    }
+
+    /** Writes separated song out in the format the sink asked for. */
+    private fun write(pcm: FloatArray) {
+        val frames = pcm.size / 2
+        val output = replaceOutputBuffer(frames * BYTES_PER_FRAME)
         output.order(ByteOrder.nativeOrder())
-        for (frame in 0 until produced) {
-            output.putShort(PcmBoundary.clamp16FromFloat(tailBuffer[frame * 2]))
-            output.putShort(PcmBoundary.clamp16FromFloat(tailBuffer[frame * 2 + 1]))
+        for (frame in 0 until frames) {
+            output.putShort(PcmBoundary.clamp16FromFloat(pcm[frame * 2]))
+            output.putShort(PcmBoundary.clamp16FromFloat(pcm[frame * 2 + 1]))
         }
         output.flip()
     }
@@ -189,7 +313,7 @@ class NeuralSingProcessor(
         /** How long the end of a track waits for its last answer. */
         const val TAIL_WAIT_MS = 4_000L
 
-        /** Frames the tail drain can write at once: two windows' worth. */
-        const val MAX_TAIL_FRAMES = 2 * NeuralVocalSeparator.MODEL_CHUNK_FRAMES
+        /** Frames taken out of the separator at once: a third of a second. */
+        const val MAX_PULL_FRAMES = 16_384
     }
 }

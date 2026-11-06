@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import com.music.bitchord.playback.SingMethod
+import com.music.bitchord.playback.StudioQuality
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -474,6 +475,24 @@ object AppSettings {
     fun setSingMethod(value: SingMethod) {
         singMethod.value = value
         prefs.edit().putString(KEY_SING_METHOD, value.name).apply()
+    }
+
+    /**
+     * Which rate Studio plays the song at — see [StudioQuality].
+     *
+     * The separation model reads 44.1 kHz audio, so the song has to be there
+     * while it is looking. What happens to it afterwards is the listener's
+     * choice: play it at the model's rate, or put it back at the rate it
+     * was made at.
+     *
+     * Only matters while Studio is on. With Studio off nothing is converted
+     * at all.
+     */
+    val studioQuality = MutableStateFlow(StudioQuality.MODEL_RATE)
+
+    fun setStudioQuality(value: StudioQuality) {
+        studioQuality.value = value
+        prefs.edit().putString(KEY_STUDIO_QUALITY, value.settingName).apply()
     }
 
     /**
@@ -1418,6 +1437,7 @@ object AppSettings {
         simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, true)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
+        studioQuality.value = StudioQuality.fromName(prefs.getString(KEY_STUDIO_QUALITY, null))
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
         equalizerMode.value = runCatching {
             EqualizerMode.valueOf(prefs.getString(KEY_EQ_MODE, null) ?: EqualizerMode.DYNAMIC.name)
@@ -2985,6 +3005,7 @@ object AppSettings {
     /** Stored by name so an unknown value falls back rather than crashing. */
     private const val KEY_SING_METHOD = "sing_method"
     private const val KEY_SING_LEVEL = "sing_level"
+    private const val KEY_STUDIO_QUALITY = "studio_quality"
     private const val KEY_EQ_ENABLED = "equalizer_enabled"
     private const val KEY_EQ_MODE = "equalizer_mode"
     private const val KEY_EQ_TONE_X = "equalizer_tone_x"

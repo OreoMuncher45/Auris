@@ -259,4 +259,145 @@ std::vector<float> Resample(
   return output;
 }
 
+StreamResampler::StreamResampler(
+    double input_rate,
+    double output_rate,
+    int channels)
+    : channels_(channels > 0 ? channels : 1) {
+  if (input_rate <= 0.0 || output_rate <= 0.0) return;
+
+  if (std::abs(input_rate - output_rate) < 1e-6) {
+    supported_ = true;
+    passthrough_ = true;
+    return;
+  }
+
+  long whole_input = 0;
+  long whole_output = 0;
+  if (!WholeRate(input_rate, &whole_input) || !WholeRate(output_rate, &whole_output)) {
+    return;
+  }
+  const long divisor = Gcd(whole_input, whole_output);
+  up_ = whole_output / divisor;
+  down_ = whole_input / divisor;
+  if (up_ > kMaxPhases) return;
+
+  // The same filter the whole-array path uses, on the same grid: output
+  // sample i sits at i * down_ / up_ input samples.
+  const double ratio = static_cast<double>(up_) / static_cast<double>(down_);
+  cutoff_ = 0.5 * std::min(1.0, ratio);
+  half_width_ = static_cast<double>(kResamplerZeroCrossings) / (2.0 * cutoff_);
+  reach_ = static_cast<long>(std::ceil(half_width_)) + 1;
+  taps_ = 2 * reach_ + 1;
+  BuildWeights();
+  supported_ = true;
+}
+
+void StreamResampler::BuildWeights() {
+  weights_.assign(static_cast<size_t>(up_ * taps_), 0.0f);
+  std::vector<double> row(static_cast<size_t>(taps_));
+  for (long phase = 0; phase < up_; ++phase) {
+    const double fraction = static_cast<double>(phase) / static_cast<double>(up_);
+    double sum = 0.0;
+    for (long k = 0; k < taps_; ++k) {
+      row[static_cast<size_t>(k)] =
+          KernelAt(fraction - static_cast<double>(k - reach_), cutoff_, half_width_);
+      sum += row[static_cast<size_t>(k)];
+    }
+    float* destination = weights_.data() + phase * taps_;
+    for (long k = 0; k < taps_; ++k) {
+      destination[k] = static_cast<float>(
+          sum != 0.0 ? row[static_cast<size_t>(k)] / sum : 0.0);
+    }
+  }
+}
+
+void StreamResampler::Reset() {
+  fifo_.clear();
+  fifo_frames_ = 0;
+  in_base_ = 0;
+  out_index_ = 0;
+}
+
+void StreamResampler::AppendInput(const float* input, size_t frames) {
+  if (frames == 0) return;
+  fifo_.insert(fifo_.end(), input, input + frames * static_cast<size_t>(channels_));
+  fifo_frames_ += frames;
+}
+
+void StreamResampler::Process(
+    const float* input,
+    size_t frames,
+    std::vector<float>* out) {
+  if (!supported_ || frames == 0) return;
+  if (passthrough_) {
+    out->insert(out->end(), input, input + frames * static_cast<size_t>(channels_));
+    return;
+  }
+  AppendInput(input, frames);
+  Produce(out);
+}
+
+void StreamResampler::Flush(std::vector<float>* out) {
+  if (!supported_ || passthrough_) return;
+  // The filter reaches `reach_` samples past the sample it is centred on, so
+  // the last outputs cannot be made until the stream has ended. Silence
+  // stands in for what was never there.
+  const std::vector<float> silence(static_cast<size_t>(reach_ * channels_), 0.0f);
+  AppendInput(silence.data(), static_cast<size_t>(reach_));
+  Produce(out);
+}
+
+void StreamResampler::Produce(std::vector<float>* out) {
+  for (;;) {
+    // Where the next output sample sits on the input timeline, as an exact
+    // fraction: `out_index_ * down_` units of 1/up_ input samples.
+    const long long position = out_index_ * down_;
+    const long long whole = position / up_;
+    const long phase = static_cast<long>(position % up_);
+    const long long available = in_base_ + static_cast<long long>(fifo_frames_);
+
+    // The filter's far tap has to have arrived before this sample can be
+    // made: the converter is centred on the sample, not on the past.
+    if (whole + reach_ >= available) break;
+
+    const float* row = weights_.data() + static_cast<size_t>(phase) * taps_;
+    for (int channel = 0; channel < channels_; ++channel) {
+      double sum = 0.0;
+      double weight_sum = 0.0;
+      for (long k = 0; k < taps_; ++k) {
+        const float weight = row[k];
+        if (weight == 0.0f) continue;
+        long long index = whole - reach_ + k;
+        // Before the stream began there is nothing to read, so the tap sits
+        // on the first sample -- the same clamp the whole-array path uses at
+        // its edges, and the same normalization by the weight that landed.
+        if (index < in_base_) index = in_base_;
+        const size_t offset =
+            static_cast<size_t>(index - in_base_) * static_cast<size_t>(channels_) +
+            static_cast<size_t>(channel);
+        sum += static_cast<double>(weight) * fifo_[offset];
+        weight_sum += weight;
+      }
+      out->push_back(
+          static_cast<float>(weight_sum != 0.0 ? sum / weight_sum : 0.0));
+    }
+    out_index_++;
+
+    // The input the next output cannot reach back to is let go, but the
+    // filter's past is kept: the next sample still needs it.
+    const long long next_position = out_index_ * down_;
+    const long long next_whole = next_position / up_;
+    const long long new_base = next_whole - reach_;
+    if (new_base > in_base_) {
+      const size_t drop = static_cast<size_t>(new_base - in_base_);
+      fifo_.erase(
+          fifo_.begin(),
+          fifo_.begin() + drop * static_cast<size_t>(channels_));
+      fifo_frames_ -= drop;
+      in_base_ = new_base;
+    }
+  }
+}
+
 }  // namespace bitchord::smart

@@ -1,13 +1,6 @@
 package com.music.bitchord.playback
 
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
 import com.music.bitchord.playback.smart.MdxStft
-import com.music.bitchord.playback.smart.MelSpectrogram
-import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -31,36 +24,35 @@ import java.util.concurrent.TimeUnit
  * separator holds the song back by one window and plays the answer when
  * it is ready.
  *
- * Nothing is dropped and nothing is repeated. The listener hears the song
- * from a window ago, with the vocal taken out of it.
+ * Nothing is dropped and nothing is repeated -- except when the phone
+ * cannot keep up, which is the one case where something has to give. See
+ * [droppedFrames].
  *
  * ## The rate
  *
- * The network was trained on 44.1 kHz. A track at another rate is converted
- * in and the answer converted back, so the stem always lines up with the
- * music it was taken from. The conversion is the native windowed-sinc
- * resampler the rest of the analyser uses.
+ * Everything inside the separator is at the model's own rate, 44.1 kHz: the
+ * network was trained there and reads a spectrogram whose bins mean
+ * something only at that rate. The conversion in and out is the caller's
+ * business -- see [NeuralSingProcessor] -- because only the caller knows
+ * whether the song is going to be played at the model's rate or at its own.
  *
  * ## The thread
  *
  * The network is far too slow to run on the audio thread -- a window of
- * audio takes a second of work on a slow machine -- so it runs on its own
- * thread while the audio thread keeps feeding it and taking answers away.
- * Two windows are in flight at most, which is what keeps the answer close
- * behind the music without letting the queue grow without bound.
+ * audio takes the better part of a second on a slow machine -- so it runs
+ * on its own thread while the audio thread keeps feeding it and taking
+ * answers away. Two windows are in flight at most, which is what keeps the
+ * answer close behind the music without letting the queue grow without
+ * bound.
+ *
+ * One separator belongs to one player. Two players can be playing at once
+ * during a crossfade, and their audio must not end up in the same buffers;
+ * they share the model itself, which is safe to run from both.
  */
 class NeuralVocalSeparator(
-    /** Where the model is, or null when none has been downloaded. */
-    private val modelPath: () -> String?,
+    /** The model this separator runs on. Shared between players. */
+    private val model: NeuralModel,
 ) {
-
-    /** What one exchange between the audio thread and the separator did. */
-    data class Exchange(
-        /** Frames taken from the caller. */
-        val consumed: Int,
-        /** Frames written back. */
-        val produced: Int,
-    )
 
     /**
      * How much of the vocal to take out, 0..1.
@@ -71,33 +63,79 @@ class NeuralVocalSeparator(
     @Volatile
     var cut: Float = 0f
 
-    /** The rate the audio arrives at. Set by the sink when it configures. */
-    @Volatile
-    var sampleRate: Int = MODEL_RATE
+    /** Whether the model is open and the separator can do anything. */
+    val ready: Boolean
+        get() = model.ready
 
-    /** Whether a model is loaded and the separator can do anything. */
+    /**
+     * How much audio the separator had to throw away because the network
+     * could not keep up with the song.
+     *
+     * Zero is the only good answer. Anything else means the phone is slower
+     * than the model at this window size, and the song has a hole in it.
+     */
     @Volatile
-    var ready: Boolean = false
+    var droppedFrames: Long = 0L
         private set
 
-    /** Set when the model could not be opened, for the log and the UI. */
+    /** How long the last window took, in milliseconds. */
     @Volatile
-    var failure: String? = null
+    var lastWindowMs: Long = 0L
         private set
 
-    /** Frames of song held back from the listener. */
-    val latencyFrames: Int
-        get() = sourceChunkFrames()
+    /** How many windows have been separated since the track started. */
+    @Volatile
+    var windowsSeparated: Long = 0L
+        private set
+
+    /**
+     * How much audio has gone in, and how much has come out, in model-rate
+     * frames.
+     *
+     * The two should be the same number: the separator holds the song back
+     * while the network thinks, but it never loses any of it. A difference
+     * between them is the sign of a hole in the song.
+     */
+    @Volatile
+    var framesIn: Long = 0L
+        private set
+
+    @Volatile
+    var framesOut: Long = 0L
+        private set
+
+    /**
+     * The rate the track arrived at, and the rate it leaves at.
+     *
+     * Written by the processor when the sink configures it, read by the
+     * settings screen to say what the song is being played at.
+     */
+    @Volatile
+    var inputRateHz: Int = 0
+
+    @Volatile
+    var outputRateHz: Int = 0
 
     private val lock = Any()
-    private var session: OrtSession? = null
-    private var sessionPath: String? = null
 
-    /** Source-rate frames waiting to be turned into a window of model audio. */
+    /** Model-rate audio waiting to be made into a window. */
     private var pending = FloatArray(0)
     private var pendingFrames = 0
 
-    /** Windows handed to the worker, oldest first. */
+    /** Where the pending audio starts in the stream, in model-rate frames. */
+    private var pendingStart = 0L
+
+    /** The song's length so far, in model-rate frames. */
+    private var streamFrames = 0L
+
+    /** Where the next frame to be played comes from, in stream frames. */
+    private var outputFrame = 0L
+
+    /** Separated audio waiting to be played, model-rate interleaved stereo. */
+    private var readyPcm = FloatArray(0)
+    private var readyFrames = 0
+
+    /** The windows handed to the worker, oldest first. */
     private val inFlight = ArrayDeque<Window>()
 
     /** The windows the worker has not picked up yet. */
@@ -108,15 +146,24 @@ class NeuralVocalSeparator(
     @Volatile
     private var running = true
 
+    /**
+     * Whether the separator is answering with separated audio yet.
+     *
+     * False until the first window has been through the network: until then
+     * the song plays as it is, because there is nothing better to play and
+     * silence would be worse.
+     */
+    @Volatile
+    var separatedYet: Boolean = false
+        private set
+
     private class Window(
-        /** The song itself, at the source rate, interleaved stereo. */
+        /** The song itself, interleaved stereo at the model's rate. */
         val dry: FloatArray,
-        /** The same song at the model's rate, interleaved stereo. */
-        val modelRate: FloatArray,
-        /** The vocal the network found, at the source rate, interleaved. */
+        /** Where the window starts in the stream, in model-rate frames. */
+        val startFrame: Long,
+        /** The vocal the network found, in the same shape as [dry]. */
         @Volatile var stem: FloatArray? = null,
-        /** Frames of this window already written out. */
-        var written: Int = 0,
         /**
          * Frames of this window that are song rather than padding.
          *
@@ -133,143 +180,45 @@ class NeuralVocalSeparator(
     }
 
     /**
-     * Opens the model, if there is one.
+     * Puts song in.
      *
-     * Cheap to call repeatedly: it only does work when the path has changed.
-     * Not called from the audio thread -- opening a thirty-megabyte model
-     * takes long enough to be heard as a hitch.
+     * [input] holds interleaved stereo at [MODEL_RATE] and [frames] says how
+     * many frames are in it. The audio is buffered until a whole window has
+     * arrived, and the window goes to the network.
      */
-    fun ensureSession() {
-        val path = modelPath() ?: run {
-            releaseSession()
-            ready = false
-            return
-        }
+    fun push(input: FloatArray, frames: Int) {
+        if (!ready || frames <= 0) return
         synchronized(lock) {
-            if (session != null && sessionPath == path) {
-                ready = true
-                return
-            }
-            releaseSession()
-            failure = null
-            val file = File(path)
-            if (!file.exists()) {
-                ready = false
-                return
-            }
-            runCatching {
-                val options = OrtSession.SessionOptions().apply {
-                    setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(1, 8))
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    setCPUArenaAllocator(false)
-                    setMemoryPatternOptimization(false)
-                }
-                OrtEnvironment.getEnvironment().createSession(file.absolutePath, options)
-            }.onSuccess {
-                session = it
-                sessionPath = path
-                ready = true
-            }.onFailure {
-                failure = it.message ?: it.javaClass.simpleName
-                ready = false
-            }
-        }
-    }
-
-    private fun releaseSession() {
-        synchronized(lock) {
-            runCatching { session?.close() }
-            session = null
-            sessionPath = null
-        }
-    }
-
-    /**
-     * Takes song in and gives the separated song back.
-     *
-     * [input] holds interleaved stereo at [sampleRate]; [inputFrames] says
-     * how many frames are in it. [output] receives interleaved stereo at the
-     * same rate, and [outputCapacity] says how many frames fit.
-     *
-     * The two counts are independent on purpose. The separator takes what it
-     * has room for and gives back what it has ready, and the caller is
-     * expected to keep offering the rest and to keep taking what comes.
-     */
-    fun exchange(
-        input: FloatArray,
-        inputFrames: Int,
-        output: FloatArray,
-        outputCapacity: Int,
-    ): Exchange {
-        if (!ready || inputFrames <= 0 || outputCapacity <= 0) return Exchange(0, 0)
-
-        synchronized(lock) {
-            accept(input, inputFrames)
+            framesIn += frames
+            appendPending(input, frames)
             submitWindows()
-            val produced = drain(output, outputCapacity)
-            return Exchange(inputFrames, produced)
+            collect()
         }
     }
 
     /**
-     * Puts the caller's audio into the window buffer.
+     * Takes the separated song out.
      *
-     * The buffer is bounded: a machine that cannot separate as fast as the
-     * song arrives must not grow a queue until the process dies. What is
-     * dropped when the bound is reached is the oldest audio still waiting
-     * for its turn -- a gap in the output rather than a stall, and a stall
-     * would be worse than a gap.
+     * Returns however much is ready, up to [maxFrames] frames of interleaved
+     * stereo at the model's rate. An empty array means the network has not
+     * answered yet.
      */
-    private fun accept(input: FloatArray, inputFrames: Int) {
-        val needed = (pendingFrames + inputFrames) * 2
-        if (needed > pending.size) {
-            val grown = FloatArray(maxOf(pending.size * 2, needed))
-            System.arraycopy(pending, 0, grown, 0, pendingFrames * 2)
-            pending = grown
-        }
-        System.arraycopy(input, 0, pending, pendingFrames * 2, inputFrames * 2)
-        pendingFrames += inputFrames
-
-        val cap = (MAX_IN_FLIGHT + 2) * sourceChunkFrames()
-        if (pendingFrames > cap) {
-            val drop = pendingFrames - cap
-            System.arraycopy(pending, drop * 2, pending, 0, (pendingFrames - drop) * 2)
-            pendingFrames -= drop
-        }
-    }
+    fun pull(maxFrames: Int): FloatArray = take(maxFrames)
 
     /**
-     * Hands whole windows to the worker, as many as there is room for.
+     * The end of the track.
      *
-     * A window that cannot be converted to the model's rate is left in the
-     * buffer rather than thrown away: the conversion failing is a fault in
-     * the front end, not a reason to lose the song.
-     *
-     * [final] is the end of the track: whatever is left in the buffer is
-     * padded out to a whole window and handed over, so the last second of
-     * a song is separated rather than dropped.
+     * The last of the song is still waiting to be made into a window; this
+     * hands it over, padded out with silence, so the last second of a song
+     * is separated rather than dropped.
      */
-    private fun submitWindows(final: Boolean = false) {
-        val chunk = sourceChunkFrames()
-        while (pendingFrames >= chunk && inFlight.size < MAX_IN_FLIGHT) {
-            val dry = FloatArray(chunk * 2)
-            System.arraycopy(pending, 0, dry, 0, chunk * 2)
-            val modelAudio = toModelRate(dry, chunk) ?: return
-            System.arraycopy(pending, chunk * 2, pending, 0, (pendingFrames - chunk) * 2)
-            pendingFrames -= chunk
-            val window = Window(dry = dry, modelRate = modelAudio)
-            inFlight.addLast(window)
-            workQueue.offer(window)
+    fun finish(maxFrames: Int): FloatArray {
+        if (!ready || maxFrames <= 0) return FloatArray(0)
+        synchronized(lock) {
+            submitWindows(final = true)
+            collect()
+            return take(maxFrames)
         }
-        if (!final || pendingFrames <= 0 || inFlight.size >= MAX_IN_FLIGHT) return
-        val chunkFrames = sourceChunkFrames()
-        val dry = FloatArray(chunkFrames * 2)
-        System.arraycopy(pending, 0, dry, 0, pendingFrames * 2)
-        val modelAudio = toModelRate(dry, chunkFrames) ?: return
-        val window = Window(dry = dry, modelRate = modelAudio, realFrames = pendingFrames)
-        inFlight.addLast(window)
-        workQueue.offer(window)
-        pendingFrames = 0
     }
 
     /**
@@ -280,66 +229,211 @@ class NeuralVocalSeparator(
      * played.
      */
     val hasPendingWork: Boolean
-        get() = synchronized(lock) { inFlight.isNotEmpty() || pendingFrames > 0 }
+        get() = synchronized(lock) {
+            inFlight.isNotEmpty() || pendingFrames > 0 || readyFrames > 0
+        }
+
+    /** Empties every buffer. Used on a seek, and when the method changes. */
+    fun reset() {
+        synchronized(lock) {
+            pendingFrames = 0
+            pendingStart = 0
+            streamFrames = 0
+            outputFrame = 0
+            readyFrames = 0
+            separatedYet = false
+            droppedFrames = 0
+            windowsSeparated = 0
+            framesIn = 0
+            framesOut = 0
+            inFlight.clear()
+            workQueue.clear()
+        }
+    }
+
+    /** Stops the worker. The model itself belongs to [NeuralModel]. */
+    fun release() {
+        running = false
+        worker.interrupt()
+        reset()
+    }
+
+    // ---- the buffers ----------------------------------------------------
+
+    private fun appendPending(input: FloatArray, frames: Int) {
+        val needed = (pendingFrames + frames) * 2
+        if (needed > pending.size) {
+            val grown = FloatArray(maxOf(pending.size * 2, needed))
+            System.arraycopy(pending, 0, grown, 0, pendingFrames * 2)
+            pending = grown
+        }
+        System.arraycopy(input, 0, pending, pendingFrames * 2, frames * 2)
+        pendingFrames += frames
+        streamFrames += frames
+
+        // A machine that cannot separate as fast as the song arrives must not
+        // grow a queue until the process dies. What is dropped when the bound
+        // is reached is the oldest audio still waiting for its turn -- a hole
+        // in the song rather than a stall, and a stall would be worse.
+        val cap = (MAX_IN_FLIGHT + 2) * WINDOW_FRAMES
+        if (pendingFrames > cap) {
+            val drop = pendingFrames - cap
+            System.arraycopy(pending, drop * 2, pending, 0, (pendingFrames - drop) * 2)
+            pendingFrames -= drop
+            pendingStart += drop
+            droppedFrames += drop
+        }
+    }
 
     /**
-     * Writes out the answers that are ready, oldest first.
+     * Hands whole windows to the worker, as many as there is room for.
+     *
+     * [final] is the end of the track: whatever is left in the buffer is
+     * padded out to a whole window and handed over, so the last second of a
+     * song is separated rather than dropped.
+     */
+    private fun submitWindows(final: Boolean = false) {
+        while (pendingFrames >= WINDOW_FRAMES && inFlight.size < MAX_IN_FLIGHT) {
+            val dry = FloatArray(WINDOW_FRAMES * 2)
+            System.arraycopy(pending, 0, dry, 0, dry.size)
+            System.arraycopy(pending, WINDOW_FRAMES * 2, pending, 0, (pendingFrames - WINDOW_FRAMES) * 2)
+            pendingFrames -= WINDOW_FRAMES
+            pendingStart += WINDOW_FRAMES
+            val window = Window(dry = dry, startFrame = pendingStart - WINDOW_FRAMES)
+            inFlight.addLast(window)
+            workQueue.offer(window)
+        }
+        if (!final || pendingFrames <= 0 || inFlight.size >= MAX_IN_FLIGHT) return
+        // The last window: the song that is left, and silence for the rest.
+        val dry = FloatArray(WINDOW_FRAMES * 2)
+        System.arraycopy(pending, 0, dry, 0, pendingFrames * 2)
+        val window = Window(dry = dry, startFrame = pendingStart, realFrames = pendingFrames)
+        pendingFrames = 0
+        pendingStart += 0
+        inFlight.addLast(window)
+        workQueue.offer(window)
+    }
+
+    /**
+     * Mixes the answers that have arrived into the ready buffer.
      *
      * The vocal is taken out by subtraction: the mix minus the vocal is the
      * instrumental, and the slider says how much of that subtraction to
      * apply, so a half-open slider is half a vocal and a closed one is the
      * song as it was.
      */
-    private fun drain(output: FloatArray, outputCapacity: Int): Int {
-        var produced = 0
+    private fun collect() {
         val amount = cut.coerceIn(0f, 1f)
-        while (inFlight.isNotEmpty() && produced < outputCapacity) {
+        while (inFlight.isNotEmpty()) {
             val window = inFlight.first()
             val stem = window.stem ?: break
-            val count = minOf(window.realFrames - window.written, outputCapacity - produced)
-            if (count <= 0) break
-            for (frame in 0 until count) {
-                val source = (window.written + frame) * 2
-                val target = (produced + frame) * 2
-                output[target] = window.dry[source] - amount * stem[source]
-                output[target + 1] = window.dry[source + 1] - amount * stem[source + 1]
+            val windowEnd = window.startFrame + window.realFrames
+            // The song that has already been played dry is not played again:
+            // the separated answer picks up exactly where the dry one left
+            // off, so the two meet without a gap and without a repeat.
+            val start = maxOf(window.startFrame, outputFrame)
+            if (start >= windowEnd) {
+                inFlight.removeFirst()
+                continue
             }
-            produced += count
-            window.written += count
-            if (window.written >= window.realFrames) inFlight.removeFirst()
+            val count = (windowEnd - start).toInt()
+            appendReady(window, stem, amount, count, (start - window.startFrame).toInt())
+            outputFrame = windowEnd
+            inFlight.removeFirst()
         }
-        return produced
+    }
+
+    private fun appendReady(
+        window: Window,
+        stem: FloatArray,
+        amount: Float,
+        count: Int,
+        from: Int,
+    ) {
+        val needed = (readyFrames + count) * 2
+        if (needed > readyPcm.size) {
+            val grown = FloatArray(maxOf(readyPcm.size * 2, needed))
+            System.arraycopy(readyPcm, 0, grown, 0, readyFrames * 2)
+            readyPcm = grown
+        }
+        val base = readyFrames * 2
+        val source = from * 2
+        for (index in 0 until count) {
+            val at = source + index * 2
+            val target = base + index * 2
+            readyPcm[target] = window.dry[at] - amount * stem[at]
+            readyPcm[target + 1] = window.dry[at + 1] - amount * stem[at + 1]
+        }
+        readyFrames += count
+        separatedYet = true
     }
 
     /**
-     * The end of the track.
+     * Gives out the song as it is, while the network is still thinking.
      *
-     * The last of the song is still sitting in the window buffer, waiting
-     * for a whole window to be made of it; this hands it over and gives
-     * back whatever has been separated by now.
+     * Only the first stretch of a track is played this way: the point at
+     * which the network answers, the separated song takes over, and the two
+     * meet without a gap because the separated song starts exactly where the
+     * dry one stopped.
      */
-    fun finish(output: FloatArray, outputCapacity: Int): Int {
-        if (!ready || outputCapacity <= 0) return 0
-        synchronized(lock) {
-            submitWindows(final = true)
-            return drain(output, outputCapacity)
+    private fun giveDry(maxFrames: Int) {
+        if (separatedYet) return
+        var remaining = minOf(maxFrames.toLong(), streamFrames - outputFrame)
+        if (remaining <= 0) return
+        // The song that has been waiting for its window comes first, and the
+        // song that has not been waiting long enough yet comes after it: the
+        // stream is played in order either way.
+        for (window in inFlight) {
+            if (remaining <= 0) break
+            val windowEnd = window.startFrame + window.realFrames
+            if (outputFrame >= windowEnd) continue
+            val count = minOf(remaining, windowEnd - outputFrame).toInt()
+            appendRaw(window.dry, ((outputFrame - window.startFrame) * 2).toInt(), count)
+            outputFrame += count
+            remaining -= count
+        }
+        if (remaining > 0 && outputFrame >= pendingStart) {
+            val count = minOf(remaining, streamFrames - outputFrame).toInt()
+            if (count > 0) {
+                appendRaw(pending, ((outputFrame - pendingStart) * 2).toInt(), count)
+                outputFrame += count
+            }
         }
     }
 
-    /** Empties every buffer. Used on a seek, and when the method changes. */
-    fun reset() {
-        synchronized(lock) {
-            pendingFrames = 0
-            inFlight.clear()
-            workQueue.clear()
+    /** Appends song as it is to the ready buffer. */
+    private fun appendRaw(source: FloatArray, from: Int, count: Int) {
+        val needed = (readyFrames + count) * 2
+        if (needed > readyPcm.size) {
+            val grown = FloatArray(maxOf(readyPcm.size * 2, needed))
+            System.arraycopy(readyPcm, 0, grown, 0, readyFrames * 2)
+            readyPcm = grown
         }
+        System.arraycopy(source, from, readyPcm, readyFrames * 2, count * 2)
+        readyFrames += count
     }
 
-    /** Releases the model and stops the worker. */
-    fun release() {
-        running = false
-        worker.interrupt()
-        releaseSession()
+    /** Hands over whatever is ready, up to [maxFrames]. */
+    private fun take(maxFrames: Int): FloatArray {
+        if (maxFrames <= 0) return FloatArray(0)
+        synchronized(lock) {
+            if (readyFrames == 0) {
+                // The network has not answered yet and the sink wants audio
+                // now. The song plays as it is until it does: the
+                // alternative is a second of silence at the start of every
+                // track, which is worse than a second of unseparated song.
+                giveDry(maxFrames)
+            }
+            if (readyFrames == 0) return FloatArray(0)
+            val count = minOf(readyFrames, maxFrames)
+            val out = FloatArray(count * 2)
+            System.arraycopy(readyPcm, 0, out, 0, count * 2)
+            val left = (readyFrames - count) * 2
+            System.arraycopy(readyPcm, count * 2, readyPcm, 0, left)
+            readyFrames -= count
+            framesOut += count
+            return out
+        }
     }
 
     // ---- the worker ----------------------------------------------------
@@ -347,11 +441,16 @@ class NeuralVocalSeparator(
     private fun drainLoop() {
         while (running) {
             val window = try {
-                workQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                // A wait rather than a poll: with nothing to do the thread
+                // sleeps, and a paused phone stays cool.
+                workQueue.poll(500, TimeUnit.MILLISECONDS) ?: continue
             } catch (_: InterruptedException) {
                 continue
             }
-            val stem = separate(window.modelRate)
+            val started = System.nanoTime()
+            val stem = model.separate(window.dry, WINDOW_FRAMES)
+            lastWindowMs = (System.nanoTime() - started) / 1_000_000
+            windowsSeparated++
             // A window the network could not answer for is played dry rather
             // than not played at all: the song keeps going and the vocal
             // comes back for that stretch.
@@ -359,113 +458,20 @@ class NeuralVocalSeparator(
         }
     }
 
-    /**
-     * Runs the network over one window and returns the vocal it found.
-     *
-     * The answer comes back at the model's rate; it is converted to the
-     * source rate here so the caller can mix it against the song it came
-     * from without thinking about rates.
-     */
-    private fun separate(modelAudio: FloatArray): FloatArray? {
-        val active = synchronized(lock) { session } ?: return null
-        val frames = MdxStft.FRAMES
-        val tensor = MdxStft.forward(modelAudio, frames)
-        if (tensor.isEmpty()) return null
-
-        return runCatching {
-            val environment = OrtEnvironment.getEnvironment()
-            val shape = longArrayOf(1, 4, MdxStft.BINS.toLong(), frames.toLong())
-            // Straight into native memory: two megabytes of tensor on the
-            // Java heap is two megabytes the phone does not need to keep.
-            val backing = ByteBuffer.allocateDirect(tensor.size * Float.SIZE_BYTES)
-                .order(ByteOrder.nativeOrder())
-            backing.asFloatBuffer().put(tensor)
-            OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { input ->
-                active.run(mapOf(active.inputNames.first() to input)).use { outputs ->
-                    val outputTensor = outputs[0] as OnnxTensor
-                    val size = outputTensor.info.shape.fold(1L) { acc, d -> acc * d }.toInt()
-                    val values = FloatArray(size)
-                    // Absolute reads: the view's own position is not
-                    // something to depend on.
-                    val source = outputTensor.floatBuffer
-                    for (index in values.indices) values[index] = source.get(index)
-                    val vocal = MdxStft.inverse(values, frames)
-                    if (vocal.isEmpty()) null else toSourceRate(vocal)
-                }
-            }
-        }.getOrNull()
-    }
-
-    // ---- rates ---------------------------------------------------------
-
-    /** Frames of source-rate audio in one window. */
-    private fun sourceChunkFrames(): Int =
-        (MODEL_CHUNK_FRAMES.toLong() * sampleRate / MODEL_RATE).toInt().coerceAtLeast(1)
-
-    /**
-     * Converts a window of song to the model's rate.
-     *
-     * Returns the input untouched when it is already at the right rate,
-     * which is the common case: most of what this app plays is 44.1 kHz.
-     */
-    private fun toModelRate(dry: FloatArray, frames: Int): FloatArray? {
-        if (sampleRate == MODEL_RATE) return dry
-        val left = FloatArray(frames)
-        val right = FloatArray(frames)
-        for (frame in 0 until frames) {
-            left[frame] = dry[frame * 2]
-            right[frame] = dry[frame * 2 + 1]
-        }
-        val convertedLeft = MelSpectrogram.resample(left, sampleRate.toDouble(), MODEL_RATE.toDouble())
-        val convertedRight = MelSpectrogram.resample(right, sampleRate.toDouble(), MODEL_RATE.toDouble())
-        if (convertedLeft == null || convertedRight == null) return null
-        val out = FloatArray(MODEL_CHUNK_FRAMES * 2)
-        val count = minOf(MODEL_CHUNK_FRAMES, convertedLeft.size, convertedRight.size)
-        for (frame in 0 until count) {
-            out[frame * 2] = convertedLeft[frame]
-            out[frame * 2 + 1] = convertedRight[frame]
-        }
-        return out
-    }
-
-    /**
-     * Converts the vocal back to the rate the song arrived at.
-     *
-     * The answer is padded or trimmed to the length of the window it
-     * belongs to, so the two always line up sample for sample.
-     */
-    private fun toSourceRate(vocal: FloatArray): FloatArray? {
-        val frames = sourceChunkFrames()
-        if (sampleRate == MODEL_RATE) {
-            val out = FloatArray(frames * 2)
-            System.arraycopy(vocal, 0, out, 0, minOf(vocal.size, out.size))
-            return out
-        }
-        val left = FloatArray(MODEL_CHUNK_FRAMES)
-        val right = FloatArray(MODEL_CHUNK_FRAMES)
-        val count = minOf(MODEL_CHUNK_FRAMES, vocal.size / 2)
-        for (frame in 0 until count) {
-            left[frame] = vocal[frame * 2]
-            right[frame] = vocal[frame * 2 + 1]
-        }
-        val convertedLeft = MelSpectrogram.resample(left, MODEL_RATE.toDouble(), sampleRate.toDouble())
-        val convertedRight = MelSpectrogram.resample(right, MODEL_RATE.toDouble(), sampleRate.toDouble())
-        if (convertedLeft == null || convertedRight == null) return null
-        val out = FloatArray(frames * 2)
-        val copied = minOf(frames, convertedLeft.size, convertedRight.size)
-        for (frame in 0 until copied) {
-            out[frame * 2] = convertedLeft[frame]
-            out[frame * 2 + 1] = convertedRight[frame]
-        }
-        return out
-    }
-
     companion object {
         /** The rate the network was trained on. */
         const val MODEL_RATE = 44_100
 
-        /** Frames of audio in one window: 64 model frames of 1024 samples. */
-        const val MODEL_CHUNK_FRAMES = MdxStft.FRAMES * MdxStft.HOP
+        /**
+         * Frames of audio in one window.
+         *
+         * 32 frames of 1024 samples is 0.74 s. The network is fully
+         * convolutional in time, so a shorter window separates almost as well
+         * as a long one -- measured against a reference mixture, 0.9969 at 32
+         * frames against 0.9977 at 64 -- and costs half as much, which is
+         * what decides whether the phone can keep up with the song at all.
+         */
+        const val WINDOW_FRAMES = MdxStft.FRAMES * MdxStft.HOP
 
         /** Windows the worker may be holding at once. */
         private const val MAX_IN_FLIGHT = 2

@@ -34,12 +34,14 @@ object MdxStft {
     /**
      * Frames this build asks for.
      *
-     * 64 frames is 1.49 s of audio, which is the latency the karaoke path
-     * accepts: the network's output is as good at this length as at 256
-     * (measured: correlation 0.9978 against 0.9979), and the inference costs
-     * a quarter as much.
+     * 32 frames is 0.74 s of audio, which is the latency the karaoke path
+     * accepts: the network's output is almost as good at this length as at
+     * 256 (measured against a reference mixture: vocal correlation 0.9969
+     * at 32 frames, 0.9977 at 64, 0.9977 at 256), and the inference costs a
+     * quarter as much as the published window -- which is what decides
+     * whether the phone can separate faster than the song arrives.
      */
-    const val FRAMES = 64
+    const val FRAMES = 32
 
     /** Whether the native library is there to answer. */
     val available: Boolean get() = NativeAnalysisLibrary.available
