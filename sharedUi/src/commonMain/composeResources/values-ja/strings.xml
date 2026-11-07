@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">オートミックス · この曲：%1$s · 次：%2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">キー %1$s</string>
+    <string name="automix_next_facts">次：%1$s</string>
+    <string name="automix_planned_bars">%1$d 小節</string>
+    <string name="automix_style_dj_blend">DJブレンド</string>
+    <string name="automix_style_dj_filter">フィルター付きハンドオフ</string>
+    <string name="automix_style_equal_power">等電力フェード</string>
+    <string name="automix_style_gapless">ギャップレス</string>
     <string name="automix_not_supported_video">動画の曲では Automix はサポートされていません</string>
     <string name="automix_stopped_in_party">Automix: 一緒に聴く中は停止</string>
     <string name="autoplay">AutoPlay</string>

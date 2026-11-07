@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">Automix · lagu ini: %1$s · berikutnya: %2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">nada %1$s</string>
+    <string name="automix_next_facts">berikutnya: %1$s</string>
+    <string name="automix_planned_bars">%1$d bar</string>
+    <string name="automix_style_dj_blend">mix DJ</string>
+    <string name="automix_style_dj_filter">perpindahan terfilter</string>
+    <string name="automix_style_equal_power">fade daya konstan</string>
+    <string name="automix_style_gapless">tanpa jeda</string>
     <string name="automix_not_supported_video">Automix tidak didukung pada lagu video</string>
     <string name="automix_stopped_in_party">Automix: dihentikan saat Dengar bersama</string>
     <string name="autoplay">AutoPlay</string>

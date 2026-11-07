@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">Automix · bu şarkı: %1$s · sonraki: %2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">anahtar %1$s</string>
+    <string name="automix_next_facts">sonraki: %1$s</string>
+    <string name="automix_planned_bars">%1$d ölçü</string>
+    <string name="automix_style_dj_blend">DJ karışımı</string>
+    <string name="automix_style_dj_filter">filtreli devir</string>
+    <string name="automix_style_equal_power">sabit güç geçişi</string>
+    <string name="automix_style_gapless">kesintisiz</string>
     <string name="automix_not_supported_video">Automix video şarkılarında desteklenmiyor</string>
     <string name="automix_stopped_in_party">Automix: Birlikte dinle sırasında durduruldu</string>
     <string name="autoplay">AutoPlay</string>

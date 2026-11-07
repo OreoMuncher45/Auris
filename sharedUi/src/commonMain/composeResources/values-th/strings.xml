@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">Automix · เพลงนี้: %1$s · ถัดไป: %2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">คีย์ %1$s</string>
+    <string name="automix_next_facts">ถัดไป: %1$s</string>
+    <string name="automix_planned_bars">%1$d ห้อง</string>
+    <string name="automix_style_dj_blend">มิกซ์ DJ</string>
+    <string name="automix_style_dj_filter">การส่งต่อแบบกรอง</string>
+    <string name="automix_style_equal_power">เฟดกำลังเท่ากัน</string>
+    <string name="automix_style_gapless">ไม่มีช่องว่าง</string>
     <string name="automix_not_supported_video">Automix ไม่รองรับเพลงแบบวิดีโอ</string>
     <string name="automix_stopped_in_party">Automix: หยุดทำงานขณะฟังด้วยกัน</string>
     <string name="autoplay">AutoPlay</string>

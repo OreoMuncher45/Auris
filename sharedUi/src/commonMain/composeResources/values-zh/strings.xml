@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">自动混音 · 当前歌曲：%1$s · 下一首：%2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">调性 %1$s</string>
+    <string name="automix_next_facts">下一首：%1$s</string>
+    <string name="automix_planned_bars">%1$d 小节</string>
+    <string name="automix_style_dj_blend">DJ 混音</string>
+    <string name="automix_style_dj_filter">滤波交接</string>
+    <string name="automix_style_equal_power">等功率淡入淡出</string>
+    <string name="automix_style_gapless">无缝衔接</string>
     <string name="automix_not_supported_video">视频类歌曲不支持 Automix</string>
     <string name="automix_stopped_in_party">Automix：一起听期间已停止</string>
     <string name="autoplay">AutoPlay</string>

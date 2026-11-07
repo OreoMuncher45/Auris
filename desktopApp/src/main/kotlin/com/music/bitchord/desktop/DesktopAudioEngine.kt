@@ -4,14 +4,17 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
+import com.music.bitchord.data.settings.SmartTrackFacts
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.playback.EqCurve
 import com.music.bitchord.playback.TransitionFilter
 import com.music.bitchord.playback.smart.CrossfadeMode
+import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
+import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.planTransition
 import java.util.concurrent.ConcurrentHashMap
@@ -486,7 +489,7 @@ class DesktopPlaybackEngine(
         // Actual video playback only: a music-video row converted to an
         // audio-only stream is still video-origin, but it is audio now and
         // Automix measures it like any other audio.
-        if (automixEnabled && !song.isVideo) {
+        if (automixEnabled && automixEligible(song.isVideo, song.isVideoOrigin)) {
             analyzer.request(song, local, song.durationText.durationSeconds())
         }
         if (local == null && DesktopMusicSources.mayServeFromAddon(song)) {
@@ -1312,7 +1315,13 @@ class DesktopPlaybackEngine(
         val next = upcoming
         // A track held back from read-ahead has no decoder yet, but is measured all the same.
         val held = if (next == null) nextSong else null
-        if (track.song.isVideo || next?.song?.isVideo == true || held?.isVideo == true) return
+        val upcomingSong = next?.song
+        // Video playback has no beat grid to measure; a converted video-origin
+        // track does, and is measured like any other audio.
+        if (!automixEligible(track.song.isVideo, track.song.isVideoOrigin) ||
+            !automixEligible(upcomingSong?.isVideo == true, upcomingSong?.isVideoOrigin == true) ||
+            !automixEligible(held?.isVideo == true, held?.isVideoOrigin == true)
+        ) return
         requestAnalysis(track)
         next?.let(::requestAnalysis)
         held?.let { analyzer.request(it, nextLocalStream, it.durationText.durationSeconds()) }
@@ -1445,10 +1454,38 @@ class DesktopPlaybackEngine(
     }
 
     /** Both halves of the next transition, for the player's Automix line. */
-    private fun analysisStatus(track: Track): SmartAnalysis = SmartAnalysis(
-        current = analyzer.stateFor(track.song.videoId),
-        next = analyzer.stateFor(upcoming?.song?.videoId ?: nextSong?.videoId.orEmpty()),
-    )
+    private fun analysisStatus(track: Track): SmartAnalysis {
+        val nextId = upcoming?.song?.videoId ?: nextSong?.videoId.orEmpty()
+        val currentState = analyzer.stateFor(track.song.videoId)
+        val nextState = analyzer.stateFor(nextId)
+        return SmartAnalysis(
+            current = currentState,
+            next = nextState,
+            currentFacts = factsOf(analyzer.analysisFor(track.song.videoId), currentState),
+            nextFacts = factsOf(analyzer.analysisFor(nextId), nextState),
+            plannedBars = activePlan?.transitionBars ?: 0,
+            style = activePlan?.transitionStyle?.name.orEmpty(),
+        )
+    }
+
+    /**
+     * What one side of the pair has measured, for the stats line.
+     *
+     * A track with no usable result reports nothing rather than a zero: a
+     * tempo of zero is not a tempo of nought beats per minute.
+     */
+    private fun factsOf(
+        analysis: TrackAnalysis,
+        state: TrackAnalysisState,
+    ): SmartTrackFacts {
+        if (!analysis.isUsable) return SmartTrackFacts(state = state)
+        return SmartTrackFacts(
+            state = state,
+            bpm = analysis.bpm.takeIf { it > 0.0 } ?: 0.0,
+            key = analysis.key.trim(),
+            confidence = analysis.beatConfidence.coerceIn(0.0, 1.0),
+        )
+    }
 
     private fun maybeStartCrossfade(track: Track, positionMs: Long) {
         val incoming = upcoming

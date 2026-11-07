@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">ऑटोमिक्स · यह गाना: %1$s · अगला: %2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">की %1$s</string>
+    <string name="automix_next_facts">अगला: %1$s</string>
+    <string name="automix_planned_bars">%1$d बार</string>
+    <string name="automix_style_dj_blend">DJ मिश्रण</string>
+    <string name="automix_style_dj_filter">फ़िल्टर किया गया हैंडऑफ़</string>
+    <string name="automix_style_equal_power">समान-शक्ति फ़ेड</string>
+    <string name="automix_style_gapless">गैपलेस</string>
     <string name="automix_not_supported_video">वीडियो गानों पर Automix समर्थित नहीं है</string>
     <string name="automix_stopped_in_party">Automix: साथ में सुनें के दौरान बंद</string>
     <string name="autoplay">ऑटोप्ले</string>

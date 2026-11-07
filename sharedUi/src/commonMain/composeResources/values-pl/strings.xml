@@ -7,6 +7,14 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">Automix · ten utwór: %1$s · następny: %2$s</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_key">tonacja %1$s</string>
+    <string name="automix_next_facts">następny: %1$s</string>
+    <string name="automix_planned_bars">%1$d taktów</string>
+    <string name="automix_style_dj_blend">miks DJ</string>
+    <string name="automix_style_dj_filter">przekazanie z filtrem</string>
+    <string name="automix_style_equal_power">przenikanie o stałej mocy</string>
+    <string name="automix_style_gapless">bez przerwy</string>
     <string name="automix_not_supported_video">Automix nie jest obsługiwany dla utworów wideo</string>
     <string name="automix_stopped_in_party">Automix: zatrzymany podczas wspólnego słuchania</string>
     <string name="autoplay">Autoodtwarzanie</string>

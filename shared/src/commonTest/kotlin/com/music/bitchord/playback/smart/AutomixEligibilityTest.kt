@@ -1,10 +1,9 @@
-package com.music.bitchord
+package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.playback.automixEligible
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Which tracks Automix is allowed to touch.
@@ -34,8 +33,8 @@ class AutomixEligibilityTest {
             isVideoOrigin = true,
         )
         assertTrue(
-            "a converted video-origin track is audio now and must take part",
             automixEligible(converted.isVideo, converted.isVideoOrigin),
+            "a converted video-origin track is audio now and must take part",
         )
     }
 
@@ -50,8 +49,8 @@ class AutomixEligibilityTest {
             isVideoOrigin = true,
         )
         assertFalse(
-            "actual video playback has no beat grid and must be left alone",
             automixEligible(video.isVideo, video.isVideoOrigin),
+            "actual video playback has no beat grid and must be left alone",
         )
     }
 
