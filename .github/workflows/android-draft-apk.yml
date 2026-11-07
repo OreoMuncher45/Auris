@@ -115,6 +115,11 @@ jobs:
             }
           done
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-draft-apk
+          path: dist/*.apk
+
       # The package, the version and the signing certificate, checked before
       # anything is published: a tester installs this over the last draft, so
       # the package has to be the same one, the versionCode has to be higher
@@ -128,18 +133,25 @@ jobs:
           bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           for apk in dist/*.apk; do
             echo "== $apk"
-            "$bt/aapt2" dump badging "$apk" | grep -E "^package:" | head -1
-            "$bt/aapt2" dump badging "$apk" | grep -E "^package:" | grep -q "package: name='$EXPECTED_PACKAGE'"
-            "$bt/aapt2" dump badging "$apk" | grep -E "^package:" | grep -q "versionCode='${{ inputs.version_code }}'"
-            cert="$("$bt/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:lower:]' | tr -d ':')"
+            badging="$("$bt/aapt2" dump badging "$apk" | grep -E "^package:" | head -1)"
+            echo "$badging"
+            echo "$badging" | grep -q "package: name='$EXPECTED_PACKAGE'"
+            echo "$badging" | grep -q "versionCode='${{ inputs.version_code }}'"
+            # The digest line is spelled differently by different build-tools
+            # ("Signer #1 certificate SHA-256 digest:" on older ones, "V2
+            # Signer: certificate SHA-256 digest:" on newer), so the hex is
+            # taken out of whatever line names the SHA-256 rather than by
+            # matching a label.
+            certs="$("$bt/apksigner" verify --print-certs "$apk")"
+            echo "$certs" | grep -i "sha-256" || true
+            cert="$(echo "$certs" | grep -i "sha-256" | head -1 | tr -d ':' | grep -oiE "[0-9a-f]{64}" | head -1)"
             echo "signer: $cert"
+            if [ -z "$cert" ]; then
+              echo "no signer certificate found in $apk" >&2
+              exit 1
+            fi
             test "$cert" = "$EXPECTED_FINGERPRINT"
           done
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-draft-apk
-          path: dist/*.apk
 
       # The draft itself: private, untagged, no publish. GitHub creates the
       # tag only when a draft is published, so nothing is cut here — the
