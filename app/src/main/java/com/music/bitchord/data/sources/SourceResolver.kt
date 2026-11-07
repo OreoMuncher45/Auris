@@ -164,14 +164,19 @@ object SourceResolver {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
                 val upgraded = matchAndStream(source, target, request) ?: continue
-                // Only a genuinely lossless answer is an upgrade. A source that
-                // *can* serve lossless but settled for a transcode of this
-                // particular track has not beaten the pinned source at anything
-                // — and returning its settle-for here jumped ahead of the
-                // track's own source, which is the one the user picked and may
-                // well hold something better. It falls through to the pinned
-                // source instead, and to [bestAcross] below if that fails.
-                if (upgraded.format.isLossless != true) continue
+                // Only a genuinely lossless answer is an upgrade — and the
+                // immersive mix counts, because the Dolby rung asks for the
+                // lossless walk with an Atmos answer preferred ahead of it.
+                // An Atmos rendition is E-AC-3 and so answers
+                // `isLossless == false`; refusing it here threw away the one
+                // answer that satisfied the rung. A source that *can* serve
+                // lossless but settled for a plain transcode of this particular
+                // track has not beaten the pinned source at anything — and
+                // returning its settle-for here jumped ahead of the track's own
+                // source, which is the one the user picked and may well hold
+                // something better. It falls through to the pinned source
+                // instead, and to [bestAcross] below if that fails.
+                if (upgraded.format.isLossless != true && !upgraded.format.isDolbyAtmos) continue
                 TrackLog.d(TAG, "lossless upgrade: '${target.title}' served by ${source.displayName}")
                 return upgraded
             }
@@ -729,10 +734,37 @@ object SourceResolver {
         // so this is the belt to that braces — it also covers the late answer
         // that arrives from a pass started before the Atmos stream landed.
         if (playing?.isDolbyAtmos == true && !candidate.isDolbyAtmos) return false
+        // The immersive rung asked for the immersive mix and did not get one.
+        // A lossless file offered late is not the answer that was asked for:
+        // it is the rung below, cut into a track that is already playing, with
+        // a seam in the audio to prove it. So the only late swap the rung
+        // allows is an Atmos answer itself.
+        if (immersiveRungActive() && playing?.isDolbyAtmos != true &&
+            candidate.isDolbyAtmos == false && candidate.isLossless == true
+        ) {
+            return false
+        }
         if (candidate.isLossless == true || candidate.isDolbyAtmos) return true
         val gain = (candidate.kbps ?: return false) - (playing?.kbps ?: return false)
         return gain >= UPGRADE_MIN_GAIN_KBPS
     }
+
+    /**
+     * Whether the immersive rung is what this connection is asking for.
+     *
+     * Two things have to be true: the listener picked Dolby Atmos on this
+     * connection, and the device can decode it. The master switch alone is not
+     * this — it is a standing preference layered over whatever rung is chosen,
+     * and on the lossless rung a late lossless copy is exactly what was asked
+     * for.
+     *
+     * Read here rather than in the caller because the rule is about the
+     * *rung*: Dolby Atmos is a choice of tier, not a bonus on top of one, and
+     * a tier that was asked for and missed is not answered late by the tier
+     * below it.
+     */
+    internal fun immersiveRungActive(): Boolean =
+        AppSettings.effectiveAudioQuality == AudioQuality.DOLBY && DeviceCodecs.playsDolbyAtmos
 
     /**
      * Whether two runtimes are close enough to be the same recording, for a

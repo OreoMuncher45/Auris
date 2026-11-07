@@ -13,6 +13,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
+import com.music.bitchord.data.settings.SmartTrackFacts
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.playback.smart.CrossfadeMode
@@ -480,6 +481,18 @@ class CrossfadeController(
     /** Dedupes the per-tick plan log down to one line per distinct verdict. */
     private var lastPlanVerdict = ""
 
+    /**
+     * What the last plan decided, for the stats line: the size of the overlap
+     * in whole bars and how it will be executed.
+     *
+     * Republished every tick from the plan itself rather than kept beside it,
+     * so the line and the plan can never disagree — and cleared when there is
+     * no plan, because "32 bars" left on screen after the planner stopped
+     * planning is a claim about a transition that is not going to happen.
+     */
+    private var plannedBars = 0
+    private var plannedStyle = ""
+
     // ---- Phase lock (Advanced Automix) --------------------------------------
 
     /** When the speed nudge in flight ends, from [SystemClock.elapsedRealtime]; 0 when none is. */
@@ -932,10 +945,13 @@ class CrossfadeController(
         val player = active()
         val currentItem = player.currentMediaItem ?: return
         val nextItem = player.nextItemOrNull() ?: return
-        // Even a manual catalogue match is still video-origin. AutoMix's
-        // analysis and cueing are deliberately never applied to either side
-        // of a transition involving a video row.
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) {
+        // Only an item that actually plays video is excluded. A music-video
+        // row that was converted to an audio-only stream is video-origin but
+        // is audio now, and it blends like any other audio — the origin flag
+        // says where the row came from, not what is playing.
+        if (!automixEligible(currentItem.isVideo, currentItem.isVideoOrigin) ||
+            !automixEligible(nextItem.isVideo, nextItem.isVideoOrigin)
+        ) {
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
             return
@@ -980,6 +996,10 @@ class CrossfadeController(
             "|vocalOverlap=${"%.2f".format(Locale.ROOT, plan.vocalOverlap)}" +
             "|advanced=$advanced|lock=${plan.phaseLock}|variant=${plan.filterVariant}|echo=${plan.echoSeconds}" +
             "|blocked=${plan.blocked}|policy=${plan.policyReasons.joinToString(",")}"
+        // The plan's own numbers, for the stats line. A blocked plan has no
+        // overlap to describe, so it describes none.
+        plannedBars = if (plan.blocked) 0 else plan.transitionBars
+        plannedStyle = if (plan.blocked) "" else plan.transitionStyle.name
         if (verdict != lastPlanVerdict) {
             lastPlanVerdict = verdict
             Log.d(
@@ -1104,7 +1124,11 @@ class CrossfadeController(
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
         val currentItem = player.currentMediaItem ?: return
         val nextItem = player.nextItemOrNull() ?: return
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
+        // Video playback has no beat grid to measure; a converted video-origin
+        // track does, and is measured like any other audio.
+        if (!automixEligible(currentItem.isVideo, currentItem.isVideoOrigin) ||
+            !automixEligible(nextItem.isVideo, nextItem.isVideoOrigin)
+        ) return
         requestAnalysis(currentItem, duration)
         requestAnalysis(nextItem, nextItemDurationMs(nextItem))
     }
@@ -1120,9 +1144,40 @@ class CrossfadeController(
         val player = active()
         val currentItem = player.currentMediaItem
         val nextItem = player.nextItemOrNull()
+        val currentAnalysis = currentItem?.let { analysisFor(it) }
+        val nextAnalysis = nextItem?.let { analysisFor(it) }
+        val currentState = currentItem?.let { stateOf(it, currentAnalysis ?: TrackAnalysis()) }
+            ?: TrackAnalysisState.WAITING
+        val nextState = nextItem?.let { stateOf(it, nextAnalysis ?: TrackAnalysis()) }
+            ?: TrackAnalysisState.WAITING
         AppSettings.smartAnalysis.value = SmartAnalysis(
-            current = currentItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
-            next = nextItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
+            current = currentState,
+            next = nextState,
+            currentFacts = factsOf(currentAnalysis, currentState),
+            nextFacts = factsOf(nextAnalysis, nextState),
+            plannedBars = plannedBars,
+            style = plannedStyle,
+        )
+    }
+
+    /**
+     * What one side of the pair has measured, for the stats line.
+     *
+     * The tempo and key are the analyser's own numbers, and the confidence is
+     * the beat grid's — which is the number the whole transition policy gates
+     * on, so it is the one worth showing next to them.
+     *
+     * A track with no usable result reports nothing rather than a zero: a
+     * tempo of zero is not a tempo of nought beats per minute, and printing
+     * it would be a claim the analysis never made.
+     */
+    private fun factsOf(analysis: TrackAnalysis?, state: TrackAnalysisState): SmartTrackFacts {
+        if (analysis == null || !analysis.isUsable) return SmartTrackFacts(state = state)
+        return SmartTrackFacts(
+            state = state,
+            bpm = analysis.bpm.takeIf { it > 0.0 } ?: 0.0,
+            key = analysis.key.trim(),
+            confidence = analysis.beatConfidence.coerceIn(0.0, 1.0),
         )
     }
 

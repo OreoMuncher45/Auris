@@ -121,14 +121,6 @@ internal object DesktopSourceRegistry {
     }
 
     /**
-     * The YouTube upload Automix measures [song] on: the row itself when it is one, else the best
-     * YouTube Music match for an addon, module or JioSaavn row. Android's
-     * `TrackAnalyzer.analysisUriFor` does the same.
-     */
-    suspend fun youTubeIdentity(song: Song): Song? =
-        if (hasYouTubeOriginal(song)) song else youTubeMatches(song).firstOrNull()
-
-    /**
      * Whether resolving [song] could ask an addon for it — an addon's own row, or a YouTube row
      * with an addon ranked above YouTube to substitute it.
      *

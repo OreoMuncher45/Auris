@@ -70,13 +70,39 @@ object StreamChoice {
     /**
      * Records [stream] as the one copy of [videoId] this play is reading.
      *
+     * A pin is a promise about *who is filling the cache entry*, and the cache
+     * entry is shared by every writer for that track — see the class doc. So
+     * the first pin for a track is the one that stands: a later answer from
+     * another server cannot take the entry over, because the bytes already
+     * written into it came from the first one and a second server's bytes at
+     * those same offsets are a different recording of the same track.
+     *
+     * That matters most for the read-ahead pin, which is chosen by the patient
+     * search and so is the better copy of the two: it must not be replaced by
+     * the live resolve's YouTube answer when the live resolve happens to
+     * finish first. It also matters in the other direction — a live answer
+     * arriving after the read-ahead pin must not displace it either — and both
+     * directions are covered by the same rule.
+     *
+     * A pin that has outlived [TTL_MS] is not a promise any more, and its
+     * track may be pinned afresh.
+     *
      * @param substituted whether this came from a source standing in for
      *   YouTube rather than from YouTube itself. Only the resolver knows, and
      *   only [refuseSubstitutes] needs it — a substitution that turns out to be
      *   unplayable has somewhere else to fall back to, and a YouTube stream
      *   that fails has not.
+     * @return whether this pin became the one in force.
      */
-    fun remember(videoId: String, stream: SourceStream, substituted: Boolean) {
+    fun remember(videoId: String, stream: SourceStream, substituted: Boolean): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val existing = chosen[videoId]
+        if (existing != null && now - existing.at <= TTL_MS) {
+            // Already pinned, and the promise still holds. The track is being
+            // filled by that server; this answer does not get to change who
+            // that is.
+            return false
+        }
         if (chosen.size >= MAX_REMEMBERED) {
             // Drop what can no longer be honoured, and only then the oldest of
             // what can. This used to `clear()`, which is the one eviction
@@ -91,13 +117,13 @@ object StreamChoice {
             // before it is reached and caches its bytes on the strength of that
             // pin, so a promise can outlive several other tracks' worth of
             // entries, and the blunt version became reachable.
-            val now = SystemClock.elapsedRealtime()
             chosen.entries.removeIf { now - it.value.at > TTL_MS }
             if (chosen.size >= MAX_REMEMBERED) {
                 chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
             }
         }
-        chosen[videoId] = Choice(stream, SystemClock.elapsedRealtime(), substituted)
+        chosen[videoId] = Choice(stream, now, substituted)
+        return true
     }
 
     /**

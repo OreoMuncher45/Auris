@@ -483,7 +483,10 @@ class DesktopPlaybackEngine(
         nextLocalStream = local
         // Measured on YouTube Opus (or the file) whatever will end up serving it, so Automix has
         // its analysis without anything being fetched from the source that will play it.
-        if (automixEnabled && !song.isVideoOrigin) {
+        // Actual video playback only: a music-video row converted to an
+        // audio-only stream is still video-origin, but it is audio now and
+        // Automix measures it like any other audio.
+        if (automixEnabled && !song.isVideo) {
             analyzer.request(song, local, song.durationText.durationSeconds())
         }
         if (local == null && DesktopMusicSources.mayServeFromAddon(song)) {
@@ -1309,7 +1312,7 @@ class DesktopPlaybackEngine(
         val next = upcoming
         // A track held back from read-ahead has no decoder yet, but is measured all the same.
         val held = if (next == null) nextSong else null
-        if (track.song.isVideoOrigin || next?.song?.isVideoOrigin == true || held?.isVideoOrigin == true) return
+        if (track.song.isVideo || next?.song?.isVideo == true || held?.isVideo == true) return
         requestAnalysis(track)
         next?.let(::requestAnalysis)
         held?.let { analyzer.request(it, nextLocalStream, it.durationText.durationSeconds()) }

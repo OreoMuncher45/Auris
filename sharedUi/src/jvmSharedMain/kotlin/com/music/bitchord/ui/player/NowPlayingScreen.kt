@@ -2114,6 +2114,7 @@ fun NowPlayingScreen(
                         // they leave it along with the rest of the player.
                         SleeveNerdStats(
                             song = song,
+                            isPlaying = isPlaying,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(horizontal = 10.dp, vertical = 8.dp)
@@ -3459,6 +3460,7 @@ fun NowPlayingScreen(
                     WhileShown({ !collapsePastHalf }) {
                         SleeveNerdStats(
                             song = song,
+                            isPlaying = isPlaying,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(horizontal = 10.dp, vertical = 8.dp)

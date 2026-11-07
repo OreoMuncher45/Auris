@@ -564,10 +564,27 @@ private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
 /** Set only on the replacement item produced by [QualityUpgrade]. */
 const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
 
-/** Whether this item was selected from a music-video row, even after conversion. */
+/**
+ * Whether this item was selected from a music-video row, even after conversion.
+ *
+ * Kept apart from [isVideo] on purpose: the origin says where the row came
+ * from, and survives the conversion of that row into an audio-only stream. It
+ * is provenance, not a capability.
+ */
 val MediaItem.isVideoOrigin: Boolean
     get() = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
+
+/**
+ * Whether this item is *playing video*.
+ *
+ * The distinction that matters everywhere: a music-video row that has been
+ * converted to an audio-only stream is still video-origin, but it is audio, and
+ * Automix can analyse, cue and blend it like any other audio. Only an item
+ * that actually plays video is excluded.
+ */
+val MediaItem.isVideo: Boolean
+    get() = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
 
 fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
     fromAutoplay = (0 until mediaItemCount).map { getMediaItemAt(it).fromAutoplay },

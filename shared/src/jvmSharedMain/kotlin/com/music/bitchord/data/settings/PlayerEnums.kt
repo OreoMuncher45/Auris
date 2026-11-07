@@ -8,10 +8,15 @@ package com.music.bitchord.data.settings
  *
  * - [DOLBY] — the immersive rung: addons and modules are asked for their
  *   Dolby Atmos rendition first, then the whole [LOSSLESS] ladder below it.
- * - [LOSSLESS] — the user's own addons and JioSaavn both asked.
- * - [HIGH] — the addons skipped, JioSaavn asked.
- * - [MEDIUM] and [LOW] — both skipped; YouTube's own Opus ladder is all there
- *   is, capped at [maxKbps].
+ * - [LOSSLESS] — every enabled source asked, for its bit-exact copy where it
+ *   has one.
+ * - [HIGH] and [MEDIUM] — every enabled source asked, for its best copy. The
+ *   difference is what each source is asked *for*: the lossless tier on the
+ *   Lossless rung, the best lossy rendition on these two.
+ * - [LOW] — YouTube alone, capped at [maxKbps]. 64kbps is below the floor any
+ *   configured source can be asked for — the lowest tier they speak is
+ *   128kbps — so letting one answer here would spend twice the data the rung
+ *   exists to save, for a copy that is no better.
  *
  * [DOLBY] is a *choice*, not a ceiling that refuses anything above it: an
  * immersive mix is lossy E-AC-3, so a track with no Atmos master still plays

@@ -1755,10 +1755,14 @@ class PlaybackService : MediaLibraryService() {
                 // above under a half-filled cache entry, and the entry would
                 // then be finished by a different file.
                 NerdStats.recordSource(videoId, "YouTube")
-                StreamChoice.remember(videoId, SourceStream(streamUrl, headers = headers), substituted = false)
+                val serving = pinOrPinned(
+                    videoId,
+                    SourceStream(streamUrl, headers = headers),
+                    substituted = false,
+                )
                 return@Resolver dataSpec.buildUpon()
-                    .setUri(Uri.parse(streamUrl))
-                    .setHttpRequestHeaders(headers)
+                    .setUri(Uri.parse(serving.url))
+                    .setHttpRequestHeaders(serving.headers)
                     .build()
             }
             val won = runBlocking(about) {
@@ -1769,14 +1773,14 @@ class PlaybackService : MediaLibraryService() {
             }
             when (won) {
                 is Resolved.Module -> {
-                    val sourceName = won.stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    val serving = pinOrPinned(videoId, won.stream, substituted = true)
+                    val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                         ?: "Module"
-                    NerdStats.onSourceStream(videoId, won.stream.format, sourceName)
+                    NerdStats.onSourceStream(videoId, serving.format, sourceName)
                     NerdStats.recordSource(videoId, sourceName)
-                    StreamChoice.remember(videoId, won.stream, substituted = true)
                     dataSpec.buildUpon()
-                        .setUri(Uri.parse(won.stream.url))
-                        .setHttpRequestHeaders(won.stream.headers)
+                        .setUri(Uri.parse(serving.url))
+                        .setHttpRequestHeaders(serving.headers)
                         .build()
                 }
                 // A module could have served this and didn't — it missed, its
@@ -1790,10 +1794,14 @@ class PlaybackService : MediaLibraryService() {
                 is Resolved.YouTube -> {
                     NerdStats.recordSource(videoId, "YouTube")
                     val headers = StreamResolver.mediaHeadersFor(won.url)
-                    StreamChoice.remember(videoId, SourceStream(won.url, headers = headers), substituted = false)
+                    val serving = pinOrPinned(
+                        videoId,
+                        SourceStream(won.url, headers = headers),
+                        substituted = false,
+                    )
                     dataSpec.buildUpon()
-                        .setUri(Uri.parse(won.url))
-                        .setHttpRequestHeaders(headers)
+                        .setUri(Uri.parse(serving.url))
+                        .setHttpRequestHeaders(serving.headers)
                         .build()
                 }
             }
@@ -1950,6 +1958,37 @@ class PlaybackService : MediaLibraryService() {
         // whose queue is already restored.
         CastController.ensureStarted(this)
         CastController.attach(castPlayback)
+    }
+
+    /**
+     * Pins [stream] as the copy of [videoId] being served, and returns the
+     * stream that must actually be served.
+     *
+     * The pin is first-one-wins — see [StreamChoice.remember] — so a resolve
+     * that arrives after a prepared pin has to serve *that* pin rather than
+     * its own answer. The cache entry for a track is shared by every writer
+     * for it, and two servers' bytes at the same offsets are two different
+     * files: the middle of one appended to the other is what the pin exists
+     * to prevent.
+     *
+     * The window this covers is narrow — the pin is only missed when a
+     * preparation lands between the wait for it and the resolve that was
+     * going to race it — but it is the one window in which two servers can
+     * both believe they are filling the same entry.
+     */
+    private fun pinOrPinned(
+        videoId: String,
+        stream: SourceStream,
+        substituted: Boolean,
+    ): SourceStream {
+        if (StreamChoice.remember(videoId, stream, substituted)) return stream
+        val pinned = StreamChoice.of(videoId) ?: return stream
+        TrackLog.d(
+            "BitChord",
+            "$videoId is already pinned; serving the pin rather than a second server's answer",
+            about = videoId,
+        )
+        return pinned
     }
 
     private fun newSessionPlayer(player: Player, crossfade: CrossfadeController) = SessionPlayer(
@@ -3466,11 +3505,18 @@ class PlaybackService : MediaLibraryService() {
         val wasPlaying = activePlayer.isPlaying
         swappingMediaId = song.videoId
 
-        // Create the target song with the appropriate flags
+        // Create the target song with the appropriate flags.
+        //
+        // Two flags, two questions. [Song.isVideo] says what is playing: the
+        // video version plays video, the audio version does not. [Song.isVideoOrigin]
+        // says where the row came from, and survives the conversion — a track
+        // switched to its audio version is still a music-video row underneath,
+        // and keeping that lets the UI and the matcher know it can be switched
+        // back.
         val targetSong = song.copy(
             videoId = targetVideoId,
             isVideo = targetIsVideo,
-            isVideoOrigin = if (targetIsVideo) false else song.isVideoOrigin,
+            isVideoOrigin = song.isVideoOrigin || targetIsVideo,
         )
 
         activePlayer.replaceMediaItem(index, targetSong.toMediaItem())

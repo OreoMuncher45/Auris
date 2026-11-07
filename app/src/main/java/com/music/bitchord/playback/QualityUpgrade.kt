@@ -85,6 +85,16 @@ object QualityUpgrade {
          * [SourceResolver.upgradeFor]'s own `servedBy`. Left out of the second
          * look so a deterministic catalogue isn't asked the same question
          * twice for a rejection it already gave the first time.
+         *
+         * Left out unconditionally, which it used not to be: it was only
+         * passed on when the copy already playing was lossless, so the
+         * ordinary case — a source serving a lossy copy, asked again in the
+         * hope of a better one — asked that same source a second time and
+         * took its answer again. The second look is the patient one; it is
+         * the last chance a track has for a better copy, and spending part
+         * of it re-asking the source that already answered is how it ended
+         * up answering "no" while a better copy sat behind another source
+         * that had not been asked yet.
          */
         val servedBy: String? = null,
     )
@@ -96,17 +106,41 @@ object QualityUpgrade {
      * quickly; with lossless requested, JioSaavn can be that answer while a
      * slower FLAC source is still searching. Once JioSaavn is playing, ask
      * again with its bitrate as the floor: it is then rejected as unchanged and
-     * the slower lossless source gets a chance to win. Dolby Atmos is final too:
-     * it is lossy by codec definition, but it is the completed immersive tier,
-     * not an interim copy to search over and swap to again.
+     * the slower lossless source gets a chance to win.
+     *
+     * Dolby Atmos is final too: it is lossy by codec definition, but it is the
+     * completed immersive tier, not an interim copy to search over and swap to
+     * again. The immersive rung queues nothing at all — see
+     * [needsLosslessFollowUp] — because a tier that was asked for and missed
+     * is not answered late by the tier below it.
      */
     private val followUps = ConcurrentHashMap<String, Pending>()
     private val forced = ConcurrentHashMap<String, SourceStream>()
 
-    internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
-        SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            format.isLossless != true &&
-            !format.isDolbyAtmos
+    /**
+     * Whether this answer is still worth a second, lossless-flavoured pass.
+     *
+     * The lossless rung answers yes when what is playing is not the
+     * bit-exact copy that was asked for: the first pass takes the first
+     * source that beats the fallback, and a slower FLAC source may still be
+     * searching. Once a lossless copy — or an Atmos one, which is the
+     * completed immersive tier — is playing, there is nothing left to ask
+     * for.
+     *
+     * The immersive rung answers no, always. Atmos is a tier rather than a
+     * bonus on top of lossless: a track with no Atmos master has no Atmos
+     * master to find later, and the tier below it — a lossless or hi-res
+     * file — is not a late answer to a request for the spatial mix. Queuing
+     * one was how a Dolby-listening session ended up with a FLAC cut into
+     * the middle of it. The only late swap the rung allows is an Atmos
+     * answer itself, and that is [SourceResolver.worthSwapping]'s rule
+     * rather than a pass to queue here.
+     */
+    internal fun needsLosslessFollowUp(format: StreamFormat): Boolean {
+        if (SourceResolver.requestForNow() !is StreamRequest.Lossless) return false
+        if (SourceResolver.immersiveRungActive()) return false
+        return format.isLossless != true && !format.isDolbyAtmos
+    }
 
     /**
      * Tracks whose upgraded stream is being *proved* rather than played — see
@@ -498,7 +532,10 @@ object QualityUpgrade {
             SourceResolver.upgradeFor(
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
-                servedBy = waiting.servedBy?.takeIf { waiting.playing?.isLossless == true },
+                // Unconditionally: the source already serving this track is
+                // the one that answered first, and asking it the same
+                // question again reproduces the stream already playing.
+                servedBy = waiting.servedBy,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {

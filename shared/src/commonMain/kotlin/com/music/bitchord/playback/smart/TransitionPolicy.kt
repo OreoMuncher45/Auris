@@ -144,20 +144,73 @@ fun alignTempoOctave(outgoingBpm: Double, incomingBpm: Double): Double {
 }
 
 /**
+ * How many samples the vocal mask is smoothed over.
+ *
+ * Five samples is about a tenth of a second at the model's frame rate, which is
+ * short enough to keep the shape of a phrase and long enough to take the
+ * flicker out of it.
+ */
+const val VOCAL_SMOOTHING_WINDOW = 5
+
+/**
+ * The vocal mask with its frame-to-frame noise taken out.
+ *
+ * A mask is a model's estimate on a coarse grid, and the estimate flickers: two
+ * neighbouring samples of the same sung phrase can land on either side of
+ * [VOCAL_ACTIVE_THRESHOLD], so a single frame decides whether the policy calls
+ * a clash. The listener hears a phrase, not a frame.
+ *
+ * A centred moving average does two things at once. It removes the flicker, and
+ * it widens the edge of a vocal phrase by about half a window — which is the
+ * honest reading of a soft edge rather than a claim about where singing starts.
+ *
+ * The length and the alignment are preserved. The policy indexes the mask
+ * against energy-curve sample times, so a mask that moved or shortened would
+ * describe a different instant than the one it is read at.
+ *
+ * Unmeasured samples read as the analyzer's neutral 0.5, so smoothing pulls
+ * the edge of a measured region towards it. That is the conservative direction:
+ * an unmeasured stretch next to singing makes the policy *less* likely to call
+ * a clash, never more.
+ */
+fun smoothVocalMask(mask: List<Double>, window: Int = VOCAL_SMOOTHING_WINDOW): List<Double> {
+    val half = window / 2
+    if (mask.size < 3 || half < 1) return mask
+    return mask.mapIndexed { index, value ->
+        val from = (index - half).coerceAtLeast(0)
+        val to = (index + half).coerceAtMost(mask.lastIndex)
+        var sum = 0.0
+        var count = 0
+        for (position in from..to) {
+            val sample = mask[position]
+            if (!sample.isFinite()) continue
+            sum += sample
+            count += 1
+        }
+        if (count == 0) value else sum / count
+    }
+}
+
+/**
  * Mean vocal activity over [start]..[end] on a track's own timeline, or null
  * when the analysis carries no usable mask there. The mask is indexed against
  * [TrackAnalysis.energyCurve] times.
+ *
+ * The mask is smoothed first — see [smoothVocalMask] — so a phrase that sits
+ * either side of the threshold across a few frames is read as the phrase it
+ * is, rather than as a run of unrelated instants.
  */
 fun vocalActivityBetween(analysis: TrackAnalysis, start: Double, end: Double): Double? {
     val mask = analysis.vocalActivityMask
     val curve = analysis.energyCurve
     if (mask.isEmpty() || mask.size != curve.size || end <= start) return null
+    val smoothed = smoothVocalMask(mask)
     var sum = 0.0
     var count = 0
-    for (index in mask.indices) {
+    for (index in smoothed.indices) {
         val time = curve[index].time
         if (!time.isFinite() || time < start || time > end) continue
-        val value = mask[index]
+        val value = smoothed[index]
         if (!value.isFinite()) continue
         sum += value
         count += 1
@@ -230,9 +283,9 @@ fun simultaneousVocalFraction(
     inStart: Double,
     rate: Double,
 ): Double? {
-    val outMask = outgoing.vocalActivityMask
+    val outMask = smoothVocalMask(outgoing.vocalActivityMask)
     val outCurve = outgoing.energyCurve
-    val inMask = incoming.vocalActivityMask
+    val inMask = smoothVocalMask(incoming.vocalActivityMask)
     val inCurve = incoming.energyCurve
     if (outMask.isEmpty() || outMask.size != outCurve.size) return null
     if (inMask.isEmpty() || inMask.size != inCurve.size) return null

@@ -103,6 +103,8 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
+import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.SmartTrackFacts
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.Song
@@ -361,7 +363,11 @@ private const val QUALITY_CARD_OFFSET_PX = 260
  * it what Automix's analysis is doing. Nothing at all while the setting is off.
  */
 @Composable
-internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
+internal fun SleeveNerdStats(
+    song: Song,
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!showNerdStats) return
@@ -372,6 +378,11 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The blend in flight, if there is one. Once there is, the indicator beats
+    // on the blend's own grid; before that it beats on the tempo the analyser
+    // measured for the track that is playing.
+    val liveBlend by PlayerSettings.smartMixBlend.collectAsStateWithLifecycle()
     // A party doesn't mix, and doesn't analyse for one either — see
     // [com.music.bitchord.playback.CrossfadeController]. So the two flows above
     // simply stop moving there, and the stats line has to say why rather than
@@ -383,6 +394,16 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
     val inParty by remember {
         PlayerPlatform.host.party.map { it.inParty }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(initialValue = PlayerPlatform.host.party.value.inParty)
+    // One clock for everything that beats with Automix, so the dot below and
+    // the scrubber's fill never drift out of step with each other.
+    val preview = rememberPreviewBlend(song.videoId, smartAnalysis.currentFacts.bpm)
+    val automixLive = smartFadeOn && showNextStatus && !inParty && !song.isVideo && isPlaying
+    val pulse = rememberMixPulse(
+        { if (automixLive) (liveBlend ?: preview) else null },
+        // Reduced motion keeps the indicator, and keeps it still: the dot is
+        // drawn at a steady brightness instead of breathing on the beat.
+        enabled = !reduceAnimation,
+    )
     // A plain white line reads fine over the usual dark tile, but a light
     // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
     // entirely. The shadow costs nothing on a dark background and is what
@@ -394,6 +415,27 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
             blurRadius = 4f,
         ),
     )
+    // What the analyser found, and what it has planned to do with it. Both are
+    // optional: a track nothing has looked at yet reports neither.
+    val currentFacts = smartAnalysis.currentFacts
+    val nextFacts = smartAnalysis.nextFacts
+    val currentFactsText = factsText(currentFacts)
+    val nextFactsText = factsText(nextFacts)
+    val factsLine = when {
+        currentFactsText != null && nextFactsText != null ->
+            "$currentFactsText  →  $nextFactsText"
+        currentFactsText != null -> currentFactsText
+        nextFactsText != null -> stringResource(Res.string.automix_next_facts, nextFactsText)
+        else -> null
+    }
+    val plannedBarsText = smartAnalysis.plannedBars.takeIf { it > 0 }
+        ?.let { stringResource(Res.string.automix_planned_bars, it) }
+    val plannedStyleText = smartAnalysis.style.takeIf { it.isNotBlank() }
+        ?.let { plannedStyleLabel(it) }
+    val plannedLine = when {
+        plannedBarsText != null && plannedStyleText != null -> "$plannedBarsText · $plannedStyleText"
+        else -> plannedBarsText ?: plannedStyleText
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier,
@@ -412,35 +454,145 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
         // report on analysis nothing is going to use, which is noise rather
         // than a stat.
         if (smartFadeOn && showNextStatus) {
-            Text(
-                // Both sides always named, even when they agree, so the line
-                // reads the same way every time and the eye can find the half
-                // it wants without re-parsing the sentence.
-                text = when {
-                    // Ahead of the video case because it is the broader one:
-                    // in a party nothing is analysed for any song, video or
-                    // not, so naming the video limitation there would describe
-                    // a rule that is not the one in force.
-                    inParty -> stringResource(Res.string.automix_stopped_in_party)
-                    song.isVideoOrigin ->
-                        stringResource(Res.string.automix_not_supported_video)
-                    else -> stringResource(
-                        Res.string.automix_analysis_status,
-                        smartAnalysis.current.localizedLabel(),
-                        smartAnalysis.next.localizedLabel(),
-                    )
-                },
-                style = nerdStyle,
-                // Dimmer than the measured line above it: that one describes
-                // the audio, this one describes the app, and the ranking
-                // should show.
-                color = ink.copy(alpha = 0.5f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // The indicator: Automix is awake and working. Hidden where it
+                // is not running at all — a party, or actual video playback.
+                if (!inParty && !song.isVideo) {
+                    AutomixBeatDot(pulse, ink)
+                }
+                Text(
+                    // Both sides always named, even when they agree, so the line
+                    // reads the same way every time and the eye can find the half
+                    // it wants without re-parsing the sentence.
+                    text = when {
+                        // Ahead of the video case because it is the broader one:
+                        // in a party nothing is analysed for any song, video or
+                        // not, so naming the video limitation there would describe
+                        // a rule that is not the one in force.
+                        inParty -> stringResource(Res.string.automix_stopped_in_party)
+                        // Actual video playback only. A music-video row converted
+                        // to an audio-only stream is still video-origin but is
+                        // audio now, and Automix runs on it.
+                        song.isVideo ->
+                            stringResource(Res.string.automix_not_supported_video)
+                        else -> stringResource(
+                            Res.string.automix_analysis_status,
+                            smartAnalysis.current.localizedLabel(),
+                            smartAnalysis.next.localizedLabel(),
+                        )
+                    },
+                    style = nerdStyle,
+                    // Dimmer than the measured line above it: that one describes
+                    // the audio, this one describes the app, and the ranking
+                    // should show.
+                    color = ink.copy(alpha = 0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            factsLine?.let { facts ->
+                Text(
+                    text = facts,
+                    style = nerdStyle,
+                    color = ink.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            plannedLine?.let { planned ->
+                Text(
+                    text = planned,
+                    style = nerdStyle,
+                    color = ink.copy(alpha = 0.45f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
+}
+
+/**
+ * The dot that says Automix is awake.
+ *
+ * It beats on the same clock as the scrubber's fill — the blend's own grid
+ * once a blend is running, the analysed tempo of the playing track before
+ * that — so what the listener sees is the tempo Automix is working to. The
+ * brightness is read in a graphics layer, so the pulse redraws the dot every
+ * frame without recomposing anything around it.
+ */
+@Composable
+private fun AutomixBeatDot(pulse: MixPulse, ink: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(6.dp)
+            .graphicsLayer { alpha = pulse.alpha(AUTOMIX_DOT_ALPHA, restShare = AUTOMIX_DOT_REST) }
+            .clip(CircleShape)
+            .background(ink.copy(alpha = 0.9f)),
+    )
+}
+
+/** The dot's brightest point, on the beat. */
+private const val AUTOMIX_DOT_ALPHA = 0.95f
+
+/** How far it dips between beats: enough to read as a pulse, not enough to vanish. */
+private const val AUTOMIX_DOT_REST = 0.35f
+
+/**
+ * A stand-in beat grid for the indicator, for the time before a blend exists.
+ *
+ * The real grid arrives with the blend. Until then the indicator beats on the
+ * tempo the analyser measured for the track that is playing, so the tempo on
+ * screen is the one Automix is working to rather than a decorative flicker.
+ * A track whose tempo is not known yet gets a slow breath instead of a beat.
+ */
+@Composable
+private fun rememberPreviewBlend(trackId: String, bpm: Double): MixBlend {
+    // Re-taken per track: the new track's grid starts from now, which is as
+    // close to its first beat as anything knows.
+    val anchor = remember(trackId) { System.nanoTime() }
+    val beatMs = remember(bpm) {
+        if (bpm <= 0.0) 0f else (60_000.0 / bpm.coerceIn(40.0, 220.0)).toFloat()
+    }
+    return remember(trackId, beatMs) {
+        MixBlend(beatMs = beatMs, beatAnchorNanos = anchor, playing = true)
+    }
+}
+
+/**
+ * The tempo and key of one side of the transition, or null when neither is
+ * known.
+ *
+ * A tempo of zero is not a tempo of nought beats per minute: the analyser
+ * simply has not found one, and printing a zero would be a claim it never
+ * made.
+ */
+@Composable
+private fun factsText(facts: SmartTrackFacts): String? {
+    val bpmText = facts.bpm.takeIf { it > 0.0 }
+        ?.let { stringResource(Res.string.automix_bpm, it.roundToInt()) }
+    val keyText = facts.key.trim().takeIf { it.isNotEmpty() }
+        ?.let { stringResource(Res.string.automix_key, it) }
+    return listOfNotNull(bpmText, keyText).takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
+}
+
+/** How the next blend will be run, in words. */
+@Composable
+private fun plannedStyleLabel(style: String): String = when (style) {
+    "DJ_BLEND" -> stringResource(Res.string.automix_style_dj_blend)
+    "DJ_FILTER" -> stringResource(Res.string.automix_style_dj_filter)
+    "GAPLESS" -> stringResource(Res.string.automix_style_gapless)
+    "EQUAL_POWER" -> stringResource(Res.string.automix_style_equal_power)
+    // Anything else is a style added after this was written: say its own
+    // name rather than claiming a label it does not have.
+    else -> style
 }
 
 /**

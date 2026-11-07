@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.JamesDspConfig
 import com.music.bitchord.playback.audio.JamesDspNative
 import com.music.bitchord.ui.components.AurisSlider
 import kotlin.math.roundToInt
@@ -126,10 +127,17 @@ fun JamesDspSheet(onDismiss: () -> Unit) {
             EffectSlider(
                 title = stringResource(R.string.jamesdsp_stereo),
                 value = stereo,
-                range = 0f..100f,
+                range = 0f..JamesDspConfig.MAX_SAFE_STEREO_LEVEL,
                 valueLabel = "${stereo.roundToInt()}%",
                 enabled = enabled && available,
-                onChange = AppSettings::setJamesDspStereoLevel,
+                onChange = { value ->
+                    // The first fifth of the track is the explicit off state.
+                    // Every enabled value stays inside the native engine's
+                    // stable widening range.
+                    AppSettings.setJamesDspStereoLevel(
+                        if (value < JamesDspConfig.MIN_SAFE_STEREO_LEVEL) 0f else value,
+                    )
+                },
             )
             EffectSlider(
                 title = stringResource(R.string.jamesdsp_tube),

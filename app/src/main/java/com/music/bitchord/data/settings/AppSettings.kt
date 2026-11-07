@@ -17,6 +17,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
+import com.music.bitchord.playback.audio.JamesDspConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -50,18 +51,37 @@ import java.util.Locale
  * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
  * caps, and it is the only source that can answer at all when the ones
  * above it are skipped.
+ *
+ * ### What the rung may exclude, and what it may not
+ *
+ * A rung used to exclude a source by what it *could* serve rather than by
+ * what it would cost: High dropped every source that could serve lossless,
+ * and Medium and Low dropped everything that was not YouTube. That made an
+ * addon a lower-priority source than JioSaavn on the rung where JioSaavn was
+ * allowed at all, which is the opposite of what the source list says — the
+ * sources the user added come first, and they come first among themselves,
+ * with YouTube last — and it left the High rung unable to play a 320kbps
+ * copy from an addon that had one, which is the best copy available.
+ *
+ * What is excluded now is only what the rung cannot pay for. Low asks for
+ * 64kbps, and YouTube's own Opus ladder is the only source that can be
+ * asked for *that* tier — an addon is asked for its best lossy rendition,
+ * which is 128kbps at the floor, twice the data. Every other rung asks for
+ * the best copy available and lets every enabled source answer, which is
+ * what [SourceResolver] then weighs: the highest-quality result available
+ * plays first, and YouTube is last in the list rather than excluded from it.
  */
 fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
     // Atmos is additive rather than a cap: the immersive mix is looked for
     // first, and every source that could serve the lossless ladder below it
     // is still in the walk.
     AudioQuality.DOLBY, AudioQuality.LOSSLESS -> true
-    // No lossless answer is wanted here, and a source that can serve one is
-    // the slow half of the list: an addon fronting several catalogues walks
-    // all of them before it answers, which is seconds spent to land on a
-    // transcode JioSaavn already has at 320.
-    AudioQuality.HIGH -> !kind.canServeLossless
-    AudioQuality.MEDIUM, AudioQuality.LOW -> kind == SourceKind.YOUTUBE
+    // The best copy on offer, whoever holds it. An addon is asked for its
+    // high tier here rather than its lossless one — the rung is what asks
+    // for bit-exact audio, not the source's ability to supply it.
+    AudioQuality.HIGH, AudioQuality.MEDIUM -> true
+    // The one rung with a byte budget too small for a source's own floor.
+    AudioQuality.LOW -> kind == SourceKind.YOUTUBE
 }
 
 /**
@@ -527,7 +547,7 @@ object AppSettings {
     /** Auto bass boost, 0..15 dB. Zero means the effect is bypassed. */
     val jamesDspBassGainDb = MutableStateFlow(0f)
 
-    /** Stereo widening, 0..100. Zero means bypassed. */
+    /** Stereo widening, 0 or 20..80. Zero means bypassed. */
     val jamesDspStereoLevel = MutableStateFlow(0f)
 
     /** Vacuum-tube harmonic drive, 0..100. Zero means bypassed. */
@@ -1430,7 +1450,9 @@ object AppSettings {
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
         jamesDspEnabled.value = prefs.getBoolean(KEY_JAMESDSP_ENABLED, false)
         jamesDspBassGainDb.value = prefs.getFloat(KEY_JAMESDSP_BASS_DB, 0f).coerceIn(0f, 15f)
-        jamesDspStereoLevel.value = prefs.getFloat(KEY_JAMESDSP_STEREO, 0f).coerceIn(0f, 100f)
+        jamesDspStereoLevel.value = JamesDspConfig.safeStereoLevel(
+            prefs.getFloat(KEY_JAMESDSP_STEREO, 0f),
+        )
         jamesDspTubeLevel.value = prefs.getFloat(KEY_JAMESDSP_TUBE, 0f).coerceIn(0f, 100f)
         jamesDspReverbPreset.value = prefs.getInt(KEY_JAMESDSP_REVERB, -1).coerceIn(-1, 18)
         jamesDspPreGainDb.value = prefs.getFloat(KEY_JAMESDSP_PREGAIN_DB, 0f).coerceIn(-15f, 15f)
@@ -1969,7 +1991,7 @@ object AppSettings {
     }
 
     fun setJamesDspStereoLevel(value: Float) {
-        val clamped = value.coerceIn(0f, 100f)
+        val clamped = JamesDspConfig.safeStereoLevel(value)
         jamesDspStereoLevel.value = clamped
         prefs.edit().putFloat(KEY_JAMESDSP_STEREO, clamped).apply()
     }

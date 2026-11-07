@@ -27,10 +27,44 @@ enum class TrackAnalysisState {
     FAILED,
 }
 
-/** Both sides of the next transition, for stats for nerds. */
+/**
+ * What the analysis found about one side of the next transition.
+ *
+ * The state says how far the measuring has got; these say what it found. Both
+ * are needed on screen: "analysed" on its own says the app is working, and the
+ * tempo and key are what a listener actually wants to know.
+ */
+data class SmartTrackFacts(
+    /** How far the analysis has got. */
+    val state: TrackAnalysisState = TrackAnalysisState.WAITING,
+    /** Tempo in BPM, or 0 when it is not known. */
+    val bpm: Double = 0.0,
+    /** The key as the analyser spelled it, or blank when it is not known. */
+    val key: String = "",
+    /** How far the beat grid can be trusted, 0..1. */
+    val confidence: Double = 0.0,
+) {
+    /** Whether there is a tempo worth showing. */
+    val hasTempo: Boolean get() = bpm > 0.0
+}
+
+/**
+ * Both sides of the next transition, for stats for nerds.
+ *
+ * [current] and [next] are kept as they were — the states are read in more
+ * places than the facts are — and the facts sit beside them.
+ */
 data class SmartAnalysis(
     val current: TrackAnalysisState = TrackAnalysisState.WAITING,
     val next: TrackAnalysisState = TrackAnalysisState.WAITING,
+    /** What is known about the track that is playing. */
+    val currentFacts: SmartTrackFacts = SmartTrackFacts(),
+    /** What is known about the track that is coming. */
+    val nextFacts: SmartTrackFacts = SmartTrackFacts(),
+    /** Whole bars the next blend will overlap, or 0 when nothing is planned. */
+    val plannedBars: Int = 0,
+    /** How the next blend will be executed, blank when nothing is planned. */
+    val style: String = "",
 )
 
 /**

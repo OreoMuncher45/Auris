@@ -1,6 +1,8 @@
 package com.music.bitchord.playback.audio
 
 import android.util.Log
+import kotlin.math.abs
+import kotlin.math.pow
 
 /**
  * The native JamesDSP engine, as exposed by `libbitchord_jamesdsp.so`.
@@ -55,7 +57,7 @@ data class JamesDspConfig(
     val enabled: Boolean = false,
     /** 0 disables the bass boost; 15 dB is the engine's useful ceiling. */
     val bassGainDb: Float = 0f,
-    /** 0 is off, 100 is the engine's maximum widening. */
+    /** 0 is off; nonzero widening stays inside the engine's stable range. */
     val stereoLevel: Float = 0f,
     /** 0 is off, 100 is the engine's maximum drive. */
     val tubeLevel: Float = 0f,
@@ -67,21 +69,38 @@ data class JamesDspConfig(
 ) {
     fun sanitized(): JamesDspConfig = copy(
         bassGainDb = bassGainDb.coerceIn(0f, 15f),
-        stereoLevel = stereoLevel.coerceIn(0f, 100f),
+        stereoLevel = safeStereoLevel(stereoLevel),
         tubeLevel = tubeLevel.coerceIn(0f, 100f),
         reverbPreset = if (reverbPreset in 0..18) reverbPreset else -1,
         preGainDb = preGainDb.coerceIn(-15f, 15f),
     )
+
+    companion object {
+        /** Below this width the engine's side path becomes unstable. */
+        const val MIN_SAFE_STEREO_LEVEL = 20f
+
+        /** Above this width the side path starts folding the channels. */
+        const val MAX_SAFE_STEREO_LEVEL = 80f
+
+        /**
+         * Keeps zero as the explicit off state while confining every enabled
+         * widening value to the range that remains stable in the native engine.
+         */
+        fun safeStereoLevel(value: Float): Float = when {
+            !value.isFinite() || value <= 0f -> 0f
+            else -> value.coerceIn(MIN_SAFE_STEREO_LEVEL, MAX_SAFE_STEREO_LEVEL)
+        }
+    }
 }
 
 /**
  * Runs JamesDSP inside BitChord's existing Float32 DSP chain.
  *
- * The engine is stereo interleaved. BitChord's music streams are stereo, so
- * the normal path is a straight copy in and out; mono is duplicated into both
- * channels and averaged back afterwards. Multichannel sources are left alone
- * rather than silently downmixed here — the output stage already owns that
- * decision.
+ * The engine is stereo interleaved. BitChord's ordinary music streams are
+ * stereo, so the normal path is a straight copy in and out; mono is duplicated
+ * into both channels and averaged back afterwards. Multichannel sources bypass
+ * the native engine and keep only pre-gain plus a safety limiter, because one
+ * stereo filter/reverb state cannot safely process an Atmos field.
  *
  * Every method that touches the native handle runs on the audio thread. The
  * settings side only publishes an immutable [JamesDspConfig], so there is no
@@ -131,8 +150,21 @@ class JamesDspProcessor : FloatAudioProcessor {
             applied = null
             return
         }
-        if (failed || block.frameCount <= 0) return
+        if (block.frameCount <= 0) return
         if (sampleRate <= 0) return
+        if (block.channelCount > 2) {
+            // JamesDSP's engine is a stereo processor. Running it over every
+            // Atmos channel pair reuses one reverb/filter state across the
+            // immersive field and garbles it. Keep only channel-independent
+            // level control on multichannel audio; all tone/space stages are
+            // bypassed.
+            releaseEngine()
+            applied = null
+            framesSinceApply = 0L
+            applyImmersiveGain(block, target)
+            return
+        }
+        if (failed || block.frameCount <= 0) return
         if (engine == 0L && !ensureEngine()) return
 
         framesSinceApply += block.frameCount
@@ -174,26 +206,39 @@ class JamesDspProcessor : FloatAudioProcessor {
             for (frame in 0 until frames) {
                 samples[frame] = (scratchOut[frame * 2] + scratchOut[frame * 2 + 1]) * 0.5f
             }
-        } else {
-            // Multichannel: run the stereo engine over each channel pair
-            // (front L/R, then surrounds, …), leaving any odd trailing
-            // channel untouched. The single engine handle is reused pair by
-            // pair, so its reverb tail carries across pairs — an inaudible
-            // cross-talk on music content.
-            var c = 0
-            while (c + 1 < channels) {
-                val base = c
-                for (frame in 0 until frames) {
-                    scratchIn[frame * 2] = samples[frame * channels + base]
-                    scratchIn[frame * 2 + 1] = samples[frame * channels + base + 1]
-                }
-                JamesDspNative.nativeProcess(engine, scratchIn, scratchOut, frames)
-                for (frame in 0 until frames) {
-                    samples[frame * channels + base] = scratchOut[frame * 2]
-                    samples[frame * channels + base + 1] = scratchOut[frame * 2 + 1]
-                }
-                c += 2
+        }
+    }
+
+    /**
+     * Applies the only JamesDSP controls that are safe across an immersive
+     * channel layout: pre-level trim and a channel-independent safety limiter.
+     *
+     * The limiter approaches full scale smoothly rather than folding peaks
+     * back with a hard clip, so a boosted Atmos bed does not acquire the
+     * crackle that a hard edge would create.
+     */
+    private fun applyImmersiveGain(block: AudioBlock, target: JamesDspConfig) {
+        val gain = 10.0.pow(target.preGainDb / 20.0).toFloat()
+        val threshold = 10.0.pow(LIMITER_THRESHOLD_DB / 20.0).toFloat()
+        val headroom = 1.0f - threshold
+        val samples = block.samples
+        for (index in 0 until block.sampleCount) {
+            var sample = samples[index] * gain
+            if (!sample.isFinite()) {
+                samples[index] = 0f
+                continue
             }
+            if (target.limiterEnabled) {
+                val magnitude = abs(sample)
+                if (magnitude > threshold) {
+                    val over = magnitude - threshold
+                    val shaped = threshold + headroom * (over / (over + headroom))
+                    sample = if (sample < 0f) -shaped else shaped
+                }
+            } else {
+                sample = sample.coerceIn(-1.0f, 1.0f)
+            }
+            samples[index] = sample
         }
     }
 
@@ -256,5 +301,6 @@ class JamesDspProcessor : FloatAudioProcessor {
 
     private companion object {
         const val TAG = "JamesDspProcessor"
+        const val LIMITER_THRESHOLD_DB = -1.0
     }
 }

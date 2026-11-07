@@ -192,7 +192,7 @@ object AutomixEngineV2 {
         maxDelay: Double,
     ): Double {
         if (maxDelay <= 0 || !plannedStart.isFinite()) return 0.0
-        val mask = analysis.vocalActivityMask
+        val mask = smoothVocalMask(analysis.vocalActivityMask)
         val times = analysis.energyCurve.map { it.time }
         if (mask.isEmpty() || mask.size != times.size) return 0.0
 
