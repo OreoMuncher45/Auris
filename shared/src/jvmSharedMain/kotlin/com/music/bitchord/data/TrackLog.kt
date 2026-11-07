@@ -1,6 +1,7 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.SmartAnalysis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
@@ -198,7 +199,11 @@ object TrackLog {
      * track nothing was ever filed against — one served whole from the disk
      * cache, or the track a cold start resumes on.
      */
-    suspend fun forTrack(song: Song, stats: NerdStats.Snapshot?): String = withContext(Dispatchers.Default) {
+    suspend fun forTrack(
+        song: Song,
+        stats: NerdStats.Snapshot?,
+        smart: SmartAnalysis? = null,
+    ): String = withContext(Dispatchers.Default) {
         val held = synchronized(lines) { lines.toList() }
         val from = listOfNotNull(
             held.firstOrNull { it.track == song.videoId }?.at,
@@ -206,7 +211,7 @@ object TrackLog {
         ).minOrNull()
         val since = held.filter { from == null || it.at >= from }
         val window = since.filter { it.track == null || it.track == song.videoId }
-        header(song, stats, from, window.size, since.size - window.size) + "\n" +
+        header(song, stats, smart, from, window.size, since.size - window.size) + "\n" +
             window.joinToString("\n") { "${CLOCK.format(Date(it.at))} ${it.level} ${it.text}" } +
             "\n"
     }
@@ -225,6 +230,7 @@ object TrackLog {
     private fun header(
         song: Song,
         stats: NerdStats.Snapshot?,
+        smart: SmartAnalysis?,
         from: Long?,
         count: Int,
         elsewhere: Int,
@@ -232,6 +238,7 @@ object TrackLog {
         appendLine("Auris log — ${song.title} — ${song.artist}")
         appendLine("id=${song.videoId} duration=${song.durationText ?: "?"} album=${song.albumName ?: "?"}")
         appendLine("playing: ${stats.describe()}")
+        smart?.let { appendLine("automix: ${it.describe()}") }
         sourcesLine()?.let(::appendLine)
         appendLine(
             "window: ${from?.let { CLOCK.format(Date(it)) } ?: "everything held"} → " +
@@ -258,6 +265,30 @@ object TrackLog {
             else -> ""
         }
         return measured + promised + tier
+    }
+
+    /**
+     * What Automix knows and has planned, in the log's own plain words.
+     *
+     * The tempo and the key are what a listener wants to know about a track
+     * anyway, and the planned size and style are what says whether the next
+     * transition was planned at all. A log that cannot answer "what did
+     * Automix measure" makes every report about a transition a guess.
+     */
+    private fun SmartAnalysis.describe(): String {
+        val current = currentFacts
+        val next = nextFacts
+        val parts = buildList {
+            add("this=${current.state.name.lowercase(Locale.US)}")
+            if (current.hasTempo) add("${current.bpm.toInt()} BPM")
+            if (current.key.isNotBlank()) add("key ${current.key}")
+            add("next=${next.state.name.lowercase(Locale.US)}")
+            if (next.hasTempo) add("next ${next.bpm.toInt()} BPM")
+            if (next.key.isNotBlank()) add("next key ${next.key}")
+            if (plannedBars > 0) add("planned $plannedBars bars")
+            if (style.isNotBlank()) add(style)
+        }
+        return parts.joinToString(" · ")
     }
 
     private val CLOCK = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
