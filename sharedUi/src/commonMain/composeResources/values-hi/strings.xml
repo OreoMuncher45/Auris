@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">ऑटो</string>
     <string name="automix_preset_custom">कस्टम</string>
     <string name="automix_preset_fade">फेड</string>
+    <string name="automix_preview">पूर्वावलोकन</string>
+    <string name="automix_preview_stop">रोकें</string>
     <string name="automix_reset">रीसेट</string>
     <string name="automix_row_automix">इस गाने के लिए Automix</string>
     <string name="automix_row_beatmatch">बीट मिलान</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">फ़िल्टर</string>
     <string name="automix_row_overlap">ओवरलैप</string>
-    <string name="automix_scrub_hint">हैंडऑफ खिसकाने के लिए हरी रेखा या नीचे वाला ट्रैक खींचें · ऊपर वाले ट्रैक को खींचकर स्क्रॉल करें</string>
+    <string name="automix_row_volume">वॉल्यूम</string>
+    <string name="automix_scrub_hint">ट्रांज़िशन खिसकाने के लिए बॉक्स खींचें · आकार बदलने के लिए किनारा खींचें · स्क्रॉल करने के लिए नीचे वाली पट्टी खींचें</string>
     <string name="automix_style_dj_blend">DJ मिश्रण</string>
     <string name="automix_style_dj_filter">फ़िल्टर किया गया हैंडऑफ़</string>
     <string name="automix_style_equal_power">समान-शक्ति फ़ेड</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: साथ में सुनें के दौरान बंद</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">वोकल ओवरलैप %1$d%%</string>
+    <string name="automix_volume_fade_in">फ़ेड इन</string>
+    <string name="automix_volume_fade_out">फ़ेड आउट</string>
+    <string name="automix_volume_fast_in">तेज़ इन</string>
+    <string name="automix_volume_fast_out">तेज़ आउट</string>
+    <string name="automix_volume_slam">स्लैम</string>
     <string name="autoplay">ऑटोप्ले</string>
     <string name="autoplay_empty_description">मिलता-जुलता संगीत चलता रहेगा</string>
     <string name="autoplay_off">ऑटोप्ले बंद</string>

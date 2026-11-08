@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Auto</string>
     <string name="automix_preset_custom">Personalizado</string>
     <string name="automix_preset_fade">Fade</string>
+    <string name="automix_preview">Prévia</string>
+    <string name="automix_preview_stop">Parar</string>
     <string name="automix_reset">Repor</string>
     <string name="automix_row_automix">Automix para esta música</string>
     <string name="automix_row_beatmatch">Sincronização de batidas</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Sobreposição</string>
-    <string name="automix_scrub_hint">Arraste a linha verde ou a faixa inferior para mover a passagem · arraste a faixa superior para rolar</string>
+    <string name="automix_row_volume">Volume</string>
+    <string name="automix_scrub_hint">Arraste a caixa para mover a transição · arraste uma borda para redimensioná-la · arraste a faixa inferior para rolar</string>
     <string name="automix_style_dj_blend">mistura DJ</string>
     <string name="automix_style_dj_filter">passagem filtrada</string>
     <string name="automix_style_equal_power">fade de potência constante</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: parado no Ouvir junto</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Sobreposição vocal %1$d%%</string>
+    <string name="automix_volume_fade_in">Fade in</string>
+    <string name="automix_volume_fade_out">Fade out</string>
+    <string name="automix_volume_fast_in">Entrada rápida</string>
+    <string name="automix_volume_fast_out">Saída rápida</string>
+    <string name="automix_volume_slam">Slam</string>
     <string name="autoplay">Reprodução Automática</string>
     <string name="autoplay_empty_description">Músicas semelhantes continuarão tocando</string>
     <string name="autoplay_off">Reprodução Automática desativada</string>

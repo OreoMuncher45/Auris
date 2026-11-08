@@ -248,6 +248,13 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         profileStore().clear(trackId)
     }
 
+    // A desktop has no second deck to blend with, so there is no transition
+    // to play on demand. The button is hidden there rather than left to do
+    // nothing when it is pressed.
+    override val automixPreviewAvailable: Boolean = false
+
+    override fun previewAutomix(start: Boolean) = Unit
+
     private fun profileStore() = AutomixProfileStore { DesktopAnalysisRuntime.analysisHome() }
 
     private const val KEY_LAST_SCREEN = "last_player_screen"

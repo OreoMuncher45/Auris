@@ -25,6 +25,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.AutomixPreview
 import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.smart.AutomixOverride
@@ -100,6 +101,11 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
             AutomixProfiles.set(trackId, override)
 
         override fun clearAutomixProfile(trackId: String) = AutomixProfiles.clear(trackId)
+
+        // The panel's preview of the transition. The engine that can play it
+        // lives in the playback service, which leaves a handler for the panel
+        // to ask.
+        override fun previewAutomix(start: Boolean) = AutomixPreview.request(start)
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)

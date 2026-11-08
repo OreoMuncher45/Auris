@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Auto</string>
     <string name="automix_preset_custom">Eigene</string>
     <string name="automix_preset_fade">Fade</string>
+    <string name="automix_preview">Vorschau</string>
+    <string name="automix_preview_stop">Stopp</string>
     <string name="automix_reset">Zurücksetzen</string>
     <string name="automix_row_automix">Automix für diesen Song</string>
     <string name="automix_row_beatmatch">Beatmatching</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Überlappung</string>
-    <string name="automix_scrub_hint">Ziehe die grüne Linie oder den unteren Track, um die Übergabe zu verschieben · ziehe den oberen Track zum Scrollen</string>
+    <string name="automix_row_volume">Lautstärke</string>
+    <string name="automix_scrub_hint">Ziehe das Kästchen, um den Übergang zu verschieben · ziehe einen Rand, um seine Länge zu ändern · ziehe die untere Spur zum Scrollen</string>
     <string name="automix_style_dj_blend">DJ-Blend</string>
     <string name="automix_style_dj_filter">Gefilterte Übergabe</string>
     <string name="automix_style_equal_power">Gleichleistungs-Überblendung</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: bei „Gemeinsam hören“ gestoppt</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Gesangsüberlappung %1$d%%</string>
+    <string name="automix_volume_fade_in">Einblenden</string>
+    <string name="automix_volume_fade_out">Ausblenden</string>
+    <string name="automix_volume_fast_in">Schnell einblenden</string>
+    <string name="automix_volume_fast_out">Schnell ausblenden</string>
+    <string name="automix_volume_slam">Slam</string>
     <string name="autoplay">AutoPlay</string>
     <string name="autoplay_empty_description">Ähnliche Musik spielt danach automatisch weiter</string>
     <string name="autoplay_off">AutoPlay aus</string>

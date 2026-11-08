@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Auto</string>
     <string name="automix_preset_custom">Personalizado</string>
     <string name="automix_preset_fade">Fundido</string>
+    <string name="automix_preview">Vista previa</string>
+    <string name="automix_preview_stop">Detener</string>
     <string name="automix_reset">Restablecer</string>
     <string name="automix_row_automix">Automix para esta canción</string>
     <string name="automix_row_beatmatch">Sincronía de ritmo</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Solape</string>
-    <string name="automix_scrub_hint">Arrastra la línea verde o la pista inferior para mover el relevo · arrastra la pista superior para desplazar</string>
+    <string name="automix_row_volume">Volumen</string>
+    <string name="automix_scrub_hint">Arrastra el recuadro para mover la transición · arrastra un borde para cambiar su tamaño · arrastra la pista inferior para desplazar</string>
     <string name="automix_style_dj_blend">mezcla DJ</string>
     <string name="automix_style_dj_filter">traspaso filtrado</string>
     <string name="automix_style_equal_power">fundido de potencia constante</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: detenido en Escuchar juntos</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Solape de voces %1$d%%</string>
+    <string name="automix_volume_fade_in">Aparecer</string>
+    <string name="automix_volume_fade_out">Desvanecer</string>
+    <string name="automix_volume_fast_in">Entrada rápida</string>
+    <string name="automix_volume_fast_out">Salida rápida</string>
+    <string name="automix_volume_slam">Slam</string>
     <string name="autoplay">Reproducción automática</string>
     <string name="autoplay_empty_description">Seguirá reproduciéndose música similar</string>
     <string name="autoplay_off">AutoPlay desactivado</string>

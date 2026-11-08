@@ -2081,7 +2081,12 @@ class PlaybackService : MediaLibraryService() {
                 loudnessB.setBlendTrim(trim)
             },
             versionSwapActive = { versionSwapJob?.isActive == true || upgradeFadeActive },
-        )
+        ).also { controller ->
+            // The Automix panel's preview. Installed here rather than at the
+            // call site so that the handler always belongs to the controller
+            // that is actually playing, whichever one that is.
+            AutomixPreview.install { start -> controller.previewAutomix(start) }
+        }
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
@@ -8646,6 +8651,10 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(discordIdleObserver)
+        // The panel's preview has no engine behind it once this service is
+        // gone, and a request that reached a dead controller would be a
+        // request against a player that no longer exists.
+        AutomixPreview.clear()
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.

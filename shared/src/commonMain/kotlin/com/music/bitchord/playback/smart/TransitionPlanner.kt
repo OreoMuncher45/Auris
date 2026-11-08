@@ -213,6 +213,14 @@ data class TransitionPlan(
      */
     val eqShape: TransitionEqShape? = null,
     /**
+     * The shape of the two faders across the overlap.
+     *
+     * [TransitionVolumeShape.AUTO] is the equal-power pair every transition
+     * has used; anything else is the listener's own statement about how the
+     * outgoing track leaves and the incoming one arrives.
+     */
+    val volumeShape: TransitionVolumeShape = TransitionVolumeShape.AUTO,
+    /**
      * How strongly the two tracks are expected to be singing over each other
      * through this overlap, 0..1; see [vocalOverlapAmount].
      *
@@ -1164,6 +1172,9 @@ private fun phraseSwitch(
         // keeps its own placement, but the shape rides on the arriving side
         // and does not care where the handoff lands.
         eqShape = override?.eq?.takeIf { !it.isFlat },
+        // The listener's shape for the two faders. It rides on the blend
+        // itself and does not care where the handoff lands either.
+        volumeShape = override?.volume ?: TransitionVolumeShape.AUTO,
     )
 }
 
@@ -1475,6 +1486,7 @@ private fun standardTransition(
     fadeSeconds: Double,
     minFadeSeconds: Double,
     reason: String = "standard",
+    volumeShape: TransitionVolumeShape = TransitionVolumeShape.AUTO,
 ): TransitionPlan {
     val fade = clamp(fadeSeconds, minFadeSeconds, 12.0)
     val transitionStart = max(0.0, length - fade)
@@ -1486,6 +1498,10 @@ private fun standardTransition(
         transitionEnd = length,
         fadeSeconds = fade,
         transitionStyle = TransitionStyle.EQUAL_POWER,
+        // The listener's shape for the faders travels even here: a plain
+        // crossfade is still a transition, and a listener who asked for the
+        // outgoing track to slam away asked for it of this one too.
+        volumeShape = volumeShape,
         reason = if (started) reason else "before-$reason-window",
     )
 }
@@ -1547,7 +1563,17 @@ fun planTransition(
     // filter and no cueing. Every other choice is a preference the planner
     // honours when it can execute it, and reports what it actually did.
     if (override != null && !override.enabled) {
-        return standardTransition(length, playbackTime, standardFade, minFadeSeconds, "automix-off-for-track")
+        return standardTransition(
+            length,
+            playbackTime,
+            standardFade,
+            minFadeSeconds,
+            "automix-off-for-track",
+            // "Not this song" is about the *transition*, not about the volume:
+            // the listener still means the shape they asked for when Automix
+            // takes over again.
+            override.volume ?: TransitionVolumeShape.AUTO,
+        )
     }
 
     val analyzedContentEnd = analysis.contentEndTime.orZero().takeIf { it != 0.0 } ?: length
@@ -1591,6 +1617,7 @@ fun planTransition(
             standardFade,
             minFadeSeconds,
             "smart-analysis-fallback",
+            override?.volume ?: TransitionVolumeShape.AUTO,
         )
     }
 
@@ -1614,6 +1641,8 @@ fun planTransition(
             fadeSeconds = mixAnchor - transitionStart,
             transitionStyle = TransitionStyle.EQUAL_POWER,
             incomingCueTime = incomingStartPoint(nextAnalysis),
+            // The listener's shape for the faders, even on the plain tier.
+            volumeShape = override?.volume ?: TransitionVolumeShape.AUTO,
             policyReasons = policy.reasons,
             reason = if (started) "smart-plain-crossfade" else "before-plain-crossfade-window",
         )
@@ -1635,7 +1664,8 @@ fun planTransition(
             override.style != null ||
             override.filter != null ||
             override.effects != null ||
-            override.transitionStart > 0.0
+            override.transitionStart > 0.0 ||
+            override.transitionEnd > 0.0
         )
 
     phraseSwitch(analysis, nextAnalysis, length, nextLength, advanced, override)
@@ -1758,6 +1788,7 @@ private fun planAdvancedBars(
     incomingPlaybackRate: Double,
     requestedBars: Int,
     requestedStart: Double = 0.0,
+    requestedEnd: Double = 0.0,
     sameBeatBlend: Boolean,
 ): AdvancedBarPlacement? {
     val currentBpm = analysis.bpm.orZero()
@@ -1771,11 +1802,17 @@ private fun planAdvancedBars(
     val incomingAudibleStart = incomingStartPoint(nextAnalysis)
     val incomingRunway = max(0.0, incomingHandoffTime - incomingAudibleStart)
 
+    // The listener's own end of the overlap, when they have dragged the panel's
+    // box: the point at which the outgoing track is retired. It cannot be past
+    // the point the analysis says the music ends — a blend over the outro is
+    // blending silence — and it cannot be before the start they chose.
+    val end = if (requestedEnd > 0.0) requestedEnd.coerceIn(0.0, mixEnd) else mixEnd
+
     // The outgoing side keeps a small clearance before the transition. The
     // incoming side must contain the whole blend before its arrangement
     // handoff; when it is stretched, its own runway is consumed faster and
     // therefore supports fewer wall-clock bars.
-    val maxByOutgoing = floor((mixEnd - MIN_CLEARANCE_SECONDS) / barSeconds).toInt()
+    val maxByOutgoing = floor((end - MIN_CLEARANCE_SECONDS) / barSeconds).toInt()
     // A shared-grid blend must end exactly at the incoming arrangement
     // handoff, so its runway limits the overlap. A filter ride may pass the
     // incoming drop near the end of the blend; it only needs somewhere to
@@ -1791,7 +1828,7 @@ private fun planAdvancedBars(
     if (bars < MIN_TRANSITION_BARS) return null
 
     // The listener's own starting point, when they have dragged the panel's
-    // line onto one.
+    // box onto one.
     //
     // It decides the *size* rather than replacing the size: the overlap still
     // has to end at the mix point and still has to be whole bars, so the only
@@ -1803,25 +1840,45 @@ private fun planAdvancedBars(
     // Rounded rather than floored: the panel's line is already on the bar
     // grid, and a start a hair under a bar line is that bar line, not the
     // bar before it.
-    if (requestedStart > 0.0) {
-        val fromStart = round((mixEnd - requestedStart) / barSeconds).toInt()
+    //
+    // A start the listener has placed *and* an end they have placed are one
+    // box: the end is taken as given and the start is honoured exactly where
+    // they put it, with the size counted between them. The bars are then the
+    // nearest whole number to what they drew, which is what the panel shows
+    // them.
+    var explicitStart = 0.0
+    if (requestedStart > 0.0 && requestedEnd > 0.0) {
+        val span = end - requestedStart
+        val whole = round(span / barSeconds).toInt()
+        if (whole in MIN_TRANSITION_BARS..ceiling && span >= MIN_TRANSITION_BARS * barSeconds) {
+            explicitStart = requestedStart.coerceIn(0.0, end)
+            bars = whole
+        }
+    } else if (requestedStart > 0.0) {
+        val fromStart = round((end - requestedStart) / barSeconds).toInt()
         if (fromStart in MIN_TRANSITION_BARS..ceiling) bars = fromStart
     }
 
-    val targetStart = mixEnd - bars * barSeconds
-    val gateSeconds = v2VocalGate(analysis, targetStart, mixEnd)
+    val targetStart = if (explicitStart > 0.0) explicitStart else end - bars * barSeconds
+    // The vocal gate waits for a gap in the outgoing track's singing. It is
+    // skipped when the listener has placed the box themselves: they have said
+    // where the handoff goes, and moving it to avoid a collision would be
+    // moving the one thing they asked to have exactly where they asked.
+    val gateSeconds = if (explicitStart > 0.0) 0.0 else v2VocalGate(analysis, targetStart, end)
     val gateBars = if (gateSeconds > 0.0) ceil(gateSeconds / barSeconds).toInt() else 0
     bars = (bars - gateBars).coerceAtLeast(MIN_TRANSITION_BARS)
 
-    val overlapSeconds = bars * barSeconds
-    val start = mixEnd - overlapSeconds
+    // The overlap the renderer will produce: the distance between the two
+    // edges the listener drew, or the whole-bar distance the planner chose.
+    val overlapSeconds = if (explicitStart > 0.0) end - explicitStart else bars * barSeconds
+    val start = if (explicitStart > 0.0) explicitStart else end - overlapSeconds
     val cue = max(
         incomingAudibleStart,
         incomingHandoffTime - overlapSeconds * rate,
     )
     return AdvancedBarPlacement(
         start = start,
-        end = mixEnd,
+        end = end,
         bars = bars,
         incomingCueTime = cue,
         gateSeconds = gateSeconds,
@@ -1874,7 +1931,11 @@ private fun mixPlan(
     val arrangementEnd = max(0.0, mixAnchor - outgoingArrangementOverlap)
     // Advanced: the exit pulled back onto a downbeat, so whatever the incoming
     // track lands on at the end of the overlap lands on the one.
-    val mixEnd = if (gridBeatSeconds > 0) {
+    //
+    // A var because the listener's own box may move it: the panel draws an
+    // overlap with two edges, and the edge at the end is the point at which
+    // the outgoing track is retired.
+    var mixEnd = if (gridBeatSeconds > 0) {
         onDownbeatBefore(analysis, arrangementEnd, 4 * gridBeatSeconds)
     } else {
         arrangementEnd
@@ -1998,6 +2059,11 @@ private fun mixPlan(
             // keeps the two in step, so a dragged line and a picked size
             // never disagree about where the overlap begins.
             requestedStart = override?.transitionStart?.takeIf { it > 0.0 } ?: 0.0,
+            // The listener's own end of the overlap, when they have dragged the
+            // other edge of the panel's box onto one. Only read together with
+            // a start: an end on its own says nothing about where the handoff
+            // goes, and the planner's own exit stands.
+            requestedEnd = override?.transitionEnd?.takeIf { it > 0.0 } ?: 0.0,
             sameBeatBlend = sameBeatBlend,
         )
         if (placement == null) {
@@ -2011,6 +2077,9 @@ private fun mixPlan(
             v2Reasons += "v2-vocal-gate+${tenths(placement.gateSeconds)}s"
         }
         transitionStart = placement.start
+        // The exit the plan will actually use: the listener's own when they
+        // have drawn one, and the analysis's otherwise.
+        mixEnd = placement.end
         finalIncomingCueTime = placement.incomingCueTime
         renderedBars = placement.bars
         renderedBeats = placement.bars * BEATS_PER_BAR
@@ -2151,6 +2220,10 @@ private fun mixPlan(
         // The listener's tone shape for the arriving track. A flat shape is
         // the same as no shape, so it is carried as none.
         eqShape = override?.eq?.takeIf { !it.isFlat },
+        // The listener's shape for the two faders. It is a statement about the
+        // blend's volume and has nothing to be compatible with, so it is
+        // carried as asked.
+        volumeShape = override?.volume ?: TransitionVolumeShape.AUTO,
         vocalOverlap = vocalOverlap,
         beatSeconds = gridBeatSeconds,
         // Tempo is fixed while audible. Live phase-lock pulses changed

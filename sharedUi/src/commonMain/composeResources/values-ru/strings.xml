@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Авто</string>
     <string name="automix_preset_custom">Свой</string>
     <string name="automix_preset_fade">Затухание</string>
+    <string name="automix_preview">Предпросмотр</string>
+    <string name="automix_preview_stop">Остановить</string>
     <string name="automix_reset">Сбросить</string>
     <string name="automix_row_automix">Automix для этого трека</string>
     <string name="automix_row_beatmatch">Сведение по биту</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">Эквалайзер</string>
     <string name="automix_row_filter">Фильтр</string>
     <string name="automix_row_overlap">Перекрытие</string>
-    <string name="automix_scrub_hint">Перетащите зелёную линию или нижнюю дорожку, чтобы сместить передачу · перетащите верхнюю дорожку, чтобы прокрутить</string>
+    <string name="automix_row_volume">Громкость</string>
+    <string name="automix_scrub_hint">Перетащите рамку, чтобы сдвинуть переход · потяните за край, чтобы изменить длину · тяните нижнюю дорожку для прокрутки</string>
     <string name="automix_style_dj_blend">DJ-микс</string>
     <string name="automix_style_dj_filter">переход с фильтром</string>
     <string name="automix_style_equal_power">кроссфейд постоянной мощности</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: остановлен в режиме «Слушать вместе»</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Перекрытие вокала %1$d%%</string>
+    <string name="automix_volume_fade_in">Нарастание</string>
+    <string name="automix_volume_fade_out">Затухание</string>
+    <string name="automix_volume_fast_in">Быстрое нарастание</string>
+    <string name="automix_volume_fast_out">Быстрое затухание</string>
+    <string name="automix_volume_slam">Слэм</string>
     <string name="autoplay">Автовоспроизведение</string>
     <string name="autoplay_empty_description">Похожая музыка будет продолжать играть</string>
     <string name="autoplay_off">Автовоспроизведение выключено</string>

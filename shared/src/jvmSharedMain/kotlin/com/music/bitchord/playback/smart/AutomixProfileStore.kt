@@ -58,7 +58,15 @@ class AutomixProfileStore(
         }
         return runCatching {
             val stored = json.decodeFromString(Stored.serializer(), file.readText())
-            require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
+            // Version 3 is read as well as written: the only thing it lacks is
+            // the volume shape, and that has an exact default — "leave the
+            // volume alone" — so a file written before the shape existed says
+            // the same thing as one written now with nothing chosen. Reading it
+            // keeps the listener's other choices, which is the whole point of
+            // keeping a choice with the song.
+            require(stored.version == SCHEMA_VERSION || stored.version == PREVIOUS_SCHEMA_VERSION) {
+                "schema ${stored.version}"
+            }
             stored.toOverride()
         }
             .onFailure {
@@ -135,7 +143,9 @@ class AutomixProfileStore(
         val filter: String = "",
         val eq: String = "",
         val effects: String = "",
+        val volume: String = "",
         val transitionStart: Double = 0.0,
+        val transitionEnd: Double = 0.0,
     ) {
         fun toOverride(): AutomixOverride = AutomixOverride(
             enabled = enabled,
@@ -152,7 +162,11 @@ class AutomixProfileStore(
             effects = effects.takeIf { it.isNotBlank() }?.let { name ->
                 AutomixEffect.entries.firstOrNull { it.name == name }
             },
+            volume = volume.takeIf { it.isNotBlank() }?.let { name ->
+                TransitionVolumeShape.entries.firstOrNull { it.name == name }
+            },
             transitionStart = transitionStart.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
+            transitionEnd = transitionEnd.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
         )
 
         companion object {
@@ -163,7 +177,9 @@ class AutomixProfileStore(
                 filter = override.filter?.name.orEmpty(),
                 eq = override.eq?.name.orEmpty(),
                 effects = override.effects?.name.orEmpty(),
+                volume = override.volume?.name.orEmpty(),
                 transitionStart = override.transitionStart.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
+                transitionEnd = override.transitionEnd.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
             )
         }
     }
@@ -172,13 +188,20 @@ class AutomixProfileStore(
         const val DIRECTORY = "automix-profiles"
 
         /**
-         * Version 3 added the effect choice. Version 2 added the tone shape
-         * and the listener's own starting point for the overlap. Version 1
-         * files are discarded rather than read as half a choice: an old file
+         * Version 4 added the volume shape and the second edge of the panel's
+         * box. Version 3 added the effect choice. Version 2 added the tone
+         * shape and the listener's own starting point for the overlap. Version
+         * 1 files are discarded rather than read as half a choice: an old file
          * is a choice without the parts it did not have, and guessing at them
          * would be worse than starting again.
+         *
+         * Version 3 is read rather than discarded, because the two things it
+         * lacks both have exact defaults — see [load].
          */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
+
+        /** The schema before the volume shape, read as well as written. */
+        const val PREVIOUS_SCHEMA_VERSION = 3
 
         /** The musical range the planner works in; a stored choice outside it is clamped. */
         const val MAX_BARS = 32

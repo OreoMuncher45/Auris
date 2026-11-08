@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">อัตโนมัติ</string>
     <string name="automix_preset_custom">กำหนดเอง</string>
     <string name="automix_preset_fade">เฟด</string>
+    <string name="automix_preview">ตัวอย่าง</string>
+    <string name="automix_preview_stop">หยุด</string>
     <string name="automix_reset">รีเซ็ต</string>
     <string name="automix_row_automix">Automix สำหรับเพลงนี้</string>
     <string name="automix_row_beatmatch">จับจังหวะให้ตรงกัน</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">อีควอไลเซอร์</string>
     <string name="automix_row_filter">ฟิลเตอร์</string>
     <string name="automix_row_overlap">การทับซ้อน</string>
-    <string name="automix_scrub_hint">ลากเส้นสีเขียวหรือแทร็กด้านล่างเพื่อเลื่อนจุดส่งต่อ · ลากแทร็กด้านบนเพื่อเลื่อนดู</string>
+    <string name="automix_row_volume">ระดับเสียง</string>
+    <string name="automix_scrub_hint">ลากกล่องเพื่อย้ายทรานซิชัน · ลากขอบเพื่อปรับขนาด · ลากเลนล่างเพื่อเลื่อน</string>
     <string name="automix_style_dj_blend">มิกซ์ DJ</string>
     <string name="automix_style_dj_filter">การส่งต่อแบบกรอง</string>
     <string name="automix_style_equal_power">เฟดกำลังเท่ากัน</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: หยุดทำงานขณะฟังด้วยกัน</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">เสียงร้องทับซ้อน %1$d%%</string>
+    <string name="automix_volume_fade_in">เฟดเข้า</string>
+    <string name="automix_volume_fade_out">เฟดออก</string>
+    <string name="automix_volume_fast_in">เฟดเข้าเร็ว</string>
+    <string name="automix_volume_fast_out">เฟดออกเร็ว</string>
+    <string name="automix_volume_slam">สแลม</string>
     <string name="autoplay">AutoPlay</string>
     <string name="autoplay_empty_description">เพลงที่คล้ายกันจะเล่นต่อไปเรื่อย ๆ</string>
     <string name="autoplay_off">ปิด AutoPlay</string>

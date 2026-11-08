@@ -1,12 +1,7 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -43,20 +40,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,11 +55,13 @@ import com.music.bitchord.data.settings.TrackAnalysisDigest
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.playback.smart.AutomixEffect
 import com.music.bitchord.playback.smart.AutomixOverride
+import com.music.bitchord.playback.smart.AutomixPreviewState
 import com.music.bitchord.playback.smart.FilterTransitionVariant
 import com.music.bitchord.playback.smart.MAX_TRANSITION_BARS
 import com.music.bitchord.playback.smart.MIN_TRANSITION_BARS
 import com.music.bitchord.playback.smart.TransitionEqShape
 import com.music.bitchord.playback.smart.TransitionStyle
+import com.music.bitchord.playback.smart.TransitionVolumeShape
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -80,7 +69,6 @@ import dev.chrisbanes.haze.HazeState
 import java.util.Locale
 import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.stringResource
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -102,16 +90,22 @@ import kotlin.math.roundToInt
  *
  * Both lanes share one axis: the *outgoing* track's clock. The upper lane is
  * the track that is playing; the lower is the one queued after it, placed so
- * that its cue point lands on the start of the overlap. The amber box is the
- * overlap the planner actually resolved, and the green line is where the
- * listener wants it to begin. Those two are deliberately separate marks: a
- * request the planner cannot execute is still shown, next to what it did
- * instead, rather than being quietly rewritten.
+ * that its cue point lands on the left edge of the box. The orange box is the
+ * window the listener has asked the transition to happen in — the green line
+ * at its left edge is the handoff itself — and the two edges can be moved
+ * separately, so a blend can begin and end anywhere in the outgoing song.
  *
- * The one coloured curve over the lower lane is the effect on the arriving
- * track — violet for the tone shape's frequency response, amber for a filter
- * ride. One curve, not two, because a second line over a waveform is where a
- * drawing stops being readable.
+ * Green dots mark the measured grid, and an edge snaps to them: what the
+ * listener places is a musical place rather than an arbitrary one. The plan's
+ * own placement is a grey hairline beside the box, drawn only when the two
+ * disagree — a request the planner cannot execute is still shown, next to
+ * what it did instead, rather than being quietly rewritten.
+ *
+ * The coloured curves are the effects in flight: violet for the tone shape's
+ * frequency response, amber for a filter ride, coral for the volume pair the
+ * two faders ride. They are drawn from the listener's own choice rather than
+ * from the plan, so a change of mind is visible at once instead of after the
+ * next plan comes back.
  *
  * ## Where the choice goes
  *
@@ -172,6 +166,7 @@ fun AutomixPanelSheet(
                 edited = true
             },
             haptic = { haptics.play(Haptic.Select) },
+            tick = { haptics.play(Haptic.Tick) },
         )
     }
 }
@@ -183,61 +178,81 @@ private fun ColumnScope.AutomixPanelBody(
     onDraft: (AutomixOverride) -> Unit,
     onReset: () -> Unit,
     haptic: () -> Unit,
+    tick: () -> Unit,
 ) {
     val current = panel.current
     val next = panel.next
     val plan = panel.plan
     val hasNext = panel.nextTitle.isNotBlank()
-    val scrubTime = draft.transitionStart.takeIf { it > 0.0 } ?: plan.transitionStart
-
-    // The two numbers the line and the size are built from: where the
-    // overlap ends, and how long one bar of the outgoing track is. The
-    // planner uses the same two, so what the listener drags and what the
-    // planner renders are measured against the same grid.
-    val mixPoint = plan.transitionEnd.takeIf { it > 0.0 } ?: current.contentEnd
-    val barSeconds = (
-        current.beatInterval.takeIf { it > 0.0 }
-            ?: current.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
-            ?: 0.0
-        ) * 4.0
-    val ceiling = barCeiling(plan)
+    val barSeconds = automixBarSeconds(current)
+    val window = automixWindow(draft = draft, current = current, plan = plan)
+    val previewing by AutomixPreviewState.playing.collectAsStateWithLifecycle()
 
     AutomixTrackHeading(panel = panel, draft = draft)
 
     Spacer(Modifier.height(12.dp))
 
-    AutomixTransitionGraph(
+    AutomixTransitionEditor(
         current = current,
         next = next,
         plan = plan,
-        scrubTime = scrubTime,
+        draft = draft,
+        window = window,
         hasNext = hasNext,
         enabled = draft.enabled,
-        onScrub = { time ->
-            // The line and the size are one decision: the overlap ends at the
-            // mix point, so a place on the track is a number of bars before
-            // it. Writing both keeps the panel and the planner talking about
-            // the same overlap instead of two that disagree.
-            val bars = barCountAt(time, mixPoint, barSeconds, ceiling)
-            onDraft(draft.copy(transitionStart = time, bars = bars))
+        resetKey = panel.trackId,
+        onWindow = { placed ->
+            // The box and the size are one decision. The window is placed
+            // where the listener put it and the size is what the two edges
+            // measure, so the row below the drawing and the drawing itself can
+            // never disagree about either.
+            val bars = automixBarsBetween(placed.start, placed.end, barSeconds)
+                .coerceIn(MIN_TRANSITION_BARS, MAX_TRANSITION_BARS)
+            onDraft(
+                draft.copy(
+                    transitionStart = placed.start,
+                    transitionEnd = placed.end,
+                    bars = bars,
+                ),
+            )
         },
-        haptic = haptic,
+        onSnap = tick,
         modifier = Modifier
             .fillMaxWidth()
-            .height(196.dp),
+            .height(210.dp),
     )
 
-    AutomixLegend(plan = plan)
+    AutomixLegend(plan = plan, draft = draft)
 
-    // The size of the overlap, right under the drawing that shows it.
-    AutomixBarsChip(
-        bars = draft.bars,
-        planned = plan.bars,
-        onBars = { haptic(); onDraft(draft.copy(bars = it, transitionStart = handoffTime(it, mixPoint, barSeconds))) },
+    Row(
         modifier = Modifier
-            .align(Alignment.CenterHorizontally)
+            .fillMaxWidth()
             .padding(top = 6.dp),
-    )
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // The size of the window, right under the drawing that shows it. A
+        // chosen size grows the box from its own right edge, so the exit the
+        // listener placed stays where they placed it.
+        AutomixBarsChip(
+            bars = draft.bars,
+            planned = plan.bars,
+            onBars = { choice ->
+                haptic()
+                onDraft(barsChoice(draft, choice, window, barSeconds))
+            },
+        )
+        if (PlayerSettings.automixPreviewAvailable && hasNext && draft.enabled) {
+            Spacer(Modifier.width(10.dp))
+            AutomixPreviewButton(
+                playing = previewing,
+                onToggle = {
+                    haptic()
+                    PlayerSettings.previewAutomix(!previewing)
+                },
+            )
+        }
+    }
 
     Text(
         text = stringResource(Res.string.automix_scrub_hint),
@@ -272,7 +287,7 @@ private fun ColumnScope.AutomixPanelBody(
                 stringResource(Res.string.automix_bars_auto)
             },
             accent = AutomixBlue,
-            options = barsOptions(draft = draft, onDraft = onDraft),
+            options = barsOptions(draft = draft, window = window, barSeconds = barSeconds, onDraft = onDraft),
             haptic = haptic,
         )
         AutomixSettingRow(
@@ -294,6 +309,16 @@ private fun ColumnScope.AutomixPanelBody(
             value = effectsValue(draft = draft, plan = plan),
             accent = AutomixCoral,
             options = effectsOptions(draft = draft, onDraft = onDraft),
+            haptic = haptic,
+        )
+        // How the two tracks leave and arrive. A shape about the outgoing
+        // track and a shape about the incoming one are both here, because
+        // they are the same question asked from two ends.
+        AutomixSettingRow(
+            label = stringResource(Res.string.automix_row_volume),
+            value = volumeLabel(draft.volume),
+            accent = AutomixCream,
+            options = volumeOptions(draft = draft, onDraft = onDraft),
             haptic = haptic,
         )
         AutomixSwitchRow(
@@ -393,564 +418,39 @@ private fun AutomixTag(text: String, color: Color) {
     )
 }
 
-// ---------------------------------------------------------------------------
-// The drawing
-// ---------------------------------------------------------------------------
-
 /**
- * Two lanes, one clock, one draggable handoff.
+ * What the lines in the drawing are.
  *
- * The viewport follows the *plan*, never the finger. That is what makes the
- * drag feel solid: the grid and the waveforms stay exactly where they were
- * while the listener decides, and the view glides to the new neighbourhood
- * only once the plan has caught up with where they put the line.
- *
- * ## Three gestures, kept apart
- *
- * The outgoing lane is the clock — the whole drawing is the outgoing track's
- * own time, with the arriving track laid on it. That gives a finger three
- * things to do, and the panel keeps them apart so none of them fights the
- * others:
- *
- * - **Drag the outgoing lane** and the view scrolls: the outgoing waveform
- *   moves under the finger, the way a timeline does. The transition itself
- *   does not change.
- * - **Drag the arriving lane, or the green line itself**, and the handoff
- *   moves: it follows the finger in whole bars, inside the range the planner
- *   can actually execute.
- * - **Tap anywhere** and the handoff jumps to that place, snapped the same
- *   way.
- *
- * ## Why the mapping is frozen
- *
- * The finger-to-time mapping is taken once, when the finger lands, and kept
- * for the whole gesture. A view that moved under the finger would put the
- * line somewhere the finger is not: the line would appear to teleport to
- * wherever the finger touched, and then refuse to travel any further because
- * the plan kept pulling it back.
+ * Drawn from the same choice the drawing is, not from the plan: the panel's
+ * legend and its picture have to agree about what is on screen, and the
+ * picture is the listener's answer until the planner has answered back.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AutomixTransitionGraph(
-    current: TrackAnalysisDigest,
-    next: TrackAnalysisDigest,
-    plan: AutomixPlanDigest,
-    scrubTime: Double,
-    hasNext: Boolean,
-    enabled: Boolean,
-    onScrub: (Double) -> Unit,
-    haptic: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val duration = current.duration.takeIf { it > 0.0 } ?: 0.0
-    // Where the overlap ends. A whole-bar overlap can only end at the mix
-    // point, so the line is placed backwards from it.
-    val mixPoint = plan.transitionEnd.takeIf { it > 0.0 } ?: current.contentEnd
-    val beatSeconds = current.beatInterval.takeIf { it > 0.0 }
-        ?: current.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
-        ?: 0.0
-    val barSeconds = beatSeconds * 4.0
-    // How far back the line may go: the planner's own ceiling, so the panel
-    // never offers a placement the planner would refuse.
-    val maxBars = barCeiling(plan)
-
-    // The window on show. Plain state rather than an animatable: the drag
-    // writes to it from inside the pointer gesture, and a gesture's scope is
-    // not allowed to reach into an animatable's mutator.
-    var viewStart by remember { mutableStateOf(0.0) }
-    var viewEnd by remember { mutableStateOf(1.0) }
-    // The listener's own scroll, in seconds, measured from the plan's window.
-    var panOffset by remember { mutableStateOf(0.0) }
-    var initialised by remember { mutableStateOf(false) }
-    var gesturing by remember { mutableStateOf(false) }
-
-    val base = graphViewport(plan.transitionStart, plan.transitionEnd, duration)
-    val liveBase by rememberUpdatedState(base)
-
-    // The window follows the plan, and the listener's scroll is kept on top
-    // of it: the plan decides which neighbourhood is on show, the scroll
-    // decides how far into the song the listener has walked away from it.
-    //
-    // Nothing moves the window while a finger is on it. That is the whole
-    // reason the drag can be trusted: the grid, the waveforms and the line
-    // are in the same places before and after every frame of the gesture.
-    LaunchedEffect(base, duration, gesturing) {
-        if (gesturing) return@LaunchedEffect
-        val from = base.start + panOffset
-        val to = base.end + panOffset
-        if (!initialised) {
-            initialised = true
-            viewStart = from
-            viewEnd = to
-            return@LaunchedEffect
-        }
-        // The glide, frame by frame. The window moves to the plan's new
-        // neighbourhood instead of jumping to it, and it moves from wherever
-        // it happens to be — which, after a scroll, is not where the plan
-        // last put it.
-        val fromStart = viewStart
-        val fromEnd = viewEnd
-        val started = withFrameNanos { it }
-        while (true) {
-            val now = withFrameNanos { it }
-            val progress = ((now - started) / VIEW_GLIDE_MS.toDouble()).coerceIn(0.0, 1.0)
-            val eased = FastOutSlowInEasing.transform(progress.toFloat())
-            viewStart = fromStart + (from - fromStart) * eased
-            viewEnd = fromEnd + (to - fromEnd) * eased
-            if (progress >= 1.0) break
-        }
-    }
-
-    val latestScrub by rememberUpdatedState(onScrub)
-    val latestHaptic by rememberUpdatedState(haptic)
-    // The mix point, the bar length and the plan itself all move while the
-    // panel is open — the analysis refines, the plan is re-made — and the
-    // gesture loop is started once, so every one of them is read through a
-    // state rather than captured.
-    val liveMix by rememberUpdatedState(mixPoint)
-    val liveBar by rememberUpdatedState(barSeconds)
-    val liveMax by rememberUpdatedState(maxBars)
-    val liveScrub by rememberUpdatedState(scrubTime)
-    val liveDuration by rememberUpdatedState(duration)
-    val liveHasNext by rememberUpdatedState(hasNext)
-
-    val graphModifier = if (!enabled || beatSeconds <= 0.0) {
-        modifier
-    } else {
-        modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                val width = size.width.toFloat().coerceAtLeast(1f)
-                val height = size.height.toFloat().coerceAtLeast(1f)
-                // Frozen for the whole gesture. The view must not move under
-                // the finger, or the line jumps away from it.
-                val viewFrom = viewStart
-                val viewTo = viewEnd
-                val viewSpan = (viewTo - viewFrom).coerceAtLeast(0.001)
-                val gap = 12.dp.toPx()
-                val laneHeight = if (liveHasNext) (height - gap) / 2f else height
-                val lowerTop = if (liveHasNext) laneHeight + gap else height
-                val onIncoming = liveHasNext && down.position.y >= lowerTop
-                val lineX = ((liveScrub - viewFrom) / viewSpan * width).toFloat()
-                val onLine = abs(down.position.x - lineX) <= LINE_HIT_DP.toPx()
-                // The outgoing lane is the clock and is scrolled; the arriving
-                // lane is the thing being placed and is dragged onto the grid.
-                val scrubbing = onIncoming || onLine
-                var decided = false
-                var horizontal = false
-                var lastBars = -1
-
-                fun handoffAt(x: Float) {
-                    val raw = viewFrom + (x / width).coerceIn(0f, 1f) * viewSpan
-                    val bars = barCountAt(raw, liveMix, liveBar, liveMax)
-                    if (bars != lastBars) {
-                        lastBars = bars
-                        latestHaptic()
-                    }
-                    latestScrub(handoffTime(bars, liveMix, liveBar))
-                }
-
-                fun panTo(dx: Float) {
-                    val span = viewSpan
-                    val length = liveDuration
-                    var from = viewFrom - (dx / width) * span
-                    val maxFrom = max(0.0, length - span)
-                    if (length > 0.0) from = from.coerceIn(0.0, maxFrom)
-                    // Keep the handoff in sight: scrolling away from the thing
-                    // being chosen is not what anyone wants from a panel that
-                    // is about that thing.
-                    val line = liveScrub
-                    if (length > span && (from > line || from + span < line)) {
-                        from = (if (from > line) line else line - span).coerceIn(0.0, maxFrom)
-                    }
-                    viewStart = from
-                    viewEnd = from + span
-                    panOffset = from - liveBase.start
-                }
-
-                gesturing = true
-                try {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) {
-                            change.consume()
-                            break
-                        }
-                        if (!decided) {
-                            val dx = change.position.x - down.position.x
-                            val dy = change.position.y - down.position.y
-                            if (abs(dx) > viewConfiguration.touchSlop || abs(dy) > viewConfiguration.touchSlop) {
-                                decided = true
-                                horizontal = abs(dx) >= abs(dy)
-                                // Only a horizontal gesture is claimed. A
-                                // vertical one belongs to the sheet, which
-                                // scrolls.
-                                if (horizontal) {
-                                    change.consume()
-                                    if (scrubbing) {
-                                        handoffAt(change.position.x)
-                                    } else {
-                                        panTo(change.position.x - down.position.x)
-                                    }
-                                }
-                            }
-                            continue
-                        }
-                        if (horizontal && change.positionChanged()) {
-                            change.consume()
-                            if (scrubbing) {
-                                handoffAt(change.position.x)
-                            } else {
-                                panTo(change.position.x - down.position.x)
-                            }
-                        }
-                    }
-                } finally {
-                    gesturing = false
-                }
-                // A tap: the handoff jumps to the place that was touched.
-                if (!decided) handoffAt(down.position.x)
-            }
-        }
-    }
-
-    Canvas(graphModifier) {
-        val width = size.width
-        val height = size.height
-        if (width <= 0f || height <= 0f) return@Canvas
-        val from = viewStart
-        val span = (viewEnd - viewStart).coerceAtLeast(0.001)
-        fun xOf(time: Double): Float = ((time - from) / span * width).toFloat().coerceIn(-width, width * 2f)
-
-        val gap = 12.dp.toPx()
-        val laneHeight = if (hasNext) (height - gap) / 2f else height
-        val upperTop = 0f
-        val lowerTop = if (hasNext) laneHeight + gap else height
-
-        // The two lanes' grounds. Rounded, barely lighter than the sheet, so
-        // the waveforms have something to sit on without the panel growing a
-        // pair of heavy boxes.
-        drawLaneGround(upperTop, laneHeight)
-        if (hasNext) drawLaneGround(lowerTop, laneHeight)
-
-        val upperMid = upperTop + laneHeight / 2f
-        drawWaveform(
-            digest = current,
-            laneTop = upperTop,
-            laneHeight = laneHeight,
-            from = from,
-            span = span,
-            mapToAxis = { it },
-            peak = AutomixBlue,
-            core = AutomixCream,
-        )
-        drawBeatGrid(
-            digest = current,
-            mid = upperMid,
-            from = from,
-            span = span,
-            anchor = mixPoint,
-            mapToAxis = { it },
-        )
-
-        if (hasNext) {
-            val lowerMid = lowerTop + laneHeight / 2f
-            // The incoming track's own clock, laid on the outgoing one's: the
-            // cue point is what plays when the overlap opens, so that is where
-            // it is pinned. Everything before it is preroll that will not be
-            // heard, and is drawn dimmer rather than hidden.
-            //
-            // While the listener is dragging, the cue is worked out from the
-            // plan rather than read from it: a longer overlap starts the
-            // arriving track earlier in its own timeline, and the panel shows
-            // that happening at once instead of waiting for the plan to catch
-            // up with the finger.
-            val drift = if (plan.transitionStart > 0.0) scrubTime - plan.transitionStart else 0.0
-            val cue = max(0.0, plan.cueSeconds - drift * plan.incomingRate)
-            val incomingMap: (Double) -> Double = { scrubTime + (it - cue) }
-            drawWaveform(
-                digest = next,
-                laneTop = lowerTop,
-                laneHeight = laneHeight,
-                from = from,
-                span = span,
-                mapToAxis = incomingMap,
-                peak = AutomixBlue.copy(alpha = 0.85f),
-                core = AutomixCream.copy(alpha = 0.85f),
-            )
-            drawBeatGrid(
-                digest = next,
-                mid = lowerMid,
-                from = from,
-                span = span,
-                anchor = mixPoint,
-                mapToAxis = incomingMap,
-            )
-        }
-
-        // The overlap the planner actually resolved. Drawn after the
-        // waveforms so it tints them, and before the marks so the marks stay
-        // crisp on top of it.
-        //
-        // Faded while a finger is down: the plan has not caught up with the
-        // request yet, and a box that claims to be the overlap while it is
-        // demonstrably something else is worse than a box that is merely
-        // waiting.
-        if (enabled && plan.transitionEnd > plan.transitionStart) {
-            val left = xOf(plan.transitionStart)
-            val right = xOf(plan.transitionEnd)
-            if (right > left) {
-                val alpha = if (gesturing) 0.35f else 1f
-                drawOverlapBox(left, right, upperTop, laneHeight, alpha)
-                if (hasNext) drawOverlapBox(left, right, lowerTop, laneHeight, alpha)
-            }
-        }
-
-        // The one effect curve, over the arriving side.
-        if (hasNext && enabled) {
-            drawEffectCurve(plan = plan, laneTop = lowerTop, laneHeight = laneHeight)
-        }
-
-        // The listener's handoff. Green, full height, with a handle at the top
-        // so there is something to aim a finger at. Brighter while it is
-        // being held, because that is the one moment it is under the finger.
-        if (enabled && scrubTime > 0.0) {
-            val x = xOf(scrubTime)
-            if (x in 0f..width) {
-                drawLine(
-                    color = AutomixGreen.copy(alpha = if (gesturing) 0.30f else 0.18f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, height),
-                    strokeWidth = 7.dp.toPx(),
-                )
-                drawLine(
-                    color = AutomixGreen,
-                    start = Offset(x, 0f),
-                    end = Offset(x, height),
-                    strokeWidth = 2.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
-                val handleWidth = if (gesturing) 30.dp.toPx() else 22.dp.toPx()
-                val handleHeight = 5.dp.toPx()
-                drawRoundRect(
-                    color = AutomixGreen,
-                    topLeft = Offset(x - handleWidth / 2f, 0f),
-                    size = Size(handleWidth, handleHeight),
-                    cornerRadius = CornerRadius(handleHeight / 2f),
-                )
-            }
-        }
-    }
-}
-
-private fun DrawScope.drawLaneGround(top: Float, height: Float) {
-    drawRoundRect(
-        color = Color.White.copy(alpha = 0.035f),
-        topLeft = Offset(0f, top),
-        size = Size(size.width, height),
-        cornerRadius = CornerRadius(12.dp.toPx()),
-    )
-}
-
-/**
- * One track's envelope, as a mirrored pair of strokes per column.
- *
- * Two tones because a single flat colour reads as a bar chart: the outer
- * stroke carries the peaks and the inner one the body, which is what makes a
- * waveform look like sound rather than like a histogram.
- *
- * Folded into one column per pixel before it is drawn. The analyser's own
- * resolution is thousands of samples over a track, and drawing every one of
- * them on every frame is a great deal of work for a picture no wider than the
- * screen — on a cheap phone that is the difference between a panel that opens
- * and one that stutters. The peak of each column is kept, so the transients
- * survive the fold.
- */
-private fun DrawScope.drawWaveform(
-    digest: TrackAnalysisDigest,
-    laneTop: Float,
-    laneHeight: Float,
-    from: Double,
-    span: Double,
-    mapToAxis: (Double) -> Double,
-    peak: Color,
-    core: Color,
-) {
-    val peaks = digest.waveform
-    val times = digest.waveformTimes
-    if (peaks.isEmpty() || times.isEmpty()) return
-    val mid = laneTop + laneHeight / 2f
-    val amplitude = laneHeight * 0.44f
-    val stroke = 1.6f
-    val columns = size.width.toInt().coerceAtLeast(1)
-    val tops = FloatArray(columns)
-    var seen = false
-    for (index in peaks.indices) {
-        val time = times.getOrNull(index) ?: continue
-        val axis = mapToAxis(time)
-        if (axis < from || axis > from + span) continue
-        val column = (((axis - from) / span) * columns).toInt().coerceIn(0, columns - 1)
-        val value = peaks[index].coerceIn(0f, 1f)
-        if (value > tops[column]) {
-            tops[column] = value
-            seen = true
-        }
-    }
-    if (!seen) return
-    val step = size.width / columns
-    for (column in 0 until columns) {
-        val value = tops[column]
-        if (value <= 0.004f) continue
-        val x = column * step + step / 2f
-        val half = value * amplitude
-        drawLine(
-            color = peak,
-            start = Offset(x, mid - half),
-            end = Offset(x, mid + half),
-            strokeWidth = stroke,
-        )
-        val inner = half * 0.42f
-        drawLine(
-            color = core,
-            start = Offset(x, mid - inner),
-            end = Offset(x, mid + inner),
-            strokeWidth = stroke,
-        )
-    }
-}
-
-/**
- * The measured grid, drawn as small marks along the lane's centre line.
- *
- * Downbeats are the brighter, longer marks. They are the ones a handoff is
- * placed against, so they are the ones the eye should find first.
- */
-private fun DrawScope.drawBeatGrid(
-    digest: TrackAnalysisDigest,
-    mid: Float,
-    from: Double,
-    span: Double,
-    anchor: Double,
-    mapToAxis: (Double) -> Double,
-) {
-    val beat = digest.beatInterval.takeIf { it > 0.0 }
-        ?: digest.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
-        ?: return
-    val width = size.width
-    fun xOf(axis: Double): Float = ((axis - from) / span * width).toFloat()
-
-    // Every beat, anchored the same way the planner anchors its bars: on the
-    // mix point, which is itself a downbeat. That makes the marks on screen
-    // the grid the transition will actually be built from.
-    if (anchor > 0.0) {
-        val first = kotlin.math.ceil((from - anchor) / beat).toInt()
-        val last = kotlin.math.floor((from + span - anchor) / beat).toInt()
-        for (step in first..last) {
-            if (step % 4 == 0) continue
-            val x = xOf(anchor + step * beat)
-            if (x < 0f || x > width) continue
-            drawRoundRect(
-                color = Color.White.copy(alpha = 0.16f),
-                topLeft = Offset(x - 1.5f, mid - 1.5f),
-                size = Size(3f, 3f),
-                cornerRadius = CornerRadius(1.5f),
-            )
-        }
-    }
-    for (downbeat in digest.downbeatTimes) {
-        val axis = mapToAxis(downbeat)
-        if (axis < from || axis > from + span) continue
-        val x = xOf(axis)
-        if (x < 0f || x > width) continue
-        drawRoundRect(
-            color = Color.White.copy(alpha = 0.55f),
-            topLeft = Offset(x - 2.5f, mid - 2.5f),
-            size = Size(5f, 5f),
-            cornerRadius = CornerRadius(2.5f),
-        )
-    }
-}
-
-private fun DrawScope.drawOverlapBox(
-    left: Float,
-    right: Float,
-    top: Float,
-    height: Float,
-    alpha: Float = 1f,
-) {
-    val inset = 2.dp.toPx()
-    drawRoundRect(
-        color = AutomixAmber.copy(alpha = 0.11f * alpha),
-        topLeft = Offset(left, top + inset),
-        size = Size(right - left, height - inset * 2),
-        cornerRadius = CornerRadius(10.dp.toPx()),
-    )
-    drawRoundRect(
-        color = AutomixAmber.copy(alpha = 0.55f * alpha),
-        topLeft = Offset(left, top + inset),
-        size = Size(right - left, height - inset * 2),
-        cornerRadius = CornerRadius(10.dp.toPx()),
-        style = Stroke(width = 1.1.dp.toPx()),
-    )
-}
-
-/**
- * The effect on the arriving track, as one curve.
- *
- * A tone shape is a frequency response, so it is drawn the way an equalizer
- * draws one: logarithmic frequency across the lane, gain up and down. A
- * filter ride is a sweep *through the overlap*, so it is drawn as the ramp it
- * is, from where the overlap opens to where it closes.
- */
-private fun DrawScope.drawEffectCurve(plan: AutomixPlanDigest, laneTop: Float, laneHeight: Float) {
-    val mid = laneTop + laneHeight / 2f
-    val amplitude = laneHeight * 0.42f
-    val shape = plan.eq.takeIf { it.isNotBlank() }
+private fun AutomixLegend(plan: AutomixPlanDigest, draft: AutomixOverride) {
+    val shape = draft.eq ?: plan.eq.takeIf { it.isNotBlank() }
         ?.let { name -> TransitionEqShape.entries.firstOrNull { it.name == name } }
-    if (shape != null && !shape.isFlat) {
-        val response = shape.responseDb(points = EQ_CURVE_POINTS)
-        if (response.size < 2) return
-        val path = Path()
-        response.forEachIndexed { index, db ->
-            val x = index.toFloat() / (response.size - 1) * size.width
-            val y = mid - (db / EQ_FULL_SCALE_DB).coerceIn(-1f, 1f) * amplitude
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        // The response sits over the waveform; a soft under-stroke keeps the
-        // line legible where it crosses a loud passage.
-        drawPath(path, color = AutomixViolet.copy(alpha = 0.22f), style = Stroke(width = 6.dp.toPx()))
-        drawPath(path, color = AutomixViolet, style = Stroke(width = 2.dp.toPx()))
-        return
-    }
-    if (plan.filterSweep > 0.0 && plan.transitionEnd > plan.transitionStart) {
-        // A filter ride opens across the overlap: the ramp is drawn over the
-        // lane's full width so it reads as a gesture, not as a measurement.
-        val path = Path()
-        path.moveTo(0f, mid + amplitude)
-        path.lineTo(size.width, mid - amplitude)
-        drawPath(path, color = AutomixAmber.copy(alpha = 0.20f), style = Stroke(width = 6.dp.toPx()))
-        drawPath(path, color = AutomixAmber, style = Stroke(width = 2.dp.toPx()))
-    }
-}
-
-@Composable
-private fun AutomixLegend(plan: AutomixPlanDigest) {
-    Row(
+    val filter = draft.filter ?: plan.filter.takeIf { it.isNotBlank() }
+        ?.let { name -> FilterTransitionVariant.entries.firstOrNull { it.name == name } }
+    val volume = draft.volume ?: plan.volume.takeIf { it.isNotBlank() }
+        ?.let { name -> TransitionVolumeShape.entries.firstOrNull { it.name == name } }
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         AutomixLegendItem(color = AutomixGreen, text = stringResource(Res.string.automix_legend_handoff))
-        AutomixLegendItem(color = AutomixAmber, text = stringResource(Res.string.automix_row_overlap))
-        val shape = plan.eq.takeIf { it.isNotBlank() }
-            ?.let { name -> TransitionEqShape.entries.firstOrNull { it.name == name } }
+        AutomixLegendItem(color = AutomixOrange, text = stringResource(Res.string.automix_row_overlap))
         when {
             shape != null && !shape.isFlat ->
                 AutomixLegendItem(color = AutomixViolet, text = eqLabel(shape))
-            plan.filterSweep > 0.0 ->
-                AutomixLegendItem(color = AutomixAmber, text = stringResource(Res.string.automix_row_filter))
+            filter != null ->
+                AutomixLegendItem(color = AutomixAmber, text = filterLabel(filter))
+        }
+        if (volume != null && !volume.isPlain) {
+            AutomixLegendItem(color = AutomixCoral, text = volumeLabel(volume))
         }
     }
 }
@@ -1029,6 +529,46 @@ private fun AutomixBarsChip(
                     action = { onBars(choice) },
                 )
             },
+        )
+    }
+}
+
+/**
+ * The preview: hear the transition the panel is about.
+ *
+ * The button plays the real handoff — the same plan, the same renderer, the
+ * same two players — from a moment before the blend, and stops after it. What
+ * it is not is a commitment: the song goes back to where it was when the
+ * blend is over, paused, so listening to the transition has not consumed it.
+ *
+ * Two faces, one button, because there is only ever one thing to do: play it,
+ * or stop playing it. Which face is showing is the engine's answer rather
+ * than the panel's guess — the preview ends by itself when the blend is done.
+ */
+@Composable
+private fun AutomixPreviewButton(playing: Boolean, onToggle: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (playing) AutomixGreen.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        Icon(
+            imageVector = if (playing) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = if (playing) AutomixGreen else AutomixInk,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = stringResource(
+                if (playing) Res.string.automix_preview_stop else Res.string.automix_preview,
+            ),
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = if (playing) AutomixGreen else AutomixInk,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 6.dp),
         )
     }
 }
@@ -1323,6 +863,8 @@ private fun blendValue(draft: AutomixOverride, plan: AutomixPlanDigest): String 
 @Composable
 private fun barsOptions(
     draft: AutomixOverride,
+    window: AutomixWindow,
+    barSeconds: Double,
     onDraft: (AutomixOverride) -> Unit,
 ): List<AutomixOption> = BAR_CHOICES.map { choice ->
     AutomixOption(
@@ -1332,8 +874,70 @@ private fun barsOptions(
             stringResource(Res.string.automix_planned_bars, choice)
         },
         selected = draft.bars == choice,
-        action = { onDraft(draft.copy(bars = choice)) },
+        action = { onDraft(barsChoice(draft, choice, window, barSeconds)) },
     )
+}
+
+/**
+ * A size choice, applied to the box rather than to the whole track.
+ *
+ * Measured backwards from the box's own right edge, because that edge is the
+ * exit the listener placed: a longer blend should reach further back into the
+ * outgoing song, not walk the exit along the track. Auto hands the size back
+ * to the planner, and with it the placement, so the two edges go to zero
+ * together — a size nobody asked for is not a box anybody drew.
+ */
+private fun barsChoice(
+    draft: AutomixOverride,
+    choice: Int,
+    window: AutomixWindow,
+    barSeconds: Double,
+): AutomixOverride {
+    if (choice <= 0) return draft.copy(bars = 0, transitionStart = 0.0, transitionEnd = 0.0)
+    if (barSeconds <= 0.0 || window.end <= 0.0) return draft.copy(bars = choice)
+    val wanted = choice.coerceIn(MIN_TRANSITION_BARS, MAX_TRANSITION_BARS)
+    val end = window.end
+    val start = max(0.0, end - wanted * barSeconds)
+    val bars = automixBarsBetween(start, end, barSeconds).coerceIn(MIN_TRANSITION_BARS, wanted)
+    return draft.copy(bars = bars, transitionStart = start, transitionEnd = end)
+}
+
+@Composable
+private fun volumeOptions(
+    draft: AutomixOverride,
+    onDraft: (AutomixOverride) -> Unit,
+): List<AutomixOption> {
+    // Auto and None are both "leave the faders alone", and both are here
+    // because the listener may mean either: one is a refusal to choose, the
+    // other is a choice to do nothing.
+    val choices = listOf<TransitionVolumeShape?>(
+        null,
+        TransitionVolumeShape.NONE,
+        TransitionVolumeShape.SLAM,
+        TransitionVolumeShape.FADE_OUT,
+        TransitionVolumeShape.FAST_OUT,
+        TransitionVolumeShape.FADE_IN,
+        TransitionVolumeShape.FAST_IN,
+    )
+    return choices.map { choice ->
+        AutomixOption(
+            label = volumeLabel(choice),
+            selected = (draft.volume ?: TransitionVolumeShape.AUTO) ==
+                (choice ?: TransitionVolumeShape.AUTO),
+            action = { onDraft(draft.copy(volume = choice)) },
+        )
+    }
+}
+
+@Composable
+private fun volumeLabel(shape: TransitionVolumeShape?): String = when (shape ?: TransitionVolumeShape.AUTO) {
+    TransitionVolumeShape.AUTO -> stringResource(Res.string.automix_choice_auto)
+    TransitionVolumeShape.NONE -> stringResource(Res.string.automix_choice_none)
+    TransitionVolumeShape.SLAM -> stringResource(Res.string.automix_volume_slam)
+    TransitionVolumeShape.FADE_OUT -> stringResource(Res.string.automix_volume_fade_out)
+    TransitionVolumeShape.FAST_OUT -> stringResource(Res.string.automix_volume_fast_out)
+    TransitionVolumeShape.FADE_IN -> stringResource(Res.string.automix_volume_fade_in)
+    TransitionVolumeShape.FAST_IN -> stringResource(Res.string.automix_volume_fast_in)
 }
 
 @Composable
@@ -1578,77 +1182,8 @@ private fun stateLabel(digest: TrackAnalysisDigest): String = when (digest.state
 }
 
 // ---------------------------------------------------------------------------
-// Geometry and wording helpers
+// Badges and formatting
 // ---------------------------------------------------------------------------
-
-/** The slice of the outgoing track the drawing shows. */
-private data class AutomixViewport(val start: Double, val end: Double)
-
-/**
- * The neighbourhood of the overlap, with room on both sides to see what is
- * being mixed into what.
- *
- * A minimum span because a four-bar overlap at a fast tempo is only a few
- * seconds, and a viewport that tight turns the drag into a hair trigger.
- */
-private fun graphViewport(start: Double, end: Double, duration: Double): AutomixViewport {
-    val overlap = (end - start).coerceAtLeast(0.0)
-    val pad = max(10.0, overlap * 0.5)
-    var from = start - pad
-    var to = end + pad
-    if (duration > 0.0) {
-        from = from.coerceAtLeast(0.0)
-        to = to.coerceAtMost(duration)
-    }
-    if (to - from < MIN_VIEW_SECONDS) {
-        to = from + MIN_VIEW_SECONDS
-        if (duration > 0.0) {
-            to = to.coerceAtMost(duration)
-            from = (to - MIN_VIEW_SECONDS).coerceAtLeast(0.0)
-        }
-    }
-    return AutomixViewport(from, to)
-}
-
-/**
- * How many whole bars of overlap a place on the outgoing track would mean.
- *
- * The overlap ends at the mix point, so a place on the track is a number of
- * bars before it. Rounded to the nearest whole bar, because that is the only
- * size the planner can execute: a half-bar request would come back as
- * something else, and the line would sit somewhere the plan does not.
- *
- * Clamped to the range the planner works in — at least [MIN_TRANSITION_BARS]
- * of overlap, and never more than the ceiling it reported for this pair.
- * That is what keeps the line from travelling to a place the planner would
- * refuse, which is what made it look stuck.
- */
-private fun barCountAt(raw: Double, mixPoint: Double, barSeconds: Double, maxBars: Int): Int {
-    if (barSeconds <= 0.0 || mixPoint <= 0.0) return MIN_TRANSITION_BARS
-    val bars = ((mixPoint - raw) / barSeconds).roundToInt()
-    return bars.coerceIn(MIN_TRANSITION_BARS, maxOf(MIN_TRANSITION_BARS, maxBars))
-}
-
-/**
- * Where a handoff of [bars] whole bars lands on the outgoing track.
- *
- * The mix point minus the length of the overlap: the same arithmetic the
- * planner does, so the line and the plan agree on where the overlap begins.
- */
-private fun handoffTime(bars: Int, mixPoint: Double, barSeconds: Double): Double {
-    if (barSeconds <= 0.0 || mixPoint <= 0.0) return 0.0
-    return max(0.0, mixPoint - bars * barSeconds)
-}
-
-/**
- * How many whole bars the planner could carry for this pair, as far as the
- * panel knows: the plan's own ceiling, or the size it settled on when it has
- * no ceiling to report.
- */
-private fun barCeiling(plan: AutomixPlanDigest): Int =
-    plan.maxBars.takeIf { it >= MIN_TRANSITION_BARS }
-        ?: plan.bars.takeIf { it >= MIN_TRANSITION_BARS }
-        ?: MAX_TRANSITION_BARS
 
 /** The key as a Camelot badge, so two keys can be compared at a glance. */
 private fun camelotBadge(key: String): String? {
@@ -1687,20 +1222,6 @@ private fun formatSeconds(seconds: Double): String =
 // Constants
 // ---------------------------------------------------------------------------
 
-private val AutomixInk = Color.White
-private val AutomixInkSecondary = Color.White.copy(alpha = 0.68f)
-private val AutomixInkTertiary = Color.White.copy(alpha = 0.48f)
-private val AutomixInkFaint = Color.White.copy(alpha = 0.30f)
-/** Type sitting on the white preset card rather than on the sheet. */
-private val AutomixSheetInk = Color(0xFF141414)
-
-private val AutomixAmber = Color(0xFFF5A524)
-private val AutomixViolet = Color(0xFFC084FC)
-private val AutomixGreen = Color(0xFF2ECC71)
-private val AutomixBlue = Color(0xFF4C8DFF)
-private val AutomixCream = Color(0xFFF2E8D5)
-private val AutomixCoral = Color(0xFFFF7A6B)
-
 /**
  * The sizes a listener can ask for, in whole bars. Zero means Automix decides.
  *
@@ -1712,23 +1233,3 @@ private val BAR_CHOICES = listOf(0, 4, 8, 12, 16, 20, 24, 28, 32)
 
 /** How long after the last change the choice is written through. */
 private const val WRITE_DEBOUNCE_MS = 250L
-
-/** The narrowest useful slice of a track to draw and drag in. */
-private const val MIN_VIEW_SECONDS = 40.0
-
-/** How far the view glides when the plan moves to a new neighbourhood. */
-private const val VIEW_GLIDE_MS = 320
-
-/**
- * How close to the green line a finger has to land to grab it, in pixels.
- *
- * Wide enough to be a target rather than a pixel hunt: the line is thin, and
- * a listener reaching for it with a thumb should not have to be exact.
- */
-private val LINE_HIT_DP = 28.dp
-
-/** Points across the tone curve; enough for a bell, few enough to stay smooth. */
-private const val EQ_CURVE_POINTS = 64
-
-/** The gain that spans half a lane, so a musical shape is not a flat line. */
-private const val EQ_FULL_SCALE_DB = 8f

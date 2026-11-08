@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Auto</string>
     <string name="automix_preset_custom">Własny</string>
     <string name="automix_preset_fade">Przejście</string>
+    <string name="automix_preview">Podgląd</string>
+    <string name="automix_preview_stop">Zatrzymaj</string>
     <string name="automix_reset">Resetuj</string>
     <string name="automix_row_automix">Automix dla tego utworu</string>
     <string name="automix_row_beatmatch">Dopasowanie tempa</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtr</string>
     <string name="automix_row_overlap">Nakładanie</string>
-    <string name="automix_scrub_hint">Przeciągnij zieloną linię lub dolny utwór, aby przesunąć przekazanie · przeciągnij górny utwór, aby przewinąć</string>
+    <string name="automix_row_volume">Głośność</string>
+    <string name="automix_scrub_hint">Przeciągnij ramkę, aby przesunąć przejście · przeciągnij krawędź, aby zmienić długość · przeciągnij dolny pas, aby przewijać</string>
     <string name="automix_style_dj_blend">miks DJ</string>
     <string name="automix_style_dj_filter">przekazanie z filtrem</string>
     <string name="automix_style_equal_power">przenikanie o stałej mocy</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: zatrzymany podczas wspólnego słuchania</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Nakładanie wokalu %1$d%%</string>
+    <string name="automix_volume_fade_in">Wzmocnienie</string>
+    <string name="automix_volume_fade_out">Wyciszenie</string>
+    <string name="automix_volume_fast_in">Szybkie wzmocnienie</string>
+    <string name="automix_volume_fast_out">Szybkie wyciszenie</string>
+    <string name="automix_volume_slam">Slam</string>
     <string name="autoplay">Autoodtwarzanie</string>
     <string name="autoplay_empty_description">Podobna muzyka będzie nadal odtwarzana</string>
     <string name="autoplay_off">Autoodtwarzanie wyłączone</string>

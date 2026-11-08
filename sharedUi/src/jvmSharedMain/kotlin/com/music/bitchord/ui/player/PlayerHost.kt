@@ -207,6 +207,24 @@ interface PlayerSettingsSource {
 
     /** Forgets the listener's Automix choice for a track, leaving Automix to decide. */
     fun clearAutomixProfile(trackId: String)
+
+    /**
+     * Whether this platform can play a preview of the transition on demand.
+     *
+     * False hides the button altogether rather than offering one that does
+     * nothing: a desktop has no second deck to mix with, and a control that
+     * does nothing when it is pressed is worse than no control at all.
+     */
+    val automixPreviewAvailable: Boolean get() = true
+
+    /**
+     * Plays the planned transition, or stops the one that is playing.
+     *
+     * A preview of the handoff and nothing else: the music either side of it
+     * is left where it was afterwards, so hearing the transition does not
+     * consume it. A platform with no second deck to blend with does nothing.
+     */
+    fun previewAutomix(start: Boolean)
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */

@@ -28,6 +28,8 @@ import com.music.bitchord.playback.smart.TransitionEqShape
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
+import com.music.bitchord.playback.smart.TransitionVolumeShape
+import com.music.bitchord.playback.smart.AutomixPreviewState
 import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.keysCompatible
@@ -368,6 +370,14 @@ class CrossfadeController(
          * null for none.
          */
         val eqShape: TransitionEqShape? = null,
+        /**
+         * The shape of the two faders across the overlap.
+         *
+         * [TransitionVolumeShape.AUTO] and [TransitionVolumeShape.NONE] both
+         * mean the equal-power pair this class has always used; anything else
+         * replaces it with the listener's own curve.
+         */
+        val volumeShape: TransitionVolumeShape = TransitionVolumeShape.AUTO,
         val vocalOverlap: Double = 0.0,
         /** Advanced Automix: DJ fader curves, moves on the beat, phase lock, tempo ease-back. */
         val advanced: Boolean = false,
@@ -535,6 +545,31 @@ class CrossfadeController(
      * rebuild the digest.
      */
     private val digestCache = ConcurrentHashMap<String, Pair<TrackAnalysis, TrackAnalysisDigest>>()
+
+    // ---- Preview ------------------------------------------------------------
+
+    /**
+     * Whether the listener is hearing a preview of the transition rather than
+     * listening to the song.
+     *
+     * A preview plays the handoff and nothing else: the outgoing track from a
+     * moment or two before the blend, the blend itself, and the arriving track
+     * for as long as the blend lasts. When it is over the song goes back to
+     * where it was, paused, so the transition has not been consumed by hearing
+     * it.
+     */
+    private var previewing = false
+
+    /**
+     * Where the song was when the preview started, so it can be put back.
+     *
+     * The queue index as well as the position: the preview hands the session
+     * over to the *incoming* track, and the song being previewed is the one
+     * before it in the queue.
+     */
+    private var previewHome: PreviewHome? = null
+
+    private data class PreviewHome(val index: Int, val positionMs: Long)
 
     // ---- Phase lock (Advanced Automix) --------------------------------------
 
@@ -805,6 +840,47 @@ class CrossfadeController(
         if (phase != Phase.IDLE) bail()
     }
 
+    /**
+     * Plays the transition that is planned, and nothing else.
+     *
+     * The Automix panel's own preview: the outgoing track from a moment or two
+     * before the handoff, the handoff itself, and the arriving track for as
+     * long as the blend runs. It is the *real* transition — the same plan, the
+     * same renderer, the same two players — so what the listener hears is what
+     * the app will do, not an imitation of it.
+     *
+     * When the blend is over the song goes back to where it was and waits:
+     * hearing a transition must not consume it. The listener can press play
+     * and have it happen for real when they reach it.
+     *
+     * Stopping is the other half of the same button: the blend is dropped and
+     * the song is left paused where the preview had reached.
+     */
+    fun previewAutomix(start: Boolean) {
+        if (!start) {
+            previewing = false
+            previewHome = null
+            AutomixPreviewState.setPlaying(false)
+            if (phase != Phase.IDLE) bail()
+            active().pause()
+            return
+        }
+        val plan = lastPlan ?: return
+        if (plan.blocked || plan.transitionStart <= 0.0) return
+        val player = active()
+        val home = PreviewHome(player.currentMediaItemIndex, player.currentPosition)
+        // A moment or two before the handoff: long enough to hear where the
+        // music is going, short enough that the preview is a preview.
+        val at = ((plan.transitionStart - PREVIEW_LEAD_SECONDS) * 1000.0)
+            .roundToLong()
+            .coerceIn(0L, player.duration.coerceAtLeast(0L))
+        previewHome = home
+        previewing = true
+        AutomixPreviewState.setPlaying(true)
+        player.seekTo(at)
+        player.play()
+    }
+
     // ---- Ticker -------------------------------------------------------------
 
     private fun tick() {
@@ -1018,7 +1094,6 @@ class CrossfadeController(
         // times per tick below, and the answer cannot change mid-tick.
         val currentAnalysis = analysisFor(currentItem)
         val nextAnalysis = analysisFor(nextItem)
-        val analysisState = AppSettings.smartAnalysis.value
         // The DJ planner is Automix now; there is no separate mode switch.
         val advanced = true
         // What the listener has chosen for the track that is playing. Kept
@@ -1063,38 +1138,26 @@ class CrossfadeController(
             )
         }
 
-        // Gated on *both* tracks being measured, not on the plan alone. Until
-        // then the planner is still sizing the overlap from a fallback that
-        // moves as evidence lands, and a marker that slides along the bar while
-        // you watch it is worse than none. Cleared during the transition itself
-        // by [driveLap], because from that moment these fractions describe a
-        // track the session player has already left.
+        // The marker is the plan's own window, so it is published whenever
+        // there is a plan to publish.
         //
-        // Asymmetric on purpose, because the two sides are read for different
-        // things and a head-only result covers one of them completely.
+        // It used to be gated on both tracks being measured, and that gate is
+        // what kept the marker off the seek bar for most of the time a track
+        // plays: the *incoming* track is measured from its opening, and a
+        // streamed track's opening is not measured until its head has been
+        // fetched — which is often not until the track before it is nearly
+        // over. The analysis said "done" and the seek bar said nothing, and
+        // the listener had no way of telling those two facts apart.
         //
-        // Where the window *sits* comes almost entirely from the outgoing track:
-        // its content end, its outro, its mix-out anchors. A provisional result
-        // has none of those — [analyzeHead] drops them deliberately rather than
-        // answering confidently about a track it has only seen the opening of —
-        // so the plan falls back to a plain end-of-track window, and the marker
-        // would sit there and then jump backwards when the whole-track pass
-        // lands. That is the sliding marker this guard exists for, so the
-        // outgoing side still has to be finished.
-        //
-        // The incoming side is the opposite case. All the planner asks of it is
-        // tempo, confidence and where it is safe to cue in — which are exactly
-        // the fields a head pass measures, and it measures them over the same
-        // opening window the whole-track pass would. Refining will sharpen those
-        // numbers but not move them, so holding the marker back for it hid a
-        // window that was already correct. Since the incoming track is now
-        // routinely analysed from its opening long before it plays, that was
-        // most of the time the marker was missing.
+        // The states were never a question about whether the window could be
+        // drawn. They were a question about whether the window would move
+        // when more measurement arrived, and a window that moves is still a
+        // window: the plan is what will happen, and the plan is what the
+        // panel shows too. A marker that is there and then settles is worth
+        // more than no marker at all.
         val markable = !plan.blocked &&
             plan.markerVisible &&
-            duration > 0L &&
-            analysisState.current == TrackAnalysisState.ANALYSED &&
-            analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON
+            duration > 0L
         AppSettings.smartTransitionWindow.value = if (markable) {
             TransitionWindow(
                 start = (plan.transitionStart * 1000.0 / duration).toFloat().coerceIn(0f, 1f),
@@ -1154,6 +1217,7 @@ class CrossfadeController(
                 filterSweep = plan.filterSweep,
                 filterVariant = plan.filterVariant,
                 eqShape = plan.eqShape,
+                volumeShape = plan.volumeShape,
                 vocalOverlap = plan.vocalOverlap,
                 advanced = advanced,
                 beats = if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0,
@@ -1305,7 +1369,10 @@ class CrossfadeController(
             firstBeat = analysis.firstBeat,
             beatInterval = analysis.beatInterval,
             downbeats = analysis.downbeats.size,
-            downbeatTimes = downsample(analysis.downbeats, PANEL_BUCKETS),
+            // The whole grid, not a sample of it. The panel draws the beats it
+            // found *and* snaps the handoff to them, and a sampled grid would
+            // snap the handoff to places the track has no beat in.
+            downbeatTimes = analysis.downbeats,
             phrases = analysis.phraseBoundaries.size,
             audibleStart = analysis.audibleStartTime ?: 0.0,
             pickup = analysis.pickupTime ?: 0.0,
@@ -1350,19 +1417,6 @@ class CrossfadeController(
     }
 
     /**
-     * A list of positions, thinned down to at most [limit] entries.
-     *
-     * Evenly spaced rather than the first N: a track's first downbeats are
-     * all in its intro, so keeping the early ones would draw the grid over
-     * five per cent of the track and leave the rest blank.
-     */
-    private fun downsample(values: List<Double>, limit: Int): List<Double> {
-        if (values.size <= limit) return values
-        val step = values.size.toDouble() / limit
-        return (0 until limit).map { index -> values[(index * step).toInt().coerceAtMost(values.size - 1)] }
-    }
-
-    /**
      * What Automix has planned, in the panel's terms.
      *
      * The plan as it is — not the request. A listener who asked for sixteen
@@ -1387,6 +1441,7 @@ class CrossfadeController(
                 plan.filterVariant.name
             },
             eq = plan.eqShape?.name.orEmpty(),
+            volume = plan.volumeShape.name,
             transitionStart = plan.transitionStart,
             transitionEnd = plan.transitionEnd,
             echoSeconds = plan.echoSeconds,
@@ -2181,6 +2236,28 @@ class CrossfadeController(
         outgoingAnalysis = TrackAnalysis()
         incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
+
+        // A preview puts the song back where it was.
+        //
+        // Hearing a transition is not the same as having one: the blend that
+        // just ran was a demonstration, and the song itself was interrupted by
+        // it. So the playhead goes back to the track it was on, at the place it
+        // was, and waits — paused, because a preview that carried on playing
+        // would run the transition a second time, for real, a moment later.
+        val home = if (previewing) previewHome else null
+        previewing = false
+        previewHome = null
+        // The panel's button goes back to "play" the moment the preview is
+        // over, whoever ended it — the listener pressing stop, or the blend
+        // simply finishing.
+        AutomixPreviewState.setPlaying(false)
+        if (home != null) {
+            val session = active()
+            if (home.index >= 0 && home.index < session.mediaItemCount) {
+                session.seekTo(home.index, home.positionMs)
+            }
+            session.pause()
+        }
     }
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
@@ -2663,7 +2740,8 @@ class CrossfadeController(
             render.style == TransitionStyle.DJ_FILTER ||
             incomingCueTimeMs > 0L ||
             incomingPlaybackRate != 1.0 ||
-            outgoingPlaybackRate != 1.0
+            outgoingPlaybackRate != 1.0 ||
+            !render.volumeShape.isPlain
         )
 
     /** Equal-power pair: [riseGain]² + [fallGain]² = 1, so the blend never dips. */
@@ -2685,6 +2763,9 @@ class CrossfadeController(
      * [headroomFor] keeps two faders at full from summing past full scale.
      */
     private fun mixRise(progress: Float): Float {
+        // The listener's own shape for the faders replaces the pair outright:
+        // it says what the incoming side does, and that is the whole of it.
+        if (!render.volumeShape.isPlain) return render.volumeShape.incomingGain(progress)
         if (!render.advanced) return riseGain(progress)
         val styled = when (render.style) {
             TransitionStyle.DJ_BLEND ->
@@ -2706,6 +2787,9 @@ class CrossfadeController(
      * the closing low-pass is already taking it away.
      */
     private fun mixFall(progress: Float): Float {
+        // The listener's own shape for the faders replaces the pair outright:
+        // it says what the outgoing side does, and that is the whole of it.
+        if (!render.volumeShape.isPlain) return render.volumeShape.outgoingGain(progress)
         if (!render.advanced) return fallGain(progress)
         // The fader carries the repeats too, so an echo out leaves it up and
         // fades the dry signal in the chain instead — see [rideEchoOut].
@@ -3074,6 +3158,15 @@ class CrossfadeController(
         const val FALLBACK_SINK_LEAD_MS = 6_000L
 
         /**
+         * How far before the handoff a preview starts.
+         *
+         * Long enough to hear the music arriving, short enough that the
+         * preview is a preview: the listener asked to hear the transition, not
+         * the run-up to it.
+         */
+        const val PREVIEW_LEAD_SECONDS = 2.0
+
+        /**
          * States in which a track is measured well enough to be *entered* on.
          *
          * [TrackAnalysisState.REFINING] belongs here because the entry fields —
@@ -3082,6 +3175,10 @@ class CrossfadeController(
          * whole-track pass it is waiting on adds the *exit* half: content end,
          * outro, mix-out anchors, the energy curve. Those matter when this track
          * is later the one being left, and not at all for the transition into it.
+         *
+         * Kept for the places that still ask what a track is worth entering
+         * on. The seek bar's marker no longer does: it is the plan's window,
+         * and the plan is drawn whether or not either side has been measured.
          */
         val MEASURED_ENOUGH_TO_ENTER_ON = setOf(
             TrackAnalysisState.ANALYSED,

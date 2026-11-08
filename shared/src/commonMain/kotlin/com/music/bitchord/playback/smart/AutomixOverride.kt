@@ -58,6 +58,16 @@ data class AutomixOverride(
      */
     val effects: AutomixEffect? = null,
     /**
+     * The shape of the two faders across the overlap, or null to leave it to
+     * the planner.
+     *
+     * A statement about the *volume* of the handoff rather than its timbre:
+     * how the outgoing track leaves and how the incoming one arrives. The
+     * equal-power pair is what every transition has used, and this is the way
+     * to ask for something else — see [TransitionVolumeShape].
+     */
+    val volume: TransitionVolumeShape? = null,
+    /**
      * Where the listener wants the overlap to begin on the outgoing track, in
      * seconds, or 0 to leave the placement to the planner.
      *
@@ -70,11 +80,25 @@ data class AutomixOverride(
      * placement stands.
      */
     val transitionStart: Double = 0.0,
+    /**
+     * Where the listener wants the overlap to *end* on the outgoing track, in
+     * seconds, or 0 to leave it to the planner.
+     *
+     * The other edge of the same box the panel draws. Together with
+     * [transitionStart] it is the window the listener has placed: a blend that
+     * ends before the outgoing track does cuts its tail off, which is a thing
+     * a listener may well want and which the planner will not do on its own.
+     *
+     * Honoured only when [transitionStart] is also set: a start on its own
+     * says where the handoff goes, and the planner still decides how much of
+     * the track is left afterwards.
+     */
+    val transitionEnd: Double = 0.0,
 ) {
     /** Whether this override says anything at all. */
     val isEmpty: Boolean
         get() = enabled && style == null && bars <= 0 && filter == null && eq == null &&
-            effects == null && transitionStart <= 0.0
+            effects == null && volume == null && transitionStart <= 0.0 && transitionEnd <= 0.0
 
     companion object {
         /** Nothing chosen: the planner's own behaviour. */

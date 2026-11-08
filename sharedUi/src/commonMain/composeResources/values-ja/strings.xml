@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">自動</string>
     <string name="automix_preset_custom">カスタム</string>
     <string name="automix_preset_fade">フェード</string>
+    <string name="automix_preview">プレビュー</string>
+    <string name="automix_preview_stop">停止</string>
     <string name="automix_reset">リセット</string>
     <string name="automix_row_automix">この曲の Automix</string>
     <string name="automix_row_beatmatch">ビートマッチ</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">フィルター</string>
     <string name="automix_row_overlap">重なり</string>
-    <string name="automix_scrub_hint">緑の線か下側のトラックをドラッグして引き継ぎ位置を移動 · 上側のトラックをドラッグしてスクロール</string>
+    <string name="automix_row_volume">音量</string>
+    <string name="automix_scrub_hint">ボックスをドラッグしてトランジションを移動 · 端をドラッグして長さを変更 · 下のレーンをドラッグしてスクロール</string>
     <string name="automix_style_dj_blend">DJブレンド</string>
     <string name="automix_style_dj_filter">フィルター付きハンドオフ</string>
     <string name="automix_style_equal_power">等電力フェード</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: 一緒に聴く中は停止</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">ボーカルの重なり %1$d%%</string>
+    <string name="automix_volume_fade_in">フェードイン</string>
+    <string name="automix_volume_fade_out">フェードアウト</string>
+    <string name="automix_volume_fast_in">高速フェードイン</string>
+    <string name="automix_volume_fast_out">高速フェードアウト</string>
+    <string name="automix_volume_slam">スラム</string>
     <string name="autoplay">AutoPlay</string>
     <string name="autoplay_empty_description">似た曲が引き続き再生されます</string>
     <string name="autoplay_off">AutoPlay: オフ</string>

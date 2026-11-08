@@ -31,10 +31,11 @@ data class TrackAnalysisDigest(
     /** How many downbeats the grid has. */
     val downbeats: Int = 0,
     /**
-     * Where the downbeats fall, in seconds, downsampled to a readable number.
+     * Where the downbeats fall, in seconds.
      *
-     * The panel draws the grid it found, and a grid is a set of marks on the
-     * track rather than a count of them.
+     * The whole grid, not a sample of it. The panel draws the grid it found
+     * *and* snaps the handoff to it, and a sampled grid would snap the
+     * handoff to places the track has no beat in.
      */
     val downbeatTimes: List<Double> = emptyList(),
     /** How many phrase boundaries the analyser heard. */
@@ -109,6 +110,15 @@ data class AutomixPlanDigest(
      * on the arriving track itself.
      */
     val eq: String = "",
+    /**
+     * The shape of the two faders across the overlap: AUTO, NONE, SLAM,
+     * FADE_OUT, FAST_OUT, FADE_IN or FAST_IN.
+     *
+     * The panel draws this as the gain curve over the outgoing track, because
+     * it is the one thing about a transition that changes what the listener
+     * hears rather than how it is coloured.
+     */
+    val volume: String = "",
     /** Where the overlap starts on the outgoing track, in seconds. */
     val transitionStart: Double = 0.0,
     /** Where the overlap ends on the outgoing track, in seconds. */

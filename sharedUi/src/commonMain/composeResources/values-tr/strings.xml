@@ -37,6 +37,8 @@
     <string name="automix_preset_auto">Otomatik</string>
     <string name="automix_preset_custom">Özel</string>
     <string name="automix_preset_fade">Solma</string>
+    <string name="automix_preview">Önizleme</string>
+    <string name="automix_preview_stop">Durdur</string>
     <string name="automix_reset">Sıfırla</string>
     <string name="automix_row_automix">Bu şarkı için Automix</string>
     <string name="automix_row_beatmatch">Vuruş eşleştirme</string>
@@ -45,7 +47,8 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtre</string>
     <string name="automix_row_overlap">Çakışma</string>
-    <string name="automix_scrub_hint">Devri taşımak için yeşil çizgiyi veya alttaki parçayı sürükleyin · kaydırmak için üstteki parçayı sürükleyin</string>
+    <string name="automix_row_volume">Ses</string>
+    <string name="automix_scrub_hint">Geçişi taşımak için kutuyu sürükleyin · boyutunu değiştirmek için kenarı sürükleyin · kaydırmak için alt şeridi sürükleyin</string>
     <string name="automix_style_dj_blend">DJ karışımı</string>
     <string name="automix_style_dj_filter">filtreli devir</string>
     <string name="automix_style_equal_power">sabit güç geçişi</string>
@@ -54,6 +57,11 @@
     <string name="automix_stopped_in_party">Automix: Birlikte dinle sırasında durduruldu</string>
     <string name="automix_tempo_match">%1$d → %2$d BPM</string>
     <string name="automix_vocal_overlap">Vokal çakışması %1$d%%</string>
+    <string name="automix_volume_fade_in">Kısarak giriş</string>
+    <string name="automix_volume_fade_out">Kısarak çıkış</string>
+    <string name="automix_volume_fast_in">Hızlı giriş</string>
+    <string name="automix_volume_fast_out">Hızlı çıkış</string>
+    <string name="automix_volume_slam">Slam</string>
     <string name="autoplay">AutoPlay</string>
     <string name="autoplay_empty_description">Benzer müzikler çalmaya devam edecek</string>
     <string name="autoplay_off">AutoPlay kapalı</string>
