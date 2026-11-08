@@ -1248,6 +1248,16 @@ object AppSettings {
     val smartAnalysis = MutableStateFlow(SmartAnalysis())
 
     /**
+     * Everything the Automix panel shows: the analysis in full, the plan that
+     * came out of it, and the listener's own choice for this track.
+     *
+     * Published by the crossfade controller, which is the only thing that
+     * knows which two tracks the next transition is between and what the
+     * planner made of them.
+     */
+    val automixPanel = MutableStateFlow(AutomixPanelState())
+
+    /**
      * Where on the *playing* track the next transition is planned to happen, as
      * fractions of its duration, or null when there is nothing worth drawing.
      *
@@ -1358,6 +1368,11 @@ object AppSettings {
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
+        // The listener's own Automix choices, kept with the songs. Initialized
+        // here because this is the first point at which the app has a place to
+        // keep files, and a choice that forgets itself when the app closes is
+        // not a choice.
+        com.music.bitchord.playback.AutomixProfiles.init(context.filesDir)
         readAll()
         watchConnection(context)
         // The offline verdict, published to the one place every request in the

@@ -2055,8 +2055,21 @@ class PlaybackService : MediaLibraryService() {
                     transitionFilterA.parkEcho()
                     transitionFilterB.parkEcho()
                 }
+
+                // The tone shape the listener chose for this song's handoff.
+                // It rides on the track that is arriving, so it is put on
+                // whichever sink that track is being written to.
+                override fun incomingEq(centerHz: Float, gainDb: Float) =
+                    activeFilter.setEq(centerHz, gainDb)
+
+                override fun outgoingEq(centerHz: Float, gainDb: Float) =
+                    spareFilter.setEq(centerHz, gainDb)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            // Whether the result came from the track's opening only. The panel
+            // marks such an analysis as partial rather than showing it as the
+            // whole answer.
+            analysisProvisionalFor = { item -> trackAnalyzer.isProvisional(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the

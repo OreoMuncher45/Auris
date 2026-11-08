@@ -113,6 +113,46 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         targetHighPassHz = highPassHz.coerceIn(OFF_HZ, MAX_HIGH_PASS_HZ)
     }
 
+    // ---- Transition EQ -------------------------------------------------------
+    //
+    // A single peaking band the arriving track carries through the overlap:
+    // the tone shape the listener chose for this song's handoff. It is applied
+    // before the sweep, so the shape is a property of the source rather than
+    // of the handoff, and it is dropped the moment the transition ends.
+
+    /** Written by the controller; read once per block on the audio thread. */
+    @Volatile private var eqEngaged = false
+    @Volatile private var eqCenterHz: Float = 1_000f
+    @Volatile private var eqGainDb: Float = 0f
+
+    /** Four samples of state per channel: two inputs and two outputs. */
+    private var eqState = FloatArray(0)
+
+    private var eqB0 = 1f
+    private var eqB1 = 0f
+    private var eqB2 = 0f
+    private var eqA1 = 0f
+    private var eqA2 = 0f
+
+    /**
+     * Aims the tone shape: a bell of [gainDb] around [centerHz].
+     *
+     * A gain of zero is the same as no shaping at all, so it switches the
+     * band off rather than filtering everything by nothing.
+     */
+    fun setEq(centerHz: Float, gainDb: Float) {
+        eqCenterHz = centerHz.coerceIn(20f, 20_000f)
+        eqGainDb = gainDb.coerceIn(-12f, 12f)
+        eqEngaged = eqGainDb != 0f
+    }
+
+    /** Drops the tone shape and puts the signal back as it was. */
+    fun parkEq() {
+        eqEngaged = false
+        eqGainDb = 0f
+        eqState.fill(0f)
+    }
+
     /** Parks both filters. Glided, not snapped. */
     fun open() = setCutoffs(OPEN_HZ, OFF_HZ)
 
@@ -181,6 +221,8 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             echoLow = FloatArray(channelCount)
             echoHigh = FloatArray(channelCount)
         }
+        val eqRequired = channelCount * 4
+        if (eqState.size != eqRequired) eqState = FloatArray(eqRequired)
         echoLowCoefficient = onePole(ECHO_LOW_PASS_HZ, sampleRate)
         echoHighCoefficient = onePole(ECHO_HIGH_PASS_HZ, sampleRate)
         // A new format invalidates the ring's length in frames.
@@ -205,7 +247,10 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         val targetHigh = targetHighPassHz
         val parked = targetLow >= OPEN_HZ && targetHigh <= OFF_HZ &&
             currentLowPassHz >= OPEN_HZ - SETTLED_HZ && currentHighPassHz <= OFF_HZ + SETTLED_HZ
-        if (parked) {
+        // The tone shape counts as work even when the sweep is parked: a
+        // listener who asked for a warmer arrival gets it whether or not the
+        // filter is closing.
+        if (parked && !eqEngaged) {
             clearStateIfNeeded()
             return
         }
@@ -221,11 +266,16 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             val highOn = currentHighPassHz > OFF_HZ + SETTLED_HZ
             if (lowOn) updateLowCoefficients()
             if (highOn) updateHighCoefficients()
+            val eqOn = eqEngaged
+            if (eqOn) updateEqCoefficients()
 
             for (f in 0 until subBlock) {
                 val baseIdx = (frameOffset + f) * channelCount
                 for (channel in 0 until channelCount) {
                     var sample = block.samples[baseIdx + channel]
+                    // The shape first: it is a property of the source, so it
+                    // belongs before the sweep that rides over it.
+                    if (eqOn) sample = eq(channel, sample)
                     if (lowOn) sample = lowPass(channel, sample)
                     if (highOn) sample = highPass(channel, sample)
                     // Headroom preserved: no clamping to [-1.0f, +1.0f]
@@ -235,6 +285,47 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             frameOffset += subBlock
             remaining -= subBlock
         }
+    }
+
+    /**
+     * The peaking band's coefficients, from the RBJ cookbook.
+     *
+     * The same formula the panel's curve is drawn from, so the line on the
+     * screen is the shape that is heard.
+     */
+    private fun updateEqCoefficients() {
+        if (sampleRate <= 0) return
+        val amplitude = Math.pow(10.0, eqGainDb / 40.0)
+        val omega = 2.0 * Math.PI * eqCenterHz / sampleRate
+        val alpha = Math.sin(omega) / (2.0 * EQ_Q)
+        val b0 = 1.0 + alpha * amplitude
+        val b1 = -2.0 * Math.cos(omega)
+        val b2 = 1.0 - alpha * amplitude
+        val a0 = 1.0 + alpha / amplitude
+        val a1 = -2.0 * Math.cos(omega)
+        val a2 = 1.0 - alpha / amplitude
+        if (a0 == 0.0) return
+        eqB0 = (b0 / a0).toFloat()
+        eqB1 = (b1 / a0).toFloat()
+        eqB2 = (b2 / a0).toFloat()
+        eqA1 = (a1 / a0).toFloat()
+        eqA2 = (a2 / a0).toFloat()
+    }
+
+    /** One sample of one channel through the peaking band. */
+    private fun eq(channel: Int, input: Float): Float {
+        val base = channel * 4
+        if (base + 3 >= eqState.size) return input
+        val x1 = eqState[base]
+        val x2 = eqState[base + 1]
+        val y1 = eqState[base + 2]
+        val y2 = eqState[base + 3]
+        val output = eqB0 * input + eqB1 * x1 + eqB2 * x2 - eqA1 * y1 - eqA2 * y2
+        eqState[base] = input
+        eqState[base + 1] = x1
+        eqState[base + 2] = output
+        eqState[base + 3] = y1
+        return output
     }
 
     /**
@@ -256,6 +347,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
     override fun onFlush() {
         lowState.fill(0f)
         highState.fill(0f)
+        eqState.fill(0f)
         currentLowPassHz = targetLowPassHz
         currentHighPassHz = targetHighPassHz
         // Whatever the ring holds is from before the seek; start it clean.
@@ -264,11 +356,13 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
 
     override fun onReset() {
         parkEcho()
+        parkEq()
         echoSeenGeneration = echoGeneration - 1
         targetLowPassHz = OPEN_HZ
         targetHighPassHz = OFF_HZ
         lowState = FloatArray(0)
         highState = FloatArray(0)
+        eqState = FloatArray(0)
         channelCount = 0
         sampleRate = 0
     }
@@ -502,6 +596,14 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         /** Two cascaded second-order sections: 24 dB/octave, the usual DJ-filter slope. */
         private const val STAGES = 2
 
+        /**
+         * The width of the transition EQ's bell.
+         *
+         * Broad enough to be a colour rather than a whistle — the same value
+         * the panel's curve is drawn with, so the two agree.
+         */
+        private const val EQ_Q = 1.0
+
         /** Section Qs for a maximally flat (Butterworth) fourth-order response. */
         private val BUTTERWORTH_Q = floatArrayOf(0.54120f, 1.30656f)
 
@@ -570,6 +672,16 @@ interface TransitionFilters {
     fun incomingEcho(delaySeconds: Float, send: Float, dry: Float) = Unit
     fun outgoingEcho(delaySeconds: Float, send: Float, dry: Float) = Unit
 
+    /**
+     * The tone shape each side carries through the overlap: a bell of
+     * [gainDb] around [centerHz]. Zero gain is the same as no shaping.
+     *
+     * Only the arriving side is normally given one — the shape belongs to the
+     * handoff, not to the record.
+     */
+    fun incomingEq(centerHz: Float, gainDb: Float) = Unit
+    fun outgoingEq(centerHz: Float, gainDb: Float) = Unit
+
     /** Drops any echo on either sink. Called whenever a transition ends, however it ended. */
     fun parkEchoes() = Unit
 
@@ -577,6 +689,9 @@ interface TransitionFilters {
     fun open() {
         incoming(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
         outgoing(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
+        // The shape belongs to the transition, so it goes with it.
+        incomingEq(1_000f, 0f)
+        outgoingEq(1_000f, 0f)
     }
 
     /** For callers with no audio sink to filter — tests, and the default wiring. */

@@ -194,6 +194,15 @@ data class TransitionPlan(
     /** The stable per-pair gesture for [TransitionStyle.DJ_FILTER]. */
     val filterVariant: FilterTransitionVariant = FilterTransitionVariant.SWEEP,
     /**
+     * The tone shape the arriving track carries through the overlap, or null
+     * for none.
+     *
+     * The listener's own choice, honoured as asked: unlike the style and the
+     * size, a tone shape has nothing to be compatible with — it is applied to
+     * one side and it either runs or it does not.
+     */
+    val eqShape: TransitionEqShape? = null,
+    /**
      * How strongly the two tracks are expected to be singing over each other
      * through this overlap, 0..1; see [vocalOverlapAmount].
      *
@@ -287,6 +296,23 @@ private fun normalizedTempoRatio(currentBpm: Double, nextBpm: Double): Double {
     while (ratio < 0.67) ratio *= 2
     return ratio
 }
+
+/**
+ * How close two tempi are, with 1 meaning the same tempo.
+ *
+ * Folded into the same octave first, so a track counted at half time against
+ * another still reads as the pair it is.
+ */
+fun tempoRatio(currentBpm: Double, nextBpm: Double): Double =
+    normalizedTempoRatio(currentBpm, nextBpm)
+
+/**
+ * Whether two keys, as the analyser spells them, are close enough to blend.
+ *
+ * A fifth is as close as a second here: it is the move every DJ makes.
+ */
+fun keysCompatible(leftKey: String, rightKey: String): Boolean =
+    harmonicallyCompatible(leftKey.trim(), rightKey.trim())
 
 private fun splitKey(key: String): Pair<Int?, String?> {
     val parts = key.trim().split(' ')
@@ -447,6 +473,18 @@ private const val MAX_FADE_BEATS = MAX_TRANSITION_BARS * BEATS_PER_BAR
 // A safety ceiling on the whole overlap regardless of how long the incoming
 // intro is. Duration and runway limits normally bite long before this does.
 private const val MAX_OVERLAP_SECONDS = 96.0
+
+/**
+ * The whole-bar path's own ceiling on wall-clock overlap.
+ *
+ * Wider than [MAX_OVERLAP_SECONDS], because the product range runs to
+ * [MAX_TRANSITION_BARS] and a bar is four beats: thirty-two bars at sixty BPM
+ * is a hundred and twenty-eight seconds, which the ninety-six-second ceiling
+ * would quietly shorten to twenty-four bars on any slow track. The listener
+ * asked for thirty-two bars and should get thirty-two or a refusal, never
+ * twenty-four.
+ */
+private const val MAX_ADVANCED_OVERLAP_SECONDS = 132.0
 
 /**
  * Moving both decks by the same musical amount preserves the beat grid and
@@ -1458,6 +1496,7 @@ fun planTransition(
     mode: CrossfadeMode = CrossfadeMode.STANDARD,
     albumSequential: Boolean = false,
     advanced: Boolean = false,
+    override: AutomixOverride? = null,
 ): TransitionPlan {
     val length = max(duration.orZero(), trackDurationSeconds(currentTrack))
     val playbackTime = max(0.0, currentTime.orZero())
@@ -1470,6 +1509,16 @@ fun planTransition(
 
     if (length < MIN_SMART_DURATION_SECONDS) {
         return blocked("short-duration-guard", transitionStart = length, transitionEnd = length)
+    }
+
+    // The listener's own answer for this track, when they have given one.
+    //
+    // "Not this song" is the only choice that overrides the planner outright:
+    // the transition is left to the plain crossfade, with no beat match, no
+    // filter and no cueing. Every other choice is a preference the planner
+    // honours when it can execute it, and reports what it actually did.
+    if (override != null && !override.enabled) {
+        return standardTransition(length, playbackTime, standardFade, minFadeSeconds, "automix-off-for-track")
     }
 
     val analyzedContentEnd = analysis.contentEndTime.orZero().takeIf { it != 0.0 } ?: length
@@ -1559,9 +1608,28 @@ fun planTransition(
         }
 
     val traits = if (advanced) PairTraits(analysis, nextAnalysis) else null
-    val filterVariant = if (traits != null) filterVariantFor(currentTrack, nextTrack) else FilterTransitionVariant.SWEEP
+    // The listener's filter shape, when they chose one; otherwise the one the
+    // pair's own character suggests.
+    //
+    // The listener's effect choice wins over the filter shape, because the
+    // effect is the more specific statement: an echo tail *is* a filter ride,
+    // and asking for one and then being given a plain sweep would be a
+    // choice quietly ignored. Asking for no effect takes the echo back out
+    // without otherwise changing the sweep.
+    val filterVariant = if (traits != null) {
+        val base = override?.filter ?: filterVariantFor(currentTrack, nextTrack)
+        when (override?.effects) {
+            AutomixEffect.ECHO_TAIL -> FilterTransitionVariant.ECHO_RIDE
+            AutomixEffect.NONE ->
+                if (base == FilterTransitionVariant.ECHO_RIDE) FilterTransitionVariant.SWEEP else base
+            null -> base
+        }
+    } else {
+        FilterTransitionVariant.SWEEP
+    }
     val primary = mixPlan(
         analysis, nextAnalysis, mixAnchor, mixOutAnchor.type, length, nextLength, traits, filterVariant,
+        override,
     )
     // An exit where the outgoing track is still singing over the incoming one
     // is worth trading for another the analysis ranked, if one halves the
@@ -1618,6 +1686,7 @@ private fun planAdvancedBars(
     incomingHandoffTime: Double,
     incomingPlaybackRate: Double,
     requestedBars: Int,
+    requestedStart: Double = 0.0,
     sameBeatBlend: Boolean,
 ): AdvancedBarPlacement? {
     val currentBpm = analysis.bpm.orZero()
@@ -1645,9 +1714,24 @@ private fun planAdvancedBars(
     } else {
         MAX_TRANSITION_BARS
     }
-    val maxByWallClock = floor(MAX_OVERLAP_SECONDS / barSeconds).toInt()
+    val maxByWallClock = floor(MAX_ADVANCED_OVERLAP_SECONDS / barSeconds).toInt()
     var bars = minOf(requested, maxByOutgoing, maxByIncoming, maxByWallClock)
     if (bars < MIN_TRANSITION_BARS) return null
+
+    // The listener's own starting point, when they have dragged the panel's
+    // line onto one.
+    //
+    // It decides the *size* rather than replacing the size: the overlap still
+    // has to end at the mix point and still has to be whole bars, so the only
+    // thing a chosen start can do is say how many whole bars fit between it
+    // and that point. A start with no room for a legal overlap behind it is
+    // refused and the planner's own placement stands — the panel then shows
+    // the plan it got, not the one that was asked for.
+    if (requestedStart > 0.0) {
+        val fromStart = floor((mixEnd - requestedStart) / barSeconds).toInt()
+        val ceiling = minOf(maxByOutgoing, maxByIncoming, maxByWallClock)
+        if (fromStart in MIN_TRANSITION_BARS..ceiling) bars = fromStart
+    }
 
     val targetStart = mixEnd - bars * barSeconds
     val gateSeconds = v2VocalGate(analysis, targetStart, mixEnd)
@@ -1683,6 +1767,7 @@ private fun mixPlan(
     nextLength: Double,
     traits: PairTraits?,
     filterVariant: FilterTransitionVariant,
+    override: AutomixOverride? = null,
 ): TransitionPlan {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1824,7 +1909,18 @@ private fun mixPlan(
             mixEnd = mixEnd,
             incomingHandoffTime = incomingHandoffTime,
             incomingPlaybackRate = incomingRateFor(incomingPlaybackRate, true),
-            requestedBars = transitionBars,
+            // The listener's size, when they have asked for one: whole bars,
+            // and the same range the planner works in. Content and runway
+            // limits still apply, so a request that does not fit comes back
+            // shorter rather than not at all.
+            requestedBars = override?.bars?.takeIf { it > 0 } ?: transitionBars,
+            // The listener's own starting point for the overlap, when they
+            // have dragged the panel's line onto one. Only asked for when
+            // they have not also asked for a size: the two are two ways of
+            // saying the same thing, and a size is the plainer of them.
+            requestedStart = override?.transitionStart
+                ?.takeIf { it > 0.0 && (override?.bars ?: 0) < MIN_TRANSITION_BARS }
+                ?: 0.0,
             sameBeatBlend = sameBeatBlend,
         )
         if (placement == null) {
@@ -1922,6 +2018,31 @@ private fun mixPlan(
             FilterTransitionVariant.BASS_HANDOFF
         else -> filterVariant
     }
+    // The style the pair would get on its own: a beat-matched blend when the
+    // grids agree, a filtered handoff when they do not.
+    val plannedStyle = if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER
+    // The listener's style, honoured where it can be executed. A beat-matched
+    // blend needs two grids that can be matched, so asking for one on a pair
+    // that cannot be matched gets the filtered handoff instead — the plan says
+    // which, and the panel shows the plan rather than the request.
+    val style = when (override?.style) {
+        TransitionStyle.EQUAL_POWER -> TransitionStyle.EQUAL_POWER
+        TransitionStyle.DJ_BLEND -> if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER
+        TransitionStyle.DJ_FILTER -> TransitionStyle.DJ_FILTER
+        // Gapless is its own path, decided before this one; a request for it
+        // on a pair that is not album-sequential cannot be honoured here.
+        TransitionStyle.GAPLESS -> plannedStyle
+        null -> plannedStyle
+    }
+    // The low end changes hands only on a blend; a filtered handoff keeps its
+    // own bass handover, and a plain fade hands nothing over at all.
+    val bassSwap = when (style) {
+        TransitionStyle.DJ_BLEND -> sameBeatBlend || hasBassContent
+        TransitionStyle.DJ_FILTER -> hasBassContent
+        else -> false
+    }
+    val filterSweep = if (style == TransitionStyle.DJ_FILTER) FILTER_SWEEP else 0.0
+    val effectiveFilterVariant = if (style == TransitionStyle.DJ_FILTER) resolvedFilterVariant else FilterTransitionVariant.SWEEP
     return TransitionPlan(
         markerVisible = true,
         transitionStart = transitionStart,
@@ -1939,15 +2060,18 @@ private fun mixPlan(
         // the exact whole-bar count produced by its placement.
         transitionBeats = renderedBeats,
         transitionBars = renderedBars,
-        bassSwap = sameBeatBlend || hasBassContent,
-        transitionStyle = if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER,
+        bassSwap = bassSwap,
+        transitionStyle = style,
         // The two styles are alternatives, not a scale: a matched pair hands the
         // low end over on a beat and otherwise stays open, while an unmatched
         // pair has no shared grid to hand anything over on and instead pulls the
         // outgoing track behind a closing low-pass. Left at zero on the blend
         // branch so the renderer doesn't do both at once.
-        filterSweep = if (sameBeatBlend) 0.0 else FILTER_SWEEP,
-        filterVariant = if (sameBeatBlend) FilterTransitionVariant.SWEEP else resolvedFilterVariant,
+        filterSweep = filterSweep,
+        filterVariant = effectiveFilterVariant,
+        // The listener's tone shape for the arriving track. A flat shape is
+        // the same as no shape, so it is carried as none.
+        eqShape = override?.eq?.takeIf { !it.isFlat },
         vocalOverlap = vocalOverlap,
         beatSeconds = gridBeatSeconds,
         // Tempo is fixed while audible. Live phase-lock pulses changed
