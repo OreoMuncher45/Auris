@@ -89,6 +89,14 @@ data class TrackAnalysisDigest(
 data class AutomixPlanDigest(
     /** Whole bars of overlap, or 0 when nothing is planned. */
     val bars: Int = 0,
+    /**
+     * The largest whole-bar overlap this pair could carry.
+     *
+     * The ceiling on the handoff's position: the panel's line may travel
+     * this many bars back from the mix point and no further, because the
+     * planner would refuse anything beyond it.
+     */
+    val maxBars: Int = 0,
     /** The blend that will run: DJ_BLEND, DJ_FILTER, EQUAL_POWER, GAPLESS. */
     val style: String = "",
     /** The filter shape a filtered handoff will ride. */

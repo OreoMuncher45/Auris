@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Überlappung</string>
-    <string name="automix_scrub_hint">Ziehe die grüne Linie oder tippe auf den Track, um die Übergabe zu verschieben</string>
+    <string name="automix_scrub_hint">Ziehe die grüne Linie oder den unteren Track, um die Übergabe zu verschieben · ziehe den oberen Track zum Scrollen</string>
     <string name="automix_style_dj_blend">DJ-Blend</string>
     <string name="automix_style_dj_filter">Gefilterte Übergabe</string>
     <string name="automix_style_equal_power">Gleichleistungs-Überblendung</string>

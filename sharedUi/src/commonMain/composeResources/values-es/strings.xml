@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Solape</string>
-    <string name="automix_scrub_hint">Arrastra la línea verde o toca la pista para mover el relevo</string>
+    <string name="automix_scrub_hint">Arrastra la línea verde o la pista inferior para mover el relevo · arrastra la pista superior para desplazar</string>
     <string name="automix_style_dj_blend">mezcla DJ</string>
     <string name="automix_style_dj_filter">traspaso filtrado</string>
     <string name="automix_style_equal_power">fundido de potencia constante</string>

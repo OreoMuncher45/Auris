@@ -186,6 +186,16 @@ data class TransitionPlan(
     val transitionBeats: Int = 0,
     /** Whole bars in the rendered overlap. This is the product-facing transition size. */
     val transitionBars: Int = 0,
+    /**
+     * The largest whole-bar overlap this pair could carry, or 0 when nothing
+     * was planned.
+     *
+     * The ceiling rather than the chosen size, so that a listener moving the
+     * handoff can be shown how far back they may put it: a request beyond
+     * this is refused by the planner, and a panel that let the line travel
+     * past it would be offering a move that cannot happen.
+     */
+    val maxTransitionBars: Int = 0,
     val bassSwap: Boolean = false,
     val handoffFraction: Double = HANDOFF_FRACTION,
     val bedPosition: Double = BED_POSITION,
@@ -697,6 +707,15 @@ sealed interface WsolaPlanResult {
         val overlapSeconds: Double,
         val beats: Int,
         val bars: Int,
+        /**
+         * The largest whole-bar overlap this pair could carry.
+         *
+         * The ceiling rather than the chosen size, so that a listener moving
+         * the handoff can be shown how far back they may put it: a request
+         * beyond this is refused, and a panel that let the line travel past
+         * it would be offering a move that cannot happen.
+         */
+        val maxBars: Int = 0,
         val fadeBeats: Int,
         val handoffFraction: Double,
         val bedPosition: Double,
@@ -1037,6 +1056,9 @@ private fun planAdvancedWsolaTransition(
         overlapSeconds = overlapSeconds,
         beats = overlapBeats,
         bars = overlapBeats / BEATS_PER_BAR,
+        // The ceiling the content allowed, so that the panel's line can be
+        // clamped to a placement this pair could actually carry.
+        maxBars = maxBars,
         fadeBeats = overlapBeats,
         handoffFraction = HANDOFF_FRACTION,
         bedPosition = BED_POSITION,
@@ -1105,6 +1127,8 @@ private fun phraseSwitch(
         pickupSeconds = incomingAudibleStart(nextAnalysis),
         transitionBeats = planned.beats,
         transitionBars = planned.bars,
+        // How far back the listener may put the handoff for this pair.
+        maxTransitionBars = planned.maxBars,
         bassSwap = true,
         handoffFraction = planned.handoffFraction,
         bedPosition = planned.bedPosition,
@@ -1708,6 +1732,14 @@ private data class AdvancedBarPlacement(
     val bars: Int,
     val incomingCueTime: Double,
     val gateSeconds: Double,
+    /**
+     * The largest whole-bar overlap this pair could carry.
+     *
+     * The ceiling rather than the chosen size: a listener dragging the
+     * handoff needs to know how far back they may put it, and the only
+     * honest answer is the one the content and the runway allow.
+     */
+    val maxBars: Int,
 )
 
 /**
@@ -1754,7 +1786,8 @@ private fun planAdvancedBars(
         MAX_TRANSITION_BARS
     }
     val maxByWallClock = floor(MAX_ADVANCED_OVERLAP_SECONDS / barSeconds).toInt()
-    var bars = minOf(requested, maxByOutgoing, maxByIncoming, maxByWallClock)
+    val ceiling = minOf(maxByOutgoing, maxByIncoming, maxByWallClock)
+    var bars = minOf(requested, ceiling)
     if (bars < MIN_TRANSITION_BARS) return null
 
     // The listener's own starting point, when they have dragged the panel's
@@ -1766,9 +1799,12 @@ private fun planAdvancedBars(
     // and that point. A start with no room for a legal overlap behind it is
     // refused and the planner's own placement stands — the panel then shows
     // the plan it got, not the one that was asked for.
+    //
+    // Rounded rather than floored: the panel's line is already on the bar
+    // grid, and a start a hair under a bar line is that bar line, not the
+    // bar before it.
     if (requestedStart > 0.0) {
-        val fromStart = floor((mixEnd - requestedStart) / barSeconds).toInt()
-        val ceiling = minOf(maxByOutgoing, maxByIncoming, maxByWallClock)
+        val fromStart = round((mixEnd - requestedStart) / barSeconds).toInt()
         if (fromStart in MIN_TRANSITION_BARS..ceiling) bars = fromStart
     }
 
@@ -1789,6 +1825,7 @@ private fun planAdvancedBars(
         bars = bars,
         incomingCueTime = cue,
         gateSeconds = gateSeconds,
+        maxBars = ceiling.coerceAtLeast(MIN_TRANSITION_BARS),
     )
 }
 
@@ -1935,6 +1972,7 @@ private fun mixPlan(
     val transitionStart: Double
     var renderedBars = transitionBars
     var renderedBeats = transitionBeats
+    var renderedMaxBars = 0
 
     if (traits != null) {
         // Advanced Automix publishes one musical size: whole bars. Requested
@@ -1954,12 +1992,12 @@ private fun mixPlan(
             // shorter rather than not at all.
             requestedBars = override?.bars?.takeIf { it > 0 } ?: transitionBars,
             // The listener's own starting point for the overlap, when they
-            // have dragged the panel's line onto one. Only asked for when
-            // they have not also asked for a size: the two are two ways of
-            // saying the same thing, and a size is the plainer of them.
-            requestedStart = override?.transitionStart
-                ?.takeIf { it > 0.0 && (override?.bars ?: 0) < MIN_TRANSITION_BARS }
-                ?: 0.0,
+            // have dragged the panel's line onto one. Honoured even when they
+            // have also chosen a size: the two are two ways of saying the
+            // same thing, and the line is the plainer of them — the panel
+            // keeps the two in step, so a dragged line and a picked size
+            // never disagree about where the overlap begins.
+            requestedStart = override?.transitionStart?.takeIf { it > 0.0 } ?: 0.0,
             sameBeatBlend = sameBeatBlend,
         )
         if (placement == null) {
@@ -1976,6 +2014,7 @@ private fun mixPlan(
         finalIncomingCueTime = placement.incomingCueTime
         renderedBars = placement.bars
         renderedBeats = placement.bars * BEATS_PER_BAR
+        renderedMaxBars = placement.maxBars
     } else if (sameBeatBlend && beatSeconds > 0) {
         // Classic mode keeps its historical timing rule unchanged.
         val introDropTime = incomingHandoffTime / max(0.8, incomingPlaybackRate)
@@ -2099,6 +2138,7 @@ private fun mixPlan(
         // the exact whole-bar count produced by its placement.
         transitionBeats = renderedBeats,
         transitionBars = renderedBars,
+        maxTransitionBars = if (traits != null) renderedMaxBars else 0,
         bassSwap = bassSwap,
         transitionStyle = style,
         // The two styles are alternatives, not a scale: a matched pair hands the

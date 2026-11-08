@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtre</string>
     <string name="automix_row_overlap">Çakışma</string>
-    <string name="automix_scrub_hint">Devri taşımak için yeşil çizgiyi sürükleyin veya parçaya dokunun</string>
+    <string name="automix_scrub_hint">Devri taşımak için yeşil çizgiyi veya alttaki parçayı sürükleyin · kaydırmak için üstteki parçayı sürükleyin</string>
     <string name="automix_style_dj_blend">DJ karışımı</string>
     <string name="automix_style_dj_filter">filtreli devir</string>
     <string name="automix_style_equal_power">sabit güç geçişi</string>

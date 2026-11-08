@@ -1,8 +1,6 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +69,8 @@ import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.playback.smart.AutomixEffect
 import com.music.bitchord.playback.smart.AutomixOverride
 import com.music.bitchord.playback.smart.FilterTransitionVariant
+import com.music.bitchord.playback.smart.MAX_TRANSITION_BARS
+import com.music.bitchord.playback.smart.MIN_TRANSITION_BARS
 import com.music.bitchord.playback.smart.TransitionEqShape
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.sharedui.resources.*
@@ -78,11 +79,9 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import java.util.Locale
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.round
 import kotlin.math.roundToInt
 
 /**
@@ -191,6 +190,18 @@ private fun ColumnScope.AutomixPanelBody(
     val hasNext = panel.nextTitle.isNotBlank()
     val scrubTime = draft.transitionStart.takeIf { it > 0.0 } ?: plan.transitionStart
 
+    // The two numbers the line and the size are built from: where the
+    // overlap ends, and how long one bar of the outgoing track is. The
+    // planner uses the same two, so what the listener drags and what the
+    // planner renders are measured against the same grid.
+    val mixPoint = plan.transitionEnd.takeIf { it > 0.0 } ?: current.contentEnd
+    val barSeconds = (
+        current.beatInterval.takeIf { it > 0.0 }
+            ?: current.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
+            ?: 0.0
+        ) * 4.0
+    val ceiling = barCeiling(plan)
+
     AutomixTrackHeading(panel = panel, draft = draft)
 
     Spacer(Modifier.height(12.dp))
@@ -202,7 +213,15 @@ private fun ColumnScope.AutomixPanelBody(
         scrubTime = scrubTime,
         hasNext = hasNext,
         enabled = draft.enabled,
-        onScrub = { onDraft(draft.copy(transitionStart = it)) },
+        onScrub = { time ->
+            // The line and the size are one decision: the overlap ends at the
+            // mix point, so a place on the track is a number of bars before
+            // it. Writing both keeps the panel and the planner talking about
+            // the same overlap instead of two that disagree.
+            val bars = barCountAt(time, mixPoint, barSeconds, ceiling)
+            onDraft(draft.copy(transitionStart = time, bars = bars))
+        },
+        haptic = haptic,
         modifier = Modifier
             .fillMaxWidth()
             .height(196.dp),
@@ -214,7 +233,7 @@ private fun ColumnScope.AutomixPanelBody(
     AutomixBarsChip(
         bars = draft.bars,
         planned = plan.bars,
-        onBars = { haptic(); onDraft(draft.copy(bars = it)) },
+        onBars = { haptic(); onDraft(draft.copy(bars = it, transitionStart = handoffTime(it, mixPoint, barSeconds))) },
         modifier = Modifier
             .align(Alignment.CenterHorizontally)
             .padding(top = 6.dp),
@@ -385,6 +404,30 @@ private fun AutomixTag(text: String, color: Color) {
  * drag feel solid: the grid and the waveforms stay exactly where they were
  * while the listener decides, and the view glides to the new neighbourhood
  * only once the plan has caught up with where they put the line.
+ *
+ * ## Three gestures, kept apart
+ *
+ * The outgoing lane is the clock — the whole drawing is the outgoing track's
+ * own time, with the arriving track laid on it. That gives a finger three
+ * things to do, and the panel keeps them apart so none of them fights the
+ * others:
+ *
+ * - **Drag the outgoing lane** and the view scrolls: the outgoing waveform
+ *   moves under the finger, the way a timeline does. The transition itself
+ *   does not change.
+ * - **Drag the arriving lane, or the green line itself**, and the handoff
+ *   moves: it follows the finger in whole bars, inside the range the planner
+ *   can actually execute.
+ * - **Tap anywhere** and the handoff jumps to that place, snapped the same
+ *   way.
+ *
+ * ## Why the mapping is frozen
+ *
+ * The finger-to-time mapping is taken once, when the finger lands, and kept
+ * for the whole gesture. A view that moved under the finger would put the
+ * line somewhere the finger is not: the line would appear to teleport to
+ * wherever the finger touched, and then refuse to travel any further because
+ * the plan kept pulling it back.
  */
 @Composable
 private fun AutomixTransitionGraph(
@@ -395,45 +438,81 @@ private fun AutomixTransitionGraph(
     hasNext: Boolean,
     enabled: Boolean,
     onScrub: (Double) -> Unit,
+    haptic: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val duration = current.duration.takeIf { it > 0.0 } ?: 0.0
-    val anchor = plan.transitionEnd.takeIf { it > 0.0 } ?: current.contentEnd
+    // Where the overlap ends. A whole-bar overlap can only end at the mix
+    // point, so the line is placed backwards from it.
+    val mixPoint = plan.transitionEnd.takeIf { it > 0.0 } ?: current.contentEnd
     val beatSeconds = current.beatInterval.takeIf { it > 0.0 }
         ?: current.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
         ?: 0.0
+    val barSeconds = beatSeconds * 4.0
+    // How far back the line may go: the planner's own ceiling, so the panel
+    // never offers a placement the planner would refuse.
+    val maxBars = barCeiling(plan)
 
-    var dragging by remember { mutableStateOf(false) }
-    val viewStart = remember { Animatable(0f) }
-    val viewEnd = remember { Animatable(1f) }
-    val initialised = remember { mutableStateOf(false) }
+    // The window on show. Plain state rather than an animatable: the drag
+    // writes to it from inside the pointer gesture, and a gesture's scope is
+    // not allowed to reach into an animatable's mutator.
+    var viewStart by remember { mutableStateOf(0.0) }
+    var viewEnd by remember { mutableStateOf(1.0) }
+    // The listener's own scroll, in seconds, measured from the plan's window.
+    var panOffset by remember { mutableStateOf(0.0) }
+    var initialised by remember { mutableStateOf(false) }
+    var gesturing by remember { mutableStateOf(false) }
 
-    // Anchored on the plan rather than on the request. During a drag the plan
-    // has not moved yet, so neither has the view; when it lands, the view
-    // glides over rather than snapping.
-    LaunchedEffect(plan.transitionStart, plan.transitionEnd, duration, dragging) {
-        if (dragging) return@LaunchedEffect
-        val target = graphViewport(plan.transitionStart, plan.transitionEnd, duration)
-        if (!initialised.value) {
-            initialised.value = true
-            viewStart.snapTo(target.start.toFloat())
-            viewEnd.snapTo(target.end.toFloat())
-        } else {
-            launch {
-                viewStart.animateTo(target.start.toFloat(), tween(VIEW_GLIDE_MS, easing = FastOutSlowInEasing))
-            }
-            launch {
-                viewEnd.animateTo(target.end.toFloat(), tween(VIEW_GLIDE_MS, easing = FastOutSlowInEasing))
-            }
+    val base = graphViewport(plan.transitionStart, plan.transitionEnd, duration)
+    val liveBase by rememberUpdatedState(base)
+
+    // The window follows the plan, and the listener's scroll is kept on top
+    // of it: the plan decides which neighbourhood is on show, the scroll
+    // decides how far into the song the listener has walked away from it.
+    //
+    // Nothing moves the window while a finger is on it. That is the whole
+    // reason the drag can be trusted: the grid, the waveforms and the line
+    // are in the same places before and after every frame of the gesture.
+    LaunchedEffect(base, duration, gesturing) {
+        if (gesturing) return@LaunchedEffect
+        val from = base.start + panOffset
+        val to = base.end + panOffset
+        if (!initialised) {
+            initialised = true
+            viewStart = from
+            viewEnd = to
+            return@LaunchedEffect
+        }
+        // The glide, frame by frame. The window moves to the plan's new
+        // neighbourhood instead of jumping to it, and it moves from wherever
+        // it happens to be — which, after a scroll, is not where the plan
+        // last put it.
+        val fromStart = viewStart
+        val fromEnd = viewEnd
+        val started = withFrameNanos { it }
+        while (true) {
+            val now = withFrameNanos { it }
+            val progress = ((now - started) / VIEW_GLIDE_MS.toDouble()).coerceIn(0.0, 1.0)
+            val eased = FastOutSlowInEasing.transform(progress.toFloat())
+            viewStart = fromStart + (from - fromStart) * eased
+            viewEnd = fromEnd + (to - fromEnd) * eased
+            if (progress >= 1.0) break
         }
     }
 
     val latestScrub by rememberUpdatedState(onScrub)
-    // The mix point and the beat length both move while the panel is open —
-    // the analysis refines, the plan is re-made — and the gesture loop is
-    // started once, so both are read through a state rather than captured.
-    val liveAnchor by rememberUpdatedState(anchor)
-    val liveBeat by rememberUpdatedState(beatSeconds)
+    val latestHaptic by rememberUpdatedState(haptic)
+    // The mix point, the bar length and the plan itself all move while the
+    // panel is open — the analysis refines, the plan is re-made — and the
+    // gesture loop is started once, so every one of them is read through a
+    // state rather than captured.
+    val liveMix by rememberUpdatedState(mixPoint)
+    val liveBar by rememberUpdatedState(barSeconds)
+    val liveMax by rememberUpdatedState(maxBars)
+    val liveScrub by rememberUpdatedState(scrubTime)
+    val liveDuration by rememberUpdatedState(duration)
+    val liveHasNext by rememberUpdatedState(hasNext)
+
     val graphModifier = if (!enabled || beatSeconds <= 0.0) {
         modifier
     } else {
@@ -441,44 +520,96 @@ private fun AutomixTransitionGraph(
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val width = size.width.toFloat().coerceAtLeast(1f)
-                fun timeAt(x: Float): Double {
-                    val from = viewStart.value.toDouble()
-                    val span = (viewEnd.value - viewStart.value).toDouble().coerceAtLeast(0.001)
-                    val raw = from + (x / width).coerceIn(0f, 1f) * span
-                    return snapHandoff(raw, liveAnchor, liveBeat).coerceIn(0.0, liveAnchor)
-                }
+                val height = size.height.toFloat().coerceAtLeast(1f)
+                // Frozen for the whole gesture. The view must not move under
+                // the finger, or the line jumps away from it.
+                val viewFrom = viewStart
+                val viewTo = viewEnd
+                val viewSpan = (viewTo - viewFrom).coerceAtLeast(0.001)
+                val gap = 12.dp.toPx()
+                val laneHeight = if (liveHasNext) (height - gap) / 2f else height
+                val lowerTop = if (liveHasNext) laneHeight + gap else height
+                val onIncoming = liveHasNext && down.position.y >= lowerTop
+                val lineX = ((liveScrub - viewFrom) / viewSpan * width).toFloat()
+                val onLine = abs(down.position.x - lineX) <= LINE_HIT_DP.toPx()
+                // The outgoing lane is the clock and is scrolled; the arriving
+                // lane is the thing being placed and is dragged onto the grid.
+                val scrubbing = onIncoming || onLine
                 var decided = false
                 var horizontal = false
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    if (!change.pressed) {
-                        change.consume()
-                        break
+                var lastBars = -1
+
+                fun handoffAt(x: Float) {
+                    val raw = viewFrom + (x / width).coerceIn(0f, 1f) * viewSpan
+                    val bars = barCountAt(raw, liveMix, liveBar, liveMax)
+                    if (bars != lastBars) {
+                        lastBars = bars
+                        latestHaptic()
                     }
-                    if (!decided) {
-                        val dx = change.position.x - down.position.x
-                        val dy = change.position.y - down.position.y
-                        if (abs(dx) > viewConfiguration.touchSlop || abs(dy) > viewConfiguration.touchSlop) {
-                            decided = true
-                            horizontal = abs(dx) >= abs(dy)
-                            // Only a horizontal gesture is claimed. A vertical
-                            // one belongs to the sheet, which scrolls.
-                            if (horizontal) {
-                                dragging = true
-                                change.consume()
-                                latestScrub(timeAt(change.position.x))
+                    latestScrub(handoffTime(bars, liveMix, liveBar))
+                }
+
+                fun panTo(dx: Float) {
+                    val span = viewSpan
+                    val length = liveDuration
+                    var from = viewFrom - (dx / width) * span
+                    val maxFrom = max(0.0, length - span)
+                    if (length > 0.0) from = from.coerceIn(0.0, maxFrom)
+                    // Keep the handoff in sight: scrolling away from the thing
+                    // being chosen is not what anyone wants from a panel that
+                    // is about that thing.
+                    val line = liveScrub
+                    if (length > span && (from > line || from + span < line)) {
+                        from = (if (from > line) line else line - span).coerceIn(0.0, maxFrom)
+                    }
+                    viewStart = from
+                    viewEnd = from + span
+                    panOffset = from - liveBase.start
+                }
+
+                gesturing = true
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        if (!decided) {
+                            val dx = change.position.x - down.position.x
+                            val dy = change.position.y - down.position.y
+                            if (abs(dx) > viewConfiguration.touchSlop || abs(dy) > viewConfiguration.touchSlop) {
+                                decided = true
+                                horizontal = abs(dx) >= abs(dy)
+                                // Only a horizontal gesture is claimed. A
+                                // vertical one belongs to the sheet, which
+                                // scrolls.
+                                if (horizontal) {
+                                    change.consume()
+                                    if (scrubbing) {
+                                        handoffAt(change.position.x)
+                                    } else {
+                                        panTo(change.position.x - down.position.x)
+                                    }
+                                }
+                            }
+                            continue
+                        }
+                        if (horizontal && change.positionChanged()) {
+                            change.consume()
+                            if (scrubbing) {
+                                handoffAt(change.position.x)
+                            } else {
+                                panTo(change.position.x - down.position.x)
                             }
                         }
-                        continue
                     }
-                    if (horizontal && change.positionChanged()) {
-                        change.consume()
-                        latestScrub(timeAt(change.position.x))
-                    }
+                } finally {
+                    gesturing = false
                 }
-                if (!decided) latestScrub(timeAt(down.position.x))
-                dragging = false
+                // A tap: the handoff jumps to the place that was touched.
+                if (!decided) handoffAt(down.position.x)
             }
         }
     }
@@ -487,8 +618,8 @@ private fun AutomixTransitionGraph(
         val width = size.width
         val height = size.height
         if (width <= 0f || height <= 0f) return@Canvas
-        val from = viewStart.value.toDouble()
-        val span = (viewEnd.value - viewStart.value).toDouble().coerceAtLeast(0.001)
+        val from = viewStart
+        val span = (viewEnd - viewStart).coerceAtLeast(0.001)
         fun xOf(time: Double): Float = ((time - from) / span * width).toFloat().coerceIn(-width, width * 2f)
 
         val gap = 12.dp.toPx()
@@ -518,17 +649,24 @@ private fun AutomixTransitionGraph(
             mid = upperMid,
             from = from,
             span = span,
-            anchor = anchor,
+            anchor = mixPoint,
             mapToAxis = { it },
         )
 
         if (hasNext) {
-            val cue = plan.cueSeconds
             val lowerMid = lowerTop + laneHeight / 2f
             // The incoming track's own clock, laid on the outgoing one's: the
             // cue point is what plays when the overlap opens, so that is where
             // it is pinned. Everything before it is preroll that will not be
             // heard, and is drawn dimmer rather than hidden.
+            //
+            // While the listener is dragging, the cue is worked out from the
+            // plan rather than read from it: a longer overlap starts the
+            // arriving track earlier in its own timeline, and the panel shows
+            // that happening at once instead of waiting for the plan to catch
+            // up with the finger.
+            val drift = if (plan.transitionStart > 0.0) scrubTime - plan.transitionStart else 0.0
+            val cue = max(0.0, plan.cueSeconds - drift * plan.incomingRate)
             val incomingMap: (Double) -> Double = { scrubTime + (it - cue) }
             drawWaveform(
                 digest = next,
@@ -545,7 +683,7 @@ private fun AutomixTransitionGraph(
                 mid = lowerMid,
                 from = from,
                 span = span,
-                anchor = anchor,
+                anchor = mixPoint,
                 mapToAxis = incomingMap,
             )
         }
@@ -553,12 +691,18 @@ private fun AutomixTransitionGraph(
         // The overlap the planner actually resolved. Drawn after the
         // waveforms so it tints them, and before the marks so the marks stay
         // crisp on top of it.
+        //
+        // Faded while a finger is down: the plan has not caught up with the
+        // request yet, and a box that claims to be the overlap while it is
+        // demonstrably something else is worse than a box that is merely
+        // waiting.
         if (enabled && plan.transitionEnd > plan.transitionStart) {
             val left = xOf(plan.transitionStart)
             val right = xOf(plan.transitionEnd)
             if (right > left) {
-                drawOverlapBox(left, right, upperTop, laneHeight)
-                if (hasNext) drawOverlapBox(left, right, lowerTop, laneHeight)
+                val alpha = if (gesturing) 0.35f else 1f
+                drawOverlapBox(left, right, upperTop, laneHeight, alpha)
+                if (hasNext) drawOverlapBox(left, right, lowerTop, laneHeight, alpha)
             }
         }
 
@@ -568,12 +712,13 @@ private fun AutomixTransitionGraph(
         }
 
         // The listener's handoff. Green, full height, with a handle at the top
-        // so there is something to aim a finger at.
+        // so there is something to aim a finger at. Brighter while it is
+        // being held, because that is the one moment it is under the finger.
         if (enabled && scrubTime > 0.0) {
             val x = xOf(scrubTime)
             if (x in 0f..width) {
                 drawLine(
-                    color = AutomixGreen.copy(alpha = 0.18f),
+                    color = AutomixGreen.copy(alpha = if (gesturing) 0.30f else 0.18f),
                     start = Offset(x, 0f),
                     end = Offset(x, height),
                     strokeWidth = 7.dp.toPx(),
@@ -585,7 +730,7 @@ private fun AutomixTransitionGraph(
                     strokeWidth = 2.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
-                val handleWidth = 22.dp.toPx()
+                val handleWidth = if (gesturing) 30.dp.toPx() else 22.dp.toPx()
                 val handleHeight = 5.dp.toPx()
                 drawRoundRect(
                     color = AutomixGreen,
@@ -726,16 +871,22 @@ private fun DrawScope.drawBeatGrid(
     }
 }
 
-private fun DrawScope.drawOverlapBox(left: Float, right: Float, top: Float, height: Float) {
+private fun DrawScope.drawOverlapBox(
+    left: Float,
+    right: Float,
+    top: Float,
+    height: Float,
+    alpha: Float = 1f,
+) {
     val inset = 2.dp.toPx()
     drawRoundRect(
-        color = AutomixAmber.copy(alpha = 0.11f),
+        color = AutomixAmber.copy(alpha = 0.11f * alpha),
         topLeft = Offset(left, top + inset),
         size = Size(right - left, height - inset * 2),
         cornerRadius = CornerRadius(10.dp.toPx()),
     )
     drawRoundRect(
-        color = AutomixAmber.copy(alpha = 0.55f),
+        color = AutomixAmber.copy(alpha = 0.55f * alpha),
         topLeft = Offset(left, top + inset),
         size = Size(right - left, height - inset * 2),
         cornerRadius = CornerRadius(10.dp.toPx()),
@@ -1460,21 +1611,44 @@ private fun graphViewport(start: Double, end: Double, duration: Double): Automix
 }
 
 /**
- * Where the listener's finger lands, in musical terms.
+ * How many whole bars of overlap a place on the outgoing track would mean.
  *
- * The grid is anchored on the mix point, because that is the anchor the
- * planner builds its whole bars from — a line snapped anywhere else would
- * silently land on a different place than the one drawn. A bar line is
- * preferred when the finger is within a quarter of a bar of one, so a drag
- * that is clearly aiming at the one gets the one.
+ * The overlap ends at the mix point, so a place on the track is a number of
+ * bars before it. Rounded to the nearest whole bar, because that is the only
+ * size the planner can execute: a half-bar request would come back as
+ * something else, and the line would sit somewhere the plan does not.
+ *
+ * Clamped to the range the planner works in — at least [MIN_TRANSITION_BARS]
+ * of overlap, and never more than the ceiling it reported for this pair.
+ * That is what keeps the line from travelling to a place the planner would
+ * refuse, which is what made it look stuck.
  */
-private fun snapHandoff(raw: Double, anchor: Double, beatSeconds: Double): Double {
-    if (beatSeconds <= 0.0 || anchor <= 0.0) return raw
-    val barSeconds = beatSeconds * 4.0
-    val barLine = anchor - round((anchor - raw) / barSeconds) * barSeconds
-    if (abs(raw - barLine) <= barSeconds * BAR_SNAP_FRACTION) return barLine
-    return anchor - round((anchor - raw) / beatSeconds) * beatSeconds
+private fun barCountAt(raw: Double, mixPoint: Double, barSeconds: Double, maxBars: Int): Int {
+    if (barSeconds <= 0.0 || mixPoint <= 0.0) return MIN_TRANSITION_BARS
+    val bars = ((mixPoint - raw) / barSeconds).roundToInt()
+    return bars.coerceIn(MIN_TRANSITION_BARS, maxOf(MIN_TRANSITION_BARS, maxBars))
 }
+
+/**
+ * Where a handoff of [bars] whole bars lands on the outgoing track.
+ *
+ * The mix point minus the length of the overlap: the same arithmetic the
+ * planner does, so the line and the plan agree on where the overlap begins.
+ */
+private fun handoffTime(bars: Int, mixPoint: Double, barSeconds: Double): Double {
+    if (barSeconds <= 0.0 || mixPoint <= 0.0) return 0.0
+    return max(0.0, mixPoint - bars * barSeconds)
+}
+
+/**
+ * How many whole bars the planner could carry for this pair, as far as the
+ * panel knows: the plan's own ceiling, or the size it settled on when it has
+ * no ceiling to report.
+ */
+private fun barCeiling(plan: AutomixPlanDigest): Int =
+    plan.maxBars.takeIf { it >= MIN_TRANSITION_BARS }
+        ?: plan.bars.takeIf { it >= MIN_TRANSITION_BARS }
+        ?: MAX_TRANSITION_BARS
 
 /** The key as a Camelot badge, so two keys can be compared at a glance. */
 private fun camelotBadge(key: String): String? {
@@ -1545,8 +1719,13 @@ private const val MIN_VIEW_SECONDS = 40.0
 /** How far the view glides when the plan moves to a new neighbourhood. */
 private const val VIEW_GLIDE_MS = 320
 
-/** How close to a bar line counts as aiming at it. */
-private const val BAR_SNAP_FRACTION = 0.25
+/**
+ * How close to the green line a finger has to land to grab it, in pixels.
+ *
+ * Wide enough to be a target rather than a pixel hunt: the line is thin, and
+ * a listener reaching for it with a thumb should not have to be exact.
+ */
+private val LINE_HIT_DP = 28.dp
 
 /** Points across the tone curve; enough for a bell, few enough to stay smooth. */
 private const val EQ_CURVE_POINTS = 64

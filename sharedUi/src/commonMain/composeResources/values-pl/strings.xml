@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtr</string>
     <string name="automix_row_overlap">Nakładanie</string>
-    <string name="automix_scrub_hint">Przeciągnij zieloną linię lub dotknij utworu, aby przesunąć przekazanie</string>
+    <string name="automix_scrub_hint">Przeciągnij zieloną linię lub dolny utwór, aby przesunąć przekazanie · przeciągnij górny utwór, aby przewinąć</string>
     <string name="automix_style_dj_blend">miks DJ</string>
     <string name="automix_style_dj_filter">przekazanie z filtrem</string>
     <string name="automix_style_equal_power">przenikanie o stałej mocy</string>

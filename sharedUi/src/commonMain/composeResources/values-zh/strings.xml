@@ -45,7 +45,7 @@
     <string name="automix_row_eq">均衡器</string>
     <string name="automix_row_filter">滤波器</string>
     <string name="automix_row_overlap">重叠</string>
-    <string name="automix_scrub_hint">拖动绿线或点击音轨以移动交接点</string>
+    <string name="automix_scrub_hint">拖动绿线或下方音轨以移动交接点 · 拖动上方音轨以滚动</string>
     <string name="automix_style_dj_blend">DJ 混音</string>
     <string name="automix_style_dj_filter">滤波交接</string>
     <string name="automix_style_equal_power">等功率淡入淡出</string>

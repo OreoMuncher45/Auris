@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">फ़िल्टर</string>
     <string name="automix_row_overlap">ओवरलैप</string>
-    <string name="automix_scrub_hint">हैंडऑफ खिसकाने के लिए हरी रेखा खींचें या ट्रैक पर टैप करें</string>
+    <string name="automix_scrub_hint">हैंडऑफ खिसकाने के लिए हरी रेखा या नीचे वाला ट्रैक खींचें · ऊपर वाले ट्रैक को खींचकर स्क्रॉल करें</string>
     <string name="automix_style_dj_blend">DJ मिश्रण</string>
     <string name="automix_style_dj_filter">फ़िल्टर किया गया हैंडऑफ़</string>
     <string name="automix_style_equal_power">समान-शक्ति फ़ेड</string>

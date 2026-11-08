@@ -46,7 +46,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Overlap</string>
-    <string name="automix_scrub_hint">Drag the green line, or tap the track, to move the handoff</string>
+    <string name="automix_scrub_hint">Drag the green line or the lower track to move the handoff · drag the upper track to scroll</string>
     <string name="automix_stopped_in_party">Automix: stopped in listen together</string>
     <string name="automix_style_dj_blend">DJ blend</string>
     <string name="automix_style_dj_filter">Filtered handoff</string>

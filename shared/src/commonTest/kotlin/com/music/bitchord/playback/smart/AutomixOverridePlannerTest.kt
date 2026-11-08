@@ -194,4 +194,65 @@ class AutomixOverridePlannerTest {
         assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
         assertNotNull(plan.transitionStart)
     }
+
+    @Test
+    fun aDraggedStartIsHonouredEvenWhenASizeWasAlsoChosen() {
+        // The panel's line and its size are one decision, and the line is the
+        // plainer of the two: a drag that lands twelve bars back is a request
+        // for twelve bars, whatever the size field happened to say.
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val wanted = base.transitionEnd - 12 * BAR_SECONDS
+        val plan = plan(current, next, AutomixOverride(bars = 8, transitionStart = wanted))
+        assertEquals(12, plan.transitionBars)
+        assertEquals(wanted, plan.transitionStart, 0.05)
+    }
+
+    @Test
+    fun aDraggedStartOnTheBarGridLandsOnTheBarGrid() {
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val wanted = base.transitionEnd - 16 * BAR_SECONDS
+        val plan = plan(current, next, AutomixOverride(transitionStart = wanted))
+        assertEquals(16, plan.transitionBars)
+        assertEquals(wanted, plan.transitionStart, 0.05)
+    }
+
+    @Test
+    fun aDraggedStartWithNoRoomBehindItLeavesTheSizeAlone() {
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val plan = plan(
+            current,
+            next,
+            AutomixOverride(bars = 8, transitionStart = base.transitionEnd - 1.0),
+        )
+        assertEquals(8, plan.transitionBars, "a start that cannot be executed is refused")
+    }
+
+    @Test
+    fun thePlanSaysHowFarBackTheLineMayGo() {
+        // The panel clamps the line to the planner's own ceiling: a line that
+        // could travel past it would be offering a move that cannot happen.
+        val (current, next) = calmPair()
+        val plan = plan(current, next)
+        assertTrue(plan.maxTransitionBars >= plan.transitionBars)
+        assertTrue(plan.maxTransitionBars >= MIN_TRANSITION_BARS)
+    }
+
+    @Test
+    fun theCeilingIsTheOneTheContentAllows() {
+        // A short pair cannot carry thirty-two bars, and the ceiling says so
+        // rather than letting the panel offer them.
+        val current = track("short-out", 120.0, "C major", vocal = 0.1, duration = 45.0)
+        val next = track("short-in", 120.0, "C major", vocal = 0.1, duration = 45.0)
+        val plan = plan(current, next)
+        assertTrue(plan.maxTransitionBars < MAX_TRANSITION_BARS)
+        assertTrue(plan.maxTransitionBars >= MIN_TRANSITION_BARS)
+    }
+
+    private companion object {
+        /** One bar of the test pair's grid: 120 BPM, four beats. */
+        const val BAR_SECONDS = 2.0
+    }
 }

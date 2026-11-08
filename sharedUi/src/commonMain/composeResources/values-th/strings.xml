@@ -45,7 +45,7 @@
     <string name="automix_row_eq">อีควอไลเซอร์</string>
     <string name="automix_row_filter">ฟิลเตอร์</string>
     <string name="automix_row_overlap">การทับซ้อน</string>
-    <string name="automix_scrub_hint">ลากเส้นสีเขียวหรือแตะแทร็กเพื่อเลื่อนจุดส่งต่อ</string>
+    <string name="automix_scrub_hint">ลากเส้นสีเขียวหรือแทร็กด้านล่างเพื่อเลื่อนจุดส่งต่อ · ลากแทร็กด้านบนเพื่อเลื่อนดู</string>
     <string name="automix_style_dj_blend">มิกซ์ DJ</string>
     <string name="automix_style_dj_filter">การส่งต่อแบบกรอง</string>
     <string name="automix_style_equal_power">เฟดกำลังเท่ากัน</string>

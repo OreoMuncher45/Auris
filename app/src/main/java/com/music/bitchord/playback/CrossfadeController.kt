@@ -1379,6 +1379,7 @@ class CrossfadeController(
         val nextBpm = nextAnalysis?.bpm ?: 0.0
         return AutomixPlanDigest(
             bars = plan.transitionBars,
+            maxBars = plan.maxTransitionBars,
             style = plan.transitionStyle.name,
             filter = if (plan.filterVariant == FilterTransitionVariant.SWEEP) {
                 ""

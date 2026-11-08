@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Tumpang tindih</string>
-    <string name="automix_scrub_hint">Geser garis hijau atau ketuk trek untuk memindahkan serah</string>
+    <string name="automix_scrub_hint">Geser garis hijau atau trek bawah untuk memindahkan serah · geser trek atas untuk menggulir</string>
     <string name="automix_style_dj_blend">mix DJ</string>
     <string name="automix_style_dj_filter">perpindahan terfilter</string>
     <string name="automix_style_equal_power">fade daya konstan</string>

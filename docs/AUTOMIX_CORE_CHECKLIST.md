@@ -82,16 +82,20 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 - [x] Run shared JVM tests.
 - [x] Run compile/lint checks for affected targets. (Desktop deliberately not built, per instruction.)
 - [x] Review diff for accidental Studio/legacy Smart changes.
-- [ ] Confirm no public release or tag was created.
+- [x] Confirm no public release or tag was created. (`v3.0-draft` untouched; no
+      `v3.0.7-draft` tag — GitHub creates a draft's tag only on publish.)
 
 ### 10. Private dev APK draft
 
 - [x] Add Android-only signed dev-APK draft workflow.
 - [x] Use `versionCode > 104` and stable dev signing key.
-- [ ] Verify APK package/version/signature/install compatibility.
-- [ ] Push branch and run workflow.
-- [ ] Create GitHub release with `gh release create --draft`.
-- [ ] Verify release `isDraft: true` and artifact is downloadable.
+- [x] Verify APK package/version/signature/install compatibility. (`com.dev.bitchord`,
+      versionCode 107, signer `385af3b4…71ce` — same key as 3.0.6, so it installs
+      over it; analyser `libbitchord_analysis.so` present.)
+- [x] Push branch and run workflow. (Run `42443324109`, success.)
+- [x] Create GitHub release with `gh release create --draft`.
+- [x] Verify release `isDraft: true` and artifact is downloadable. (`v3.0.7-draft`,
+      four signed APKs, draft.)
 
 ## Automix panel and per-song choices (v3)
 
@@ -107,12 +111,32 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 - [x] The handoff's slice of the seek bar swells on its own, in the effect's colour.
 - [x] Reduced-motion aware; no motion that carries meaning.
 
+### 11a. The graph's gestures
+
+- [x] Drag the outgoing lane: the view scrolls and the outgoing waveform moves
+      under the finger. The transition does not change.
+- [x] Drag the arriving lane, or the green line itself: the handoff follows the
+      finger, in whole bars, with a haptic tick on every bar.
+- [x] Tap anywhere: the handoff jumps to that place, snapped the same way.
+- [x] The finger-to-time mapping is frozen for the whole gesture, so the line
+      cannot jump out from under the finger.
+- [x] The line is clamped to the planner's own ceiling, so it can travel the
+      whole legal range and no further.
+- [x] The plan's overlap box fades while a finger is down: the plan has not
+      caught up with the request yet, and a stale box should not claim to be
+      the overlap.
+
 ### 12. Per-song choices
 
 - [x] A choice per track: blend, size, filter, tone shape, effect, handoff start.
 - [x] Kept on disk, one file per track, written off the main thread.
-- [x] The listener's handoff start snaps to the beat, and to a bar line when it is
-      clearly aimed at one.
+- [x] The listener's handoff start snaps to whole bars on the planner's own
+      grid, and the size and the start are written together so they cannot
+      disagree.
+- [x] A dragged start is honoured by the planner even when a size was also
+      chosen: the line is the plainer of the two.
+- [x] The plan reports the largest overlap the pair could carry, so the panel
+      never offers a placement the planner would refuse.
 - [x] Whole bars throughout: 4 to 32, and a request that does not fit comes back
       shorter rather than not at all.
 - [x] An empty choice is no choice; "not this song" is a choice and is kept.

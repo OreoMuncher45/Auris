@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">フィルター</string>
     <string name="automix_row_overlap">重なり</string>
-    <string name="automix_scrub_hint">緑の線をドラッグするかトラックをタップして引き継ぎ位置を移動</string>
+    <string name="automix_scrub_hint">緑の線か下側のトラックをドラッグして引き継ぎ位置を移動 · 上側のトラックをドラッグしてスクロール</string>
     <string name="automix_style_dj_blend">DJブレンド</string>
     <string name="automix_style_dj_filter">フィルター付きハンドオフ</string>
     <string name="automix_style_equal_power">等電力フェード</string>

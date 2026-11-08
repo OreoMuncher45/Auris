@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Bộ lọc</string>
     <string name="automix_row_overlap">Chồng lấp</string>
-    <string name="automix_scrub_hint">Kéo đường xanh lá hoặc chạm vào bản nhạc để dời điểm chuyển giao</string>
+    <string name="automix_scrub_hint">Kéo đường xanh lá hoặc bản nhạc dưới để dời điểm chuyển giao · kéo bản nhạc trên để cuộn</string>
     <string name="automix_style_dj_blend">trộn DJ</string>
     <string name="automix_style_dj_filter">bàn giao có lọc</string>
     <string name="automix_style_equal_power">chuyển tiếp công suất đều</string>

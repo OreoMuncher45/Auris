@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtre</string>
     <string name="automix_row_overlap">Chevauchement</string>
-    <string name="automix_scrub_hint">Faites glisser la ligne verte ou touchez le morceau pour déplacer le relais</string>
+    <string name="automix_scrub_hint">Faites glisser la ligne verte ou la piste du bas pour déplacer le relais · glissez la piste du haut pour faire défiler</string>
     <string name="automix_style_dj_blend">mix DJ</string>
     <string name="automix_style_dj_filter">passage filtré</string>
     <string name="automix_style_equal_power">fondu à puissance constante</string>

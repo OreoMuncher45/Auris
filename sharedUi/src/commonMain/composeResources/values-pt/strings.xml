@@ -45,7 +45,7 @@
     <string name="automix_row_eq">EQ</string>
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Sobreposição</string>
-    <string name="automix_scrub_hint">Arraste a linha verde ou toque na faixa para mover a passagem</string>
+    <string name="automix_scrub_hint">Arraste a linha verde ou a faixa inferior para mover a passagem · arraste a faixa superior para rolar</string>
     <string name="automix_style_dj_blend">mistura DJ</string>
     <string name="automix_style_dj_filter">passagem filtrada</string>
     <string name="automix_style_equal_power">fade de potência constante</string>

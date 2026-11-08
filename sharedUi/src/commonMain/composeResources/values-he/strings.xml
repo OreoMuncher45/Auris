@@ -45,7 +45,7 @@
     <string name="automix_row_eq">אקולייזר</string>
     <string name="automix_row_filter">מסנן</string>
     <string name="automix_row_overlap">חפיפה</string>
-    <string name="automix_scrub_hint">גררו את הקו הירוק או הקישו על הרצועה כדי להזיז את המסירה</string>
+    <string name="automix_scrub_hint">גררו את הקו הירוק או את הרצועה התחתונה כדי להזיז את המסירה · גררו את הרצועה העליונה כדי לגלול</string>
     <string name="automix_style_dj_blend">מיקס DJ</string>
     <string name="automix_style_dj_filter">מעבר מסונן</string>
     <string name="automix_style_equal_power">עיבוד כוח שווה</string>
