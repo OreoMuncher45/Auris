@@ -83,18 +83,18 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 - [x] Run compile/lint checks for affected targets. (Desktop deliberately not built, per instruction.)
 - [x] Review diff for accidental Studio/legacy Smart changes.
 - [x] Confirm no public release or tag was created. (`v3.0-draft` untouched; no
-      `v3.0.7-draft` tag — GitHub creates a draft's tag only on publish.)
+      `v3.0.8-draft` tag — GitHub creates a draft's tag only on publish.)
 
 ### 10. Private dev APK draft
 
 - [x] Add Android-only signed dev-APK draft workflow.
 - [x] Use `versionCode > 104` and stable dev signing key.
 - [x] Verify APK package/version/signature/install compatibility. (`com.dev.bitchord`,
-      versionCode 107, signer `385af3b4…71ce` — same key as 3.0.6, so it installs
+      versionCode 108, signer `385af3b4…71ce` — same key as 3.0.7, so it installs
       over it; analyser `libbitchord_analysis.so` present.)
-- [x] Push branch and run workflow. (Run `42443324109`, success.)
+- [x] Push branch and run workflow. (Run `42456044317`, success.)
 - [x] Create GitHub release with `gh release create --draft`.
-- [x] Verify release `isDraft: true` and artifact is downloadable. (`v3.0.7-draft`,
+- [x] Verify release `isDraft: true` and artifact is downloadable. (`v3.0.8-draft`,
       four signed APKs, draft.)
 
 ## Automix panel and per-song choices (v3)
