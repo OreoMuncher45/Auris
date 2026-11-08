@@ -25,7 +25,9 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.cast.CastController
+import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +79,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val showLosslessBadge get() = AppSettings.showLosslessBadge
         override val showHiResBadge get() = AppSettings.showHiResBadge
         override val smartAnalysis get() = AppSettings.smartAnalysis
+        override val automixPanel get() = AppSettings.automixPanel
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
@@ -89,6 +92,14 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
         override fun setLastPlayerScreen(value: LastPlayerScreen) = AppSettings.setLastPlayerScreen(value)
         override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
+
+        // The listener's own choice, kept with the song. The store is the
+        // one place it lives, so the panel and the planner cannot disagree
+        // about what was chosen.
+        override fun setAutomixProfile(trackId: String, override: AutomixOverride) =
+            AutomixProfiles.set(trackId, override)
+
+        override fun clearAutomixProfile(trackId: String) = AutomixProfiles.clear(trackId)
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)

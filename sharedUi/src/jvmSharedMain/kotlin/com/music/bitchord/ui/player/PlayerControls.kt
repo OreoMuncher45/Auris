@@ -104,6 +104,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.AutomixPanelState
+import com.music.bitchord.playback.smart.TransitionEqShape
 import com.music.bitchord.data.settings.SmartTrackFacts
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.AudioQuality
@@ -197,6 +199,10 @@ internal fun PlayerScrubber(
     transitionWindow: ClosedFloatingPointRange<Float>?,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
+    /** Whether the Automix panel is up, so the handoff's slice can say so. */
+    transitionWindowInflated: Boolean = false,
+    /** Opens the Automix panel from a hold on the handoff itself. */
+    onTransitionWindowLongPress: (() -> Unit)? = null,
     centerLabel: @Composable BoxScope.() -> Unit = {},
 ) {
     val shown = shown()
@@ -208,6 +214,15 @@ internal fun PlayerScrubber(
     // canvas needs.
     val mixBlend = PlayerSettings.smartMixBlend.collectAsStateWithLifecycle()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The effect's colour, and *only* its colour: the panel republishes its
+    // whole state on every tick of the planner, and the bar has no business
+    // recomposing for a new BPM. Mapped to nullable and de-duplicated, this
+    // emits when the handoff changes colour and at no other time.
+    val effectAccent by remember {
+        PlayerSettings.automixPanel
+            .map { state -> effectAccentOf(state) }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = null)
     // One clock for the bar and the "Mixing" label, so they breathe on the same beat.
     val mixPulse = rememberMixPulse({ mixBlend.value }, enabled = !reduceAnimation)
     Column(Modifier.fillMaxWidth()) {
@@ -219,6 +234,9 @@ internal fun PlayerScrubber(
             mixing = mixing,
             mixPulse = mixPulse,
             transitionWindow = transitionWindow,
+            transitionWindowInflated = transitionWindowInflated,
+            transitionAccent = effectAccent,
+            onTransitionWindowLongPress = onTransitionWindowLongPress,
             activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
             markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
@@ -265,6 +283,25 @@ internal fun PlayerScrubber(
             }
         }
     }
+}
+
+/** The colour the panel draws the handoff's effect in: violet for tone, amber for a filter ride. */
+private val AUTOMIX_EQ_ACCENT = Color(0xFFC084FC)
+private val AUTOMIX_FILTER_ACCENT = Color(0xFFF5A524)
+
+/**
+ * The effect colour for the transition window, or null when nothing is shaped.
+ *
+ * Null rather than a neutral colour, so the bar keeps its ordinary marker when
+ * there is nothing to report. A flat tone shape with no filter ride is not an
+ * effect: it is the track arriving as it was recorded.
+ */
+private fun effectAccentOf(state: AutomixPanelState): Color? {
+    val eq = state.plan.eq.takeIf { it.isNotBlank() }
+        ?.let { name -> TransitionEqShape.entries.firstOrNull { it.name == name } }
+    if (eq != null && !eq.isFlat) return AUTOMIX_EQ_ACCENT
+    if (state.plan.filterSweep > 0.0) return AUTOMIX_FILTER_ACCENT
+    return null
 }
 
 /**

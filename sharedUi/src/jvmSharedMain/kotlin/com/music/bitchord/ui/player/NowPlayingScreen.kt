@@ -877,6 +877,16 @@ fun NowPlayingScreen(
     lyricsUnavailable: Boolean,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
+    /**
+     * Whether the Automix panel is up.
+     *
+     * Hoisted rather than held here because the track menu opens it too: the
+     * three-dot sheet has an "Automix analysis" row, and that row and the
+     * seekbar's long-press have to agree about whether the panel is already
+     * showing.
+     */
+    automixPanelOpen: Boolean = false,
+    onAutomixPanelOpenChange: (Boolean) -> Unit = {},
     /** Opens the Sing vocal-level sheet. A no-op on hosts without one. */
     onOpenSing: () -> Unit = {},
     /** Whether the vocal cut is currently engaged, for the lyrics mic disc. */
@@ -1193,6 +1203,8 @@ fun NowPlayingScreen(
     PlayerBackHandler(enabled = showCast) { showCast = false }
 
     PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
+
+    PlayerBackHandler(enabled = automixPanelOpen) { onAutomixPanelOpenChange(false) }
 
     // Both of these sit ahead of [lyricsOpen]'s own handler — see the note on
     // the queue above — because both are drawn *over* the panel rather than
@@ -1821,6 +1833,12 @@ fun NowPlayingScreen(
                 onDismiss = onDismissLyricsOffset,
             )
         }
+        if (automixPanelOpen) {
+            AutomixPanelSheet(
+                hazeState = playerHaze,
+                onDismiss = { onAutomixPanelOpenChange(false) },
+            )
+        }
         lyricsShare?.let { request ->
             PlayerPlatform.host.LyricsShareSheet(
                 hazeState = playerHaze,
@@ -2168,6 +2186,10 @@ fun NowPlayingScreen(
                                 transitionWindow = transitionWindow
                                     ?.takeIf { !scrub.scrubbing && it.end > it.start }
                                     ?.let { it.start..it.end },
+                                transitionWindowInflated = automixPanelOpen,
+                                onTransitionWindowLongPress = {
+                                    onAutomixPanelOpenChange(true)
+                                },
                                 onScrub = onScrub,
                                 onScrubFinished = onScrubFinished,
                             ) {
@@ -3960,6 +3982,10 @@ fun NowPlayingScreen(
                 transitionWindow = transitionWindow
                     ?.takeIf { !scrub.scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
+                transitionWindowInflated = automixPanelOpen,
+                onTransitionWindowLongPress = {
+                    onAutomixPanelOpenChange(true)
+                },
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
             ) {

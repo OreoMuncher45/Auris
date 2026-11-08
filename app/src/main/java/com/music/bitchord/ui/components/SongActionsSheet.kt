@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
@@ -223,6 +224,12 @@ fun SongActionsSheet(
      * create/join page otherwise. Player-only.
      */
     onOpenListenTogether: (() -> Unit)? = null,
+    /**
+     * Opens the Automix panel for this track: what was measured about it, what
+     * was planned for the handoff, and the listener's own answer to both.
+     * Player-only, and null everywhere else.
+     */
+    onOpenAutomix: (() -> Unit)? = null,
     /** Party size while listening together, or null when there is no party. */
     listenTogetherMembers: Int? = null,
     /**
@@ -465,6 +472,18 @@ fun SongActionsSheet(
                 icon = Icons.Rounded.Groups,
                 label = stringResource(R.string.listen_together),
                 value = listenTogetherMembers?.toString(),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
+        // Automix analysis: what the app measured about this track and what it
+        // planned for the handoff into the next one, and the listener's own
+        // answer to both. Player-only for the same reason the four above are:
+        // it is about the track playing right now.
+        onOpenAutomix?.let {
+            ActionRow(
+                icon = Icons.Rounded.GraphicEq,
+                label = stringResource(R.string.automix_analysis_menu),
                 accent = palette.accent,
                 onClick = it,
             )

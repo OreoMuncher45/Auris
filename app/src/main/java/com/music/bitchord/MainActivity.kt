@@ -762,6 +762,15 @@ private fun BitChordApp(
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
     var showLyricsOffset by remember { mutableStateOf(false) }
+    /**
+     * Whether the Automix panel is up over the player.
+     *
+     * Held here rather than inside the player because two different things
+     * open it: a hold on the handoff in the seek bar, and the row in the
+     * track menu. Both are outside the player's own state, and the panel has
+     * to know that the menu closed behind it.
+     */
+    var automixPanelOpen by remember { mutableStateOf(false) }
     var showSing by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
@@ -3173,6 +3182,8 @@ private fun BitChordApp(
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
+            automixPanelOpen = automixPanelOpen,
+            onAutomixPanelOpenChange = { automixPanelOpen = it },
             onOpenSing = { showSing = true },
             singActive = AppSettings.singLevel.collectAsStateWithLifecycle().value > 0.001f,
             spatialAudioOn = AppSettings.spatialAudio.collectAsStateWithLifecycle().value,
@@ -3753,6 +3764,18 @@ private fun BitChordApp(
                 },
                 listenTogetherMembers = if (fromPlayer && partyState.inParty) {
                     partyState.members.size
+                } else {
+                    null
+                },
+                // The Automix panel: what was measured about this track, what
+                // was planned for the handoff, and the listener's own answer
+                // to both, kept with the song. Player-only, and the menu goes
+                // away behind it rather than over it.
+                onOpenAutomix = if (fromPlayer) {
+                    {
+                        songActions = null
+                        automixPanelOpen = true
+                    }
                 } else {
                     null
                 },

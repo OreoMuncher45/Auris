@@ -11,10 +11,13 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.playback.smart.AutomixOverride
+import com.music.bitchord.playback.smart.AutomixProfileStore
 import com.music.bitchord.ui.player.AudioOutputDevice
 import com.music.bitchord.ui.player.AudioOutputKind
 import com.music.bitchord.ui.player.CanvasVideoSpec
@@ -212,6 +215,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val showLosslessBadge = MutableStateFlow(true)
     override val showHiResBadge = MutableStateFlow(true)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
+    override val automixPanel = MutableStateFlow(AutomixPanelState())
     override val smartFadeEnabled = MutableStateFlow(false)
     override val smartMixInProgress = MutableStateFlow(false)
     override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
@@ -232,6 +236,19 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         lyricsOffsetMs.value = clamped
         persistence.saveInt(KEY_LYRICS_OFFSET, clamped)
     }
+
+    // The listener's own Automix choices, kept with the songs — the same
+    // disk-backed store the phone uses, so a choice means the same thing
+    // wherever it was made.
+    override fun setAutomixProfile(trackId: String, override: AutomixOverride) {
+        profileStore().save(trackId, override)
+    }
+
+    override fun clearAutomixProfile(trackId: String) {
+        profileStore().clear(trackId)
+    }
+
+    private fun profileStore() = AutomixProfileStore { DesktopAnalysisRuntime.analysisHome() }
 
     private const val KEY_LAST_SCREEN = "last_player_screen"
     private const val KEY_LYRICS_OFFSET = "lyrics_offset_ms"

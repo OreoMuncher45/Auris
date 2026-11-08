@@ -92,3 +92,38 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 - [ ] Push branch and run workflow.
 - [ ] Create GitHub release with `gh release create --draft`.
 - [ ] Verify release `isDraft: true` and artifact is downloadable.
+
+## Automix panel and per-song choices (v3)
+
+### 11. The panel
+
+- [x] Dual-lane drawing: the outgoing track above, the one arriving below, one clock.
+- [x] Beat grid drawn from the analysis, downbeats brighter.
+- [x] The overlap the planner actually resolved, as a marked box.
+- [x] One effect curve only: violet for the tone shape, amber for a filter ride.
+- [x] Camelot badges beside the spelled keys, so two keys can be compared.
+- [x] BPM, key, overlap length, cue point, tempo match and vocal overlap, as evidence.
+- [x] Opens from a hold on the handoff in the seek bar, and from the track menu.
+- [x] The handoff's slice of the seek bar swells on its own, in the effect's colour.
+- [x] Reduced-motion aware; no motion that carries meaning.
+
+### 12. Per-song choices
+
+- [x] A choice per track: blend, size, filter, tone shape, effect, handoff start.
+- [x] Kept on disk, one file per track, written off the main thread.
+- [x] The listener's handoff start snaps to the beat, and to a bar line when it is
+      clearly aimed at one.
+- [x] Whole bars throughout: 4 to 32, and a request that does not fit comes back
+      shorter rather than not at all.
+- [x] An empty choice is no choice; "not this song" is a choice and is kept.
+
+### 13. Running on cheap hardware
+
+- [x] Analysis split into a fast head pass and a whole-track pass, so the next
+      track is never waiting behind the last one's refinement.
+- [x] The opening megabyte is fetched at once; the rest waits for the queue to settle.
+- [x] The panel's state is published only when it changes, so the graph does not
+      redraw on the playback clock.
+- [x] The waveform is folded to one column per pixel before it is drawn.
+- [x] The profile write is debounced and happens on its own thread.
+

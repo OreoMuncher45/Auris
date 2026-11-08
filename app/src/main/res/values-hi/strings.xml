@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Auris</string>
+    <string name="automix_analysis_menu">Automix विश्लेषण</string>
     <string name="playback_channel_name">अभी चल रहा है</string>
     <string name="download_channel_name">डाउनलोड</string>
     <string name="download_channel_description">आपके संगीत फ़ोल्डर में सेव हो रहे गाने</string>

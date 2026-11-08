@@ -107,6 +107,16 @@ fun PlayerDrawer(
     modifier: Modifier = Modifier,
     /** Air between the title and whatever the drawer opens with. */
     titleGap: Dp = 14.dp,
+    /**
+     * How tall the drawer may grow.
+     *
+     * Capped so a phone full of rows scrolls inside the drawer rather than
+     * growing one into a full-screen page — but a panel that is mostly a
+     * graph wants more room than a list of output devices does, and a panel
+     * that is *also* a list wants both. The cap is a parameter rather than a
+     * constant for that reason.
+     */
+    maxHeight: Dp = 560.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -200,7 +210,7 @@ fun PlayerDrawer(
             modifier = Modifier
                 // Capped so a phone full of rows scrolls inside the drawer
                 // rather than growing one into a full-screen page.
-                .heightIn(max = 560.dp)
+                .heightIn(max = maxHeight)
                 // Capped before the fill, so [Modifier.fillMaxWidth] fills to
                 // the cap rather than to the window. Centred by the parent's
                 // own BottomCenter alignment once it is narrower.

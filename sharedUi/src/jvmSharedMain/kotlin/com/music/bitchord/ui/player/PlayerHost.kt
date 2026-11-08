@@ -10,10 +10,12 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -174,6 +176,11 @@ interface PlayerSettingsSource {
     /** Whether that badge may say "Hi-Res Lossless" instead of "Lossless". */
     val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
+    /**
+     * Everything the Automix panel shows: the analysis in full, the plan that
+     * came out of it, and the listener's own choice for the playing track.
+     */
+    val automixPanel: StateFlow<AutomixPanelState>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
@@ -188,6 +195,18 @@ interface PlayerSettingsSource {
 
     fun setLastPlayerScreen(value: LastPlayerScreen)
     fun setLyricsOffsetMs(value: Int)
+
+    /**
+     * Stores the listener's own Automix choice for a track.
+     *
+     * The choice lives with the song, so it means the same thing every time
+     * that song plays. An empty choice is the same as no choice, and clears
+     * the track's entry rather than storing an empty one.
+     */
+    fun setAutomixProfile(trackId: String, override: AutomixOverride)
+
+    /** Forgets the listener's Automix choice for a track, leaving Automix to decide. */
+    fun clearAutomixProfile(trackId: String)
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */

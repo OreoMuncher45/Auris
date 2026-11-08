@@ -48,8 +48,12 @@ import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.settings.MixBlend
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.cos
+
+/** How much taller the Automix window's slice grows while its panel is open. */
+private const val WINDOW_INFLATE = 1.7f
 
 /**
  * Apple Music's scrubber: a hairline capsule with no thumb knob, which
@@ -94,6 +98,29 @@ fun ThinSlider(
      * unplayed bar so the mix is visible before it arrives.
      */
     transitionWindow: ClosedFloatingPointRange<Float>? = null,
+    /**
+     * Raised while the Automix panel is open.
+     *
+     * Only the window's slice swells, not the whole bar: the listener held
+     * *that part* of the track, and the bar saying so is what connects the
+     * hold to the panel that opened from it.
+     */
+    transitionWindowInflated: Boolean = false,
+    /**
+     * The colour of the effect on the arriving track, when there is one.
+     *
+     * The window is the part of the bar that will be affected, so it is the
+     * part that carries the effect's colour — the same violet or amber the
+     * panel draws its curve in.
+     */
+    transitionAccent: Color? = null,
+    /**
+     * A hold on the transition window itself, which opens the Automix panel.
+     *
+     * Null means the window is only a marker and a hold anywhere on the bar
+     * scrubs, exactly as before.
+     */
+    onTransitionWindowLongPress: (() -> Unit)? = null,
     idleHeight: Dp = 7.dp,
     activeHeight: Dp = 12.dp,
     activeColor: Color = Color.White.copy(alpha = 0.92f),
@@ -137,6 +164,23 @@ fun ThinSlider(
         animationSpec = tween(durationMillis = MORPH_MS, easing = FastOutSlowInEasing),
         label = "fillFactor",
     )
+    // The window's own swell, independent of the bar's: the two can happen at
+    // once and must not fight over one height.
+    val windowInflation by animateFloatAsState(
+        targetValue = if (transitionWindowInflated && transitionWindow != null) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "transitionWindowInflation",
+    )
+
+    // The window and the hold handler change over the track's life, and the
+    // gesture loop below is started once: read them through a state so the
+    // loop always sees the current ones rather than the ones from the first
+    // composition.
+    val liveWindow by rememberUpdatedState(transitionWindow)
+    val liveLongPress by rememberUpdatedState(onTransitionWindowLongPress)
 
     Box(
         modifier = modifier
@@ -149,24 +193,64 @@ fun ThinSlider(
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    dragging = true
-                    onValueChange((down.position.x / size.width).coerceIn(0f, 1f))
-
-                    while (true) {
-                        val event = awaitPointerEvent()
+                    val width = size.width.toFloat().coerceAtLeast(1f)
+                    val atDown = (down.position.x / width).coerceIn(0f, 1f)
+                    val window = liveWindow
+                    // Only a hold that lands *inside* the planned handoff is an
+                    // Automix gesture. Everywhere else the bar behaves exactly
+                    // as it always has, which is what keeps the scrub feeling
+                    // like a scrub rather than like a button with a delay.
+                    val canOpenPanel = window != null && liveLongPress != null &&
+                        atDown >= window.start && atDown <= window.endInclusive
+                    var scrubbing = !canOpenPanel
+                    var panelOpened = false
+                    if (scrubbing) {
+                        dragging = true
+                        onValueChange(atDown)
+                    }
+                    var released = false
+                    while (!released) {
+                        // Waiting on the long-press clock only until the
+                        // gesture has declared itself. A hold that never moves
+                        // produces no events, so the timeout is the long-press.
+                        val event = if (canOpenPanel && !panelOpened && !scrubbing) {
+                            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { awaitPointerEvent() }
+                        } else {
+                            awaitPointerEvent()
+                        }
+                        if (event == null) {
+                            panelOpened = true
+                            liveLongPress?.invoke()
+                            continue
+                        }
                         val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!pointer.pressed) {
                             pointer.consume()
+                            released = true
                             break
                         }
+                        if (panelOpened) {
+                            // The panel owns the rest of this gesture: the
+                            // playhead must not jump while it is open.
+                            pointer.consume()
+                            continue
+                        }
                         if (pointer.positionChanged()) {
-                            onValueChange((pointer.position.x / size.width).coerceIn(0f, 1f))
+                            if (!scrubbing) {
+                                // Moved before the hold resolved: a scrub after
+                                // all, and the long-press is off.
+                                scrubbing = true
+                                dragging = true
+                            }
+                            onValueChange((pointer.position.x / width).coerceIn(0f, 1f))
                             pointer.consume()
                         }
                     }
 
                     dragging = false
-                    onValueChangeFinished?.invoke()
+                    // A hold that opened the panel is not a finished seek: the
+                    // listener never asked to move the playhead.
+                    if (!panelOpened) onValueChangeFinished?.invoke()
                 }
             },
         contentAlignment = Alignment.Center,
@@ -174,10 +258,20 @@ fun ThinSlider(
         Canvas(
             Modifier
                 .fillMaxWidth()
-                .height(height),
+                // Taller than the track so the window's slice has somewhere to
+                // swell to. The track itself stays centred in it, so the bar
+                // does not move when the slice does.
+                .height(activeHeight + 6.dp),
         ) {
-            val radius = CornerRadius(size.height / 2f)
-            drawRoundRect(color = inactiveColor, cornerRadius = radius)
+            val barHeight = height.toPx()
+            val barTop = (size.height - barHeight) / 2f
+            val radius = CornerRadius(barHeight / 2f)
+            drawRoundRect(
+                color = inactiveColor,
+                topLeft = Offset(0f, barTop),
+                size = Size(size.width, barHeight),
+                cornerRadius = radius,
+            )
             // Between the two track colours, and drawn *under* the played fill:
             // once the playhead reaches the window the transition is no longer
             // upcoming, and the ordinary progress colour taking it over is what
@@ -186,11 +280,19 @@ fun ThinSlider(
                 val from = size.width * window.start.coerceIn(0f, 1f)
                 val to = size.width * window.endInclusive.coerceIn(0f, 1f)
                 if (to > from) {
+                    val extra = (WINDOW_INFLATE - 1f) * barHeight
+                    val sliceHeight = barHeight + extra * windowInflation
+                    val sliceTop = (size.height - sliceHeight) / 2f
+                    val edge = markerColor.copy(alpha = 0.45f)
+                    // The swell is carried by colour as well as by size on a
+                    // bar this thin: taller alone is a couple of pixels.
                     drawRoundRect(
-                        color = markerColor,
-                        topLeft = Offset(from, 0f),
-                        size = Size(to - from, size.height),
-                        cornerRadius = radius,
+                        color = transitionAccent ?: markerColor.copy(
+                            alpha = markerColor.alpha + (edge.alpha - markerColor.alpha) * windowInflation,
+                        ),
+                        topLeft = Offset(from, sliceTop),
+                        size = Size(to - from, sliceHeight),
+                        cornerRadius = CornerRadius(sliceHeight / 2f),
                     )
                 }
             }
@@ -212,9 +314,10 @@ fun ThinSlider(
                 val alpha = if (dragging) activeColor.alpha else mixPulse?.alpha(activeColor.alpha) ?: activeColor.alpha
                 drawRoundRect(
                     color = activeColor.copy(alpha = alpha),
+                    topLeft = Offset(0f, barTop),
                     size = Size(
-                        filled.coerceAtLeast(size.height * fillFactor).coerceAtMost(size.width),
-                        size.height,
+                        filled.coerceAtLeast(barHeight * fillFactor).coerceAtMost(size.width),
+                        barHeight,
                     ),
                     cornerRadius = radius,
                 )
