@@ -1028,13 +1028,14 @@ object AudioCache {
                 // below, which would write a different recording's bytes under
                 // an entry this track owns.
                 if (SourceRegistry.parseTrackKey(next) != null) {
-                    // The settle delay is about not spending data on a queue
-                    // the listener is still rearranging; it has nothing to add
-                    // to the resolver preparation below, which is cheap and
-                    // was deliberately started the moment the queue changed.
-                    val wait = readyAt - SystemClock.elapsedRealtime()
-                    if (wait > 0) delay(wait)
-                    prefetchSourceTrack(next, head.uri!!)
+                    // The opening goes now, not after the settle delay: it is
+                    // what the analysis of the incoming track reads, and it is
+                    // what the hand-over starts from. The settle delay is about
+                    // not spending data on a queue the listener is still
+                    // rearranging, and it has nothing to add to the megabyte
+                    // that the next track's beat grid is measured from — so the
+                    // delay now only holds back the rest of the file.
+                    prefetchSourceTrack(next, head.uri!!, readyAt)
                     return@launch
                 }
                 // With substitution on, the *bytes* half above used to be
@@ -1097,9 +1098,14 @@ object AudioCache {
                     (prepared != null || SourceRegistry.youtubeEnabled())
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
+                        // The opening goes now: it is what the incoming
+                        // track's analysis reads and what the hand-over
+                        // starts from, and a megabyte is not what the settle
+                        // delay was written for. The rest of the file waits
+                        // for the queue to settle.
+                        fetch(next, 0, PRELOAD_BYTES)
                         val wait = readyAt - SystemClock.elapsedRealtime()
                         if (wait > 0) delay(wait)
-                        fetch(next, 0, PRELOAD_BYTES)
                         // Enough to start the track is worth having everywhere.
                         // The rest is a guess about where the listener will
                         // seek, and a whole-track download of a guess is what
@@ -2037,13 +2043,18 @@ object AudioCache {
      * album side is not something to pull down over a metered link for a track
      * the listener may skip.
      */
-    private suspend fun prefetchSourceTrack(mediaId: String, uri: Uri) {
+    private suspend fun prefetchSourceTrack(mediaId: String, uri: Uri, settleAt: Long = 0L) {
         val key = cacheKeyOf(uri)
         if (cache.getCachedBytes(key, 0, PRELOAD_BYTES) < PRELOAD_BYTES) {
             TrackLog.d(TAG, "read-ahead fetching the opening of $mediaId from its source", about = mediaId)
             fetch(key, uri, 0, PRELOAD_BYTES, pinKey = true)
         }
         if (pendingQueue.firstOrNull() != mediaId) return
+        // The rest of the file waits for the queue to settle: it is a guess
+        // about where the listener will seek, and the opening above is all
+        // the analysis needs.
+        val wait = settleAt - SystemClock.elapsedRealtime()
+        if (wait > 0) delay(wait)
         val context = appContext ?: return
         if (!PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) return
 

@@ -212,8 +212,38 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private fun discardsOf(key: String): Int = discarded[key] ?: 0
 
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "bitchord-smart-analysis").apply {
+    /**
+     * The urgent lane: stored results and head passes.
+     *
+     * These are what a transition is waiting for — the tempo of the track
+     * that is coming, and the numbers a previous session already worked out —
+     * so they never queue behind anything long.
+     */
+    private val fastExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "bitchord-smart-analysis-fast").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY
+        }
+    }
+
+    /**
+     * The patient lane: whole-track passes.
+     *
+     * A whole-track pass decodes the entire file and runs two models over it,
+     * which takes tens of seconds — and it cannot finish before the track has
+     * been downloaded to its last byte, which for a streamed track means after
+     * it has already played. So it describes the track's *outro* for the next
+     * time round, and it must never stand between the listener and the
+     * analysis of the track that is about to start.
+     *
+     * That was the shape of the old single lane, and it is why Automix felt
+     * slow however many threads the performance setting gave it: every track
+     * that finished queued a full-length decode, and the next track's beat
+     * grid waited behind it. More threads only ever added more full-length
+     * decodes to the queue.
+     */
+    private val wholeExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "bitchord-smart-analysis-whole").apply {
             isDaemon = true
             priority = Thread.NORM_PRIORITY
         }
@@ -241,7 +271,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // caller, so a track with nothing stored is looked for once per session
         // rather than on every tick.
         if (!restoreAttempted.add(trackId)) return
-        executor.execute {
+        // The urgent lane: a stored result is the fastest answer there is, and
+        // it must not wait behind a decode.
+        fastExecutor.execute {
             val stored = store.load(trackId) ?: return@execute
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
             results.putIfAbsent(trackId, stored)
@@ -250,6 +282,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     /** True once [trackId] has a result, including a failure. Nothing more will arrive. */
     fun isAnalysed(trackId: String): Boolean = results.containsKey(trackId)
+
+    /**
+     * Whether [trackId]'s current result came from the track's opening only.
+     *
+     * A head pass measures the first part of a track and knows nothing of its
+     * outro, so its numbers are good enough to plan a transition and not good
+     * enough to be described as the track's analysis. The Automix panel says
+     * so rather than showing a partial answer as a complete one.
+     */
+    fun isProvisional(trackId: String): Boolean = trackId in provisional
 
     /**
      * True while a decode and inference for [trackId] is actually in flight.
@@ -388,7 +430,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
         if (!running.add(trackId)) return
 
-        executor.execute {
+        // Which lane this pass belongs to: the urgent one for a head pass and
+        // for nothing else, the patient one for a whole-track pass. The two
+        // never share a queue, so the track that is coming is measured while
+        // the track that just finished is still being measured properly.
+        val lane = if (usableComplete) wholeExecutor else fastExecutor
+
+        lane.execute {
             try {
                 // Efficient mode yields to decoding and playback rather than
                 // competing for a core. Thread count remains the speed knob.
@@ -399,17 +447,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         Process.THREAD_PRIORITY_DEFAULT
                     },
                 )
-                // [restoreOnce] queues onto this same single-threaded executor,
-                // so a stored result for this track has landed by now if there
-                // was one — but the decision to get here was taken a tick
-                // earlier, when it had not. Without this check a track measured
-                // in an earlier session is restored and then immediately spends
-                // seven seconds recomputing the identical numbers. A provisional
-                // result is exempt: superseding one is the whole point of it.
+                // A stored result for this track has landed by now if there was
+                // one and the restore ran ahead of this task — but the decision
+                // to get here was taken a tick earlier, when it had not.
+                // Without this check a track measured in an earlier session is
+                // restored and then immediately spends seven seconds
+                // recomputing the identical numbers. A provisional result is
+                // exempt: superseding one is the whole point of it.
                 val landed = results[trackId]
                 if (landed != null && landed.isUsable && trackId !in provisional) return@execute
-                // The queue this task sat in is single-threaded, so a party
-                // started while the track ahead of it was being measured. Every
+                // The lane this task sat in is single-threaded, so a party
+                // started while the task ahead of it was being measured. Every
                 // task behind that one turns into this return, which drains the
                 // backlog without needing to reach into the executor's queue.
                 if (stopped) return@execute
@@ -1313,7 +1361,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     )
 
     fun release() {
-        executor.shutdownNow()
+        fastExecutor.shutdownNow()
+        wholeExecutor.shutdownNow()
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
