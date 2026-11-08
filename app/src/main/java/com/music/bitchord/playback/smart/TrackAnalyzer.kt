@@ -42,6 +42,21 @@ import kotlin.math.max
 import java.util.Locale
 
 /**
+ * The least decoded audio a head-only pass is allowed to measure a tempo from.
+ *
+ * Twelve seconds is around 24 beats at 120 bpm — enough for the grid's own
+ * confidence measure to mean something, and not enough for the estimator to be
+ * reading the tail of a fade-in.
+ *
+ * Public because the cache fetches *for* this number. The read-ahead of a
+ * source-backed track sizes its opening from it, and the analyser's own gate
+ * measures against it; the two have to agree, or the read-ahead fetches a
+ * megabyte that is one second of a lossless rendition while the analyser waits
+ * for eleven more. See `AudioCache.analysisOpeningBytes`.
+ */
+const val ANALYSIS_HEAD_SECONDS = 12.0
+
+/**
  * Produces [TrackAnalysis] for tracks that are about to be mixed, and hands it
  * to [TransitionPlanner].
  *
@@ -406,7 +421,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // rest, and a queued track reaches its own transition carrying an
             // entry-only estimate: no content end, no mix-out anchor, no vocal
             // mask, which is most of what the outgoing half of a blend reads.
-            if (trackId in provisional && !usableComplete) cache.requestAnalysisHead(analysisUri)
+            if (trackId in provisional && !usableComplete) {
+                cache.requestAnalysisHead(analysisUri, durationSeconds)
+            }
             return
         }
         // The strike count belongs to the attempt that was given up on, not to
@@ -423,9 +440,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // Nothing on disk worth decoding, so ask for something. Every other
             // writer either fetches this track's opening too late to matter or
             // never fetches it at all — see [AudioCache.requestAnalysisHead],
-            // which is a no-op after the first call and for anything that isn't
-            // a YouTube-backed track.
-            cache.requestAnalysisHead(analysisUri)
+            // which is a no-op after the first call and, until it learned how,
+            // for anything that isn't a YouTube-backed track.
+            //
+            // The duration travels with the ask because the length of the
+            // opening is a question about seconds: the cache cannot turn a
+            // byte count into a meaningful one without knowing how long the
+            // track is, and this is the only place in the app that knows.
+            cache.requestAnalysisHead(analysisUri, durationSeconds)
             return
         }
         if (!running.add(trackId)) return
@@ -1448,10 +1470,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /**
          * The least decoded audio a head-only tempo estimate is allowed to rest
-         * on. Twelve seconds is around 24 beats at 120 bpm — enough for the
-         * grid's own confidence measure to mean something.
+         * on; see [ANALYSIS_HEAD_SECONDS], which is the same number and is the
+         * one the cache reads.
          */
-        const val MIN_HEAD_SECONDS = 12.0
+        const val MIN_HEAD_SECONDS = ANALYSIS_HEAD_SECONDS
 
         /**
          * How much more of the file has to be cached before the head is worth

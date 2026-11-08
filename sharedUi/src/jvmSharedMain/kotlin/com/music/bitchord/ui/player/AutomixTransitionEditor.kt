@@ -22,7 +22,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.settings.AutomixPlanDigest
 import com.music.bitchord.data.settings.TrackAnalysisDigest
@@ -253,6 +252,19 @@ internal fun AutomixTransitionEditor(
     var pending by remember(resetKey) { mutableStateOf<AutomixWindow?>(null) }
     // The beat the last placement landed on, so the drawing can light it up.
     var snapped by remember(resetKey) { mutableStateOf<Double?>(null) }
+    /**
+     * Whether a finger is on the drawing.
+     *
+     * Read by the sync below, and the reason that sync exists at all: the
+     * window the panel hands down is derived from the *plan* whenever the
+     * listener has not chosen anything yet, and the planner re-plans while the
+     * analyser refines and the playhead moves. Without this flag the plan's
+     * own window was adopted on every one of those ticks — including the ones
+     * in the middle of a drag — and the box was dragged back out from under
+     * the finger several times a second. Which is what "it is so hard to move
+     * the box" was.
+     */
+    var dragging by remember(resetKey) { mutableStateOf(false) }
 
     // The view. The editor's own, not the panel's: a viewport kept above this
     // composable would change identity on every plan, and a window that moves
@@ -273,7 +285,12 @@ internal fun AutomixTransitionEditor(
     // commit is in flight the dragged window stays on screen, so the box
     // cannot flicker back to the plan's placement for the frame between the
     // finger coming off and the panel answering.
+    //
+    // Nothing at all is adopted while a finger is down. That is the whole
+    // point: the plan moves on its own, and a box that followed it would be
+    // one the listener could not hold on to.
     LaunchedEffect(window.start, window.end) {
+        if (dragging) return@LaunchedEffect
         val waiting = pending
         if (waiting == null || waiting.start != window.start || waiting.end != window.end) {
             live = window
@@ -286,6 +303,10 @@ internal fun AutomixTransitionEditor(
     // finger is down: the placement is measured against a frozen mapping, and
     // a view that shifted would put the box somewhere the finger is not.
     LaunchedEffect(window.start, window.end, duration, resetKey) {
+        // Never while a finger is down, for the same reason the window itself
+        // is not adopted then: a view that glided mid-drag would carry the box
+        // out from under the finger even though the mapping is frozen.
+        if (dragging) return@LaunchedEffect
         val length = window.length
         val resized = abs(length - lastLength) > 0.05
         lastLength = length
@@ -332,7 +353,6 @@ internal fun AutomixTransitionEditor(
                 val gap = LANE_GAP.toPx()
                 val laneHeight = if (liveHasNext) (height - gap) / 2f else height
                 val lowerTop = if (liveHasNext) laneHeight + gap else height
-                val edgeHit = EDGE_HIT_DP.toPx()
                 val bar = liveBar
                 val track = latestCurrent
                 val opened = live
@@ -342,19 +362,48 @@ internal fun AutomixTransitionEditor(
 
                 val startX = xOf(opened.start)
                 val endX = xOf(opened.end)
+                val boxLeft = min(startX, endX)
+                val boxRight = max(startX, endX)
+                val boxWidth = boxRight - boxLeft
+                // The handle zone scales down with the box. A whole-bar window
+                // at a fast tempo is a narrow rectangle on screen, and a fixed
+                // zone ate most of it: on a short transition every touch landed
+                // on an edge, so the body of the box — the part that moves it —
+                // could not be reached at all. A quarter of the box either side
+                // leaves the middle half for moving it, whatever size it is.
+                //
+                // Outwards the zone is the full width, so a thumb that lands a
+                // little past an edge takes hold of that edge rather than
+                // jumping the whole box to the touch.
+                val handleOut = EDGE_HIT_DP.toPx()
+                val handleIn = min(handleOut, boxWidth * 0.25f)
+                val inBox = down.position.x >= boxLeft && down.position.x <= boxRight
                 val grabbed = when {
-                    abs(down.position.x - startX) <= edgeHit -> Grab.START_EDGE
-                    abs(down.position.x - endX) <= edgeHit -> Grab.END_EDGE
-                    down.position.x >= min(startX, endX) && down.position.x <= max(startX, endX) -> Grab.BODY
-                    // The upper lane is the outgoing track, which is the thing
-                    // the box is placed against: a drag there moves the box.
-                    down.position.y < lowerTop -> Grab.BODY
+                    abs(down.position.x - startX) <= if (down.position.x < startX) handleOut else handleIn ->
+                        Grab.START_EDGE
+                    abs(down.position.x - endX) <= if (down.position.x > endX) handleOut else handleIn ->
+                        Grab.END_EDGE
+                    // Inside the box: moving it, whichever lane the finger is
+                    // on. The box is one object and it should behave like one.
+                    inBox -> Grab.BODY
+                    // Outside it on the outgoing lane, the lane the box is
+                    // placed against: put the handoff under the finger. That is
+                    // the plainest way to say where the transition should start,
+                    // and it is the one gesture that can move the box a long way
+                    // in a single touch.
+                    down.position.y < lowerTop -> Grab.HANDOFF
                     else -> Grab.VIEW
                 }
 
                 var decided = false
                 var horizontal = false
                 var lastSnap: Double? = null
+                // Where the finger was last seen horizontally. Tracked by hand
+                // rather than read from [PointerInputChange.positionChanged],
+                // which answers false for an event another consumer has already
+                // taken: the sheet's own scroll is one, and a drag that had been
+                // half-claimed by it would silently stop moving the box.
+                var lastX = down.position.x
 
                 fun snap(raw: Double): Double {
                     val placed = automixSnapToBeat(raw, track) ?: raw
@@ -380,6 +429,7 @@ internal fun AutomixTransitionEditor(
                     .coerceIn(MIN_TRANSITION_BARS, MAX_TRANSITION_BARS)
 
                 fun apply(x: Float) {
+                    lastX = x
                     val raw = timeOf(x)
                     when (grabbed) {
                         Grab.START_EDGE -> {
@@ -405,17 +455,18 @@ internal fun AutomixTransitionEditor(
                             live = AutomixWindow(max(0.0, to - length), to)
                         }
                         Grab.BODY -> {
-                            // Two ways to take hold of the same box: on its body
-                            // it travels with the finger, keeping the reach it
-                            // was grabbed with; on the upper lane the handoff is
-                            // put under the finger, which is the plainest way to
-                            // say where the transition should start.
-                            val placed = if (down.position.y < lowerTop) {
-                                snap(raw)
-                            } else {
-                                val offset = down.position.x - startX
-                                snap(timeOf(x - offset))
-                            }
+                            // The box travels with the finger, keeping the reach
+                            // it was taken hold with, so grabbing it anywhere
+                            // moves it by the same amount the finger moved
+                            // rather than jumping its edge to the touch.
+                            val offset = down.position.x - boxLeft
+                            val placed = snap(timeOf(x - offset))
+                            place(placed, placed + opened.length)
+                        }
+                        Grab.HANDOFF -> {
+                            // Put the handoff where the finger is; the exit
+                            // follows, because the size is a size.
+                            val placed = snap(raw)
                             place(placed, placed + opened.length)
                         }
                         Grab.VIEW -> Unit
@@ -423,6 +474,7 @@ internal fun AutomixTransitionEditor(
                 }
 
                 fun panTo(x: Float) {
+                    lastX = x
                     val travel = x - down.position.x
                     var from = frozenFrom - (travel / width) * frozenSpan
                     val span = frozenSpan
@@ -448,8 +500,9 @@ internal fun AutomixTransitionEditor(
                             change.consume()
                             break
                         }
+                        val x = change.position.x
                         if (!decided) {
-                            val dx = change.position.x - down.position.x
+                            val dx = x - down.position.x
                             val dy = change.position.y - down.position.y
                             if (abs(dx) > viewConfiguration.touchSlop || abs(dy) > viewConfiguration.touchSlop) {
                                 decided = true
@@ -458,14 +511,15 @@ internal fun AutomixTransitionEditor(
                                 // one belongs to the sheet, which scrolls.
                                 if (horizontal) {
                                     change.consume()
-                                    if (grabbed == Grab.VIEW) panTo(change.position.x) else apply(change.position.x)
+                                    dragging = true
+                                    if (grabbed == Grab.VIEW) panTo(x) else apply(x)
                                 }
                             }
                             continue
                         }
-                        if (horizontal && change.positionChanged()) {
+                        if (horizontal && x != lastX) {
                             change.consume()
-                            if (grabbed == Grab.VIEW) panTo(change.position.x) else apply(change.position.x)
+                            if (grabbed == Grab.VIEW) panTo(x) else apply(x)
                         }
                     }
                 } finally {
@@ -480,6 +534,9 @@ internal fun AutomixTransitionEditor(
                         }
                     }
                     snapped = null
+                    // Last, so that the panel's window is allowed to be adopted
+                    // again from the next frame on — see the sync above.
+                    dragging = false
                 }
             }
         }
@@ -905,7 +962,7 @@ private fun DrawScope.drawVolumeCurve(
 // Where a drag was taken hold of
 // ---------------------------------------------------------------------------
 
-private enum class Grab { START_EDGE, END_EDGE, BODY, VIEW }
+private enum class Grab { START_EDGE, END_EDGE, BODY, HANDOFF, VIEW }
 
 // ---------------------------------------------------------------------------
 // Colours and constants

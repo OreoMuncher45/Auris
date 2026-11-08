@@ -96,6 +96,10 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 - [x] Create GitHub release with `gh release create --draft`.
 - [x] Verify release `isDraft: true` and artifact is downloadable. (`v3.0.8-draft`,
       four signed APKs, draft.)
+- [x] Draft `v3.0.9-draft` (versionCode 109) cut from `feature/automix-core-v2`
+      and verified: run `42529150467` succeeded, four signed APKs, `isDraft:
+      true`, and no `v3.0.9-draft` git tag — GitHub creates a draft's tag only
+      on publish.
 
 ## Automix panel and per-song choices (v3)
 
@@ -113,33 +117,95 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
 
 ### 11a. The graph's gestures
 
-- [x] Drag the outgoing lane: the view scrolls and the outgoing waveform moves
-      under the finger. The transition does not change.
-- [x] Drag the arriving lane, or the green line itself: the handoff follows the
-      finger, in whole bars, with a haptic tick on every bar.
-- [x] Tap anywhere: the handoff jumps to that place, snapped the same way.
-- [x] The finger-to-time mapping is frozen for the whole gesture, so the line
+The drawing was rewritten as one composable that owns its own viewport and its
+own drag, rather than being patched. Everything below is the behaviour of
+`AutomixTransitionEditor`, and it supersedes the three gestures the old graph
+had.
+
+- [x] The orange box is the listener's own window: the handoff is its left
+      edge and the exit where the outgoing track is retired is its right one.
+- [x] Either edge can be taken hold of on its own. The edge under the finger
+      snaps to the nearest measured beat and the other edge is re-derived so
+      the window is still a whole number of bars.
+- [x] Dragging the box itself moves it with the finger; dragging the upper
+      lane (the outgoing waveform) puts the handoff under the finger.
+- [x] Dragging the lower lane scrolls the view, and the window is kept in
+      sight.
+- [x] Green dots mark the measured grid, downbeats larger; the beat a
+      placement snapped to lights up, and a haptic tick fires when the snapped
+      beat changes.
+- [x] The finger-to-time mapping is frozen for the whole gesture, so the box
       cannot jump out from under the finger.
-- [x] The line is clamped to the planner's own ceiling, so it can travel the
-      whole legal range and no further.
-- [x] The plan's overlap box fades while a finger is down: the plan has not
-      caught up with the request yet, and a stale box should not claim to be
-      the overlap.
+- [x] There is no tap-anywhere behaviour: a stray touch does not move the
+      transition.
+- [x] A bar-count change grows the box backwards from its own right edge and
+      the view zooms out to fit it.
+- [x] The curves — tone shape, filter ride, volume pair — are drawn from the
+      listener's draft rather than from the plan, so a change of mind shows at
+      once. The plan's own placement is a grey hairline beside the box, drawn
+      only when the two disagree.
+- [x] Drag state is local to the editor and committed on release, so a finger
+      on the box no longer recomposes the sheet or rebuilds the plan per frame.
+
+### 11b. Volume, preview and the seek bar marker
+
+- [x] A `Volume` row: Auto, None, Slam, Fade out, Fast out, Fade in, Fast in.
+- [x] The shape is carried through the planner into the renderer, where it
+      replaces the equal-power pair outright; the gain curves live in shared
+      code so the drawing and the audio agree by construction.
+- [x] A preview button that plays the real handoff from two seconds before the
+      blend and then puts the song back, paused — hearing a transition is not
+      the same as having one.
+- [x] The button's face follows the engine, which is the only thing that knows
+      a preview has ended by itself.
+- [x] The seek bar's Automix marker is published whenever there is a plan,
+      rather than waiting for both tracks to have been measured — which is
+      what kept it off the bar for most of a streamed track.
+- [x] The digest carries the analysis's whole downbeat grid, because the
+      editor snaps to it.
+
+### 11c. Lossless addons with YouTube off
+
+The reported symptom: with addon (lossless) sources and YouTube switched off,
+the incoming track's Automix analysis took minutes to appear, and the
+transition fell back to a plain fade.
+
+- [x] Root cause: the read-ahead's opening fetch was a fixed megabyte, which is
+      about one second of a lossless rendition, while the analyser's head pass
+      refuses anything under twelve seconds. The bytes it was waiting for only
+      arrived once the whole-file fill caught up, or once the track started
+      playing.
+- [x] The read-ahead now sizes a source-backed track's opening in *seconds of
+      audio* — twelve of them, from the stream's own length over the item's own
+      runtime — instead of a fixed byte count. `ANALYSIS_HEAD_SECONDS` is the
+      one number the analyser and the cache both read.
+- [x] The stream's length is measured before the settle delay rather than
+      after, because the analyser divides by it to decide whether what is on
+      disk is enough.
+- [x] The analyser's own request for a head now works for a source-backed
+      track. It used to be a YouTube-only call that returned immediately
+      whenever YouTube was switched off, so the one component that knew it
+      needed more bytes could not ask for them.
 
 ### 12. Per-song choices
 
-- [x] A choice per track: blend, size, filter, tone shape, effect, handoff start.
+- [x] A choice per track: blend, size, filter, tone shape, effect, volume
+      shape, handoff start and exit.
 - [x] Kept on disk, one file per track, written off the main thread.
 - [x] The listener's handoff start snaps to whole bars on the planner's own
       grid, and the size and the start are written together so they cannot
       disagree.
 - [x] A dragged start is honoured by the planner even when a size was also
       chosen: the line is the plainer of the two.
-- [x] The plan reports the largest overlap the pair could carry, so the panel
-      never offers a placement the planner would refuse.
+- [x] A window drawn at both edges is honoured at both edges, including one
+      that retires the outgoing track before its mix point — the planner will
+      not cut a tail on its own, and a listener who draws it that way means it.
 - [x] Whole bars throughout: 4 to 32, and a request that does not fit comes back
       shorter rather than not at all.
 - [x] An empty choice is no choice; "not this song" is a choice and is kept.
+- [x] Schema 4 reads schema 3 files rather than discarding them: the two fields
+      it lacks both have exact defaults, so a version 3 choice is a whole
+      choice that has not said anything about the volume.
 
 ### 13. Running on cheap hardware
 

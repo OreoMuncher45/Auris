@@ -6975,6 +6975,11 @@ class PlaybackService : MediaLibraryService() {
                     mediaId = item.mediaId,
                     target = TrackMatcher.targetOf(item.toSong()),
                     uri = item.localConfiguration?.uri,
+                    // The runtime, from the timeline window when the player has
+                    // one and from the item's own claim otherwise — the same
+                    // pair [claimedDurationMs] reads. Read-ahead sizes a
+                    // source-backed track's analysis opening from it.
+                    durationMs = item.claimedDurationMs(),
                 )
             },
         )

@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Überlappung</string>
     <string name="automix_row_volume">Lautstärke</string>
-    <string name="automix_scrub_hint">Ziehe das Kästchen, um den Übergang zu verschieben · ziehe einen Rand, um seine Länge zu ändern · ziehe die untere Spur zum Scrollen</string>
+    <string name="automix_scrub_hint">Ziehe das Kästchen, um den Übergang zu verschieben · ziehe einen Rand, um ein Ende zu setzen · ziehe die untere Spur zum Scrollen</string>
     <string name="automix_style_dj_blend">DJ-Blend</string>
     <string name="automix_style_dj_filter">Gefilterte Übergabe</string>
     <string name="automix_style_equal_power">Gleichleistungs-Überblendung</string>

@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Фильтр</string>
     <string name="automix_row_overlap">Перекрытие</string>
     <string name="automix_row_volume">Громкость</string>
-    <string name="automix_scrub_hint">Перетащите рамку, чтобы сдвинуть переход · потяните за край, чтобы изменить длину · тяните нижнюю дорожку для прокрутки</string>
+    <string name="automix_scrub_hint">Перетащите рамку, чтобы сдвинуть переход · потяните за край, чтобы задать границу · тяните нижнюю дорожку для прокрутки</string>
     <string name="automix_style_dj_blend">DJ-микс</string>
     <string name="automix_style_dj_filter">переход с фильтром</string>
     <string name="automix_style_equal_power">кроссфейд постоянной мощности</string>

@@ -48,7 +48,7 @@
     <string name="automix_row_filter">ฟิลเตอร์</string>
     <string name="automix_row_overlap">การทับซ้อน</string>
     <string name="automix_row_volume">ระดับเสียง</string>
-    <string name="automix_scrub_hint">ลากกล่องเพื่อย้ายทรานซิชัน · ลากขอบเพื่อปรับขนาด · ลากเลนล่างเพื่อเลื่อน</string>
+    <string name="automix_scrub_hint">ลากกล่องเพื่อย้ายทรานซิชัน · ลากขอบเพื่อกำหนดปลาย · ลากเลนล่างเพื่อเลื่อน</string>
     <string name="automix_style_dj_blend">มิกซ์ DJ</string>
     <string name="automix_style_dj_filter">การส่งต่อแบบกรอง</string>
     <string name="automix_style_equal_power">เฟดกำลังเท่ากัน</string>

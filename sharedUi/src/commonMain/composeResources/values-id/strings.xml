@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Tumpang tindih</string>
     <string name="automix_row_volume">Volume</string>
-    <string name="automix_scrub_hint">Geser kotak untuk memindahkan transisi · geser tepinya untuk mengubah ukuran · geser jalur bawah untuk menggulir</string>
+    <string name="automix_scrub_hint">Geser kotak untuk memindahkan transisi · geser tepinya untuk menempatkan ujung · geser jalur bawah untuk menggulir</string>
     <string name="automix_style_dj_blend">mix DJ</string>
     <string name="automix_style_dj_filter">perpindahan terfilter</string>
     <string name="automix_style_equal_power">fade daya konstan</string>

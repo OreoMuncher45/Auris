@@ -48,7 +48,7 @@
     <string name="automix_row_filter">फ़िल्टर</string>
     <string name="automix_row_overlap">ओवरलैप</string>
     <string name="automix_row_volume">वॉल्यूम</string>
-    <string name="automix_scrub_hint">ट्रांज़िशन खिसकाने के लिए बॉक्स खींचें · आकार बदलने के लिए किनारा खींचें · स्क्रॉल करने के लिए नीचे वाली पट्टी खींचें</string>
+    <string name="automix_scrub_hint">ट्रांज़िशन खिसकाने के लिए बॉक्स खींचें · किनारा खींचकर सिरा तय करें · स्क्रॉल करने के लिए नीचे वाली पट्टी खींचें</string>
     <string name="automix_style_dj_blend">DJ मिश्रण</string>
     <string name="automix_style_dj_filter">फ़िल्टर किया गया हैंडऑफ़</string>
     <string name="automix_style_equal_power">समान-शक्ति फ़ेड</string>

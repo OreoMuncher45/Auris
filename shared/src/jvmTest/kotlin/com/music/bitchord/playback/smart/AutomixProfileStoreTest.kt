@@ -44,7 +44,9 @@ class AutomixProfileStoreTest {
             filter = FilterTransitionVariant.BASS_HANDOFF,
             eq = TransitionEqShape.BRIGHT,
             effects = AutomixEffect.ECHO_TAIL,
+            volume = TransitionVolumeShape.SLAM,
             transitionStart = 42.5,
+            transitionEnd = 61.5,
         )
         store().save("track-1", choice)
         assertEquals(choice, store().load("track-1"))
@@ -87,6 +89,48 @@ class AutomixProfileStoreTest {
 
         assertNull(store().load("track-6"))
         assertTrue(!file.exists(), "an unreadable profile should be discarded, not kept")
+    }
+
+    @Test
+    fun readsAFileFromTheVersionBeforeTheVolumeShape() {
+        // The two things version 3 lacks both have an exact default — "leave
+        // the volume alone", and "no second edge" — so the file says the same
+        // thing as one written now. Discarding it would throw away a
+        // listener's other choices to avoid a guess nobody has to make.
+        val directory = File(root, AutomixProfileStore.DIRECTORY)
+        directory.mkdirs()
+        val file = File(directory, fileNameFor("track-8"))
+        file.writeText(
+            """{"version":3,"enabled":true,"style":"DJ_BLEND","bars":8,"filter":"SWEEP",""" +
+                """"eq":"WARM","effects":"ECHO_TAIL","transitionStart":12.0}""",
+        )
+
+        val loaded = store().load("track-8")
+        assertNotNull(loaded)
+        assertEquals(8, loaded.bars)
+        assertEquals(TransitionStyle.DJ_BLEND, loaded.style)
+        assertEquals(FilterTransitionVariant.SWEEP, loaded.filter)
+        assertEquals(TransitionEqShape.WARM, loaded.eq)
+        assertEquals(AutomixEffect.ECHO_TAIL, loaded.effects)
+        assertEquals(12.0, loaded.transitionStart)
+        assertNull(loaded.volume, "a file written before the shape means 'leave the volume alone'")
+        assertEquals(0.0, loaded.transitionEnd)
+        assertTrue(file.exists(), "a version 3 choice is read, not thrown away")
+    }
+
+    @Test
+    fun aChoiceWrittenNowIsStillRead() {
+        // The migration must not cost the current schema anything: a file this
+        // build wrote has to come back whole.
+        val choice = AutomixOverride(
+            style = TransitionStyle.DJ_FILTER,
+            bars = 16,
+            volume = TransitionVolumeShape.FADE_IN,
+            transitionStart = 30.0,
+            transitionEnd = 46.0,
+        )
+        store().save("track-9", choice)
+        assertEquals(choice, store().load("track-9"))
     }
 
     @Test

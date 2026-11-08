@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.Uri
 import android.os.SystemClock
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.playback.smart.ANALYSIS_HEAD_SECONDS
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -141,6 +142,44 @@ object AudioCache {
      * single-sourced; see [analysisHeadSize].
      */
     private const val MAX_ANALYSIS_TRACK_BYTES = 16L * 1024 * 1024
+
+    /**
+     * The most of a *source-backed* track's opening read-ahead will fetch for
+     * the analyser, however little is known about the stream.
+     *
+     * Twelve megabytes is about twelve seconds of 24-bit/192 kHz lossless, the
+     * heaviest thing an addon plausibly serves. A bound rather than a target:
+     * the size actually asked for comes from the stream's own length and the
+     * track's own duration — see [analysisOpeningBytes] — and this exists only
+     * so a stream that states neither cannot turn "enough to measure a tempo
+     * from" into "the whole file".
+     */
+    private const val MAX_ANALYSIS_OPENING_BYTES = 12L * 1024 * 1024
+
+    /**
+     * The bitrate assumed for a stream whose duration nobody has stated.
+     *
+     * Sixteen-bit lossless — about 176 kB/s — rather than the [PRELOAD_BYTES]
+     * default that used to stand in. That default was written for start
+     * latency, where a megabyte is a generous few seconds of anything, and it
+     * is barely one second of a lossless rendition: the analyser needs
+     * [ANALYSIS_HEAD_SECONDS] of audio, so a megabyte of a heavy rendition is
+     * not a short head, it is no head at all — the head pass refuses it and the
+     * track stays unmeasured until the download catches up minutes later.
+     *
+     * CD-quality is the assumption because it is the middle of what addons
+     * serve and because erring low is the safe direction: a rendition that
+     * really is heavier is corrected by the next round, once its length is on
+     * record and [analysisOpeningBytes] can stop guessing.
+     */
+    private const val ASSUMED_LOSSLESS_BYTES_PER_SECOND = 176_400.0
+
+    /**
+     * Head-room over the computed opening, for the container header and for an
+     * opening that is not at the stream's own average bitrate. The same number
+     * the analyser applies to its own gate; see `TrackAnalyzer.HEAD_BYTES_MARGIN`.
+     */
+    private const val ANALYSIS_OPENING_MARGIN = 1.35
 
     /**
      * How long [renditionKeysFor]'s answer is reused. Short enough that a
@@ -1035,7 +1074,7 @@ object AudioCache {
                     // rearranging, and it has nothing to add to the megabyte
                     // that the next track's beat grid is measured from — so the
                     // delay now only holds back the rest of the file.
-                    prefetchSourceTrack(next, head.uri!!, readyAt)
+                    prefetchSourceTrack(next, head.uri!!, head.durationMs / 1000.0, readyAt)
                     return@launch
                 }
                 // With substitution on, the *bytes* half above used to be
@@ -1170,6 +1209,16 @@ object AudioCache {
         val mediaId: String,
         val target: TrackMatcher.Target,
         val uri: Uri? = null,
+        /**
+         * The runtime the queue item was built with, in milliseconds, or 0 when
+         * it states none.
+         *
+         * Read-ahead needs it to size a source-backed track's opening in
+         * *seconds of audio* rather than in bytes — see
+         * [AudioCache.analysisOpeningBytes] — and an item built from a row that
+         * knew its runtime carries one from the moment the queue is set.
+         */
+        val durationMs: Long = 0L,
     )
 
     /**
@@ -1301,6 +1350,19 @@ object AudioCache {
      * part-written. See [alignmentHeadComplete].
      */
     private val analysisHeadWant = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Source-backed tracks whose analysis opening has been asked for, and how
+     * much of it was asked for.
+     *
+     * A size rather than a flag, unlike [analysisHeads], because the answer
+     * grows: the first round is sized from a guess at the stream's bitrate and
+     * a later one from its real length, and the second is worth running.
+     */
+    private val analysisOpenings = ConcurrentHashMap<String, Long>()
+
+    /** Cache keys with a source-opening fetch in the air. */
+    private val analysisOpeningsInFlight = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Pulls [uri]'s recording onto disk under the plain YouTube key, so Smart
@@ -1485,7 +1547,7 @@ object AudioCache {
         )
     }
 
-    fun requestAnalysisHead(uri: Uri) {
+    fun requestAnalysisHead(uri: Uri, durationSeconds: Double = 0.0) {
         // Each of these gates used to stop a head dead with nothing in the
         // log to show for it: an unwired cache or upstream looked from the
         // outside exactly like a network that refuses everything.
@@ -1497,11 +1559,25 @@ object AudioCache {
             TrackLog.w(TAG, "analysis head for $uri not started: no upstream yet")
             return
         }
+        // A track served by an addon has no YouTube copy to ask for: the
+        // analyser reads whatever copy the track itself will play from, and
+        // that stream's own opening is what has to be fetched. This branch is
+        // the difference between "the analyser asked for bytes" and "the
+        // analyser asked for bytes and was told no" — which is what happened
+        // for every addon-only queue, since the line below used to end the
+        // request outright whenever YouTube was switched off.
+        //
+        // Read defensively: [Uri.getQueryParameter] throws on an opaque URI,
+        // and a source-backed track's URI is whatever the addon handed over.
+        val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
+        if (videoId == null) {
+            requestSourceAnalysisHead(uri, durationSeconds)
+            return
+        }
         // The head is a YouTube copy, and with the switch off the resolver
         // refuses one by design. The analyzer reads the copy the track is
         // already playing from instead — see [TrackAnalyzer].
         if (!SourceRegistry.youtubeEnabled()) return
-        val videoId = uri.getQueryParameter("v") ?: return
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
@@ -1575,6 +1651,53 @@ object AudioCache {
                 }
             } finally {
                 analysisHeadsInFlight.remove(videoId)
+            }
+        }
+    }
+
+    /**
+     * Fetches the opening the analyser reads, for a track served by an addon.
+     *
+     * ## Why the analyser has to be able to ask here too
+     *
+     * The read-ahead fetches the *next* track's opening, which covers the
+     * ordinary case — the analyser is measuring the track that is coming. It
+     * does not cover the rest: a queue the listener skipped into, a track
+     * several places ahead, a rendition whose first opening was sized from a
+     * guess. In every one of those the analyser is asking for bytes nobody
+     * else is going to fetch, and with YouTube off the ask used to fall on
+     * the floor.
+     *
+     * ## Why a round can run more than once
+     *
+     * Unlike the YouTube path, whose size is decided once from a length the
+     * resolver already knew, this one starts from a guess whenever the track's
+     * duration has not been stated — see [analysisOpeningBytes]. A round that
+     * was sized from a guess is worth repeating once the stream's real length
+     * is on record, and [analysisOpenings] remembers the size asked for so
+     * that the repeat happens when the answer grows and not on every tick the
+     * analyser spends waiting.
+     */
+    private fun requestSourceAnalysisHead(uri: Uri, durationSeconds: Double) {
+        if (uri.scheme != "http" && uri.scheme != "https") return
+        val key = cacheKeyOf(uri)
+        val wanted = analysisOpeningBytes(key, durationSeconds)
+        if (cachedPrefixBytes(uri) >= wanted) return
+        val asked = analysisOpenings[key] ?: 0L
+        if (wanted <= asked) return
+        if (!analysisOpeningsInFlight.add(key)) return
+        analysisOpenings[key] = wanted
+        TrackLog.w(
+            TAG,
+            "analysis opening for $key: want=${wanted / 1024}kB " +
+                "held=${cachedPrefixBytes(uri) / 1024}kB",
+            key,
+        )
+        scope.launch {
+            try {
+                fetch(key, uri, 0, wanted, pinKey = true)
+            } finally {
+                analysisOpeningsInFlight.remove(key)
             }
         }
     }
@@ -2024,6 +2147,50 @@ object AudioCache {
     }
 
     /**
+     * How many bytes of a track's opening the analyser needs to measure a
+     * tempo from it — the number the read-ahead fetches and the number the
+     * analyser's own gate measures against.
+     *
+     * ## Why this is a size and not a megabyte
+     *
+     * [PRELOAD_BYTES] is a start-latency figure, and it means wildly different
+     * amounts of *audio* at different bitrates: sixty-odd seconds of a 128 kbps
+     * stream and about one second of a lossless one. The analyser's head pass
+     * refuses anything under [ANALYSIS_HEAD_SECONDS], so for a lossless
+     * rendition the read-ahead was fetching a megabyte that could never be
+     * measured — and the analyser then waited, tick after tick, for a few more
+     * megabytes that only arrived once the whole-file fill caught up (or once
+     * the track itself started playing). That is the "Automix takes forever to
+     * load with addons and YouTube off" report, and it is a units mistake
+     * rather than a missing fetch.
+     *
+     * ## Where the bitrate comes from
+     *
+     * The stream's own length over the track's own duration when both are
+     * stated, which is the normal case for an addon: the queue item carries a
+     * runtime and [measureUpstream] answers the length. When the duration is
+     * unknown the assumption is [ASSUMED_LOSSLESS_BYTES_PER_SECOND], and once
+     * the length is on record a later round recomputes this properly — see
+     * [requestSourceAnalysisHead], which is allowed to run again for exactly
+     * that reason.
+     */
+    private fun analysisOpeningBytes(key: String, durationSeconds: Double): Long {
+        val total = ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 }
+        val wanted = if (total > 0L && seconds != null) {
+            (ANALYSIS_HEAD_SECONDS * (total / seconds) * ANALYSIS_OPENING_MARGIN).toLong()
+        } else {
+            (ANALYSIS_HEAD_SECONDS * ASSUMED_LOSSLESS_BYTES_PER_SECOND).toLong()
+        }
+        val ceiling = if (total > 0L) {
+            minOf(total, MAX_ANALYSIS_OPENING_BYTES.toLong())
+        } else {
+            MAX_ANALYSIS_OPENING_BYTES.toLong()
+        }
+        return wanted.coerceAtLeast(PRELOAD_BYTES).coerceAtMost(ceiling)
+    }
+
+    /**
      * Fills the cache entry for a source-backed track before the player reaches
      * it — the addon counterpart of the YouTube read-ahead above.
      *
@@ -2038,16 +2205,44 @@ object AudioCache {
      * plain fade — the reported "AutoMix became v1".
      *
      * The opening goes first, because that is all a head pass needs and it is
-     * what makes the track start instantly when it is reached. The rest is
-     * filled only under the same policy as [fetchWhole] — a whole lossless
-     * album side is not something to pull down over a metered link for a track
-     * the listener may skip.
+     * what makes the track start instantly when it is reached — and it is sized
+     * to the head pass rather than to a fixed megabyte, which is what makes the
+     * head pass possible at all on a lossless rendition; see
+     * [analysisOpeningBytes]. The rest is filled only under the same policy as
+     * [fetchWhole] — a whole lossless album side is not something to pull down
+     * over a metered link for a track the listener may skip.
      */
-    private suspend fun prefetchSourceTrack(mediaId: String, uri: Uri, settleAt: Long = 0L) {
+    private suspend fun prefetchSourceTrack(
+        mediaId: String,
+        uri: Uri,
+        durationSeconds: Double,
+        settleAt: Long = 0L,
+    ) {
         val key = cacheKeyOf(uri)
+        // The start-latency megabyte goes first whatever it turns out to be
+        // worth, because it is what makes the track begin the moment it is
+        // reached and it must not wait on a round trip that is only about
+        // sizing the analysis.
         if (cache.getCachedBytes(key, 0, PRELOAD_BYTES) < PRELOAD_BYTES) {
             TrackLog.d(TAG, "read-ahead fetching the opening of $mediaId from its source", about = mediaId)
             fetch(key, uri, 0, PRELOAD_BYTES, pinKey = true)
+        }
+        // Then the length. It sizes the rest of the opening, and it is what the
+        // analyser divides by to decide whether what is already on disk is
+        // enough to measure a tempo from — so leaving it until after the settle
+        // delay, as this used to, left the analyser reading a track whose size
+        // was unknown for exactly the seconds it was trying to read it.
+        val total = contentLengthOf(uri).takeIf { it > 0L } ?: measureUpstream(uri)
+        if (total > 0L) recordContentLength(key, total)
+        val opening = analysisOpeningBytes(key, durationSeconds)
+        if (opening > PRELOAD_BYTES && cache.getCachedBytes(key, 0, opening) < opening) {
+            TrackLog.d(
+                TAG,
+                "read-ahead fetching the analyser's opening of $mediaId " +
+                    "(${opening / 1024}kB${if (total > 0) " of ${total / 1024}kB" else ""})",
+                about = mediaId,
+            )
+            fetch(key, uri, 0, opening, pinKey = true)
         }
         if (pendingQueue.firstOrNull() != mediaId) return
         // The rest of the file waits for the queue to settle: it is a guess
@@ -2064,7 +2259,6 @@ object AudioCache {
         // makes the pass below possible at all: without a total there is
         // nothing to iterate to, which left addon tracks with an opening and
         // no more.
-        val total = contentLengthOf(uri).takeIf { it > 0L } ?: measureUpstream(uri)
         if (total <= 0L) {
             TrackLog.d(
                 TAG,
@@ -2073,7 +2267,6 @@ object AudioCache {
             )
             return
         }
-        recordContentLength(key, total)
         var position = 0L
         while (position < total) {
             if (pendingQueue.firstOrNull() != mediaId) return

@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Solape</string>
     <string name="automix_row_volume">Volumen</string>
-    <string name="automix_scrub_hint">Arrastra el recuadro para mover la transición · arrastra un borde para cambiar su tamaño · arrastra la pista inferior para desplazar</string>
+    <string name="automix_scrub_hint">Arrastra el recuadro para mover la transición · arrastra un borde para mover un extremo · arrastra la pista inferior para desplazar</string>
     <string name="automix_style_dj_blend">mezcla DJ</string>
     <string name="automix_style_dj_filter">traspaso filtrado</string>
     <string name="automix_style_equal_power">fundido de potencia constante</string>

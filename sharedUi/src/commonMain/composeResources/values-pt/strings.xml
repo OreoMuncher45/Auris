@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filtro</string>
     <string name="automix_row_overlap">Sobreposição</string>
     <string name="automix_row_volume">Volume</string>
-    <string name="automix_scrub_hint">Arraste a caixa para mover a transição · arraste uma borda para redimensioná-la · arraste a faixa inferior para rolar</string>
+    <string name="automix_scrub_hint">Arraste a caixa para mover a transição · arraste uma borda para posicionar uma ponta · arraste a faixa inferior para rolar</string>
     <string name="automix_style_dj_blend">mistura DJ</string>
     <string name="automix_style_dj_filter">passagem filtrada</string>
     <string name="automix_style_equal_power">fade de potência constante</string>

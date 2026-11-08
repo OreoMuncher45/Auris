@@ -143,6 +143,92 @@ class AutomixOverridePlannerTest {
     }
 
     @Test
+    fun theVolumeShapeTravelsWithThePlan() {
+        // The shape is a statement about the two faders and has nothing to be
+        // compatible with, so unlike the blend it is carried exactly as asked.
+        val (current, next) = calmPair()
+        val plan = plan(current, next, AutomixOverride(volume = TransitionVolumeShape.SLAM))
+        assertEquals(TransitionVolumeShape.SLAM, plan.volumeShape)
+    }
+
+    @Test
+    fun nothingChosenLeavesTheEqualPowerPair() {
+        val (current, next) = calmPair()
+        val plan = plan(current, next)
+        assertEquals(TransitionVolumeShape.AUTO, plan.volumeShape)
+        assertTrue(plan.volumeShape.isPlain, "the default is the pair every transition has used")
+    }
+
+    @Test
+    fun aVolumeShapeReachesAPlainCrossfadeToo() {
+        // "Not this song" is about the transition, not about the volume: the
+        // listener still means the shape they asked for when the plain fade
+        // answers instead.
+        val (current, next) = calmPair()
+        val plan = plan(
+            current,
+            next,
+            AutomixOverride(enabled = false, volume = TransitionVolumeShape.FAST_OUT),
+        )
+        assertEquals(TransitionStyle.EQUAL_POWER, plan.transitionStyle)
+        assertEquals(TransitionVolumeShape.FAST_OUT, plan.volumeShape)
+    }
+
+    @Test
+    fun aBoxDrawnAtBothEdgesIsHonouredAtBothEdges() {
+        // The panel's window: two edges the listener placed, honoured where
+        // they put them rather than snapped to the planner's own exit.
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val end = base.transitionEnd
+        val start = end - 12 * BAR_SECONDS
+        val drawn = plan(
+            current,
+            next,
+            AutomixOverride(bars = 12, transitionStart = start, transitionEnd = end),
+        )
+        assertEquals(start, drawn.transitionStart, 0.05)
+        assertEquals(end, drawn.transitionEnd, 0.05)
+        assertEquals(12, drawn.transitionBars)
+    }
+
+    @Test
+    fun aBoxThatEndsEarlyCutsTheTailOffTheOutgoingTrack() {
+        // The planner will not retire a track before its mix point on its own.
+        // A listener who draws the box that way means it, and the plan has to
+        // end where they said rather than where the analysis would have.
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val end = base.transitionEnd - 8.0
+        val start = end - 8 * BAR_SECONDS
+        val drawn = plan(
+            current,
+            next,
+            AutomixOverride(bars = 8, transitionStart = start, transitionEnd = end),
+        )
+        assertEquals(end, drawn.transitionEnd, 0.05)
+        assertEquals(start, drawn.transitionStart, 0.05)
+        assertEquals(8, drawn.transitionBars)
+        assertTrue(drawn.transitionEnd < base.transitionEnd, "the exit moved earlier")
+    }
+
+    @Test
+    fun aBoxWithTooLittleRoomBehindItFallsBackToThePlannersOwnPlacement() {
+        val (current, next) = calmPair()
+        val base = plan(current, next)
+        val end = base.transitionEnd
+        // Two bars is below the product floor, so the drawn span cannot be
+        // executed and the plan says what it did instead.
+        val drawn = plan(
+            current,
+            next,
+            AutomixOverride(bars = 2, transitionStart = end - 2 * BAR_SECONDS, transitionEnd = end),
+        )
+        assertTrue(!drawn.blocked)
+        assertTrue(drawn.transitionBars >= MIN_TRANSITION_BARS)
+    }
+
+    @Test
     fun theEffectWinsOverTheFilterShape() {
         // An echo tail is a filter ride; asking for one and being given a plain
         // sweep would be a choice quietly ignored.
