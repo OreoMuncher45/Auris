@@ -146,6 +146,13 @@ had.
       only when the two disagree.
 - [x] Drag state is local to the editor and committed on release, so a finger
       on the box no longer recomposes the sheet or rebuilds the plan per frame.
+- [x] Nothing is adopted from the plan while a finger is down, and the view
+      does not glide either: the plan is re-made several times a second while
+      the analyser refines and the playhead moves, and adopting it mid-drag
+      pulled the box back out from under the finger.
+- [x] The edge handles scale with the box — a quarter of it either side, and
+      the full width outwards — so a short window still has a body to grab and
+      a near miss takes hold of the edge instead of jumping the whole box.
 
 ### 11b. Volume, preview and the seek bar marker
 
