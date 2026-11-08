@@ -1073,6 +1073,7 @@ private fun phraseSwitch(
     length: Double,
     nextLength: Double,
     advanced: Boolean,
+    override: AutomixOverride? = null,
 ): TransitionPlan? {
     if (!harmonicallyCompatible(trustedKey(analysis), trustedKey(nextAnalysis))) return null
 
@@ -1135,6 +1136,10 @@ private fun phraseSwitch(
         // Playback speed remains fixed once either deck is audible.
         phaseLock = false,
         transitionStyle = TransitionStyle.DJ_BLEND,
+        // The listener's tone shape for the arriving track. A phrase switch
+        // keeps its own placement, but the shape rides on the arriving side
+        // and does not care where the handoff lands.
+        eqShape = override?.eq?.takeIf { !it.isFlat },
     )
 }
 
@@ -1592,8 +1597,26 @@ fun planTransition(
 
     val nextLength = max(nextAnalysis.duration.orZero(), trackDurationSeconds(nextTrack))
 
-    phraseSwitch(analysis, nextAnalysis, length, nextLength, advanced)
+    // The phrase switch is the most ambitious handoff the app has, and it
+    // plans its own size and its own placement. A listener who has asked for
+    // a particular shape — a size, a blend, a filter, an echo, a place to
+    // start — asked for something the phrase switch cannot execute, so the
+    // whole-bar path below answers instead: it is the path that can.
+    //
+    // A tone shape is the exception: it rides on the arriving side and does
+    // not care where the handoff lands, so the phrase switch keeps its
+    // placement and carries the shape with it.
+    val overrideAsksForShape = override != null && !override.isEmpty && (
+        override.bars > 0 ||
+            override.style != null ||
+            override.filter != null ||
+            override.effects != null ||
+            override.transitionStart > 0.0
+        )
+
+    phraseSwitch(analysis, nextAnalysis, length, nextLength, advanced, override)
         ?.takeIf { playbackTime < it.transitionEnd }
+        ?.takeIf { !overrideAsksForShape }
         ?.let { plan ->
             val started = playbackTime >= plan.transitionStart
             return capIncomingSkip(
@@ -1642,7 +1665,23 @@ fun planTransition(
         rankedMixOuts.asSequence()
             .filter { abs(it.time - mixAnchor) > 1.0 && it.time <= length }
             .take(MAX_REROUTE_CANDIDATES)
-            .map { mixPlan(analysis, nextAnalysis, it.time, it.type, length, nextLength, traits, filterVariant) }
+            // The listener's choice travels with the reroute: a second exit
+            // is a better place to put the *same* transition, not a different
+            // transition. Dropping it here would silently hand the plan back
+            // to the app's own answer.
+            .map {
+                mixPlan(
+                    analysis,
+                    nextAnalysis,
+                    it.time,
+                    it.type,
+                    length,
+                    nextLength,
+                    traits,
+                    filterVariant,
+                    override,
+                )
+            }
             .filter { playbackTime < it.transitionStart }
             .minByOrNull { it.vocalOverlap }
             ?.takeIf { it.vocalOverlap <= primary.vocalOverlap * VOCAL_REROUTE_GAIN }
