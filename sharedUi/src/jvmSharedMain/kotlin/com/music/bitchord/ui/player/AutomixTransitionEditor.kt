@@ -274,6 +274,18 @@ internal fun AutomixTransitionEditor(
     enabled: Boolean,
     resetKey: String,
     onWindow: (AutomixWindow) -> Unit,
+    /**
+     * The arriving track's cue as the listener moved it, in its own seconds; 0
+     * to leave it to the planner.
+     *
+     * Handed up on release, like the window, and for the same reason: what the
+     * listener moved has to reach the engine or the picture is a lie. It is the
+     * *arriving waveform* the listener dragged, so what it changes is where
+     * that track plays — the cue and the handoff together — and never the
+     * window, which is why this is a callback of its own rather than a field on
+     * the window.
+     */
+    onCue: (Double) -> Unit = {},
     onSnap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -334,6 +346,7 @@ internal fun AutomixTransitionEditor(
     val latestPlan by rememberUpdatedState(plan)
     val latestWindow by rememberUpdatedState(window)
     val latestOnWindow by rememberUpdatedState(onWindow)
+    val latestOnCue by rememberUpdatedState(onCue)
     val latestOnSnap by rememberUpdatedState(onSnap)
 
     // The panel's window is adopted whenever it says something new. While a
@@ -346,6 +359,14 @@ internal fun AutomixTransitionEditor(
     // one the listener could not hold on to.
     LaunchedEffect(window.start, window.end) {
         if (dragging) return@LaunchedEffect
+        // A plan with no placement yet is not a window, it is the absence of
+        // one — the analyser is still refining, or the pair has nothing to mix
+        // on this tick. Adopting it emptied the drawing: the box vanished from
+        // a panel the listener was working in, and came back on the next open
+        // once the planner had something to place. Holding what is already
+        // drawn costs a few frames of a stale window, which is a great deal
+        // better than a box that is not there.
+        if (window.length <= 0.0 && live.length > 0.0) return@LaunchedEffect
         val waiting = pending
         if (waiting == null || waiting.start != window.start || waiting.end != window.end) {
             live = window
@@ -488,6 +509,10 @@ internal fun AutomixTransitionEditor(
                 var horizontal = false
                 var lastSnap: Double? = null
                 val startedAtShift = incomingShift
+                // The cue in force when this gesture began. The commit is a
+                // *delta* from it rather than the total shift, so a second drag
+                // of the same lane does not count the first one twice.
+                val startedAtCue = latestPlan.cueSeconds
                 // Where the finger was last seen horizontally. Tracked by hand
                 // rather than read from [PointerInputChange.positionChanged],
                 // which answers false for an event another consumer has already
@@ -660,6 +685,16 @@ internal fun AutomixTransitionEditor(
                         if (finished.start != latestWindow.start || finished.end != latestWindow.end) {
                             pending = finished
                             latestOnWindow(finished)
+                        }
+                        // The arriving track was moved, so the engine is told
+                        // where it was put. Without this the drag was drawing
+                        // and nothing else: the waveform sat where the listener
+                        // left it and the preview played the planner's own cue.
+                        if (grabbed == Grab.ARRIVING) {
+                            val moved = incomingShift - startedAtShift
+                            if (abs(moved) > 0.02) {
+                                latestOnCue((startedAtCue - moved).coerceAtLeast(0.0))
+                            }
                         }
                     }
                     snapped = null

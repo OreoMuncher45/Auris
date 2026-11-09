@@ -458,18 +458,41 @@ fun latestIncomingCue(length: Double): Double =
  * The backstop behind the capped candidate choice above, for every path —
  * an arrangement overlap or a stretch can still carry a cue past the line.
  */
-private fun capIncomingSkip(plan: TransitionPlan, nextAnalysis: TrackAnalysis, nextLength: Double): TransitionPlan {
+private fun capIncomingSkip(
+    plan: TransitionPlan,
+    nextAnalysis: TrackAnalysis,
+    nextLength: Double,
+    incomingShift: Double = 0.0,
+): TransitionPlan {
+    // The listener's own move of the arriving track, taken first and in the
+    // same breath as the cap below, because the two are the same kind of
+    // adjustment: this function is the last word on where the arriving side
+    // sits, and every path out of the planner comes through it.
+    //
+    // Both the cue and the handoff move, by the same amount and in the same
+    // direction, so the arrangement the blend ends on is unchanged — the whole
+    // track slides against the outgoing one and the two waveforms stay aligned
+    // with each other. Positive is *later*, which is the way the editor's own
+    // drag reads.
+    val shifted = if (incomingShift == 0.0) {
+        plan
+    } else {
+        plan.copy(
+            incomingCueTime = max(0.0, plan.incomingCueTime - incomingShift),
+            incomingHandoffTime = max(0.0, plan.incomingHandoffTime - incomingShift),
+        )
+    }
     val latest = latestIncomingCue(nextLength)
-    if (plan.incomingCueTime <= latest) return plan
+    if (shifted.incomingCueTime <= latest) return shifted
     val beat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (nextAnalysis.bpm.orZero() > 0) 60 / nextAnalysis.bpm else 0.0
-    val over = plan.incomingCueTime - latest
+    val over = shifted.incomingCueTime - latest
     val shift = if (beat > 0) ceil(over / (4 * beat)) * 4 * beat else over
-    val cue = max(0.0, plan.incomingCueTime - shift)
-    val moved = plan.incomingCueTime - cue
-    return plan.copy(
+    val cue = max(0.0, shifted.incomingCueTime - shift)
+    val moved = shifted.incomingCueTime - cue
+    return shifted.copy(
         incomingCueTime = cue,
-        incomingHandoffTime = max(cue, plan.incomingHandoffTime - moved),
+        incomingHandoffTime = max(cue, shifted.incomingHandoffTime - moved),
     )
 }
 
@@ -1681,6 +1704,7 @@ fun planTransition(
                 ),
                 nextAnalysis,
                 nextLength,
+                override?.incomingCueShift ?: 0.0,
             )
         }
 
@@ -1752,6 +1776,7 @@ fun planTransition(
         ),
         nextAnalysis,
         nextLength,
+        override?.incomingCueShift ?: 0.0,
     )
 }
 

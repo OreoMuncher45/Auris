@@ -13,6 +13,8 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
@@ -1936,16 +1938,16 @@ fun NowPlayingScreen(
         // Last, and drawn over everything: the search covers the whole player,
         // the queue behind it included. It is the one overlay here the listener
         // types into, so nothing may sit above it.
-        // A short rise and fade rather than a cut: this screen arrives over the
-        // player, and a whole page appearing in one frame reads as the player
-        // having been replaced. The field takes focus as it composes either way,
-        // so nothing about it waits for the animation.
+        // A box, not a page: it arrives where it is going to be with a short
+        // fade and a small settle, and the scrim beneath it comes up with it so
+        // the player behind dims rather than disappearing. The field takes focus
+        // as it composes, so nothing about the search waits for the animation.
         AnimatedVisibility(
             visible = queueSearchOpen,
-            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 14 },
-            exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 18 },
+            enter = fadeIn(tween(160)) + scaleIn(tween(200), initialScale = 0.94f),
+            exit = fadeOut(tween(120)) + scaleOut(tween(150), targetScale = 0.96f),
         ) {
-            PlayerQueueSearchScreen(
+            PlayerQueueSearchBox(
                 onDismiss = { queueSearchOpen = false },
                 onAddToQueue = onAddToQueue,
                 onPlayNext = onPlayNext,

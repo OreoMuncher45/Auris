@@ -236,6 +236,12 @@ private fun ColumnScope.AutomixPanelBody(
                 ),
             )
         },
+        onCue = { cue ->
+            // The arriving waveform was moved by hand. It is the *track's* place
+            // the gesture changes, so it is saved with the placement it belongs
+            // to and the engine plays it there — see AutomixOverride.
+            onDraft(draft.copy(incomingCueShift = cue))
+        },
         onSnap = tick,
         modifier = Modifier
             .fillMaxWidth()

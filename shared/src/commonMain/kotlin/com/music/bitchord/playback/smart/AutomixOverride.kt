@@ -94,11 +94,31 @@ data class AutomixOverride(
      * the track is left afterwards.
      */
     val transitionEnd: Double = 0.0,
+    /**
+     * How far the listener has moved the arriving track by hand, in seconds of
+     * the outgoing clock; 0 leaves it where the planner put it.
+     *
+     * The editor's own gesture: the lower waveform is dragged left or right and
+     * the arriving track really does play that much earlier or later. Positive
+     * means *later*, which is the direction the waveform went.
+     *
+     * It moves the arriving side and nothing else — its cue and its handoff
+     * together, by the same amount — so the arrangement the blend ends on is
+     * the same one, and the two waveforms stay aligned with each other while
+     * both slide against the outgoing track. That is the whole point of the
+     * gesture: lining a track up by ear is something a listener does when the
+     * planner's own placement is a beat or two off.
+     *
+     * Applied where every other placement cap is applied, at the very end of
+     * the planner — see [TransitionPlanner] — so no path out of it can miss it.
+     */
+    val incomingCueShift: Double = 0.0,
 ) {
     /** Whether this override says anything at all. */
     val isEmpty: Boolean
         get() = enabled && style == null && bars <= 0 && filter == null && eq == null &&
-            effects == null && volume == null && transitionStart <= 0.0 && transitionEnd <= 0.0
+            effects == null && volume == null && transitionStart <= 0.0 && transitionEnd <= 0.0 &&
+            incomingCueShift == 0.0
 
     companion object {
         /** Nothing chosen: the planner's own behaviour. */
