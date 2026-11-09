@@ -799,6 +799,22 @@ object SourceResolver {
         candidatesForYouTube(SourceRegistry.activeForPlayback()).isNotEmpty()
 
     /**
+     * Whether anything enabled can hand over a bit-exact copy of a track.
+     *
+     * The rung above a downloaded file, and the only one: a track playing from
+     * its own file starts there and stays there unless a source can serve
+     * something *better* than the file, which — since a file cannot be
+     * improved by a lossy re-encode of itself — means lossless.
+     *
+     * Answerable from the source list alone, without a search, because the
+     * question it gates is whether a search is worth starting at all: see
+     * [QualityUpgrade.couldStillUpgrade], which is asked on every progress
+     * sample for the track that is playing.
+     */
+    fun canServeLossless(): Boolean =
+        candidatesForYouTube(SourceRegistry.activeForPlayback()).any { it.kind.canServeLossless }
+
+    /**
      * The sources a YouTube track may be served from, in rank order.
      *
      * Normally that is everything ranked above YouTube — the sources the user

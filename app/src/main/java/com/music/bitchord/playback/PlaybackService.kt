@@ -4779,13 +4779,14 @@ class PlaybackService : MediaLibraryService() {
      * Swaps a track whose stream failed back onto its downloaded file, in
      * place and at the same position.
      *
-     * The mirror of [restreamMissingLocalFile] for the online-upgrade path:
-     * a download plays as a stream while the network is up (see
-     * [Song.toMediaItem][com.music.bitchord.playback.toMediaItem]), so a
-     * dead stream must not strand a track whose file is sitting on disk.
-     * First failure only — a file that itself fails goes through
-     * [restreamMissingLocalFile] and the ordinary retry budget from there,
-     * so the two can never ping-pong.
+     * The mirror of [restreamMissingLocalFile], and rare now: a downloaded
+     * track is *built* as its file ([preferLocalFile]), so the only tracks
+     * reaching here are ones queued before their download finished, or being
+     * streamed from a source because a lossless copy was found for them. A
+     * stream that dies must not strand a track whose file is sitting on disk
+     * in either case. First failure only — a file that itself fails goes
+     * through [restreamMissingLocalFile] and the ordinary retry budget from
+     * there, so the two can never ping-pong.
      */
     private fun fallbackOnlineStreamToFile(player: ExoPlayer, mediaId: String, position: Long): Boolean {
         val index = player.currentMediaItemIndex
@@ -4794,12 +4795,10 @@ class PlaybackService : MediaLibraryService() {
         val scheme = current.localConfiguration?.uri?.scheme
         if (scheme == "file" || scheme == "content") return false
         if (Downloads.verifiedSavedUri(mediaId) == null) return false
-        // Built with no local URI of its own, so the item can only come out as
-        // a stream unless [shouldPlayLocalFile] says the network is gone. This
-        // path is reached *after* a stream has already failed, and it checks
-        // [Downloads.verifiedSavedUri] itself, so it does not depend on that
-        // verdict having been true when the item was first built.
-        val fileItem = current.toSong().copy(localUri = null, localPath = null).toMediaItem()
+        // Built from the item's own song with nothing stripped, so that a track
+        // which had been streamed from a source — its item a marked
+        // `bitchord://` uri — comes out as the file it was saved as.
+        val fileItem = current.toSong().toMediaItem()
         val fileScheme = fileItem.localConfiguration?.uri?.scheme
         if (fileScheme != "file" && fileScheme != "content") return false
         TrackLog.w(
@@ -4826,10 +4825,13 @@ class PlaybackService : MediaLibraryService() {
      * waits in the live queue. This is the other end of that, and the only one
      * that can see the file is gone rather than guess.
      *
-     * The record goes first, then the item is rebuilt from its own metadata with
-     * the local uri stripped, which sends [Song.toMediaItem] down its streaming
-     * branch. Position is kept, so this reads as the hiccup [recoverFrom] is
-     * written around rather than the song starting over.
+     * The record goes first, then the item is rebuilt from its own metadata
+     * with the local uri stripped. The order matters: [Song.toMediaItem] plays
+     * the file whenever there is one on record ([preferLocalFile]), so it is
+     * [Downloads.forgetMissing] that makes this a stream rather than the same
+     * `content://` path handed straight back. Position is kept, so this reads
+     * as the hiccup [recoverFrom] is written around rather than the song
+     * starting over.
      *
      * @return false when this is not that situation and the caller should carry
      *   on with its ordinary stream recovery — including the case where stripping
@@ -5218,7 +5220,7 @@ class PlaybackService : MediaLibraryService() {
             // the cached-track path, was refused by it for being pending, and
             // lost its upgrade until the next progress sample came round.
             if (!QualityUpgrade.isPending(mediaId) &&
-                (uri == null || !adoptCachedTrack(mediaId, uri, playingSeconds))
+                (uri == null || !adoptUnresolvedTrack(mediaId, uri, playingSeconds))
             ) {
                 return@launch
             }
@@ -5317,24 +5319,33 @@ class PlaybackService : MediaLibraryService() {
      *    renderer is reporting for *some other track* gets the same treatment,
      *    and has to, because it is indistinguishable from an answer — see
      *    [audioFormatFor] for what it cost to read one on trust.
-     *  - **Whether the listener owns the file.** A downloaded track resolves to
-     *    its own copy on disk — see the resolving data source above, which
-     *    answers it before the module race is ever reached, so a download has
-     *    never been a candidate for substitution. Reproduced here because this
-     *    path skips that resolver entirely; without it the second look would
-     *    spend data replacing a file the user deliberately saved.
+     *  - **Whether the listener owns the file.** A downloaded track plays its
+     *    own copy on disk — see [preferLocalFile] — so nothing ever resolved
+     *    it and this is the only offer it gets. It is not excluded from the
+     *    second look: a source that can serve a Lossless or Hi-res copy is
+     *    ranked above local storage on purpose, and this is where that happens
+     *    for a file. What it *is* excluded from is being replaced by anything
+     *    else — see [adoptFileBackedTrack], which refuses anything a file
+     *    cannot be beaten on, and a device file of the listener's own, which
+     *    has no catalogue identity to search by.
      *
      * @param durationSec the runtime the decoder reports, waited for by the
      *   caller — needed here to turn the size of the cache entry into a
      *   bitrate. See [cachedFloor].
      */
-    private suspend fun adoptCachedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+    private suspend fun adoptUnresolvedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
         val format = withContext(Dispatchers.Main) {
             player
                 ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
                 ?.audioFormat
         } ?: return false
         val mime = format.sampleMimeType ?: return false
+        // The file the listener saved, playing as itself. This is the track
+        // every other part of the app already believes is on disk — and now
+        // the one that actually is.
+        if (uri.scheme == "file" || uri.scheme == "content") {
+            return adoptFileBackedTrack(mediaId, uri, format, durationSec)
+        }
         val videoId = uri.getQueryParameter("v") ?: return false
         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
         if (downloaded) return false
@@ -5353,6 +5364,64 @@ class PlaybackService : MediaLibraryService() {
             uri = uri,
             target = target,
             playingMime = mime,
+            playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
+        )
+    }
+
+    /**
+     * Offers a downloaded track the sources, over the file it is playing.
+     *
+     * The rung the ladder was missing. A downloaded track used to be "final" —
+     * the copy was the copy, and no amount of looking could improve it — and
+     * that was wrong in one direction only, which is the direction the ranking
+     * is for: a Lossless or Hi-res source sits above local storage deliberately,
+     * and a 128kbps file YouTube handed the listener when they saved the track
+     * is not the copy the app would have chosen now.
+     *
+     * Four things keep it honest, and each has to stay:
+     *
+     *  - Only a *download*. A file of the listener's own has no catalogue
+     *    identity to search by, and playing a stream instead of their own
+     *    folder would be a presumption, not an upgrade.
+     *  - A file that is already lossless is left alone.
+     *    [QualityUpgrade.adoptUnresolved] refuses it by the decoder's own mime,
+     *    which is the measurement rather than the badge the download wrote.
+     *  - The floor is the *file's* own quality, so a lossy candidate has to
+     *    clear it by [SourceResolver.worthSwapping]'s margin. A file whose
+     *    bitrate the decoder does not state is a floor nothing lossy clears.
+     *  - The search itself is gated like every other automatic one:
+     *    [PlaybackNetworkPolicy] keeps it off mobile data with the screen off.
+     *    Playing the file costs nothing, and it already has.
+     */
+    private suspend fun adoptFileBackedTrack(
+        mediaId: String,
+        uri: Uri,
+        format: Format,
+        durationSec: Int?,
+    ): Boolean {
+        if (Downloads.verifiedSavedUri(mediaId) == null) return false
+        // A track that came from an addon is left alone, and not because there
+        // is nothing to look for: its file *is* the copy that source served —
+        // the download resolved through the same ladder, so the local file and
+        // the best copy available were the same thing when it was saved.
+        //
+        // What it could not do is come back out again. A swap hands the player
+        // a marked rendition of an item it can re-resolve, and for an addon
+        // track that item is `bitchord://source…`, which the resolver answers
+        // by asking the source afresh rather than by handing over the parked
+        // stream ([QualityUpgrade.forcedStream] is keyed on the `v=` that a
+        // YouTube id carries). An "upgrade" there would overwrite a file the
+        // listener has with a fresh stream from the same source at the same
+        // quality, and pay a seam in the audio for it.
+        if (SourceRegistry.parseTrackKey(mediaId) != null) return false
+        val song = withContext(Dispatchers.Main) {
+            player?.currentMediaItem?.takeIf { it.mediaId == mediaId }?.toSong()
+        } ?: return false
+        return QualityUpgrade.adoptUnresolved(
+            mediaId = mediaId,
+            uri = uri,
+            target = TrackMatcher.targetOf(song),
+            playingMime = format.sampleMimeType,
             playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
         )
     }
@@ -5387,6 +5456,11 @@ class PlaybackService : MediaLibraryService() {
      * question separately, from the mime type itself.
      */
     private fun cachedFloor(uri: Uri, format: Format, durationSec: Int?): StreamFormat? {
+        // Also the honest figure for a file the listener saved: the extractor
+        // reads the bitrate out of the container, so a downloaded 128kbps MP3
+        // states it and a lossy module stream has to clear
+        // [SourceResolver.worthSwapping]'s margin over it to be worth a seam in
+        // the audio. A file it does not state is a floor nothing lossy clears.
         format.bitrate.takeIf { it != Format.NO_VALUE && it > 0 }?.let {
             return StreamFormat(kbps = it / 1000)
         }
@@ -5398,7 +5472,22 @@ class PlaybackService : MediaLibraryService() {
     /** Where the playing track stands, read off the player in one hop. */
     private class SwapPoint(
         val item: MediaItem,
+        /**
+         * The item's own playback URI: what the swap replaces, and what a
+         * revert puts back. For a track playing from a downloaded file this is
+         * that `content://` path, which is exactly what must come back if the
+         * replacement turns out not to be the same recording.
+         */
         val uri: String,
+        /**
+         * What the upgraded item is built on.
+         *
+         * The same as [uri] for everything except a file, where the upgrade
+         * cannot be built on the item's own URI at all: the resolving data
+         * source never sees a `content://` path, so a marked one would simply
+         * go on being the file. See [Song.toStreamMediaItem].
+         */
+        val upgradeBase: String,
         val position: Long,
         val duration: Long,
     )
@@ -5430,7 +5519,7 @@ class PlaybackService : MediaLibraryService() {
             return
         }
 
-        val upgradedUri = QualityUpgrade.upgradedUri(at.uri)
+        val upgradedUri = QualityUpgrade.upgradedUri(at.upgradeBase)
         // Whether the rendition entry already holds *this* stream's bytes,
         // asked before [force] overwrites the record of what filled it. True
         // only for a shelved upgrade being re-offered, where throwing the entry
@@ -5717,7 +5806,18 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "no swap for $mediaId: it is held on the original", about = mediaId)
             return null
         }
-        return SwapPoint(item, uri, player.currentPosition, player.duration)
+        // A downloaded track is playing its own file, so the swap has to be
+        // built on the item this song *would* have been queued as. See
+        // [SwapPoint.upgradeBase]: marking a `content://` path would hand the
+        // resolver something it never sees, and the marked item would go on
+        // being the file.
+        val scheme = item.localConfiguration?.uri?.scheme
+        val upgradeBase = if (scheme == "file" || scheme == "content") {
+            item.toSong().toStreamMediaItem().localConfiguration?.uri?.toString() ?: return null
+        } else {
+            uri
+        }
+        return SwapPoint(item, uri, upgradeBase, player.currentPosition, player.duration)
     }
 
     /**
@@ -6426,11 +6526,15 @@ class PlaybackService : MediaLibraryService() {
         // downloaded track could show a bitrate badge for a file it was not
         // playing.
         //
-        // Only a `bitchord://` uri, which is what an item carries before the
-        // resolver has opened it, is still an open question — and there the
-        // download record is the best answer available.
+        // A `bitchord://` uri is a *stream*, and is answered as such. This used
+        // to fall back to the download record — "a downloaded track streamed,
+        // so it must be local" — which was reading the old policy rather than
+        // the item. There are only two ways an item gets here: it was built for
+        // a track with no file (not local), or its file was traded up for a
+        // lossless copy from a source ([QualityUpgrade]), which is the one case
+        // where calling it Local Storage is exactly backwards.
         val scheme = uri?.scheme
-        if (scheme != null && scheme != "bitchord") return false
+        if (scheme != null) return false
         return Downloads.verifiedSavedUri(mediaId) != null
     }
 
@@ -7944,14 +8048,21 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            // Edge-triggered: the work is only wanted on the edges, not on
-            // every emission of a value the player already follows. Both
-            // directions matter — coming back online returns the queue to
-            // streams, going offline claims the downloaded files before the
-            // first stream has to fail to find them.
+            // Edge-triggered: the work is only wanted on the edges, and only
+            // in one direction now.
+            //
+            // Going offline claims the downloaded files for the *upcoming*
+            // tracks, before any of them has to fail as a stream to get one —
+            // a track queued while the network was up keeps its stream uri
+            // until something rebuilds it, and this is that something.
+            //
+            // Coming back online does nothing at all. It used to hand the
+            // queued downloads back to the network, on the policy that a
+            // download streams whenever a connection is up (see
+            // [preferLocalFile]); the file is what plays now, whatever the
+            // network is doing, so there is nothing to hand back.
             var wasOffline = AppSettings.effectiveOffline.value
             AppSettings.effectiveOffline.collect { offline ->
-                if (wasOffline && !offline) restoreStreamingAfterOffline()
                 if (!wasOffline && offline) applyOfflineFilesToQueue()
                 wasOffline = offline
             }
@@ -8092,84 +8203,6 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * When offline ends, put the *upcoming* tracks back on the configured
-     * stream.
-     *
-     * Which copy plays is decided where the item is built, so a queue assembled
-     * while offline carries file uris and would stay on them until the queue was
-     * rebuilt by hand — the switch would come back on and nothing would change.
-     * Every item records the file it could play in its own extras, so the rows
-     * can be rebuilt as streams without disturbing the queue, its order, or
-     * what is playing right now.
-     *
-     * The current item is left alone on purpose: swapping the source under a
-     * track that is already audible is a gap in the music, and the one track
-     * where it would be felt is the one nobody is waiting on. The change lands
-     * on the next play, which is also when it would be noticed.
-     */
-    private suspend fun restoreStreamingAfterOffline() {
-        val player = player ?: return
-        val count = player.mediaItemCount
-        if (count == 0) return
-        val items: List<MediaItem> = (0 until count).map { player.getMediaItemAt(it) }
-        val from = player.currentMediaItemIndex + 1
-        if (from >= items.size) return
-        // Every upcoming track is rebuilt, not only the ones with a file.
-        //
-        // The old version handed [Player.replaceMediaItems] a list built with
-        // `mapNotNull`, so a track without a file was *dropped* from the list
-        // and therefore removed from the queue: the listener's own music,
-        // gone, because the wifi came back. A track that was left alone
-        // going offline has to be left alone coming back too.
-        val rebuilt = (from until items.size).map { index ->
-            val item = items[index]
-            val scheme = item.localConfiguration?.uri?.scheme
-            // Only a download is put back on the network. A file of the
-            // listener's own — a track in their music folder — is not
-            // something a stream can replace, and stripping its path would
-            // send it looking for one.
-            if (scheme != "file" && scheme != "content") {
-                item
-            } else if (Downloads.verifiedSavedUri(item.mediaId) == null) {
-                item
-            } else {
-                item.toSong().copy(localUri = null, localPath = null).toMediaItem()
-            }
-        }
-        if (rebuilt == items.subList(from, items.size)) return
-        val restored = rebuilt.indices.count { i ->
-            rebuilt[i].localConfiguration?.uri != items[from + i].localConfiguration?.uri
-        }
-        if (restored == 0) return
-        TrackLog.d(
-            "BitChord",
-            "back online; $restored queued track(s) return to streaming",
-            about = player.currentMediaItem?.mediaId,
-        )
-        player.replaceMediaItems(from, items.size, rebuilt)
-    }
-
-    /**
-     * The mirror of [restoreStreamingAfterOffline]: when offline begins, claim
-     * the downloaded files for the *upcoming* tracks before any of them has to
-     * fail as a stream to get one.
-     *
-     * Without this, the queue only half joins the offline mode: the tracks
-     * that were queued while the network was up keep their stream uris, and
-     * each of them then costs a full failed resolve — [fallbackOnlineStreamToFile]
-     * rescues the ones with a file on disk, but only after the failure, on
-     * the player's error path, one dead request at a time. Rebuilding the rows
-     * here makes the whole rest of the queue read as files in one pass, the
-     * same decision [Song.toMediaItem][com.music.bitchord.playback.toMediaItem]
-     * would have made for a queue built now.
-     *
-     * Tracks with no file on disk keep their stream uri, and are skipped by
-     * the offline path in [recoverFrom] rather than retried into a dead
-     * network. The current item is left alone for the same reason as the
-     * restore: cutting the source under an audible track is a gap nobody
-     * asked for, and the ladder can rescue that one failure on its own.
-     */
-    /**
      * The queue, switched to the files behind it, the moment the network goes.
      *
      * Everything from the *current* track onwards. The track playing when the
@@ -8183,6 +8216,16 @@ class PlaybackService : MediaLibraryService() {
      * left exactly as it is, so the queue the listener built survives the
      * switch. The player skips what it cannot play (see [recoverFrom]), which
      * is a different thing from deleting it from under them.
+     *
+     * Most of the queue usually needs nothing from this. A downloaded track is
+     * built as its file in the first place ([preferLocalFile]) and a track
+     * without one cannot be switched to a file. What is left, and what this is
+     * for, is a download that finished *after* the row was built — the item is
+     * still a stream uri, and going offline is the first moment anything
+     * notices.
+     *
+     * Tracks with no file on disk keep their stream uri, and are skipped by the
+     * offline path in [recoverFrom] rather than retried into a dead network.
      *
      * The current track's position is kept: the file is the same song, and a
      * song that restarts from its first second every time the wifi drops is

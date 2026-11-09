@@ -429,13 +429,34 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // The strike count belongs to the attempt that was given up on, not to
         // the track for the rest of the session; a reopened track starts level.
         if (recorded != null && !recorded.isUsable) shortDecodes.remove(trackId)
-        // One head attempt per track: a partial container that will not parse
-        // now is unlikely to parse ten ticks later, and retrying a decode every
-        // 250ms would cost more than the analysis it is trying to bring
-        // forward. Skipped entirely for a local file, which is `usableComplete`
-        // from the first tick: the head pass exists to get ahead of a download,
-        // and there is no download to get ahead of.
-        val headRendition = if (usableComplete) null else headWorthTrying(trackId, analysisUri, durationSeconds)
+        // A head pass is worth running whenever there is no answer yet, and
+        // *whether or not the whole file is already on disk*.
+        //
+        // That second half is not a detail, it is the difference between an
+        // answer in seconds and one in minutes. The whole-track pass decodes
+        // the entire recording and runs two models over it, and the forced
+        // round the Automix panel asks for pulls the track's bytes up front —
+        // which routinely means the cache entry is *complete* by the time
+        // anybody looks. Completeness used to be the test that sent a track
+        // straight down the whole-track lane, so opening the panel on a track
+        // whose bytes had just been fetched skipped the head pass entirely and
+        // waited for the full analysis: minutes on a phone, on the very screen
+        // the listener had opened to watch it.
+        //
+        // The head pass costs a window of audio and one model, and what it
+        // publishes is a provisional result — the BPM, the grid and the
+        // opening's own envelope, which is what the panel draws and what the
+        // incoming side of a transition reads. The whole-track pass replaces
+        // it on a later tick, from the same bytes, with no fetch left to wait
+        // for.
+        //
+        // One attempt per track per growth step: a partial container that will
+        // not parse now is unlikely to parse ten ticks later, and retrying a
+        // decode every 250 ms would cost more than the analysis it is trying
+        // to bring forward. Skipped for a local file, which is `usableComplete`
+        // from the first tick — the head pass exists to get ahead of a
+        // download, and there is no download to get ahead of.
+        val headRendition = headWorthTrying(trackId, analysisUri, durationSeconds)
         if (!usableComplete && headRendition == null) {
             // Nothing on disk worth decoding, so ask for something. Every other
             // writer either fetches this track's opening too late to matter or
@@ -451,11 +472,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return
         }
         if (!running.add(trackId)) return
-        // Which lane this pass belongs to: the urgent one for a head pass and
-        // for nothing else, the patient one for a whole-track pass. The two
+        // Which pass this is, and so which lane it belongs to: the urgent one
+        // for a head pass, the patient one for a whole-track pass. The two
         // never share a queue, so the track that is coming is measured while
         // the track that just finished is still being measured properly.
-        val lane = if (usableComplete) wholeExecutor else fastExecutor
+        //
+        // A *provisional* result is deliberately not a reason to run the head
+        // pass again: it is the head pass's own answer, the lane it came from
+        // is single-threaded, and asking for the same window twice would turn
+        // the escalation to the whole-track pass into a loop that never
+        // reaches it. What a provisional result wants is bytes, and that is
+        // asked for above.
+        val headOnly = headRendition != null && recorded?.isUsable != true
+        val lane = if (headOnly) fastExecutor else wholeExecutor
 
         lane.execute {
             try {
@@ -482,7 +511,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // task behind that one turns into this return, which drains the
                 // backlog without needing to reach into the executor's queue.
                 if (stopped) return@execute
-                if (usableComplete) {
+                if (headOnly) {
+                    // Marked before it is published, so a reader on the playback
+                    // thread can never see a provisional result that is not
+                    // flagged as one.
+                    analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)?.let { head ->
+                        provisional.add(trackId)
+                        results[trackId] = head
+                    }
+                } else {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val whole = outcome.analysis
                     if (whole != null) {
@@ -512,14 +549,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                             )
                         }
                     }
-                } else {
-                    // Marked before it is published, so a reader on the playback
-                    // thread can never see a provisional result that is not
-                    // flagged as one.
-                    analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)?.let { head ->
-                        provisional.add(trackId)
-                        results[trackId] = head
-                    }
                 }
             } catch (error: Throwable) {
                 // Throwable, not Exception: decode leans on MediaCodec, and an
@@ -532,7 +561,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // a different, complete file and deserves its own attempt.
                 // [headWorthTrying] has already made sure the head is not tried
                 // twice, so this cannot spin.
-                if (usableComplete) {
+                if (!headOnly) {
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
                     // session.

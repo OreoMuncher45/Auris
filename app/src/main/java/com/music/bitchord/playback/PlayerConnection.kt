@@ -31,7 +31,6 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.durationMillis
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
@@ -643,17 +642,14 @@ private fun Song.matchQuery(): String = buildString {
 }
 
 /**
- * Whether a track plays from its downloaded file.
+ * Whether a track the device holds a copy of plays that copy.
  *
- * A file is the *offline* path, not the preferred one. With a network up the
- * answer is always a stream, at whatever the connection's ceiling allows —
- * which is what "upgrade to the quality set on WiFi" means, and why a
- * downloaded 128kbps copy does not get in the way of a lossless one. Neither
- * YouTube nor the local file outranks a source that can serve better; see
- * [SourceRegistry.active] for that order.
+ * Yes, unconditionally — with a network up or down. The file is the copy the
+ * listener asked for when they saved it, and it is the only copy that is
+ * certain to play at all.
  *
- * This has been inverted twice, both times reported as the same bug — "a
- * downloaded song sometimes plays the file and sometimes streams".
+ * This has been inverted three times, and the third inversion is the one that
+ * cost the most, because it was a whole *policy* rather than a bug:
  *
  * - Disk-always-wins: a download kept playing as itself while a better copy
  *   sat one lookup away.
@@ -661,33 +657,41 @@ private fun Song.matchQuery(): String = buildString {
  *   "offline" and "not determined yet", and it flips for a moment on every
  *   network handover, so the verdict differed between two queues built seconds
  *   apart.
+ * - Network-first, decided from `AppSettings.effectiveOffline`: a downloaded
+ *   track streamed whenever a network was up, and fell back to its file when
+ *   one was not.
  *
- * What settles it is [AppSettings.effectiveOffline]: the switch in Settings, or
- * the detector, or either — never a value read from one and forgotten about
- * the other. The detector is optimistic about a network and waits out a
- * handover before believing one has gone. Getting this wrong is survivable in
- * one direction only: a stream that fails falls back to the file
- * ([PlaybackService.fallbackOnlineStreamToFile]), while a stale file cannot
- * fall forward.
+ * The trouble with the third was that nothing else in the app agreed with it.
+ * A queue entry for a downloaded track carries its file URI as a *claim*
+ * ([EXTRA_LOCAL_URI]) and every other reader took that claim at its word: the
+ * disk cache skipped it (`AudioCache.noteSongs`), read-ahead skipped it
+ * (`AudioCache.prefetchQueue`), "stats for nerds" named it Local Storage
+ * (`PlaybackService.isLocalPlayback`), and the download badge showed the
+ * file's own bitrate. Only [Song.toMediaItem] disagreed, silently deciding to
+ * resolve a stream instead — so a track that every other part of the app
+ * believed was a file on disk was opened as a `bitchord://` stream that
+ * nothing had warmed, on a resolve nobody had asked for. That is the "keeps
+ * loading" report, and the file was sitting right there the whole time.
+ *
+ * Being right in one direction only still holds, and it now holds for the
+ * file: a stream that fails can be replaced by the file
+ * ([PlaybackService.fallbackOnlineStreamToFile]), while a file that has gone
+ * missing cannot be played at all — and is caught at build time instead, by
+ * [Downloads.verifiedSavedUri].
+ *
+ * The one thing that outranks the file is a source that can serve a better
+ * copy — the Lossless/Hi-res rung. That is not a decision made here, because
+ * finding one costs a search: the file starts playing, and the ordinary second
+ * look ([QualityUpgrade]) swaps a lossless copy in over it, exactly as it does
+ * for a lossy stream. See [PlaybackService.lookForBetterCopy], and
+ * [QualityUpgrade.couldStillUpgrade], which is what lets a file-backed track
+ * be looked at again.
  *
  * Pinned by `StreamPreferenceTest`.
  */
-internal fun shouldPlayLocalFile(hasLocalFile: Boolean, canStream: Boolean): Boolean =
-    hasLocalFile && !canStream
+internal fun preferLocalFile(hasLocalFile: Boolean): Boolean = hasLocalFile
 
-/**
- * The same question, asked of the app's own answers rather than of two
- * booleans someone remembered to combine: [AppSettings.effectiveOffline] is the
- * manual switch OR the detector, so a caller cannot get this wrong by reading
- * one and forgetting the other.
- */
-internal fun shouldPlayLocalFile(hasLocalFile: Boolean): Boolean =
-    shouldPlayLocalFile(
-        hasLocalFile = hasLocalFile,
-        canStream = !AppSettings.effectiveOffline.value,
-    )
-
-fun Song.toMediaItem(parentBrowseId: String? = null): MediaItem {
+fun Song.toMediaItem(parentBrowseId: String? = null, playLocalFile: Boolean = true): MediaItem {
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
@@ -715,12 +719,17 @@ fun Song.toMediaItem(parentBrowseId: String? = null): MediaItem {
     // leaves that path unguarded.
     val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
         ?: Downloads.verifiedSavedUri(videoId)
-    // Streaming first while a network is up, file when there is none — see
-    // [shouldPlayLocalFile] for why that distinction has been got wrong twice.
+    // The file is what plays, whenever there is one — see [preferLocalFile].
     // A stream that fails still falls back to the file via
     // [PlaybackService.fallbackOnlineStreamToFile]; a file that has gone
     // missing is caught above and by the player's own recovery.
-    val playFile = shouldPlayLocalFile(hasLocalFile = offlineUri != null)
+    //
+    // [playLocalFile] is the only caller that can contradict that, and it has
+    // exactly one: the *upgrade* of a file-backed track, which has to build
+    // the item the song would have had if it had never been saved, so the
+    // parked lossless stream can be swapped in over the file. See
+    // [toStreamMediaItem].
+    val playFile = playLocalFile && preferLocalFile(hasLocalFile = offlineUri != null)
     // One map read, no I/O: lets the row report the file's own bitrate even
     // when the song came from a playlist that knew nothing about the download.
     val offlineFormat: String? = if (playFile) Downloads.savedFormat(videoId) else null
@@ -857,6 +866,26 @@ fun Song.toDirectYouTubeMediaItem(): MediaItem =
     toMediaItem().buildUpon()
         .setUri(directYouTubeUri())
         .build()
+
+/**
+ * The same track with its downloaded file stepped over: the item this song
+ * would have been queued as if it had never been saved.
+ *
+ * For one caller only — the upgrade of a track that is playing from its file.
+ * A swap hands the player a *marked* `bitchord://` URI and lets the resolving
+ * data source turn it back into the parked stream ([QualityUpgrade]), and a
+ * file-backed item has no such URI to mark: its own is a `content://` path,
+ * which the resolver never sees and which OkHttp would reject if it did. So
+ * the upgrade is built on the stream this track would otherwise have had, and
+ * the item keeps everything else — the media id the queue is keyed on, the
+ * metadata the lock screen draws, and the download's own claim in its extras,
+ * which is what the row still says about the file on disk.
+ *
+ * Deliberately not used to decide what plays. Nothing but the upgrade path
+ * should ever hand a downloaded track a stream, and everything else asks
+ * [toMediaItem] — see [preferLocalFile].
+ */
+fun Song.toStreamMediaItem(): MediaItem = toMediaItem(playLocalFile = false)
 
 private fun Song.directYouTubeUri(): String =
     "bitchord://watch?v=$videoId${matchQuery()}&$DIRECT_YOUTUBE_PARAMETER=1&q=original"

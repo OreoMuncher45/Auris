@@ -131,99 +131,58 @@ class AutomixTransitionEditorTest {
     // The arriving lane
     // -----------------------------------------------------------------------
 
-    /**
-     * The arriving track is cued to [cue] and its handoff lands at the end of
-     * the blend, so the cue is one blend-length before the handoff.
-     */
-    private fun cueFor(handoff: Double, blendSeconds: Double): Double = handoff - blendSeconds
-
     @Test
-    fun resizingTheWindowLeavesTheArrivingLaneWhereItIs() {
-        // The report: "if I'm resizing the transition window, it moves the
-        // bottom waveform". The bottom waveform is the arriving track, and it
-        // moved because it was anchored to the cue — and the cue is one
-        // blend-length before the handoff, so every change of blend length
-        // moved it.
-        val handoff = 140.0
-        val before = automixIncomingAxis(
-            time = 130.0,
-            windowStart = 100.0,
-            windowEnd = 116.0,
-            handoff = handoff,
-            cue = cueFor(handoff, 16.0),
-        )
-        // The same window, eight seconds longer: the handoff edge has not
-        // moved, and neither has the arriving lane.
-        val after = automixIncomingAxis(
-            time = 130.0,
-            windowStart = 92.0,
-            windowEnd = 116.0,
-            handoff = handoff,
-            cue = cueFor(handoff, 16.0),
-        )
-        assertEquals(before, after, 1e-9)
-    }
-
-    @Test
-    fun movingTheWholeWindowStillMovesTheArrivingLane() {
-        // The arriving track really does begin somewhere else when the handoff
-        // moves, and a lane that stayed behind would be lying about it.
-        val handoff = 140.0
-        val before = automixIncomingAxis(
-            time = 130.0,
-            windowStart = 100.0,
-            windowEnd = 116.0,
-            handoff = handoff,
-            cue = cueFor(handoff, 16.0),
-        )
-        val after = automixIncomingAxis(
-            time = 130.0,
-            windowStart = 90.0,
-            windowEnd = 106.0,
-            handoff = handoff,
-            cue = cueFor(handoff, 16.0),
-        )
-        assertEquals(before - 10.0, after, 1e-9)
-    }
-
-    @Test
-    fun theArrivingLanesHandoffLandsAtTheEndOfTheWindow() {
+    fun theArrivingLanesOriginIsTakenFromTheHandoffAtTheWindowsEnd() {
         // The planner's own geometry: the arriving track is cued so that the
         // point of its arrangement where the blend ends arrives exactly as the
-        // blend ends.
-        val handoff = 140.0
-        val windowEnd = 116.0
-        val axis = automixIncomingAxis(
-            time = handoff,
-            windowStart = 100.0,
-            windowEnd = windowEnd,
-            handoff = handoff,
-            cue = cueFor(handoff, 16.0),
-        )
-        assertEquals(windowEnd, axis, 1e-9)
+        // blend ends. That is where the lane is anchored — once.
+        assertEquals(116.0 - 140.0, automixIncomingOrigin(116.0, 140.0)!!, 1e-9)
     }
 
     @Test
-    fun theTwoAnchorsAgreeWhenTheWindowIsThePlansOwn() {
-        // With no handoff to anchor to, the cue is used — and when the
-        // window is the plan's own, the two answers are the same picture.
+    fun aPlannerWithNoHandoffYetAnchorsNothing() {
+        assertNull(automixIncomingOrigin(116.0, 0.0))
+        assertNull(automixIncomingOrigin(116.0, null))
+    }
+
+    @Test
+    fun theOriginIsAFactAboutThePairAndIsTakenOnce() {
+        // The report, twice over: first "resizing the window moves the bottom
+        // waveform", then "the lower waveform is still stuck to one of the
+        // markers". The anchor moment is what decides where the lane sits, so
+        // a lane re-derived from the window's current edge would follow it —
+        // which is exactly the fault. Taken once, the lane is a picture at a
+        // fixed place for the rest of the pair.
+        val takenAtThePlansEnd = automixIncomingOrigin(anchorOutgoingSeconds = 116.0, handoff = 140.0)!!
+        val takenLater = automixIncomingOrigin(anchorOutgoingSeconds = 126.0, handoff = 140.0)!!
+        assertEquals(
+            automixIncomingAxis(time = 130.0, origin = takenAtThePlansEnd) + 10.0,
+            automixIncomingAxis(time = 130.0, origin = takenLater),
+            1e-9,
+        )
+    }
+
+    @Test
+    fun theListenersOwnDragIsWhatMovesTheLane() {
+        val origin = automixIncomingOrigin(116.0, 140.0)!!
+        val before = automixIncomingAxis(time = 130.0, origin = origin)
+        val after = automixIncomingAxis(time = 130.0, origin = origin, shift = 1.5)
+        assertEquals(before + 1.5, after, 1e-9)
+    }
+
+    @Test
+    fun withoutAHandoffTheCueIsWhereThePlannerWouldHavePutIt() {
+        // Before the planner has said, the drawing falls back to the cue — and
+        // the two agree whenever the window is the plan's own, which is the
+        // only case both numbers describe the same picture.
         val handoff = 140.0
         val blend = 16.0
-        val cue = cueFor(handoff, blend)
+        val cue = handoff - blend
         val byHandoff = automixIncomingAxis(
             time = cue + 4.0,
-            windowStart = 100.0,
-            windowEnd = 116.0,
-            handoff = handoff,
-            cue = cue,
+            origin = automixIncomingOrigin(anchorOutgoingSeconds = 116.0, handoff = handoff)!!,
         )
-        val byCue = automixIncomingAxis(
-            time = cue + 4.0,
-            windowStart = 100.0,
-            windowEnd = 116.0,
-            handoff = null,
-            cue = cue,
-        )
+        val byCue = automixIncomingAxis(time = cue + 4.0, origin = 100.0 - cue)
         assertEquals(byCue, byHandoff, 1e-9)
     }
 }

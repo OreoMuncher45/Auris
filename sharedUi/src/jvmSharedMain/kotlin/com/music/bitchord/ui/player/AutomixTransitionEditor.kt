@@ -167,43 +167,47 @@ internal fun automixSnapToBar(time: Double, digest: TrackAnalysisDigest): Double
 }
 
 /**
- * Where a moment of the arriving track lands on the outgoing track's clock.
+ * Where the arriving track's own zero sits on the outgoing track's clock.
  *
- * The lower lane is the arriving track, and it has to be laid on the same
- * axis as the outgoing one for the two to be read against each other: the
- * blend is the overlap of the two, and the picture has to show that overlap.
+ * Worked out **once**, from the planner's handoff, and never again: the lane
+ * the listener is looking at is theirs from then on.
  *
- * ## Why it is anchored at the end of the window
+ * ## Why it is not re-derived
  *
- * The arriving track is cued so that the point of its own arrangement where
- * the blend ends — its handoff — lands at the blend's end. The cue is one
- * blend-length before that, so anchoring the lane to the *cue* tied the lane
- * to the *length* of the overlap: every change of length slid the arriving
- * waveform out from under the finger, and a listener could not look at the
- * arriving track while they were setting the transition up. That was the
- * report — "resizing the transition window moves the bottom waveform".
+ * The arriving track is cued so that the point of its arrangement where the
+ * blend ends — its handoff — lands at the blend's end. That is the planner's
+ * geometry, and reading it every frame ties the arriving *picture* to the
+ * outgoing *window*: every drag of a marker moved the lower waveform with it.
+ * Which is the report — "the lower waveform is still stuck to one of the
+ * markers" — and it is the same fault the previous anchor had, one level
+ * further out. Anchoring to the window's end fixed the lane sliding when the
+ * window's *length* changed, and left it sliding whenever the window itself
+ * moved.
  *
- * Anchored at the handoff instead, the arriving lane stays exactly where it
- * is while the window's length changes: the window moves over it, and the
- * green line says which part of the arriving track will be heard. The lane
- * still travels when the whole box is moved, because then the arriving track
- * really does begin somewhere else.
+ * So the anchor is taken once, when the planner first says where the handoff
+ * is, and from then on the arriving lane is a *picture at a fixed place* that
+ * the window slides over. The listener lines it up by hand if they want to
+ * ([AutomixTransitionEditor]'s own shift), and nothing else moves it.
  *
- * With no handoff to anchor to — the planner has not said where it is yet —
- * the cue is the best answer there is, and the picture is the one this
- * always was.
+ * @param anchorOutgoingSeconds the outgoing moment the handoff lands at, at
+ *   the instant the anchor is taken — the end of the window as the planner
+ *   placed it.
+ * @param handoff the arriving track's own handoff time, or null before the
+ *   planner has said.
  */
-internal fun automixIncomingAxis(
-    time: Double,
-    windowStart: Double,
-    windowEnd: Double,
-    handoff: Double?,
-    cue: Double,
-): Double = if (handoff != null) {
-    windowEnd + (time - handoff)
-} else {
-    windowStart + (time - max(0.0, cue))
-}
+internal fun automixIncomingOrigin(anchorOutgoingSeconds: Double, handoff: Double?): Double? =
+    handoff?.takeIf { it > 0.0 }?.let { anchorOutgoingSeconds - it }
+
+/**
+ * A moment of the arriving track, on the outgoing track's clock.
+ *
+ * [origin] is where its zero sits (see [automixIncomingOrigin]), [shift] is the
+ * listener's own nudge, and [time] is the moment on the arriving track's own
+ * clock. Two lanes, one axis, and the only thing that moves this one is the
+ * listener's finger.
+ */
+internal fun automixIncomingAxis(time: Double, origin: Double, shift: Double = 0.0): Double =
+    origin + shift + time
 
 // ---------------------------------------------------------------------------
 // The editor
@@ -216,10 +220,19 @@ internal fun automixIncomingAxis(
  *
  * Both lanes share the outgoing track's clock. The upper lane is the track
  * that is playing; the lower is the one queued after it, laid on the same
- * axis so that its cue point lands on the left edge of the window. What the
- * listener moves — the orange box — is the window the transition will happen
- * in, and the green line at its left edge is the handoff itself: the moment
- * the arriving track becomes audible.
+ * axis so that the two can be read against each other. What the listener moves
+ * is either a *marker* — the two edges of the orange box, which are the window
+ * the transition will happen in — or a *waveform*: dragging the arriving lane
+ * moves that track, and dragging the playing lane moves the timeline.
+ *
+ * ## Nothing is attached to anything
+ *
+ * A waveform does not follow a marker and a marker does not move a waveform.
+ * The arriving lane is anchored once, where the planner put it, and after that
+ * only the listener's own drag moves it — which is the whole of the fix for
+ * "the lower waveform is still stuck to one of the markers". The window then
+ * slides over the two waveforms, and the green handoff line moves with the
+ * window because the handoff *is* a moment in the window.
  *
  * ## The size is what the edges measure
  *
@@ -229,7 +242,8 @@ internal fun automixIncomingAxis(
  * planner's own terms — the size inside the four-to-thirty-two-bar range the
  * product works in — and the edges are magnetically drawn to the bar lines the
  * ruler shows, so a placement lands on a bar when it is near one and follows the
- * finger when it is not.
+ * finger when it is not. The waveforms are deliberately *not* magnetic: lining
+ * two tracks up by ear is the listener's business.
  *
  * ## The drawing is the listener's, the hairline is the planner's
  *
@@ -274,22 +288,25 @@ internal fun AutomixTransitionEditor(
     // The beat the last placement landed on, so the drawing can light it up.
     var snapped by remember(resetKey) { mutableStateOf<Double?>(null) }
     /**
-     * Where the arriving track's own arrangement lands, in its own seconds.
+     * Where the arriving track's own zero sits on the outgoing clock, and the
+     * listener's own nudge on top of it.
      *
-     * The anchor the arriving lane is drawn against — see the drawing below
-     * for why it is this and not the cue.
-     *
-     * Held for the life of the pair rather than read fresh. The planner
-     * re-plans as the analysis refines and as the playhead moves, and each of
-     * those can move the handoff by a beat or two; a lane that slides because
-     * something behind it was re-published is a lane the listener cannot work
-     * with, which is the same fault as the one this anchor was introduced to
-     * fix.
-     *
-     * Null until the planner has said where it is, and the drawing falls back
-     * to the cue until then.
+     * Taken once from the planner's handoff and held for the life of the pair
+     * — see [automixIncomingOrigin] for why re-reading it is what glued the
+     * lower waveform to the window's edge. Null until the planner has said
+     * where the handoff is, in which case the drawing falls back to the cue.
      */
-    var incomingHandoff by remember(resetKey) { mutableStateOf<Double?>(null) }
+    var incomingOrigin by remember(resetKey) { mutableStateOf<Double?>(null) }
+
+    /**
+     * How far the listener has moved the arriving waveform by hand, in outgoing
+     * seconds. Zero is where the planner put it.
+     *
+     * A shift rather than a re-anchor, so that the planner's own placement is
+     * never lost: whatever the handoff turns out to be when the analysis
+     * refines, the lane is that plus this.
+     */
+    var incomingShift by remember(resetKey) { mutableStateOf(0.0) }
     /**
      * Whether a finger is on the drawing.
      *
@@ -337,12 +354,15 @@ internal fun AutomixTransitionEditor(
     }
 
     // The arriving lane's anchor, taken from the planner the first time it
-    // says where it is. Not while a finger is down: the lane is being looked
-    // at, and a re-published plan must not move it.
-    LaunchedEffect(resetKey, plan.handoffSeconds) {
+    // says where the handoff is — and taken *once*, never again. The window
+    // slides over this lane; nothing but the listener's own drag moves it.
+    LaunchedEffect(resetKey, plan.handoffSeconds, dragging) {
         if (dragging) return@LaunchedEffect
-        val handoff = plan.handoffSeconds
-        if (handoff > 0.0 && incomingHandoff == null) incomingHandoff = handoff
+        if (incomingOrigin != null) return@LaunchedEffect
+        automixIncomingOrigin(
+            anchorOutgoingSeconds = window.end,
+            handoff = plan.handoffSeconds,
+        )?.let { incomingOrigin = it }
     }
 
     // The view opens on the window, zooms out when the window grows, and comes
@@ -425,26 +445,49 @@ internal fun AutomixTransitionEditor(
                 val handleOut = EDGE_HIT_DP.toPx()
                 val handleIn = min(handleOut, boxWidth * 0.25f)
                 val inBox = down.position.x >= boxLeft && down.position.x <= boxRight
+                // ## What a touch means
+                //
+                // Three things, and nothing else — no mode, no second finger,
+                // no long press:
+                //
+                //  - **A marker** (the two vertical handles, which run the full
+                //    height of the drawing, so either of them is reachable from
+                //    either lane) moves that edge of the window. And only that
+                //    edge: no waveform follows a marker any more.
+                //  - **The arriving lane** — the lower one, which is the track
+                //    that is coming — moves *that waveform*, by hand, with no
+                //    snapping to anything. Lining two tracks up is the thing a
+                //    listener does by ear and by eye, and a magnet that took the
+                //    decision away was the "attached to a marker" complaint
+                //    wearing a different hat.
+                //  - **The playing lane** moves the view: it is the outgoing
+                //    track's own clock, so dragging it drags the timeline.
+                //
+                // The box's body is the one gesture kept from the old model and
+                // it now lives on the upper lane only, so that every touch on
+                // the arriving lane means "this waveform" and never "the
+                // window".
                 val grabbed = when {
                     abs(down.position.x - startX) <= if (down.position.x < startX) handleOut else handleIn ->
                         Grab.START_EDGE
                     abs(down.position.x - endX) <= if (down.position.x > endX) handleOut else handleIn ->
                         Grab.END_EDGE
-                    // Inside the box: moving it, whichever lane the finger is
-                    // on. The box is one object and it should behave like one.
+                    // The arriving lane, in the box or out of it.
+                    liveHasNext && down.position.y >= lowerTop -> Grab.ARRIVING
+                    // Inside the box on the outgoing lane: moving it, at the
+                    // size it already has.
                     inBox -> Grab.BODY
-                    // Outside it on the outgoing lane, the lane the box is
-                    // placed against: put the handoff under the finger. That is
-                    // the plainest way to say where the transition should start,
-                    // and it is the one gesture that can move the box a long way
-                    // in a single touch.
-                    down.position.y < lowerTop -> Grab.HANDOFF
+                    // Outside it on the outgoing lane: pan the view. That is the
+                    // plainest way to look somewhere else on the timeline, and
+                    // the one gesture that can move a long way in a single
+                    // touch.
                     else -> Grab.VIEW
                 }
 
                 var decided = false
                 var horizontal = false
                 var lastSnap: Double? = null
+                val startedAtShift = incomingShift
                 // Where the finger was last seen horizontally. Tracked by hand
                 // rather than read from [PointerInputChange.positionChanged],
                 // which answers false for an event another consumer has already
@@ -547,11 +590,13 @@ internal fun AutomixTransitionEditor(
                             val placed = snap(timeOf(x - offset), x)
                             place(placed, placed + opened.length)
                         }
-                        Grab.HANDOFF -> {
-                            // Put the handoff where the finger is; the exit
-                            // follows, because the size is a size.
-                            val placed = snap(raw, x)
-                            place(placed, placed + opened.length)
+                        Grab.ARRIVING -> {
+                            // The arriving waveform follows the finger, exactly,
+                            // in the timeline's own seconds. No magnet: this is
+                            // the one gesture whose whole point is to put the
+                            // track where the listener wants it rather than
+                            // where a grid says.
+                            incomingShift = startedAtShift + (x - down.position.x) / width * frozenSpan
                         }
                         Grab.VIEW -> Unit
                     }
@@ -648,18 +693,15 @@ internal fun AutomixTransitionEditor(
         val left = xOf(box.start)
         val right = xOf(box.end)
 
-        // The arriving track's own clock, laid on the outgoing one's. See
-        // [automixIncomingAxis] for why it is anchored at the end of the
-        // window and what that buys.
-        val handoff = incomingHandoff
+        // The arriving track's own clock, laid on the outgoing one's. The
+        // origin is taken once — see [automixIncomingOrigin] — and the
+        // listener's own nudge is added on top. Neither term has anything to
+        // do with where the window is, which is what keeps the lower waveform
+        // still while a marker is dragged over it.
+        val origin = incomingOrigin ?: (box.start - max(0.0, plan.cueSeconds))
+        val shift = incomingShift
         val incomingMap: (Double) -> Double = { t ->
-            automixIncomingAxis(
-                time = t,
-                windowStart = box.start,
-                windowEnd = box.end,
-                handoff = handoff,
-                cue = plan.cueSeconds,
-            )
+            automixIncomingAxis(time = t, origin = origin, shift = shift)
         }
 
         drawWaveform(
@@ -1078,7 +1120,7 @@ private fun DrawScope.drawVolumeCurve(
 // Where a drag was taken hold of
 // ---------------------------------------------------------------------------
 
-private enum class Grab { START_EDGE, END_EDGE, BODY, HANDOFF, VIEW }
+private enum class Grab { START_EDGE, END_EDGE, BODY, ARRIVING, VIEW }
 
 // ---------------------------------------------------------------------------
 // Colours and constants
