@@ -451,7 +451,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return
         }
         if (!running.add(trackId)) return
-
         // Which lane this pass belongs to: the urgent one for a head pass and
         // for nothing else, the patient one for a whole-track pass. The two
         // never share a queue, so the track that is coming is measured while
@@ -557,6 +556,49 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
         }
     }
+
+    /**
+     * Asks for [trackId]'s analysis *now*, at the listener's request rather
+     * than the tick's.
+     *
+     * The ordinary [request] is a poll: it notices what is on disk and asks
+     * for what is missing, and every guard in it is a guard against spending
+     * the same work twice on a 250 ms tick. That is the right shape for work
+     * that runs in the background and the wrong shape for the Automix panel
+     * opening, which is the one moment the listener is *looking* at the
+     * answer and waiting for it.
+     *
+     * So this asks the cache for the bytes whatever its one-round guard says,
+     * and then runs the ordinary path so that whatever is already on disk is
+     * measured straight away rather than at the next tick. The two together
+     * are what "at all costs" means here: the bytes go out even if a round
+     * for this track is already in the air, and the decode happens the moment
+     * there is something to decode.
+     *
+     * Cheap to call repeatedly — the listener may open and close the panel
+     * several times — because the cache's own guards still stop a second
+     * fetch of the same bytes, and the analyzer's guards still stop a second
+     * decode of the same file.
+     */
+    fun force(trackId: String, uri: Uri, durationSeconds: Double) {
+        if (trackId.isBlank()) return
+        if (stopped) return
+        // The bytes first: everything else is downstream of them, and a
+        // decode of nothing is a decode of nothing.
+        cache.requestAnalysisHead(uri, durationSeconds, force = true)
+        // Then the ordinary path, so a track whose bytes are already on disk
+        // is measured now rather than at the next tick.
+        request(trackId, uri, durationSeconds)
+    }
+
+    /**
+     * How far the fetch of [uri]'s analysis bytes has got, 0..1.
+     *
+     * Read by the panel so it can say "fetching, 40%" rather than "waiting",
+     * which is the difference between a listener who knows what is happening
+     * and a listener who thinks the app has stopped.
+     */
+    fun analysisProgress(uri: Uri): Float = cache.analysisProgressOf(uri)
 
     /**
      * Whether enough of [uri]'s head is on disk to be worth a decode, claiming
@@ -781,6 +823,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             introEndTime = entry?.introEndTime ?: 0.0,
             mixInTime = entry?.mixInTime ?: 0.0,
             mixInCandidates = entry?.mixInCandidates.orEmpty(),
+            // The opening's own envelope, kept for the panel and for nothing
+            // else. It describes the window this pass actually decoded and
+            // says nothing about the rest of the track, which is why it does
+            // not go into [TrackAnalysis.energyCurve] — see that field. The
+            // panel draws it where it belongs and leaves the rest of the
+            // lane blank, which is honest and better than an empty lane.
+            headEnergyCurve = entry?.energyCurve.orEmpty(),
         )
     }
 

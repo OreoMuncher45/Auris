@@ -260,4 +260,15 @@
     <string name="new_folder">Nowy folder</string>
     <string name="folders">Foldery</string>
     <string name="home_load_more">Wczytaj więcej</string>
+    <string name="automix_fetching">Wczytywanie audio…</string>
+    <string name="automix_fetching_percent">Wczytywanie audio… %1$d%%</string>
+    <string name="add_to_queue">Dodaj do kolejki</string>
+    <string name="queue_search_back">Wstecz</string>
+    <string name="queue_search_title">Dodaj utwory</string>
+    <string name="queue_search_hint">Szukaj utworów</string>
+    <string name="queue_search_start">Znajdź utwór, aby dodać go do kolejki</string>
+    <string name="queue_search_no_results">Nie znaleziono utworów</string>
+    <string name="queue_search_offline">Pokazywanie pobranych utworów</string>
+    <string name="queue_search_added">Dodano do kolejki</string>
+    <string name="queue_search_will_play">Zagra następny</string>
 </resources>

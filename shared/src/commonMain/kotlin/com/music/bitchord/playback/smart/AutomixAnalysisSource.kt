@@ -28,4 +28,20 @@ object AutomixAnalysisSource {
     fun opusUri(videoId: String): String = "bitchord://watch?v=$videoId&$OPUS_QUERY_PARAMETER=1"
 
     fun requestsYouTubeOpus(marker: String?): Boolean = marker == "1"
+
+    /**
+     * Whether a track's URI has bytes worth fetching for an analysis.
+     *
+     * A local file has no stream to fetch and is already whole; a content URI
+     * is a document handed over by the platform, not an address the cache can
+     * pull from with the source's own headers.
+     *
+     * Everything else is fetchable, and that includes the app's own
+     * `bitchord://` addresses — those are how an addon-served track is
+     * reached, and refusing them is what left every such track sitting on
+     * "Waiting for analysis" for as long as it was queued: the one branch
+     * that existed to fetch bytes for an addon-served track could not fetch
+     * any.
+     */
+    fun schemeIsFetchable(scheme: String?): Boolean = scheme != "file" && scheme != "content"
 }

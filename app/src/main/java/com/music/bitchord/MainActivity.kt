@@ -3053,6 +3053,11 @@ private fun BitChordApp(
             onRemoveFromQueue = { controller?.removeMediaItem(it) },
             onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
+            // The queue's search asks for both of these by name, and both are
+            // the same edits the long-press menu makes — one way to add a song
+            // to the queue, wherever the listener asked from.
+            onAddToQueue = addToQueue,
+            onPlayNext = playNext,
             // The enriched copy, not player.song — otherwise the menu
             // hides the album and artist rows even once their browse
             // ids have been resolved.

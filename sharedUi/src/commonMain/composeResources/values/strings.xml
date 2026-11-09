@@ -283,4 +283,15 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_load_more">Load more</string>
+    <string name="automix_fetching">Fetching audio…</string>
+    <string name="automix_fetching_percent">Fetching audio… %1$d%%</string>
+    <string name="add_to_queue">Add to queue</string>
+    <string name="queue_search_back">Back</string>
+    <string name="queue_search_title">Add songs</string>
+    <string name="queue_search_hint">Search songs</string>
+    <string name="queue_search_start">Search for a song to add it to the queue</string>
+    <string name="queue_search_no_results">No songs found</string>
+    <string name="queue_search_offline">Showing downloaded songs</string>
+    <string name="queue_search_added">Added to queue</string>
+    <string name="queue_search_will_play">Will play next</string>
 </resources>

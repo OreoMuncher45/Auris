@@ -1574,14 +1574,26 @@ class PlaybackService : MediaLibraryService() {
                     dataSpec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
                 )
             ) {
-                // Analysis reads YouTube's own Opus encoding, so it has the
-                // same problem as the direct request above: with YouTube off
-                // there is nothing here to analyse. The blend is skipped for
-                // this transition rather than a stream played from a source
-                // the listener turned off.
-                if (!SourceRegistry.youtubeEnabled()) {
+                // Analysis reads YouTube's own Opus encoding, and it reads it
+                // under a marker that playback never sends: this URI is built
+                // only by [AutomixAnalysisSource.opusUri], and the queue never
+                // carries it. Nothing here reaches the speaker.
+                //
+                // So the YouTube *source* switch does not reach it either. It
+                // did once, and the consequence was that every Automix panel
+                // opened on "Waiting for analysis" for a listener who had
+                // turned YouTube off — the fetch that could have answered the
+                // panel was refused by the very switch the panel was opened
+                // from underneath. What is left of the switch is what the
+                // listener hears, and this is not what the listener hears.
+                //
+                // [SourceRegistry.youtubeAnalysisEnabled] is the gate now, and
+                // it is about reachability rather than preference; the
+                // listener's own Automix switch is what stops the work being
+                // queued in the first place.
+                if (!SourceRegistry.youtubeAnalysisEnabled()) {
                     throw java.io.IOException(
-                        "YouTube Music is turned off; automix analysis for $videoId needs its audio",
+                        "YouTube is not available; automix analysis for $videoId needs its audio",
                     )
                 }
                 NerdStats.recordSource(videoId, "YouTube")
@@ -2028,6 +2040,25 @@ class PlaybackService : MediaLibraryService() {
                     trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
                 }
             },
+            // The panel's demand: the same work, asked for at the listener's
+            // request rather than the tick's, and with the cache's one-round
+            // guard set aside. The bytes go out even if a fetch for the same
+            // track is already in the air, because the lane the listener is
+            // looking at is worth a second fetch.
+            forceAnalysisFor = { item, durationMs ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0)
+                }
+            },
+            // How far each track's analysis fetch has got. The panel's
+            // progress line: without it, "waiting" and "fetching" are the
+            // same word, and a fetch that takes several seconds over a slow
+            // connection looks like a hang.
+            analysisProgressFor = { item ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.analysisProgress(uri)
+                } ?: 0f
+            },
             // "Incoming" and "outgoing" here are session roles, not players:
             // the session player's sink and the spare's. The controller maps
             // its two tracks onto them according to which side of the
@@ -2086,6 +2117,12 @@ class PlaybackService : MediaLibraryService() {
             // call site so that the handler always belongs to the controller
             // that is actually playing, whichever one that is.
             AutomixPreview.install { start -> controller.previewAutomix(start) }
+            // The panel's other request: the analysis it is waiting on, now.
+            // The engine already analyses the pair in the background, on its
+            // own schedule; this is the listener asking for the bytes to be
+            // on their way the moment they open the panel, because both lanes
+            // are on screen and they are looking at them.
+            AutomixAnalysisDemand.install { controller.forceAnalysis() }
         }
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
@@ -8660,6 +8697,11 @@ class PlaybackService : MediaLibraryService() {
         // gone, and a request that reached a dead controller would be a
         // request against a player that no longer exists.
         AutomixPreview.clear()
+        // The same for the panel's demand for the analysis: with the engine
+        // gone there is nothing to fetch or measure, and a request that
+        // reached a dead controller would be a request against a player that
+        // no longer exists.
+        AutomixAnalysisDemand.clear()
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.

@@ -81,6 +81,25 @@ data class TrackAnalysis(
     val mixOutCandidates: List<MixCandidate> = emptyList(),
 
     val energyCurve: List<EnergySample> = emptyList(),
+    /**
+     * The energy curve of the track's **opening**, measured by a head-only
+     * pass.
+     *
+     * Kept apart from [energyCurve] on purpose. The head pass measures the
+     * envelope of the window it decoded, which is real evidence — but it is
+     * evidence about the first half-minute and nothing else, and the policy
+     * indexes the vocal mask against the curve and counts audible seconds
+     * from it. A curve that stops at thirty seconds would have this track's
+     * *outgoing* half scored against a window it does not cover, which is
+     * how a head pass came to describe an ending it had never heard.
+     *
+     * So the policy keeps reading [energyCurve], which only the whole-track
+     * pass fills, and this one is for the panel: a lane that has nothing in
+     * it is worse than a lane with the opening drawn in it and the rest
+     * honestly blank. The times are the track's own, so the panel draws this
+     * curve exactly where it belongs.
+     */
+    val headEnergyCurve: List<EnergySample> = emptyList(),
     /** Low-band energy, present only when the analyzer ran a band split. Drives the bass swap. */
     val lowEnergyCurve: List<EnergySample> = emptyList(),
     /**

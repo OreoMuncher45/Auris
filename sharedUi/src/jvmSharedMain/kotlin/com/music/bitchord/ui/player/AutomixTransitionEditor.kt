@@ -166,6 +166,45 @@ internal fun automixSnapToBar(time: Double, digest: TrackAnalysisDigest): Double
     return bars.minByOrNull { abs(it - time) }
 }
 
+/**
+ * Where a moment of the arriving track lands on the outgoing track's clock.
+ *
+ * The lower lane is the arriving track, and it has to be laid on the same
+ * axis as the outgoing one for the two to be read against each other: the
+ * blend is the overlap of the two, and the picture has to show that overlap.
+ *
+ * ## Why it is anchored at the end of the window
+ *
+ * The arriving track is cued so that the point of its own arrangement where
+ * the blend ends — its handoff — lands at the blend's end. The cue is one
+ * blend-length before that, so anchoring the lane to the *cue* tied the lane
+ * to the *length* of the overlap: every change of length slid the arriving
+ * waveform out from under the finger, and a listener could not look at the
+ * arriving track while they were setting the transition up. That was the
+ * report — "resizing the transition window moves the bottom waveform".
+ *
+ * Anchored at the handoff instead, the arriving lane stays exactly where it
+ * is while the window's length changes: the window moves over it, and the
+ * green line says which part of the arriving track will be heard. The lane
+ * still travels when the whole box is moved, because then the arriving track
+ * really does begin somewhere else.
+ *
+ * With no handoff to anchor to — the planner has not said where it is yet —
+ * the cue is the best answer there is, and the picture is the one this
+ * always was.
+ */
+internal fun automixIncomingAxis(
+    time: Double,
+    windowStart: Double,
+    windowEnd: Double,
+    handoff: Double?,
+    cue: Double,
+): Double = if (handoff != null) {
+    windowEnd + (time - handoff)
+} else {
+    windowStart + (time - max(0.0, cue))
+}
+
 // ---------------------------------------------------------------------------
 // The editor
 // ---------------------------------------------------------------------------
@@ -235,6 +274,23 @@ internal fun AutomixTransitionEditor(
     // The beat the last placement landed on, so the drawing can light it up.
     var snapped by remember(resetKey) { mutableStateOf<Double?>(null) }
     /**
+     * Where the arriving track's own arrangement lands, in its own seconds.
+     *
+     * The anchor the arriving lane is drawn against — see the drawing below
+     * for why it is this and not the cue.
+     *
+     * Held for the life of the pair rather than read fresh. The planner
+     * re-plans as the analysis refines and as the playhead moves, and each of
+     * those can move the handoff by a beat or two; a lane that slides because
+     * something behind it was re-published is a lane the listener cannot work
+     * with, which is the same fault as the one this anchor was introduced to
+     * fix.
+     *
+     * Null until the planner has said where it is, and the drawing falls back
+     * to the cue until then.
+     */
+    var incomingHandoff by remember(resetKey) { mutableStateOf<Double?>(null) }
+    /**
      * Whether a finger is on the drawing.
      *
      * Read by the sync below, and the reason that sync exists at all: the
@@ -278,6 +334,15 @@ internal fun AutomixTransitionEditor(
             live = window
         }
         pending = null
+    }
+
+    // The arriving lane's anchor, taken from the planner the first time it
+    // says where it is. Not while a finger is down: the lane is being looked
+    // at, and a re-published plan must not move it.
+    LaunchedEffect(resetKey, plan.handoffSeconds) {
+        if (dragging) return@LaunchedEffect
+        val handoff = plan.handoffSeconds
+        if (handoff > 0.0 && incomingHandoff == null) incomingHandoff = handoff
     }
 
     // The view opens on the window, zooms out when the window grows, and comes
@@ -583,12 +648,19 @@ internal fun AutomixTransitionEditor(
         val left = xOf(box.start)
         val right = xOf(box.end)
 
-        // The arriving track's own clock, laid on the outgoing one's: its cue
-        // point is what plays when the window opens, so that is where it is
-        // pinned. Everything before it is preroll that will not be heard, and
-        // is drawn dimmer rather than hidden.
-        val cue = max(0.0, plan.cueSeconds)
-        val incomingMap: (Double) -> Double = { box.start + (it - cue) }
+        // The arriving track's own clock, laid on the outgoing one's. See
+        // [automixIncomingAxis] for why it is anchored at the end of the
+        // window and what that buys.
+        val handoff = incomingHandoff
+        val incomingMap: (Double) -> Double = { t ->
+            automixIncomingAxis(
+                time = t,
+                windowStart = box.start,
+                windowEnd = box.end,
+                handoff = handoff,
+                cue = plan.cueSeconds,
+            )
+        }
 
         drawWaveform(
             digest = current,

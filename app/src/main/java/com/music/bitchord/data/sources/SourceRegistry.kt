@@ -420,6 +420,36 @@ object SourceRegistry {
         configs.value.any { it.kind == SourceKind.YOUTUBE && it.enabled }
 
     /**
+     * Whether YouTube may be asked for the bytes Automix's *analysis* reads.
+     *
+     * Deliberately not [youtubeEnabled], and the difference is the whole point.
+     *
+     * [youtubeEnabled] is about what the listener **hears**: it decides
+     * whether a stream may be served from YouTube at all, and switching it
+     * off is a promise that no byte of YouTube reaches the speaker.
+     *
+     * The analysis is not a performance. It fetches a copy of its own, under a
+     * marker that playback never sends
+     * ([com.music.bitchord.playback.smart.AutomixAnalysisSource]), and reads
+     * it to measure a tempo; not one of its bytes is ever played. And it has
+     * to keep working when YouTube is switched off, because otherwise every
+     * Automix panel opens on "Waiting for analysis" — the one thing that
+     * could have answered it was the very thing the listener had turned off,
+     * and the panel sits there waiting for a fetch that was never allowed to
+     * start. That is the bug this exists to end.
+     *
+     * So the source switch does not reach here. What does: the listener's own
+     * Automix switch, read where the work is queued rather than here, so that
+     * turning Automix off still stops every byte being fetched.
+     *
+     * The answer is "yes" whenever the YouTube row is there, and the row is
+     * never removable — see [remove] — so this is the reachability of
+     * YouTube, not a preference.
+     */
+    fun youtubeAnalysisEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE }
+
+    /**
      * Puts the addons in [orderedIds], which is the order they will be asked in.
      *
      * The stored list *is* the priority order and needs no rank field to carry

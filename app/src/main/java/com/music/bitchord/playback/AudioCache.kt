@@ -201,6 +201,16 @@ object AudioCache {
     /** How long to leave the player alone with an entry before trying again. */
     private const val RETRY_DELAY_MS = 5_000L
 
+    /**
+     * How often the analysis progress line is refreshed while the bytes are
+     * arriving.
+     *
+     * Fast enough that the bar moves rather than jumps, slow enough that
+     * reading the cache is not itself a cost: a hundredth of a second would
+     * be a hundred reads a second against a file the size of a track.
+     */
+    private const val PROGRESS_POLL_MS = 250L
+
     /** Enough to cover a hand-over, not enough to keep chasing a lost race. */
     private const val MAX_ATTEMPTS = 4
 
@@ -335,8 +345,10 @@ object AudioCache {
         // the first switch after a wipe asks for its head from a clean slate —
         // [discardBadRendition] clears one track's claim for the same reason.
         analysisHeads.clear()
-        analysisHeadsInFlight.clear()
+        analysisHeadRounds.clear()
         analysisHeadWant.clear()
+        analysisInFlight.clear()
+        analysisProgress.clear()
         renditionKeys.clear()
         scope.launch {
             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
@@ -1341,8 +1353,43 @@ object AudioCache {
      */
     private val analysisHeads = ConcurrentHashMap<String, Boolean>()
 
-    /** Video ids with a head fetch in the air, so a tick cannot stack another on top. */
-    private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
+    /**
+     * How many head fetches are in the air for each video id.
+     *
+     * A count rather than a set, because a forced round — the one the
+     * Automix panel asks for — is allowed to run beside a round the tick
+     * already started. With a set, the first round to finish would take the
+     * flag with it and the second would be left running unguarded: the
+     * aligner would then read a half-written head as a finished one.
+     */
+    private val analysisHeadRounds = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Claims a head round for [videoId].
+     *
+     * @param force whether the round may run beside one already in the air.
+     * @return false when the claim was refused because a round is already
+     *   running and this one was not forced.
+     */
+    private fun beginHeadRound(videoId: String, force: Boolean): Boolean {
+        while (true) {
+            val current = analysisHeadRounds[videoId] ?: 0
+            if (!force && current > 0) return false
+            if (analysisHeadRounds.replace(videoId, current, current + 1) != null) return true
+            if (analysisHeadRounds.putIfAbsent(videoId, 1) == null) return true
+        }
+    }
+
+    /** Releases a head round claimed by [beginHeadRound]. */
+    private fun endHeadRound(videoId: String) {
+        analysisHeadRounds.compute(videoId) { _, count ->
+            val live = count ?: 0
+            if (live <= 1) null else live - 1
+        }
+    }
+
+    /** How many head rounds are in the air for [videoId]. */
+    private fun headRoundsInFlight(videoId: String): Int = analysisHeadRounds[videoId] ?: 0
 
     /**
      * How many bytes each track's last round asked for — the only way for
@@ -1363,6 +1410,89 @@ object AudioCache {
 
     /** Cache keys with a source-opening fetch in the air. */
     private val analysisOpeningsInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * How far each track's analysis fetch has got, 0..1.
+     *
+     * The panel has to say *what* is happening, and "Waiting for analysis" is
+     * the answer to four different questions: nothing has been asked for, the
+     * bytes are on their way, the decode is running, and the decode found
+     * nothing. Only the second of those has a number attached to it, and it is
+     * the one that lasts long enough to be worth watching — a fetch over a
+     * slow connection takes seconds, and a spinner with no progress under it
+     * is indistinguishable from a hang.
+     *
+     * Keyed by the same key the fetch is written under, so the panel can ask
+     * about a track by the URI it already has.
+     */
+    private val analysisProgress = ConcurrentHashMap<String, Float>()
+
+    /**
+     * How many analysis fetches are in the air for each track.
+     *
+     * A count rather than a set, because a forced round — the one the
+     * Automix panel asks for — is allowed to run beside a round the tick
+     * already started. With a set, the first round to finish would take the
+     * flag with it and the second would be left running unguarded.
+     */
+    private val analysisInFlight = ConcurrentHashMap<String, Int>()
+
+    /**
+     * How far the analysis fetch for [uri] has got, 0..1.
+     *
+     * Zero when nothing has been asked for yet, and one when the bytes the
+     * analyser asked for are all on disk. A small positive number while the
+     * bytes are still coming and none have landed yet, so that "fetching" and
+     * "nothing has been asked for" do not look the same.
+     */
+    fun analysisProgressOf(uri: Uri): Float {
+        val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
+        val key = videoId ?: runCatching { cacheKeyOf(uri) }.getOrNull() ?: return 0f
+        val fraction = analysisProgress[key] ?: 0f
+        if (fraction > 0f) return fraction
+        return if ((analysisInFlight[key] ?: 0) > 0) 0.02f else 0f
+    }
+
+    /** Claims an analysis fetch for [key]. */
+    private fun beginAnalysisFetch(key: String) {
+        analysisInFlight.merge(key, 1, Int::plus)
+    }
+
+    /** Releases an analysis fetch claimed by [beginAnalysisFetch]. */
+    private fun endAnalysisFetch(key: String) {
+        analysisInFlight.compute(key) { _, count ->
+            val live = count ?: 0
+            if (live <= 1) null else live - 1
+        }
+    }
+
+    /**
+     * Records how far a fetch has got.
+     *
+     * Read back through [analysisProgressOf], which is the only consumer. The
+     * number is a fraction of what was asked for, so it needs the target as
+     * well as the count — both are kept together here rather than in two
+     * maps that could disagree.
+     */
+    private fun reportAnalysisProgress(key: String, held: Long, want: Long) {
+        if (want <= 0L) return
+        val fraction = (held.toDouble() / want.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        analysisProgress[key] = fraction
+    }
+
+    /**
+     * How many of [want] bytes of [key] are on disk, counted over the whole
+     * range rather than over a probe.
+     *
+     * The probe the rest of the cache uses is capped at
+     * [HEAD_PROBE_BYTES], which is more than the opening and less than a
+     * whole track — so it is no use for a progress line, which has to be able
+     * to say "sixty per cent" and mean it.
+     */
+    private fun cachedBytesOf(key: String, want: Long): Long {
+        if (!::cache.isInitialized || want <= 0L) return 0L
+        return cache.getCachedLength(key, 0, want).coerceAtLeast(0L)
+    }
 
     /**
      * Pulls [uri]'s recording onto disk under the plain YouTube key, so Smart
@@ -1460,17 +1590,18 @@ object AudioCache {
      */
     suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
         if (!::cache.isInitialized) return false
-        // No YouTube copy can be fetched while the switch is off, and waiting
-        // the deadline for one that will never arrive costs the transition it
-        // is meant to inform. The analyzer's ordinary path does not come
-        // through here — see [TrackAnalyzer].
-        if (!SourceRegistry.youtubeEnabled()) return false
+        // The head is a YouTube copy, fetched under the analysis-only marker —
+        // see [AutomixAnalysisSource]. It is read to measure the two versions
+        // against each other, not to be played, so the YouTube *source* switch
+        // does not reach it. What does stop it is the listener's own Automix
+        // switch, which is read where the work is queued.
+        if (!SourceRegistry.youtubeAnalysisEnabled()) return false
         val videoId = uri.getQueryParameter("v") ?: return false
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         // A previous round that wrote nothing would otherwise block retries
         // for the rest of the session.
-        if (videoId !in analysisHeadsInFlight) {
+        if (headRoundsInFlight(videoId) == 0) {
             analysisHeads.remove(videoId)
         }
         requestAnalysisHead(opus)
@@ -1479,7 +1610,7 @@ object AudioCache {
         val deadline = askedAt + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
             if (alignmentHeadComplete(videoId)) return true
-            if (videoId !in analysisHeadsInFlight) {
+            if (headRoundsInFlight(videoId) == 0) {
                 if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return alignmentHeadComplete(videoId)
                 val now = SystemClock.elapsedRealtime()
                 if (now - askedAt >= HEAD_ROUND_SETTLE_MS) {
@@ -1520,7 +1651,7 @@ object AudioCache {
         val held = alignmentPrefixBytes(videoId)
         if (held >= MIN_ALIGNMENT_PREFIX_BYTES) return true
         val want = analysisHeadWant[videoId] ?: return false
-        if (videoId in analysisHeadsInFlight) return false
+        if (headRoundsInFlight(videoId) > 0) return false
         return held >= want
     }
 
@@ -1547,7 +1678,19 @@ object AudioCache {
         )
     }
 
-    fun requestAnalysisHead(uri: Uri, durationSeconds: Double = 0.0) {
+    /**
+     * Asks for the opening the analyser reads, for [uri].
+     *
+     * [force] is the listener asking for it *now*, rather than the tick
+     * noticing that it is needed: the Automix panel opening is the moment
+     * the bytes have to be on their way, and the one-shot guard below is
+     * there to stop a 250 ms tick from queueing the same fetch four times a
+     * second — not to refuse the listener's own request. A forced round
+     * therefore claims the track again and starts a second fetch beside the
+     * first if one is running, which is the point: the panel's two lanes are
+     * worth more than the tidiness of a single round.
+     */
+    fun requestAnalysisHead(uri: Uri, durationSeconds: Double = 0.0, force: Boolean = false) {
         // Each of these gates used to stop a head dead with nothing in the
         // log to show for it: an unwired cache or upstream looked from the
         // outside exactly like a network that refuses everything.
@@ -1571,21 +1714,30 @@ object AudioCache {
         // and a source-backed track's URI is whatever the addon handed over.
         val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
         if (videoId == null) {
-            requestSourceAnalysisHead(uri, durationSeconds)
+            requestSourceAnalysisHead(uri, durationSeconds, force)
             return
         }
-        // The head is a YouTube copy, and with the switch off the resolver
-        // refuses one by design. The analyzer reads the copy the track is
-        // already playing from instead — see [TrackAnalyzer].
-        if (!SourceRegistry.youtubeEnabled()) return
+        // The head is a YouTube copy, fetched under the analysis-only marker —
+        // see [AutomixAnalysisSource] — and read to measure a tempo rather
+        // than to be played. The YouTube *source* switch is about what the
+        // listener hears, so it does not reach this: refusing here is what
+        // left every Automix panel sitting on "Waiting for analysis" for a
+        // listener who had YouTube switched off, with the one fetch that
+        // could have answered it turned away by that very switch.
+        //
+        // What does stop it is the listener's own Automix switch, which is
+        // read where the work is queued — see [TrackAnalyzer].
+        if (!SourceRegistry.youtubeAnalysisEnabled()) return
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
-        // the wrong shape.
-        if (analysisHeads.putIfAbsent(videoId, true) != null) return
+        // the wrong shape. A forced round ignores the guard: the panel asked
+        // for this, and the panel's own lane is worth a second fetch.
+        if (!force && analysisHeads.putIfAbsent(videoId, true) != null) return
+        if (force) analysisHeads[videoId] = true
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
         // top of a fetch that is still running.
-        if (!analysisHeadsInFlight.add(videoId)) return
+        if (!beginHeadRound(videoId, force)) return
         scope.launch {
             try {
                 val total = runCatching { StreamResolver.contentLength(videoId) }
@@ -1598,23 +1750,40 @@ object AudioCache {
                 TrackLog.w(
                     TAG,
                     "analysis head round for $videoId: total=$total want=$want " +
-                        "held=${alignmentPrefixBytes(videoId)}",
+                        "held=${alignmentPrefixBytes(videoId)}" +
+                        (if (force) " (forced)" else ""),
                     videoId,
                 )
                 if (!clearPartialHead(videoId, want)) {
                     TrackLog.w(TAG, "analysis head round for $videoId skipped: partial is held elsewhere", videoId)
                     return@launch
                 }
-                fetch(
-                    cacheKey = videoId,
-                    // Do not inherit a JioSaavn/lossless StreamChoice from
-                    // playback. The base key is reserved for the lightweight
-                    // YouTube Opus copy used by Automix analysis.
-                    uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)),
-                    position = 0,
-                    length = want,
-                    pinKey = true,
-                )
+                reportAnalysisProgress(videoId, cachedBytesOf(videoId, want), want)
+                beginAnalysisFetch(videoId)
+                // The progress line, read while the bytes arrive. A fetch of
+                // a whole track takes seconds, and a panel that says nothing
+                // for those seconds is a panel that looks broken.
+                val progress = scope.launch {
+                    while (true) {
+                        reportAnalysisProgress(videoId, cachedBytesOf(videoId, want), want)
+                        delay(PROGRESS_POLL_MS)
+                    }
+                }
+                try {
+                    fetch(
+                        cacheKey = videoId,
+                        // Do not inherit a JioSaavn/lossless StreamChoice from
+                        // playback. The base key is reserved for the lightweight
+                        // YouTube Opus copy used by Automix analysis.
+                        uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)),
+                        position = 0,
+                        length = want,
+                        pinKey = true,
+                    )
+                } finally {
+                    progress.cancel()
+                }
+                reportAnalysisProgress(videoId, cachedBytesOf(videoId, want), want)
                 if (alignmentPrefixBytes(videoId) < MIN_ALIGNMENT_PREFIX_BYTES) {
                     // The plain Opus copy would not come: on the networks where
                     // its googlevideo resolve fails it never does, while
@@ -1650,7 +1819,8 @@ object AudioCache {
                     )
                 }
             } finally {
-                analysisHeadsInFlight.remove(videoId)
+                endHeadRound(videoId)
+                endAnalysisFetch(videoId)
             }
         }
     }
@@ -1677,27 +1847,90 @@ object AudioCache {
      * is on record, and [analysisOpenings] remembers the size asked for so
      * that the repeat happens when the answer grows and not on every tick the
      * analyser spends waiting.
+     *
+     * ## Why the scheme is not checked any more
+     *
+     * This used to refuse anything that was not `http` or `https`, which
+     * excluded every track an addon served: those carry a `bitchord://source`
+     * URI, and the scheme is the app's own address for "ask the source". So
+     * the one branch that existed to fetch bytes for an addon-served track
+     * could never fetch any, and every such track sat on "Waiting for
+     * analysis" for as long as it was queued.
+     *
+     * The bytes are read through [upstreamFactory], which resolves a
+     * `bitchord://` URI exactly the way playback does — so the same source,
+     * the same credentials and the same headers serve the analysis copy that
+     * serve the audible one. What is excluded now is the local file, which
+     * has no stream to fetch and is already whole.
      */
-    private fun requestSourceAnalysisHead(uri: Uri, durationSeconds: Double) {
-        if (uri.scheme != "http" && uri.scheme != "https") return
+    private fun requestSourceAnalysisHead(uri: Uri, durationSeconds: Double, force: Boolean = false) {
+        // Only a local file and a platform document are refused. The app's own
+        // `bitchord://` addresses are how an addon-served track is reached,
+        // and refusing them left every such track on "Waiting for analysis".
+        if (!AutomixAnalysisSource.schemeIsFetchable(uri.scheme)) return
         val key = cacheKeyOf(uri)
         val wanted = analysisOpeningBytes(key, durationSeconds)
-        if (cachedPrefixBytes(uri) >= wanted) return
+        val held = cachedPrefixBytes(uri)
+        if (held >= wanted) {
+            reportAnalysisProgress(key, held, wanted)
+            return
+        }
         val asked = analysisOpenings[key] ?: 0L
-        if (wanted <= asked) return
-        if (!analysisOpeningsInFlight.add(key)) return
-        analysisOpenings[key] = wanted
+        // A forced round is the listener asking for the bytes now, so the
+        // "we already asked for this much" guard does not apply to it: the
+        // panel's lane is worth a second fetch beside the one the tick
+        // started.
+        if (!force && wanted <= asked) return
+        if (!force && !analysisOpeningsInFlight.add(key)) return
+        if (force) analysisOpeningsInFlight.add(key)
+        analysisOpenings[key] = maxOf(asked, wanted)
         TrackLog.w(
             TAG,
             "analysis opening for $key: want=${wanted / 1024}kB " +
-                "held=${cachedPrefixBytes(uri) / 1024}kB",
+                "held=${held / 1024}kB" +
+                (if (force) " (forced)" else ""),
             key,
         )
+        reportAnalysisProgress(key, held, wanted)
+        beginAnalysisFetch(key)
         scope.launch {
             try {
-                fetch(key, uri, 0, wanted, pinKey = true)
+                // A forced round asks for the whole track, as far as the bound
+                // allows, where an ordinary round asks for the opening.
+                //
+                // The panel draws a waveform, and a waveform of the first
+                // twelve seconds is not one: the transition sits at the end of
+                // the outgoing track and at the beginning of the arriving one,
+                // and neither of those is in the middle of an opening. So the
+                // listener's own request pulls the track, and the whole-track
+                // pass gets a complete copy to measure.
+                //
+                // The length is asked of the stream itself, because a bounded
+                // fetch cannot teach the cache the length — see
+                // [recordContentLength] — and without one there is nothing to
+                // iterate to.
+                val total = if (force) measureUpstream(uri) else 0L
+                val target = if (force && total > 0L) {
+                    minOf(total, MAX_ANALYSIS_TRACK_BYTES)
+                } else {
+                    wanted
+                }
+                if (total > 0L) recordContentLength(key, total)
+                val progress = scope.launch {
+                    while (true) {
+                        reportAnalysisProgress(key, cachedBytesOf(key, target), target)
+                        delay(PROGRESS_POLL_MS)
+                    }
+                }
+                try {
+                    fetch(key, uri, 0, target, pinKey = true)
+                } finally {
+                    progress.cancel()
+                }
+                reportAnalysisProgress(key, cachedBytesOf(key, target), target)
             } finally {
                 analysisOpeningsInFlight.remove(key)
+                endAnalysisFetch(key)
             }
         }
     }

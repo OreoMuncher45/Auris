@@ -153,6 +153,26 @@ class CrossfadeController(
      */
     private val requestAnalysis: (MediaItem, Long) -> Unit = { _, _ -> },
     /**
+     * Asks for a media item's analysis *now*, rather than at the next tick's
+     * noticing.
+     *
+     * The ordinary [requestAnalysis] is a poll — it looks at what is on disk
+     * and asks for what is missing, and its guards are there to stop the same
+     * work being done twice on a 250 ms tick. That is right for background
+     * work and wrong for the Automix panel opening, which is the one moment
+     * the listener is looking at the answer and waiting for it.
+     *
+     * Used by [forceAnalysis], which the panel asks for when it opens.
+     */
+    private val forceAnalysisFor: (MediaItem, Long) -> Unit = { _, _ -> },
+    /**
+     * How far the fetch of a media item's analysis bytes has got, 0..1.
+     *
+     * The panel's progress line: without it, "waiting" and "fetching" are the
+     * same word, and a fetch that takes several seconds looks like a hang.
+     */
+    private val analysisProgressFor: (MediaItem) -> Float = { 0f },
+    /**
      * The low-pass and high-pass riding each side of a transition. This is what
      * makes a plan's
      * [com.music.bitchord.playback.smart.TransitionPlan.transitionStyle] audible
@@ -841,6 +861,50 @@ class CrossfadeController(
     }
 
     /**
+     * Asks for both sides of the next transition to be measured *now*.
+     *
+     * The Automix panel opens on a pair of lanes, and a lane with nothing in
+     * it is a lane the listener cannot set a handoff on. The ordinary
+     * analysis is a background poll: it notices what is on disk, asks for
+     * what is missing, and gets there in its own time — which is the right
+     * behaviour for work nobody is waiting on and the wrong one for the
+     * moment someone opens the panel and looks at it.
+     *
+     * So the panel asks for this when it opens, and both the track that is
+     * playing and the one that is coming are asked for at once. The bytes go
+     * out even if a fetch for the same track is already in the air, because
+     * the lane the listener is looking at is worth a second fetch.
+     *
+     * Cheap to call repeatedly, and harmless when there is nothing to do: the
+     * analyser and the cache each keep their own guards against repeating
+     * work that has already been done.
+     */
+    fun forceAnalysis() {
+        val player = active()
+        val current = player.currentMediaItem ?: return
+        val duration = playbackDurationMs(
+            player.duration,
+            current.claimedDurationMs() ?: 0L,
+        )
+        forceAnalysisOf(current, duration)
+        player.nextItemOrNull()?.let { next ->
+            forceAnalysisOf(next, nextItemDurationMs(next))
+        }
+    }
+
+    /**
+     * Asks for one item's analysis, if it is one that can be measured.
+     *
+     * The same eligibility rule the planner uses: a music video is not
+     * measured, because there is no beat grid in a video to measure, and a
+     * converted video-origin track is measured like any other audio.
+     */
+    private fun forceAnalysisOf(item: MediaItem, durationMs: Long) {
+        if (!automixEligible(item.isVideo, item.isVideoOrigin)) return
+        forceAnalysisFor(item, durationMs)
+    }
+
+    /**
      * Plays the transition that is planned, and nothing else.
      *
      * The Automix panel's own preview: the outgoing track from a moment or two
@@ -1063,6 +1127,15 @@ class CrossfadeController(
     private fun considerSmartTransition(duration: Long) {
         val player = active()
         val currentItem = player.currentMediaItem ?: return
+        // The pair is measured before anything else is decided, and whether or
+        // not there is a next track to plan a transition into.
+        //
+        // This used to sit below the next-track check, so a queue with
+        // nothing after the song left the song itself unmeasured: the panel's
+        // outgoing lane said "Waiting for analysis" for a track that was
+        // playing, and the lane it draws the transition over was empty. The
+        // measurement is wanted for the panel as much as for the blend.
+        requestAnalysisAround(player, duration)
         val nextItem = player.nextItemOrNull() ?: return
         // Only an item that actually plays video is excluded. A music-video
         // row that was converted to an audio-only stream is video-origin but
@@ -1077,8 +1150,6 @@ class CrossfadeController(
             return
         }
         val nextDuration = nextItemDurationMs(nextItem)
-
-        requestAnalysisAround(player, duration)
 
         // Only used before analysis lands, or when the evidence is too weak
         // for more than a plain fade (see [TransitionTier.PLAIN_CROSSFADE]):
@@ -1241,13 +1312,21 @@ class CrossfadeController(
      */
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
         val currentItem = player.currentMediaItem ?: return
+        // The playing track is measured whatever else is true of the queue.
+        //
+        // This used to need a next track before it would measure anything, and
+        // that one condition explained a lot of "Waiting for analysis": with
+        // nothing queued after the song, or before the queue had been filled,
+        // the track that was playing was never measured at all — even though
+        // the Automix panel has a lane for it and draws the transition window
+        // over its end.
+        if (automixEligible(currentItem.isVideo, currentItem.isVideoOrigin)) {
+            requestAnalysis(currentItem, duration)
+        }
         val nextItem = player.nextItemOrNull() ?: return
         // Video playback has no beat grid to measure; a converted video-origin
         // track does, and is measured like any other audio.
-        if (!automixEligible(currentItem.isVideo, currentItem.isVideoOrigin) ||
-            !automixEligible(nextItem.isVideo, nextItem.isVideoOrigin)
-        ) return
-        requestAnalysis(currentItem, duration)
+        if (!automixEligible(nextItem.isVideo, nextItem.isVideoOrigin)) return
         requestAnalysis(nextItem, nextItemDurationMs(nextItem))
     }
 
@@ -1346,7 +1425,16 @@ class CrossfadeController(
             buildDigest(analysis, analysisProvisionalFor(item))
                 .also { digestCache[item.mediaId] = analysis to it }
         }
-        return if (digest.state == state) digest else digest.copy(state = state)
+        // The progress is not part of the cached digest: it moves while the
+        // bytes arrive, and the digest is cached against the *analysis*, which
+        // does not. Rounded to a whole per cent so a fast fetch does not
+        // republish the panel four times a second.
+        val progress = (analysisProgressFor(item).coerceIn(0f, 1f) * 100f).toInt() / 100f
+        return if (digest.state == state && digest.progress == progress) {
+            digest
+        } else {
+            digest.copy(state = state, progress = progress)
+        }
     }
 
     /**
@@ -1354,12 +1442,26 @@ class CrossfadeController(
      * behind them.
      */
     private fun buildDigest(analysis: TrackAnalysis, provisional: Boolean): TrackAnalysisDigest {
-        val energy = analysis.energyCurve.map { it.energy }
+        // The whole track's envelope when there is one, and the opening's when
+        // there is not.
+        //
+        // A head-only pass measures the envelope of the window it decoded and
+        // drops it, because the policy counts audible seconds from that curve
+        // and a curve that stops thirty seconds in would describe an ending it
+        // never heard. The panel is not the policy: it draws a lane, and a
+        // lane with the opening drawn in it and the rest honestly blank is
+        // better than an empty one — and the times are the track's own, so it
+        // lands exactly where the audio is.
+        val curve = if (analysis.energyCurve.isNotEmpty()) {
+            analysis.energyCurve
+        } else {
+            analysis.headEnergyCurve
+        }
+        val energy = curve.map { it.energy }
         val peak = energy.filter { it.isFinite() }.maxOrNull() ?: 0.0
         // The waveform's own envelope: the analyser's own resolution, with the
         // peak of each window rather than its mean. The panel draws this, and
         // a drawing wants the transients in it.
-        val curve = analysis.energyCurve
         val scale = if (peak > 1.0) peak else 1.0
         return TrackAnalysisDigest(
             bpm = analysis.bpm,
@@ -1448,6 +1550,7 @@ class CrossfadeController(
             filterSweep = plan.filterSweep,
             overlapSeconds = plan.fadeSeconds,
             cueSeconds = plan.incomingCueTime,
+            handoffSeconds = plan.incomingHandoffTime,
             incomingRate = plan.incomingPlaybackRate,
             outgoingRate = plan.outgoingPlaybackRate,
             vocalOverlap = plan.vocalOverlap,

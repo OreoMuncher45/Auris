@@ -260,4 +260,15 @@
     <string name="new_folder">Nova pasta</string>
     <string name="folders">Pastas</string>
     <string name="home_load_more">Carregar mais</string>
+    <string name="automix_fetching">A carregar áudio…</string>
+    <string name="automix_fetching_percent">A carregar áudio… %1$d%%</string>
+    <string name="add_to_queue">Adicionar à fila</string>
+    <string name="queue_search_back">Voltar</string>
+    <string name="queue_search_title">Adicionar músicas</string>
+    <string name="queue_search_hint">Pesquisar músicas</string>
+    <string name="queue_search_start">Pesquise uma música para adicioná-la à fila</string>
+    <string name="queue_search_no_results">Nenhuma música encontrada</string>
+    <string name="queue_search_offline">A mostrar músicas transferidas</string>
+    <string name="queue_search_added">Adicionada à fila</string>
+    <string name="queue_search_will_play">Toca a seguir</string>
 </resources>

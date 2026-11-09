@@ -260,4 +260,15 @@
     <string name="new_folder">Nueva carpeta</string>
     <string name="folders">Carpetas</string>
     <string name="home_load_more">Cargar más</string>
+    <string name="automix_fetching">Cargando audio…</string>
+    <string name="automix_fetching_percent">Cargando audio… %1$d%%</string>
+    <string name="add_to_queue">Agregar a la cola</string>
+    <string name="queue_search_back">Atrás</string>
+    <string name="queue_search_title">Añadir canciones</string>
+    <string name="queue_search_hint">Buscar canciones</string>
+    <string name="queue_search_start">Busca una canción para añadirla a la cola</string>
+    <string name="queue_search_no_results">No se encontraron canciones</string>
+    <string name="queue_search_offline">Mostrando canciones descargadas</string>
+    <string name="queue_search_added">Añadida a la cola</string>
+    <string name="queue_search_will_play">Se reproducirá a continuación</string>
 </resources>

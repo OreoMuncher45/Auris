@@ -260,4 +260,15 @@
     <string name="new_folder">Nouveau dossier</string>
     <string name="folders">Dossiers</string>
     <string name="home_load_more">Charger plus</string>
+    <string name="automix_fetching">Chargement de l'audio…</string>
+    <string name="automix_fetching_percent">Chargement de l'audio… %1$d%%</string>
+    <string name="add_to_queue">Ajouter à la file d\'attente</string>
+    <string name="queue_search_back">Retour</string>
+    <string name="queue_search_title">Ajouter des titres</string>
+    <string name="queue_search_hint">Rechercher des titres</string>
+    <string name="queue_search_start">Recherchez un titre pour l\'ajouter à la file d\'attente</string>
+    <string name="queue_search_no_results">Aucun titre trouvé</string>
+    <string name="queue_search_offline">Titres téléchargés affichés</string>
+    <string name="queue_search_added">Ajouté à la file d\'attente</string>
+    <string name="queue_search_will_play">Sera lu ensuite</string>
 </resources>

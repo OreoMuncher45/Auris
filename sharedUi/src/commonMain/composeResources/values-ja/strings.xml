@@ -260,4 +260,15 @@
     <string name="new_folder">新しいフォルダー</string>
     <string name="folders">フォルダー</string>
     <string name="home_load_more">さらに読み込む</string>
+    <string name="automix_fetching">音频を読み込み中…</string>
+    <string name="automix_fetching_percent">音频を読み込み中… %1$d%%</string>
+    <string name="add_to_queue">再生キューに追加</string>
+    <string name="queue_search_back">戻る</string>
+    <string name="queue_search_title">曲を追加</string>
+    <string name="queue_search_hint">曲を検索</string>
+    <string name="queue_search_start">再生キューに追加する曲を検索</string>
+    <string name="queue_search_no_results">曲が見つかりません</string>
+    <string name="queue_search_offline">ダウンロード済みの曲を表示中</string>
+    <string name="queue_search_added">再生キューに追加しました</string>
+    <string name="queue_search_will_play">次に再生します</string>
 </resources>

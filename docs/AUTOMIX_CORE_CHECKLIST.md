@@ -311,3 +311,79 @@ as a fault, and the eye is on the movement more than the picture.
       handing their artwork to the player; the queue and lyrics panels easing
       rather than sliding; the settings rows settling in as the sheet opens.
 
+### 17. The analysis overhaul
+
+Reported from the 3.0.13 draft: the panel sat on "Waiting for analysis" for
+tracks that were playing, streamed tracks showed no waveform at all, there was
+no sign of progress while the bytes were coming, and resizing the transition
+window dragged the arriving waveform out from under the finger.
+
+**The panel asks, the engine answers**
+
+- [x] The panel asks for the pair's analysis when it opens. The engine already
+      analyses in the background on its own schedule, which is right for work
+      nobody is waiting on; but the panel opens on two lanes the listener is
+      *looking* at, and on a slow connection those stayed empty long enough
+      for the panel to look broken. The demand travels through one shared
+      object — `AutomixAnalysisDemand` — the way the preview already did, so
+      the panel still knows nothing about the engine that answers it.
+- [x] A forced round sets the cache's one-round guard aside, and may run beside
+      a round the tick already started. The in-flight count is a counter and
+      not a set, so a forced round finishing cannot unguard the live one.
+- [x] A forced round pulls the whole track, as far as the 16 MB bound allows,
+      and records the stream's length so the whole-track pass has something to
+      iterate. A waveform of the first twelve seconds is not a waveform, and
+      the transition sits at the end of one track and the beginning of the
+      next — neither of which is in the middle of an opening.
+
+**YouTube off does not stop the measurement**
+
+- [x] The analysis copy is fetched under the `automix_opus` marker, which
+      playback never sends, and not one of its bytes reaches the speaker. The
+      YouTube *source* switch is a promise about what the listener hears, so it
+      no longer gates the analysis; the gate is the listener's own Automix
+      switch, read where the work is queued.
+- [x] `SourceRegistry.youtubeAnalysisEnabled()` answers that gate, and it
+      answers about reachability rather than preference: the YouTube row is
+      never removable, so it is there whether or not the listener plays
+      anything from YouTube.
+- [x] A track served by an addon can be analysed at all. The branch that
+      fetches bytes for an addon-served track used to refuse anything that was
+      not `http`, which excluded every `bitchord://` address — so the one
+      branch that existed to fetch those bytes could never fetch any, and
+      every such track sat on "Waiting for analysis" for as long as it was
+      queued.
+
+**Waiting is not what playing means**
+
+- [x] The playing track is measured whatever else is true of the queue. The
+      measurement used to need a next track before it would measure anything,
+      so with nothing queued after the song the song itself was never
+      measured — even though the panel has a lane for it and draws the
+      transition window over its end. The request now happens before the
+      next-track check.
+
+**Progress while the bytes come**
+
+- [x] The panel says "Fetching audio… 40%" under the lane that is waiting,
+      with a bar that moves. "Waiting" and "fetching" are different situations
+      and the listener deserves to know which one they are in: the first means
+      the app is not doing anything, the second means it is working and how far
+      along it is. The number is read from the cache while the fetch runs,
+      every 250 ms.
+
+**The arriving lane stays put**
+
+- [x] The lower lane is anchored at the arriving track's *handoff* — the point
+      of its own arrangement where the blend ends — and not at its cue. The cue
+      is one blend-length before the handoff, so anchoring to the cue tied the
+      lane to the length of the overlap: every change of length slid the
+      arriving waveform away, which is what was reported. Anchored at the
+      handoff, the lane stays where it is while the window is resized, and
+      travels when the whole window is moved, because then the arriving track
+      really does begin somewhere else.
+- [x] The anchor is frozen for the life of the pair. The planner re-plans as
+      the analysis refines and as the playhead moves, and a lane that slides
+      because something behind it was re-published is a lane the listener
+      cannot work with. Nothing is adopted while a finger is down.
+

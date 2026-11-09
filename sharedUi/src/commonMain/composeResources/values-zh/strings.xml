@@ -260,4 +260,15 @@
     <string name="new_folder">新建文件夹</string>
     <string name="folders">文件夹</string>
     <string name="home_load_more">加载更多</string>
+    <string name="automix_fetching">正在加载音频…</string>
+    <string name="automix_fetching_percent">正在加载音频… %1$d%%</string>
+    <string name="add_to_queue">添加到播放队列</string>
+    <string name="queue_search_back">返回</string>
+    <string name="queue_search_title">添加歌曲</string>
+    <string name="queue_search_hint">搜索歌曲</string>
+    <string name="queue_search_start">搜索要添加到播放队列的歌曲</string>
+    <string name="queue_search_no_results">未找到歌曲</string>
+    <string name="queue_search_offline">正在显示已下载的歌曲</string>
+    <string name="queue_search_added">已添加到播放队列</string>
+    <string name="queue_search_will_play">将接着播放</string>
 </resources>

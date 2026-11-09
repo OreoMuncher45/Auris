@@ -126,6 +126,23 @@ fun AutomixPanelSheet(
     val panel by PlayerSettings.automixPanel.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
 
+    // The panel's own demand for the analysis it is about to draw.
+    //
+    // The engine already analyses the pair in the background, on its own
+    // schedule, and that is the right shape for work nobody is waiting on.
+    // But this panel opens on two lanes that the listener is *looking* at,
+    // and the background schedule is not theirs: on a slow connection the
+    // lanes stayed empty for long enough that the panel looked broken.
+    //
+    // So the panel asks, once, when it opens. The engine fetches the bytes
+    // again if it has to — the lane the listener is looking at is worth a
+    // second fetch — and measures whatever has arrived. Asking again while
+    // the panel is open would only repeat that; the bytes are already on
+    // their way by then.
+    LaunchedEffect(panel.trackId) {
+        PlayerSettings.forceAutomixAnalysis()
+    }
+
     // The listener's working copy. Kept apart from the published profile so a
     // drag can move the line before anything has been planned for it, and so
     // a plan that lands mid-gesture cannot pull the line out from under it.
@@ -1127,17 +1144,54 @@ private fun AutomixTrackFacts(
             style = MaterialTheme.typography.labelSmall,
             color = AutomixInkFaint,
         )
+        // "Waiting for analysis" and "fetching the audio to analyse" are
+        // different situations and the listener deserves to know which one
+        // they are in: the first means the app is not doing anything, and the
+        // second means it is working and how far along it is.
+        val fetching = !digest.hasTempo && digest.progress > 0f && digest.progress < 1f
         Text(
-            text = if (digest.hasTempo) {
-                stringResource(Res.string.automix_bpm, digest.bpm.roundToInt())
-            } else {
-                stateLabel(digest)
+            text = when {
+                digest.hasTempo -> stringResource(Res.string.automix_bpm, digest.bpm.roundToInt())
+                fetching -> stringResource(Res.string.automix_fetching)
+                else -> stateLabel(digest)
             },
             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
             color = AutomixInk,
             modifier = Modifier.padding(top = 4.dp),
             maxLines = 1,
         )
+        if (fetching) {
+            // The bar itself, under the label: a number alone is read once and
+            // forgotten, and a bar that moves says "still working" without
+            // saying anything.
+            val fraction = digest.progress.coerceIn(0.02f, 0.99f)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.08f)),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(AutomixBlue),
+                )
+            }
+            Text(
+                text = stringResource(
+                    Res.string.automix_fetching_percent,
+                    (digest.progress * 100f).roundToInt().coerceIn(0, 99),
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = AutomixInkFaint,
+                modifier = Modifier.padding(top = 4.dp),
+                maxLines = 1,
+            )
+        }
         val key = digest.key.trim()
         if (key.isNotEmpty()) {
             Row(

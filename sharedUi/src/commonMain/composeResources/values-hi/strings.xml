@@ -260,4 +260,15 @@
     <string name="new_folder">नया फ़ोल्डर</string>
     <string name="folders">फ़ोल्डर</string>
     <string name="home_load_more">और लोड करें</string>
+    <string name="automix_fetching">ऑडियो लोड हो रहा है…</string>
+    <string name="automix_fetching_percent">ऑडियो लोड हो रहा है… %1$d%%</string>
+    <string name="add_to_queue">कतार में जोड़ें</string>
+    <string name="queue_search_back">वापस</string>
+    <string name="queue_search_title">गाने जोड़ें</string>
+    <string name="queue_search_hint">गाने खोजें</string>
+    <string name="queue_search_start">कतार में जोड़ने के लिए कोई गाना खोजें</string>
+    <string name="queue_search_no_results">कोई गाना नहीं मिला</string>
+    <string name="queue_search_offline">डाउनलोड किए गाने दिखाए जा रहे हैं</string>
+    <string name="queue_search_added">कतार में जोड़ा गया</string>
+    <string name="queue_search_will_play">अगला चलेगा</string>
 </resources>

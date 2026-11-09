@@ -260,4 +260,15 @@
     <string name="new_folder">Yeni klasör</string>
     <string name="folders">Klasörler</string>
     <string name="home_load_more">Daha fazla yükle</string>
+    <string name="automix_fetching">Ses yükleniyor…</string>
+    <string name="automix_fetching_percent">Ses yükleniyor… %1$d%%</string>
+    <string name="add_to_queue">Sıraya ekle</string>
+    <string name="queue_search_back">Geri</string>
+    <string name="queue_search_title">Şarkı ekle</string>
+    <string name="queue_search_hint">Şarkı ara</string>
+    <string name="queue_search_start">Sıraya eklemek için bir şarkı arayın</string>
+    <string name="queue_search_no_results">Şarkı bulunamadı</string>
+    <string name="queue_search_offline">İndirilen şarkılar gösteriliyor</string>
+    <string name="queue_search_added">Sıraya eklendi</string>
+    <string name="queue_search_will_play">Sırada çalacak</string>
 </resources>

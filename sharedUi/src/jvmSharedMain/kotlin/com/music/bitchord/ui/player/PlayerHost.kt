@@ -118,7 +118,45 @@ interface PlayerHost {
      */
     @Composable
     fun LyricsShareSheet(hazeState: HazeState, request: LyricsShareRequest, onDismiss: () -> Unit) = Unit
+
+    /**
+     * Whether this platform can search for songs to put on the queue.
+     *
+     * False hides the search row altogether rather than offering one that
+     * leads to an empty screen. The phone answers true; a platform with no
+     * catalogue behind it has nothing to search.
+     */
+    val queueSearchAvailable: Boolean get() = false
+
+    /**
+     * The songs [query] is asking for, for the queue's search.
+     *
+     * One list, two sources: the catalogue's answer and the device's own
+     * songs, with the device's copy first where both have one — a song the
+     * listener downloaded is a song they can hear without a network. The
+     * platform reads both; [QueueSearch][com.music.bitchord.playback.QueueSearch]
+     * decides what the two lists mean together, so the rule is one rule.
+     *
+     * A platform with no catalogue answers with the device's songs and
+     * [QueueSearchResult.catalogueUnavailable] false — there was nothing to
+     * fail.
+     */
+    suspend fun searchQueueSongs(query: String): QueueSearchResult = QueueSearchResult(emptyList())
 }
+
+/** What the queue's search found. */
+data class QueueSearchResult(
+    val songs: List<Song>,
+    /**
+     * True when the catalogue could not be reached and [songs] is only what
+     * the device holds.
+     *
+     * Said out loud on the search screen, because "nothing found" and "the
+     * catalogue is unreachable" look exactly alike otherwise — and on a train
+     * the second one is the answer, with the downloaded songs under it.
+     */
+    val catalogueUnavailable: Boolean = false,
+)
 
 private val NoCast = MutableStateFlow(CastUi())
 
@@ -227,6 +265,17 @@ interface PlayerSettingsSource {
      * consume it. A platform with no second deck to blend with does nothing.
      */
     fun previewAutomix(start: Boolean)
+
+    /**
+     * Asks for the pair's analysis to be fetched and measured *now*.
+     *
+     * The panel's own demand, and the reason it is not the same as the
+     * background analysis the engine already does: the background analysis
+     * runs on its own schedule, and the panel opens on two lanes that the
+     * listener is looking at. A platform with no analysis engine does
+     * nothing.
+     */
+    fun forceAutomixAnalysis() = Unit
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */

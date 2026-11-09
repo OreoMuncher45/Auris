@@ -222,6 +222,13 @@ internal fun InlineQueue(
     collapsePlayerOnScroll: Boolean = false,
     onRevealPlayer: () -> Unit = {},
     onHidePlayer: () -> Unit = {},
+    /**
+     * Opens the queue's search, where this platform has one.
+     *
+     * Null hides the row: a platform with no catalogue behind it would only be
+     * able to offer a screen that answers nothing.
+     */
+    onOpenSearch: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -274,6 +281,16 @@ internal fun InlineQueue(
             }
         }
         Spacer(Modifier.height(4.dp))
+        // The way into the search, at the head of the queue where the queue
+        // begins: the listener is looking at what plays next, and this is how
+        // they change it. Hidden while a party's host owns the order — there
+        // is nothing for the guest to add to.
+        if (onOpenSearch != null && !controlsLocked) {
+            QueueSearchBar(
+                onClick = onOpenSearch,
+                modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()

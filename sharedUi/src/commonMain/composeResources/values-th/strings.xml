@@ -260,4 +260,15 @@
     <string name="new_folder">โฟลเดอร์ใหม่</string>
     <string name="folders">โฟลเดอร์</string>
     <string name="home_load_more">โหลดเพิ่ม</string>
+    <string name="automix_fetching">กำลังโหลดเสียง…</string>
+    <string name="automix_fetching_percent">กำลังโหลดเสียง… %1$d%%</string>
+    <string name="add_to_queue">เพิ่มลงคิว</string>
+    <string name="queue_search_back">ย้อนกลับ</string>
+    <string name="queue_search_title">เพิ่มเพลง</string>
+    <string name="queue_search_hint">ค้นหาเพลง</string>
+    <string name="queue_search_start">ค้นหาเพลงเพื่อเพิ่มลงคิว</string>
+    <string name="queue_search_no_results">ไม่พบเพลง</string>
+    <string name="queue_search_offline">แสดงเพลงที่ดาวน์โหลดไว้</string>
+    <string name="queue_search_added">เพิ่มลงคิวแล้ว</string>
+    <string name="queue_search_will_play">จะเล่นถัดไป</string>
 </resources>

@@ -20,13 +20,19 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.data.model.SearchFilter
+import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.AutomixAnalysisDemand
 import com.music.bitchord.playback.AutomixPreview
 import com.music.bitchord.playback.AutomixProfiles
+import com.music.bitchord.playback.QueueSearch
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
@@ -107,6 +113,12 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         // lives in the playback service, which leaves a handler for the panel
         // to ask.
         override fun previewAutomix(start: Boolean) = AutomixPreview.request(start)
+
+        // The panel's demand for the analysis it is waiting on. The engine
+        // that can fetch and measure it lives in the playback service, which
+        // leaves a handler for the panel to ask — the same arrangement as the
+        // preview above.
+        override fun forceAutomixAnalysis() = AutomixAnalysisDemand.request()
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
@@ -135,6 +147,35 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     // Lazy, all three: the player is not the first thing the process does, and
     // none of these objects should be woken for a launch that never opens it.
     override val volume: SystemVolume by lazy { CastAwareVolume(MusicStreamVolume(app), scope) }
+
+    // The queue's search. The phone is the platform that has both halves of
+    // it: a catalogue to ask and a device to look in.
+    override val queueSearchAvailable: Boolean get() = true
+
+    override suspend fun searchQueueSongs(query: String): QueueSearchResult {
+        val term = query.trim()
+        if (term.isEmpty()) return QueueSearchResult(emptyList())
+        // The device's own songs first. They are instant — the record is
+        // already in memory — and they are the ones that play with no network,
+        // so a downloaded track is the row the listener gets rather than a
+        // second row for the same recording.
+        val local = QueueSearch.localMatches(Downloads.snapshotSongs(), term)
+        // The catalogue. A refused search is not a search that found nothing,
+        // and the screen says which of the two happened: on a train the first
+        // is the answer, with the downloaded songs underneath it.
+        val online = runCatching { YtMusicRepository.search(term, SearchFilter.SONGS) }.getOrNull()
+        val songs = online?.getOrNull().orEmpty().mapNotNull { row ->
+            when (row) {
+                is SearchResult.TopTrack -> row.song
+                is SearchResult.Track -> row.song
+                is SearchResult.Browse -> null
+            }
+        }
+        return QueueSearchResult(
+            songs = QueueSearch.merge(local, songs),
+            catalogueUnavailable = online?.isFailure == true,
+        )
+    }
 
     @Composable
     override fun rememberAudioOutputs(): List<AudioOutputDevice> {

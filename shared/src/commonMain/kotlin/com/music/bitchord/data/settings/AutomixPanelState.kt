@@ -16,6 +16,20 @@ import com.music.bitchord.playback.smart.AutomixOverride
 data class TrackAnalysisDigest(
     /** How far the measuring has got. */
     val state: TrackAnalysisState = TrackAnalysisState.WAITING,
+    /**
+     * How far the fetch of this track's audio has got, 0..1.
+     *
+     * The panel has to say what is going on, and "Waiting for analysis" is
+     * the answer to four different questions: nothing has been asked for, the
+     * bytes are on their way, the decode is running, and the decode found
+     * nothing. Only the second of those lasts long enough to be worth
+     * watching — a fetch over a slow connection takes seconds — and a
+     * spinner with no number under it is indistinguishable from a hang.
+     *
+     * Zero when nothing has been asked for yet, one when the bytes the
+     * analyser asked for are all on disk.
+     */
+    val progress: Float = 0f,
     /** Tempo in BPM, or 0 when it is not known. */
     val bpm: Double = 0.0,
     /** The key as the analyser spelled it, or blank when it is not known. */
@@ -131,6 +145,24 @@ data class AutomixPlanDigest(
     val overlapSeconds: Double = 0.0,
     /** Where in the incoming track playback will be cued, in seconds. */
     val cueSeconds: Double = 0.0,
+    /**
+     * Where the incoming track's own arrangement lands, in its own seconds.
+     *
+     * The point the blend ends on: the arriving track is cued so that this
+     * moment of it arrives exactly as the overlap finishes.
+     *
+     * The panel draws the arriving lane against this rather than against the
+     * cue, and the difference is the whole of a bug that was reported as
+     * "resizing the window moves the incoming waveform". The cue is the
+     * blend's *length* away from this point, so anchoring the lane to the cue
+     * ties it to the length of the overlap: changing the length moved the
+     * lane, and the listener could not look at the arriving track while they
+     * were setting the transition up. Anchored here, the arriving lane stays
+     * where it is and the window moves over it, which is the picture a
+     * listener wants — the green line says which part of the arriving track
+     * will be heard, and the lane itself does not slide away underneath.
+     */
+    val handoffSeconds: Double = 0.0,
     /** How much the incoming track is stretched to match, as a rate. */
     val incomingRate: Double = 1.0,
     /** How much the outgoing track is brought up, as a rate. */

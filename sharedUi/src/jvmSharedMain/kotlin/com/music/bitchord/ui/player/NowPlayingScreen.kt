@@ -889,6 +889,16 @@ fun NowPlayingScreen(
      */
     onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
+    /**
+     * Adds [song] to the end of what the listener queued, for the queue's search.
+     *
+     * The queue's search screen is drawn by the player and the queue is owned
+     * by the engine, so the two actions it offers arrive from the host that
+     * owns both — the same way every other queue edit does.
+     */
+    onAddToQueue: (Song) -> Unit = {},
+    /** Puts [song] next in line, for the queue's search. */
+    onPlayNext: (Song) -> Unit = {},
     onOpenMenu: () -> Unit,
     /**
      * Reports where the three-dot button sits, in window coordinates.
@@ -1124,6 +1134,21 @@ fun NowPlayingScreen(
         mutableStateOf(restoredPlayerScreen == LastPlayerScreen.LYRICS)
     }
     var queueControlsOpen by remember { mutableStateOf(true) }
+    // The queue's search. Open over the whole player rather than inside the
+    // queue pane, so the listener searches and adds without ever leaving the
+    // player — the music keeps playing underneath and the queue is one tap
+    // back.
+    var queueSearchOpen by remember { mutableStateOf(false) }
+    // The way into that search, or null where the platform has none — which is
+    // what hides the row in the queue. Read once: whether a catalogue is behind
+    // this player is a fact about the platform, not about the track.
+    val openQueueSearch: (() -> Unit)? = remember {
+        if (PlayerPlatform.host.queueSearchAvailable) {
+            { queueSearchOpen = true }
+        } else {
+            null
+        }
+    }
     // Shared with Spotify's title placement below. The deck and credits must
     // read one clock: the weighted region changes size as this value moves, so
     // independently animating the title towards that moving target makes it
@@ -1236,6 +1261,12 @@ fun NowPlayingScreen(
 
     // Back out of the queue to the player.
     PlayerBackHandler(enabled = queueOpen) { queueOpen = false }
+
+    // Back out of the queue's search to the queue. Registered after the
+    // queue's own handler because that is the order back reads them in: the
+    // newest enabled handler is the one the next press reaches, and the search
+    // is drawn over the queue rather than instead of it.
+    PlayerBackHandler(enabled = queueSearchOpen) { queueSearchOpen = false }
 
     // Registered ahead of the pipeline dialog's own handler below: the
     // pipeline is now only ever opened from the row at the bottom of this
@@ -1902,6 +1933,16 @@ fun NowPlayingScreen(
                 onDismiss = { lyricsShare = null },
             )
         }
+        // Last, and drawn over everything: the search covers the whole player,
+        // the queue behind it included. It is the one overlay here the listener
+        // types into, so nothing may sit above it.
+        if (queueSearchOpen) {
+            PlayerQueueSearchScreen(
+                onDismiss = { queueSearchOpen = false },
+                onAddToQueue = onAddToQueue,
+                onPlayNext = onPlayNext,
+            )
+        }
     }
 
     // A landscape window — a tablet, or a phone on its side — takes an entirely
@@ -2439,6 +2480,7 @@ fun NowPlayingScreen(
                         onMove = onMoveInQueue,
                         onClear = onClearQueue,
                         onDragActiveChange = onQueueDragActiveChange,
+                        onOpenSearch = openQueueSearch,
                         modifier = Modifier.fillMaxSize(),
                     )
                 },
@@ -4052,6 +4094,7 @@ fun NowPlayingScreen(
                             collapsePlayerOnScroll = true,
                             onRevealPlayer = { queueControlsOpen = true },
                             onHidePlayer = { queueControlsOpen = false },
+                            onOpenSearch = openQueueSearch,
                             modifier = Modifier.weight(1f),
                         )
                     }
