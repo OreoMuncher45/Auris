@@ -108,6 +108,11 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
       111 with the same dev signer (`385af3b4…71ce`), `isDraft: true`, no git
       tag. Edges resize the transition, the grid is a ruler along the drawing's
       edges, and snapping is a magnet on bar lines.
+- [x] Draft `v3.0.12-draft` (versionCode 112) cut from `feature/automix-core-v2`
+      and verified: run `42543405634` succeeded, four signed APKs, versionCode
+      112 with the same dev signer (`385af3b4…71ce`), `isDraft: true`, no git
+      tag, `libbitchord_analysis.so` present. The player-chrome fixes and the
+      Spotify Canvas switch.
 
 ## Automix panel and per-song choices (v3)
 
