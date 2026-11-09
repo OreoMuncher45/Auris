@@ -22,6 +22,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -43,6 +44,7 @@ import androidx.compose.ui.draw.alpha
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -85,6 +87,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -1014,13 +1017,72 @@ private fun TransportGlyph(
             .size(size)
             .then(if (heightScale != 1f) Modifier.graphicsLayer { scaleY = heightScale } else Modifier)
         when {
-            shape != null -> TransportShapeGlyph(
-                shape = shape,
-                tint = ink.copy(alpha = alpha),
-                contentDescription = contentDescription,
-                smoothness = smoothness,
-                modifier = glyphModifier,
-            )
+            shape != null -> {
+                // The play and pause glyphs are two different shapes, and this
+                // is the button people press most. A hard swap between a
+                // triangle and two bars reads as a glitch; one handing over to
+                // the other, each growing into its place, reads as the same
+                // button changing its mind.
+                if (shape == TransportShape.PLAY || shape == TransportShape.PAUSE) {
+                    val pause by animateFloatAsState(
+                        targetValue = if (shape == TransportShape.PAUSE) 1f else 0f,
+                        animationSpec = tween(
+                            durationMillis = 220,
+                            easing = FastOutSlowInEasing,
+                        ),
+                        label = "transportShape",
+                    )
+                    Box(
+                        modifier = glyphModifier.clearAndSetSemantics {
+                            this.contentDescription = contentDescription
+                        },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        TransportShapeGlyph(
+                            shape = TransportShape.PLAY,
+                            tint = ink.copy(alpha = alpha),
+                            contentDescription = null,
+                            smoothness = smoothness,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    // The outgoing glyph grows a little as it
+                                    // goes, the incoming one shrinks into
+                                    // place: the same movement in opposite
+                                    // directions, which is what makes the two
+                                    // read as one thing changing rather than
+                                    // one thing being replaced.
+                                    val s = 1f + 0.14f * pause
+                                    scaleX = s
+                                    scaleY = s
+                                    this.alpha = 1f - pause
+                                },
+                        )
+                        TransportShapeGlyph(
+                            shape = TransportShape.PAUSE,
+                            tint = ink.copy(alpha = alpha),
+                            contentDescription = null,
+                            smoothness = smoothness,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val s = 0.86f + 0.14f * pause
+                                    scaleX = s
+                                    scaleY = s
+                                    this.alpha = pause
+                                },
+                        )
+                    }
+                } else {
+                    TransportShapeGlyph(
+                        shape = shape,
+                        tint = ink.copy(alpha = alpha),
+                        contentDescription = contentDescription,
+                        smoothness = smoothness,
+                        modifier = glyphModifier,
+                    )
+                }
+            }
             icon != null -> Icon(
                 painter = icon.painter(),
                 contentDescription = contentDescription,

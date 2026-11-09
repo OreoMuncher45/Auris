@@ -41,15 +41,19 @@ internal enum class TransportShape { PLAY, PAUSE, PREVIOUS, NEXT }
 internal fun TransportShapeGlyph(
     shape: TransportShape,
     tint: Color,
-    contentDescription: String,
+    contentDescription: String?,
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
     modifier: Modifier = Modifier,
 ) {
     val softness = smoothness.coerceIn(0f, 1f)
     Canvas(
-        modifier = modifier.semantics {
-            this.contentDescription = contentDescription
-        },
+        modifier = modifier.then(
+            if (contentDescription != null) {
+                Modifier.semantics { this.contentDescription = contentDescription }
+            } else {
+                Modifier
+            },
+        ),
     ) {
         // Everything below is authored on the 24-unit grid the rest of the
         // player icons use, then scaled once so a 38dp play button and a 42dp
