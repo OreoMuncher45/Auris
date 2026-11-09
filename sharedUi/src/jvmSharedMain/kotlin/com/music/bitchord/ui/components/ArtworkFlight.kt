@@ -21,6 +21,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -111,7 +112,17 @@ private class Departure(
     var destination: String? = null,
 )
 
-/** One cover on its way, in one direction. */
+/**
+ * One cover on its way, in one direction.
+ *
+ * The two ends of it are *state* rather than plain fields, and that is not a
+ * detail: where the page's sleeve is arrives as a side effect of that page's
+ * layout, one or two frames after the tap, and both the drawing and the effect
+ * that drives it have to wake up when it does. Written as plain fields they
+ * were read once, into a flight that then timed out and threw itself away —
+ * which is exactly what "it does the same thing as before, with a glitch"
+ * was: one frame of a picture that had nowhere to go.
+ */
 private class Flight(
     val destination: String,
     val from: Rect,
@@ -123,11 +134,41 @@ private class Flight(
     var model: Any? = null,
     /** The card the picture leaves from or returns to; set last, because the layer waits on it. */
     var token: Any? = null,
-    /** True while the picture is actually being drawn: only then do the ends stand aside. */
+    /** True once the picture has something to show: only then do the ends stand aside. */
     var drawn: Boolean = false,
     /** The flight back, which starts from the page's sleeve rather than from a card's measure. */
     val returning: Boolean = false,
-)
+) {
+    /** The sleeve's place, observable — see the class doc. */
+    var destinationRect: Rect?
+        get() = toState
+        set(value) {
+            toState = value
+        }
+
+    var destinationCornerPx: Float
+        get() = cornerState
+        set(value) {
+            cornerState = value
+        }
+
+    var destinationWash: Color
+        get() = washState
+        set(value) {
+            washState = value
+        }
+
+    var pictureReady: Boolean
+        get() = readyState
+        set(value) {
+            readyState = value
+        }
+
+    private var toState by mutableStateOf<Rect?>(null)
+    private var cornerState by mutableFloatStateOf(0f)
+    private var washState by mutableStateOf(Color.Unspecified)
+    private var readyState by mutableStateOf(false)
+}
 
 private object ArtworkFlight {
     /** Every card on screen that could be departed from, by token. */
@@ -141,6 +182,17 @@ private object ArtworkFlight {
     /** The area the whole thing happens in, so a card measured off screen can be judged. */
     var host: Rect = Rect.Zero
 
+    /**
+     * Where the layer itself sits in the window.
+     *
+     * Every measurement here is in window coordinates — that is the only frame
+     * the card on one page and the sleeve on another can both be stated in —
+     * while a `layout` block places its child relative to its *parent*. The two
+     * frames differ by exactly this offset, and without subtracting it the
+     * picture flies beside the place it was going rather than into it.
+     */
+    var origin: Offset = Offset.Zero
+
     /** 0 to 1 across the current flight. Read inside draw and layout blocks only. */
     var progress by mutableFloatStateOf(0f)
 
@@ -149,7 +201,7 @@ private object ArtworkFlight {
 
     /** The picture is in the air: the card and the sleeve both stand aside for it. */
     val airborne: Boolean
-        get() = flight?.let { it.drawn && it.token != null && (it.returning || it.to != null) } == true
+        get() = flight?.let { it.pictureReady && it.token != null && (it.returning || it.destinationRect != null) } == true
 
     fun departs(token: Any): Boolean = airborne && flight?.token === token
 
@@ -162,7 +214,7 @@ private object ArtworkFlight {
         val current = flight ?: return 1f
         if (current.destination != destination) return 1f
         if (current.returning) return if (airborne) 0f else 1f
-        return if (current.token != null && current.to != null) 0f else 1f
+        return if (current.token != null && current.destinationRect != null) 0f else 1f
     }
 
     fun visibleShare(rect: Rect): Float {
@@ -199,12 +251,16 @@ private object ArtworkFlight {
         val token = current?.token ?: destinations.entries.firstOrNull { it.value == destination }?.key
         val card = token?.let { departures[it] }
         if (card == null || card.bounds.isEmpty) return
-        val landed = current?.let { lerpRect(it.from, it.to ?: from, traveled) } ?: from
+        val landed = current?.let { lerpRect(it.from, it.destinationRect ?: from, traveled) } ?: from
         flight = Flight(
             destination = destination,
             from = if (inAir) landed else from,
             fromCornerPx = if (inAir) {
-                lerpF(current?.fromCornerPx ?: fromCornerPx, current?.toCornerPx ?: fromCornerPx, traveled)
+                lerpF(
+                    current?.fromCornerPx ?: fromCornerPx,
+                    current?.destinationCornerPx ?: fromCornerPx,
+                    traveled,
+                )
             } else {
                 fromCornerPx
             },
@@ -212,7 +268,7 @@ private object ArtworkFlight {
         ).also {
             it.model = card.model
             it.token = token
-            it.drawn = true
+            it.pictureReady = true
         }
         progress = 0f
         sleeveDrawn = null
@@ -313,9 +369,9 @@ fun Modifier.artworkArrival(
             lastBounds[0] = found.inWindow()
             val current = ArtworkFlight.flight
             if (current != null && !current.returning && current.destination == destination) {
-                current.to = found.inWindow()
-                current.toCornerPx = cornerPx
-                current.wash = wash
+                current.destinationRect = found.inWindow()
+                current.destinationCornerPx = cornerPx
+                current.destinationWash = wash
             }
         }
 }
@@ -346,7 +402,10 @@ fun ArtworkFlightLayer() {
     Box(
         Modifier
             .fillMaxSize()
-            .onGloballyPositioned { ArtworkFlight.host = it.inWindow() },
+            .onGloballyPositioned {
+                ArtworkFlight.host = it.inWindow()
+                ArtworkFlight.origin = it.positionInWindow()
+            },
     ) {
         ArtworkFlight.flight?.let { flight -> TravellingArtwork(flight) }
     }
@@ -391,16 +450,20 @@ private fun TravellingArtwork(flight: Flight) {
         if (!flight.returning) {
             // A page that never says where its sleeve is is a page this tap was
             // not opening — stand down and let the card behave normally.
-            withTimeoutOrNull(DESTINATION_TIMEOUT_MS) {
-                snapshotFlow { ArtworkFlight.flight?.to }.filterNotNull().first()
-            } ?: run {
+            val waited = withTimeoutOrNull(DESTINATION_TIMEOUT_MS) {
+                snapshotFlow { ArtworkFlight.flight?.destinationRect }.filterNotNull().first()
+            }
+            if (waited == null) {
+                // A page that never said where its sleeve is is a page this tap
+                // was not opening: stand down and leave the card behaving
+                // normally rather than flying a cover at nothing.
                 if (ArtworkFlight.flight === flight) ArtworkFlight.flight = null
                 return@LaunchedEffect
             }
         }
-        // Drawn before either end stands aside, so nothing blinks out between
-        // the card hiding and the picture appearing.
-        flight.drawn = true
+        // Both ends stand aside from here: the picture is about to be the only
+        // copy of this sleeve on screen.
+        flight.pictureReady = true
         ArtworkFlight.progress = 0f
         progress.animateTo(1f, tween(durationMillis = FLIGHT_MS, easing = FlightEasing)) {
             ArtworkFlight.progress = value
@@ -419,13 +482,13 @@ private fun TravellingArtwork(flight: Flight) {
         if (ArtworkFlight.flight === flight) ArtworkFlight.flight = null
     }
 
-    val destination = flight.to ?: return
+    val destination = flight.destinationRect ?: return
     // The picture is a square at the card's own size — the copy Coil already
     // has — and the moving frame scales it, rather than asking for a second
     // decode at the sleeve's size.
     val sidePx = max(flight.from.width, flight.from.height).coerceAtLeast(1f)
     val side = with(density) { sidePx.toDp() }
-    val wash = flight.wash
+    val wash = flight.destinationWash
 
     Box(
         Modifier
@@ -434,12 +497,20 @@ private fun TravellingArtwork(flight: Flight) {
                 val width = rect.width.roundToInt().coerceAtLeast(1)
                 val height = rect.height.roundToInt().coerceAtLeast(1)
                 val placeable = measurable.measure(Constraints.fixed(width, height))
+                val origin = ArtworkFlight.origin
                 layout(width, height) {
-                    placeable.place(rect.left.roundToInt(), rect.top.roundToInt())
+                    // Window coordinates to the layer's own, which is the frame
+                    // a layout block places in. See [ArtworkFlight.origin].
+                    placeable.place(
+                        (rect.left - origin.x).roundToInt(),
+                        (rect.top - origin.y).roundToInt(),
+                    )
                 }
             }
             .graphicsLayer {
-                shape = RoundedCornerShape(lerpF(flight.fromCornerPx, flight.toCornerPx, progress.value))
+                shape = RoundedCornerShape(
+                    lerpF(flight.fromCornerPx, flight.destinationCornerPx, progress.value),
+                )
                 clip = true
                 alpha = remaining.value
                 // The shadow is the lift: it comes up as the picture leaves the
@@ -458,7 +529,7 @@ private fun TravellingArtwork(flight: Flight) {
             contentScale = ContentScale.Crop,
             onState = {
                 if (it is AsyncImagePainter.State.Success || it is AsyncImagePainter.State.Error) {
-                    flight.drawn = true
+                    flight.pictureReady = true
                 }
             },
             modifier = Modifier
