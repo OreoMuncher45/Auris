@@ -55,6 +55,20 @@ internal object SpotifyToken {
     @Volatile private var accessTokenExpiresAtMs = 0L
     @Volatile private var cachedClientId: String? = null
 
+    /**
+     * The token the web player mints for a visitor with no session, cached
+     * apart from the signed-in one.
+     *
+     * A separate cache rather than one slot, because they are different
+     * identities: the page mints an anonymous token first and the signed-in one
+     * a moment later, so a single slot would have the arrival of the visitor's
+     * token overwrite the listener's (or the other way round) depending on
+     * which request happened to be reading it.
+     */
+    @Volatile private var cachedAnonymousToken: String? = null
+    @Volatile private var anonymousTokenExpiresAtMs = 0L
+    @Volatile private var anonymousClientId: String? = null
+
     @Volatile private var cachedSession: SessionInfo? = null
     @Volatile private var cachedClientToken: String? = null
     @Volatile private var clientTokenExpiresAtMs = 0L
@@ -70,6 +84,9 @@ internal object SpotifyToken {
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         cachedClientId = null
+        cachedAnonymousToken = null
+        anonymousTokenExpiresAtMs = 0L
+        anonymousClientId = null
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
     }
@@ -85,16 +102,55 @@ internal object SpotifyToken {
      * see [harvestViaWebView] for why signing the request ourselves isn't
      * enough.
      */
-    suspend fun accessToken(): String? {
-        val cookie = AppSettings.spotifySpdcToken.value
-        if (cookie.isBlank()) return null
+    suspend fun accessToken(): String? = token(Mode.SIGNED_IN)
+
+    /**
+     * A bearer token that belongs to nobody: the one Spotify's web player mints
+     * for a visitor with no session.
+     *
+     * The harvest below has always received one of these and thrown it away,
+     * because an anonymous token cannot read a track's Canvas — which is what
+     * this class was written for. It *can* read the public catalogue: browse
+     * lists, new releases, categories, search, an album's or a playlist's
+     * tracks. That is what a homepage has to be built from for a listener who
+     * has not signed in, and it is the difference between a provider switch that
+     * shows nothing until you log in and one that shows music immediately.
+     *
+     * Returns null when [init] was never called or the harvest failed, like its
+     * signed-in sibling — never because there is no cookie, which is the whole
+     * point of it.
+     */
+    suspend fun anonymousToken(): String? = token(Mode.ANONYMOUS)
+
+    /** Which of the two identities [token] is minting for. */
+    private enum class Mode { SIGNED_IN, ANONYMOUS }
+
+    /**
+     * A live cached token, or a fresh harvest for [mode].
+     *
+     * One body for both identities, because everything except the cookie and
+     * the cache the answer lands in is identical: the same offscreen web player,
+     * the same hook, the same expiry the page states. The signed-in mode is the
+     * one that needs a cookie, and it is refused outright without one rather
+     * than silently answering with the visitor's token — a caller that asked for
+     * the listener's library must not be handed a stranger's view of it.
+     */
+    private suspend fun token(mode: Mode): String? {
+        val cookie = AppSettings.spotifySpdcToken.value.takeIf { mode == Mode.SIGNED_IN }
+        if (mode == Mode.SIGNED_IN && cookie.isNullOrBlank()) return null
 
         val now = System.currentTimeMillis()
-        cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
+        if (mode == Mode.SIGNED_IN) {
+            cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
+        } else {
+            cachedAnonymousToken?.let { if (now < anonymousTokenExpiresAtMs - 30_000) return it }
+        }
 
         return harvestMutex.withLock {
             val stillNow = System.currentTimeMillis()
-            cachedAccessToken?.let { if (stillNow < accessTokenExpiresAtMs - 30_000) return@withLock it }
+            val live = if (mode == Mode.SIGNED_IN) cachedAccessToken else cachedAnonymousToken
+            val liveExpiry = if (mode == Mode.SIGNED_IN) accessTokenExpiresAtMs else anonymousTokenExpiresAtMs
+            live?.let { if (stillNow < liveExpiry - 30_000) return@withLock it }
 
             val context = appContext
             if (context == null) {
@@ -102,16 +158,33 @@ internal object SpotifyToken {
                 return@withLock null
             }
 
-            val harvested = withContext(Dispatchers.Main) { harvestViaWebView(context, cookie) }
+            val harvested = withContext(Dispatchers.Main) {
+                harvestViaWebView(context, cookie, acceptAnonymous = mode == Mode.ANONYMOUS)
+            }
             if (harvested == null) {
                 Log.w(TAG, "token harvest failed or timed out")
                 return@withLock null
             }
 
-            cachedAccessToken = harvested.token
-            accessTokenExpiresAtMs = harvested.expiresAt
-            harvested.clientId?.let { cachedClientId = it }
-            Log.d(TAG, "harvested access token, good until ${java.util.Date(harvested.expiresAt)}")
+            if (mode == Mode.SIGNED_IN) {
+                cachedAccessToken = harvested.token
+                accessTokenExpiresAtMs = harvested.expiresAt
+                harvested.clientId?.let { cachedClientId = it }
+            } else {
+                cachedAnonymousToken = harvested.token
+                anonymousTokenExpiresAtMs = harvested.expiresAt
+                // Only when nothing better exists: the client id feeds the
+                // client-token request, and the listener's own client id is the
+                // one the rest of the app's signed-in calls should be using.
+                if (cachedClientId == null) {
+                    harvested.clientId?.let { anonymousClientId = it }
+                }
+            }
+            Log.d(
+                TAG,
+                "harvested ${if (mode == Mode.ANONYMOUS) "anonymous " else ""}access token, " +
+                    "good until ${java.util.Date(harvested.expiresAt)}",
+            )
             harvested.token
         }
     }
@@ -131,14 +204,23 @@ internal object SpotifyToken {
      * runs.
      */
     @SuppressLint("SetJavaScriptEnabled")
-    private suspend fun harvestViaWebView(context: Context, cookie: String): HarvestedToken? {
+    private suspend fun harvestViaWebView(
+        context: Context,
+        cookie: String?,
+        acceptAnonymous: Boolean,
+    ): HarvestedToken? {
         val deferred = CompletableDeferred<HarvestedToken?>()
 
+        // No cookie for the anonymous visitor, and none applied: sending a stale
+        // one here would make the page mint the listener's token while the
+        // caller believes it is reading the public catalogue.
         val cookieManager = CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            setCookie("https://open.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
-            setCookie("https://accounts.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
-            flush()
+            if (cookie != null) {
+                setCookie("https://open.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
+                setCookie("https://accounts.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
+                flush()
+            }
         }
         // The player caches its token in web storage and skips a fresh
         // /api/token request if a live one is already sitting there, leaving
@@ -153,7 +235,7 @@ internal object SpotifyToken {
                 settings.domStorageEnabled = true
                 settings.userAgentString = CANVAS_UA
                 cookieManager.setAcceptThirdPartyCookies(this, true)
-                addJavascriptInterface(TokenBridge(deferred), BRIDGE_NAME)
+                addJavascriptInterface(TokenBridge(deferred, acceptAnonymous), BRIDGE_NAME)
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
@@ -184,8 +266,18 @@ internal object SpotifyToken {
         }
     }
 
-    /** Receives raw `/api/token` response bodies from the hooked page. */
-    private class TokenBridge(private val deferred: CompletableDeferred<HarvestedToken?>) {
+    /**
+     * Receives raw `/api/token` response bodies from the hooked page.
+     *
+     * [acceptAnonymous] is the difference between the two identities this is
+     * asked for: reading a Canvas needs the listener's own token, so a visitor's
+     * is skipped and waited out, while reading the public catalogue is exactly
+     * what the visitor's token is for.
+     */
+    private class TokenBridge(
+        private val deferred: CompletableDeferred<HarvestedToken?>,
+        private val acceptAnonymous: Boolean,
+    ) {
         @JavascriptInterface
         fun onTokenPayload(payload: String?) {
             if (payload.isNullOrBlank() || deferred.isCompleted) return
@@ -194,10 +286,10 @@ internal object SpotifyToken {
                 val token = root["accessToken"]?.jsonPrimitive?.contentOrNull
                 val anonymous = root["isAnonymous"]?.jsonPrimitive?.contentOrNull
                     ?.toBooleanStrictOrNull() ?: false
-                // The player also mints an anonymous token before the cookie
-                // takes effect; that one can't read canvases, so keep waiting
-                // for the logged-in one.
-                if (token.isNullOrBlank() || anonymous) return
+                // The player mints an anonymous token before the cookie takes
+                // effect; that one can't read canvases, so a signed-in harvest
+                // keeps waiting for the logged-in one.
+                if (token.isNullOrBlank() || (anonymous && !acceptAnonymous)) return
                 val expiresAt = root["accessTokenExpirationTimestampMs"]?.jsonPrimitive?.contentOrNull
                     ?.toLongOrNull()?.takeIf { it > System.currentTimeMillis() }
                     ?: (System.currentTimeMillis() + DEFAULT_TOKEN_LIFETIME_MS)
@@ -265,7 +357,7 @@ internal object SpotifyToken {
         val now = System.currentTimeMillis()
         cachedClientToken?.let { if (now < clientTokenExpiresAtMs - 30_000) return it }
 
-        val clientId = cachedClientId
+        val clientId = cachedClientId ?: anonymousClientId
         if (clientId == null) {
             Log.w(TAG, "no client id yet (access token not minted); skipping client token")
             return null
