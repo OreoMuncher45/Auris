@@ -1975,7 +1975,11 @@ object AppSettings {
      */
     fun setHomeProvider(value: HomeProvider) {
         homeProvider.value = value
-        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).apply()
+        // Committed, not applied: the caller restarts the process as soon as
+        // this returns, and an async write that has not reached disk when the
+        // process dies is a switch that reports success and comes back on the
+        // old provider — which is exactly what it did.
+        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).commit()
     }
 
     /**

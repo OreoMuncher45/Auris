@@ -240,21 +240,32 @@ internal object SpotifyToken {
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
-                        view.evaluateJavascript(HOOK_SCRIPT, null)
+                        // Guarded: these callbacks fire after the harvest's own
+                        // try block has closed, on the main thread, and the web
+                        // view is destroyed as soon as a token arrives — so a
+                        // page that finishes loading a moment later reaches a
+                        // destroyed view. Throwing there is a process crash for
+                        // work whose entire failure mode is meant to be "no
+                        // token this time".
+                        runCatching { view.evaluateJavascript(HOOK_SCRIPT, null) }
                     }
 
                     override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
                         // Re-assert in case the player navigated client-side
                         // after the onPageStarted injection ran.
-                        view.evaluateJavascript(HOOK_SCRIPT, null)
+                        runCatching { view.evaluateJavascript(HOOK_SCRIPT, null) }
                     }
                 }
                 loadUrl("https://open.spotify.com/")
             }
 
             withTimeoutOrNull(HARVEST_TIMEOUT_MS) { deferred.await() }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: this runs on the main thread at app
+            // start, and a WebView that refuses to come up throws things that
+            // are not Exceptions. Every failure here means "no token", which the
+            // caller already handles, so none of it is worth a crash.
             Log.w(TAG, "token harvest threw: ${e.message}")
             null
         } finally {

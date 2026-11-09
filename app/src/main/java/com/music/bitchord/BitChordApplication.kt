@@ -11,6 +11,7 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.data.CrashLog
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.flow.FlowStore
 import com.music.bitchord.data.liked.LikedCache
@@ -51,6 +52,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @kotlin.OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
+        // First, so anything that fails below is recorded rather than lost. A
+        // crash report with a stack in it is the difference between a bug that
+        // can be fixed and one that can only be guessed at; see [CrashLog].
+        CrashLog.install(this)
         // One system-service probe needs a context; answered once, cached for
         // the process. See DeviceCodecs for what it is and is not.
         com.music.bitchord.data.sources.DeviceCodecs.init(this)

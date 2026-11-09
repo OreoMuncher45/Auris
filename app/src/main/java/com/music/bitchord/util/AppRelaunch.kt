@@ -30,7 +30,7 @@ import android.os.SystemClock
 object AppRelaunch {
 
     /** Roughly how long the restart waits, so the kill lands first. */
-    private const val RESTART_DELAY_MS = 150L
+    private const val RESTART_DELAY_MS = 250L
 
     /**
      * Kills this process and starts [context]'s app again.
@@ -55,7 +55,23 @@ object AppRelaunch {
             PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         alarm.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + RESTART_DELAY_MS, pending)
-        Runtime.getRuntime().exit(0)
+
+        // Killed from a thread of its own, and by pid rather than by
+        // [Runtime.exit].
+        //
+        // The straightforward version — `Runtime.getRuntime().exit(0)` on the
+        // caller's thread — runs the JVM's shutdown sequence from inside a
+        // Compose click handler, on the main thread, in the middle of a frame.
+        // That is what crashed the app on the provider switch: the process died
+        // badly enough to take the activity with it and the alarm's launch
+        // arrived at a dying process. This is what a restart utility does
+        // instead: leave the UI thread alone, wait past the next frame, and kill
+        // the pid outright, so nothing is unwound and nothing can fail while it
+        // is.
+        Thread {
+            runCatching { Thread.sleep(RESTART_DELAY_MS) }
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }.start()
     }
 
     private const val REQUEST_CODE = 1
