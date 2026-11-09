@@ -27,6 +27,8 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.HomeProvider
+import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.data.settings.withoutBlockedArtists
 import com.music.bitchord.data.settings.withoutBlockedRecommendations
 import com.music.bitchord.data.innertube.Innertube
@@ -2297,6 +2299,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
+
+        // The provider decides what a feed *is*, so the YouTube fan-out below is
+        // not something to run and then discard: a Spotify home is built from
+        // Spotify's own rows, matched to playable tracks, and pages no further.
+        // The two above counters are set for requests this path never makes, so
+        // they are cleared rather than left to draw skeletons that never fill.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            _homePendingShelves.value = 0
+            _homeRecentlyPlayedLoading.value = false
+            loadSpotifyHome(identity, generation)
+            return
+        }
         viewModelScope.launch {
             launch {
                 try {
@@ -2341,6 +2355,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    /**
+     * [loadHome]'s Spotify half.
+     *
+     * Not a branch inside the YouTube fan-out, because the two providers share
+     * none of it — not a request, not a continuation, not a shelf shape. What
+     * they do share is the *page*: [publishHomeShelves] and everything under it
+     * draw both, so a Spotify home gets the same skeleton, the same
+     * blocked-artist filtering and the same cards as a YouTube one.
+     *
+     * Nothing here pages. YouTube's home is an endless continuation; Spotify's
+     * is a fixed set of rows read once, so [homeContinuation] stays null and
+     * scrolling to the bottom simply stops.
+     */
+    private fun loadSpotifyHome(identity: String?, generation: Long) {
+        homeContinuation = null
+        viewModelScope.launch {
+            val shelves = runCatching { SpotifyHomeSource.shelves() }.getOrDefault(emptyList())
+            if (!isCurrentHomeLoad(identity, generation)) return@launch
+            if (shelves.isEmpty()) {
+                // An error the listener can act on beats a blank page, and the
+                // likeliest cause is a token that could not be minted rather than
+                // an empty catalogue — see the provider's row logging.
+                _home.value = UiState.Error("Spotify returned nothing to show")
+                return@launch
+            }
+            publishHomeShelves(shelves)
+        }
+    }
+
+    /** [refreshHome]'s Spotify half: the rows, read again rather than carried on. */
+    private suspend fun refreshSpotifyHome(identity: String?) {
+        val shelves = runCatching { SpotifyHomeSource.shelves() }.getOrDefault(emptyList())
+        if (identity != listenerKey() || shelves.isEmpty()) return
+        homeSeenTitles.clear()
+        _homeRaw.value = shelves
+        publishHome()
     }
 
     /**
@@ -2448,6 +2500,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
+        // Spotify's rows are read rather than continued, so a refresh is the
+        // whole of what it does — see [refreshSpotifyHome].
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            refreshSpotifyHome(identity)
+            return@coroutineScope
+        }
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         YtMusicRepository.home().onSuccess { feed ->
             if (identity != listenerKey()) return@onSuccess

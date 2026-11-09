@@ -294,6 +294,16 @@ object AppSettings {
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
     /**
+     * Where the homepage, Flow and Autoplay get their content.
+     *
+     * Read through [HomeProvider] for what this does and does not change —
+     * briefly: the algorithm, not the audio, and not the Library. Changing it
+     * restarts the app, because Flow's and Autoplay's learning are trained
+     * against the provider that built them; see [HomeProvider].
+     */
+    val homeProvider = MutableStateFlow(HomeProvider.YOUTUBE)
+
+    /**
      * The transition planner Automix runs.
      *
      * Pinned to the phrase-aware engine: the legacy plan it replaced is gone,
@@ -1436,6 +1446,9 @@ object AppSettings {
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
+        // An unknown name lands on YouTube rather than on nothing: the provider
+        // a listener never chose is the one that works without an account.
+        homeProvider.value = HomeProvider.of(prefs.getString(KEY_HOME_PROVIDER, null))
         // An install that still has the removed engine's name in its
         // preferences fails the lookup and lands on the one engine there is.
         automixEngine.value = runCatching {
@@ -1951,6 +1964,18 @@ object AppSettings {
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
         prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
+    }
+
+    /**
+     * Records the selected content provider.
+     *
+     * The restart that makes the change take effect is the caller's — see
+     * [com.music.bitchord.util.AppRelaunch] — because a settings write has no
+     * business killing the process behind the screen that called it.
+     */
+    fun setHomeProvider(value: HomeProvider) {
+        homeProvider.value = value
+        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).apply()
     }
 
     /**
@@ -3028,6 +3053,7 @@ object AppSettings {
     private const val KEY_SMART_FADE = "smart_fade_enabled"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
+    private const val KEY_HOME_PROVIDER = "home_provider"
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
