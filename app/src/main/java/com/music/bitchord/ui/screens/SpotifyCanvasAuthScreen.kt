@@ -41,6 +41,7 @@ fun SpotifyCanvasAuthScreen(
     val currentToken by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     val autoHidePlayer by AppSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val prioritizeSpotify by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val spotifyEnabled by AppSettings.spotifyCanvasEnabled.collectAsStateWithLifecycle()
     var tokenInput by remember(currentToken) { mutableStateOf(currentToken) }
 
     Scaffold(
@@ -72,18 +73,27 @@ fun SpotifyCanvasAuthScreen(
             )
 
             SpotifyCanvasSettingToggle(
-                title = stringResource(R.string.spotify_canvas_auto_hide),
-                subtitle = stringResource(R.string.spotify_canvas_auto_hide_subtitle),
-                checked = autoHidePlayer,
-                onCheckedChange = AppSettings::setSpotifyCanvasAutoHide,
+                title = stringResource(R.string.spotify_canvas_enabled),
+                subtitle = stringResource(R.string.spotify_canvas_enabled_subtitle),
+                checked = spotifyEnabled,
+                onCheckedChange = AppSettings::setSpotifyCanvasEnabled,
             )
 
-            SpotifyCanvasSettingToggle(
-                title = stringResource(R.string.prioritize_spotify_canvas),
-                subtitle = stringResource(R.string.prioritize_spotify_canvas_subtitle),
-                checked = prioritizeSpotify,
-                onCheckedChange = AppSettings::setPrioritizeSpotifyCanvas,
-            )
+            if (spotifyEnabled) {
+                SpotifyCanvasSettingToggle(
+                    title = stringResource(R.string.spotify_canvas_auto_hide),
+                    subtitle = stringResource(R.string.spotify_canvas_auto_hide_subtitle),
+                    checked = autoHidePlayer,
+                    onCheckedChange = AppSettings::setSpotifyCanvasAutoHide,
+                )
+
+                SpotifyCanvasSettingToggle(
+                    title = stringResource(R.string.prioritize_spotify_canvas),
+                    subtitle = stringResource(R.string.prioritize_spotify_canvas_subtitle),
+                    checked = prioritizeSpotify,
+                    onCheckedChange = AppSettings::setPrioritizeSpotifyCanvas,
+                )
+            }
             
             Text(
                 text = stringResource(R.string.spotify_canvas_setup_steps),

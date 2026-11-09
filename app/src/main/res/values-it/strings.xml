@@ -521,6 +521,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Riduce il mezzo player dopo 5 secondi mentre è in riproduzione uno Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">Dai priorità a Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Prova Spotify prima di Apple Music e degli altri fornitori di copertine animate</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Disattivato, Spotify resta connesso ma il suo Canvas non viene mai cercato. Le copertine animate di Apple Music, Tidal e della community continuano a funzionare.</string>
     <string name="status">Stato</string>
     <string name="status_dialog_message">Cosa mostra il tuo account mentre la presenza è attiva.</string>
     <string name="status_dnd">Non disturbare</string>

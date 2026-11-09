@@ -503,6 +503,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Spotify Canvas oynarken yarım oynatıcıyı 5 saniye sonra daraltır</string>
     <string name="prioritize_spotify_canvas">Spotify Canvas\'a öncelik ver</string>
     <string name="prioritize_spotify_canvas_subtitle">Apple Music ve diğer hareketli kapak sağlayıcılarından önce Spotify\'ı dene</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Kapalıyken Spotify bağlı kalır ama Canvas\'ı hiç aranmaz. Apple Music, Tidal ve topluluk hareketli kapakları çalışmaya devam eder.</string>
     <string name="status">Durum</string>
     <string name="status_dialog_message">Varlık aktifken hesabının gösterdiği şey.</string>
     <string name="status_dnd">Rahatsız etmeyin</string>

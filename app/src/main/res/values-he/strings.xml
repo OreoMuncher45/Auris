@@ -440,6 +440,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">מכווץ את חצי הנגן אחרי 5 שניות בזמן ש-Spotify Canvas פועל</string>
     <string name="prioritize_spotify_canvas">העדפת Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">לנסות את Spotify לפני Apple Music וספקי עטיפות מונפשות אחרים</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">כשזה כבוי, Spotify נשאר מחובר אבל ה-Canvas שלו לא נחפש לעולם. עטיפות מונפשות של Apple Music, Tidal והקהילה ימשיכו לפעול.</string>
     <string name="status">סטטוס</string>
     <string name="status_dialog_message">מה החשבון שלך מראה בזמן שהנוכחות פעילה.</string>
     <string name="status_dnd">נא לא להפריע</string>

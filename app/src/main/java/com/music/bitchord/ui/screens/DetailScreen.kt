@@ -411,6 +411,7 @@ fun DetailScreen(
     // photograph, and neither is something a label publishes a canvas for.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val spotifyCanvasEnabled by AppSettings.spotifyCanvasEnabled.collectAsStateWithLifecycle()
     // Which acts the listener has marked as AI. Collected here so toggling the
     // menu item updates the chip on the same screen without a reload.
     val aiArtists by AppSettings.aiArtists.collectAsStateWithLifecycle()
@@ -422,7 +423,7 @@ fun DetailScreen(
     // which case the tracks themselves know who it is.
     val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas) {
+    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas, spotifyCanvasEnabled) {
         // An artist's clip is set below, by the lookup that finds it.
         if (isArtist) return@LaunchedEffect
         if (!canvasEnabled || page.type != BrowseType.ALBUM) {

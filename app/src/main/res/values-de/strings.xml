@@ -472,6 +472,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Klappt den halben Player nach 5 Sekunden ein, während Spotify Canvas läuft</string>
     <string name="prioritize_spotify_canvas">Spotify Canvas bevorzugen</string>
     <string name="prioritize_spotify_canvas_subtitle">Spotify vor Apple Music und anderen Anbietern animierter Cover versuchen</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Ausgeschaltet bleibt Spotify verbunden, aber sein Canvas wird nie gesucht. Animierte Cover von Apple Music, Tidal und der Community werden weiterhin abgespielt.</string>
     <string name="status">Status</string>
     <string name="status_dialog_message">Was dein Konto anzeigt, während Presence aktiv ist.</string>
     <string name="status_dnd">Nicht stören</string>

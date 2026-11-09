@@ -488,6 +488,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">ย่อเพลเยอร์ครึ่งจอหลัง 5 วินาทีขณะเล่น Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">ให้ความสำคัญกับ Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">ลอง Spotify ก่อน Apple Music และผู้ให้บริการปกแบบเคลื่อนไหวอื่นๆ</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">เมื่อปิด Spotify จะยังเชื่อมต่ออยู่ แต่จะไม่ค้นหา Canvas ของ Spotify อีก ส่วนปกภาพเคลื่อนไหวของ Apple Music, Tidal และชุมชนยังเล่นได้ตามปกติ</string>
     <string name="status">สถานะ</string>
     <string name="status_dialog_message">สิ่งที่บัญชีของคุณแสดงขณะเปิดใช้งานการแสดงสถานะ</string>
     <string name="status_dnd">ห้ามรบกวน</string>

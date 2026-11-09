@@ -472,6 +472,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Spotify Canvas चलते समय 5 सेकंड बाद आधा प्लेयर छोटा कर देता है</string>
     <string name="prioritize_spotify_canvas">Spotify Canvas को प्राथमिकता दें</string>
     <string name="prioritize_spotify_canvas_subtitle">Apple Music और दूसरे एनिमेटेड कवर प्रदाताओं से पहले Spotify आज़माएँ</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">बंद होने पर Spotify जुड़ा रहता है लेकिन उसका Canvas कभी नहीं खोजा जाता। Apple Music, Tidal और समुदाय के एनिमेटेड कवर अब भी चलते हैं।</string>
     <string name="status">स्टेटस</string>
     <string name="status_dialog_message">प्रेज़ेंस चालू रहते हुए आपका खाता क्या दिखाता है।</string>
     <string name="status_dnd">डिस्टर्ब न करें</string>

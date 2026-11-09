@@ -491,6 +491,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Сворачивает половину плеера через 5 секунд, пока играет Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">Приоритет Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Пробовать Spotify раньше Apple Music и других источников анимированных обложек</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Если выключено, Spotify остаётся подключённым, но его Canvas никогда не ищется. Анимированные обложки Apple Music, Tidal и сообщества продолжат работать.</string>
     <string name="status">Статус</string>
     <string name="status_dialog_message">Что показывает ваш аккаунт, пока Presence активен.</string>
     <string name="status_dnd">Не беспокоить</string>

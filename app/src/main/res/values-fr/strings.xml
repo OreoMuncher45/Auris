@@ -473,6 +473,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Réduit le demi-lecteur après 5 secondes pendant la lecture d\'un Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">Privilégier Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Essayer Spotify avant Apple Music et les autres sources de pochettes animées</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Désactivé, Spotify reste connecté mais son Canvas n\'est jamais recherché. Les pochettes animées d\'Apple Music, Tidal et de la communauté continuent de s\'afficher.</string>
     <string name="status">Statut</string>
     <string name="status_dialog_message">Ce que votre compte affiche lorsque la présence est active.</string>
     <string name="status_dnd">Ne pas déranger</string>

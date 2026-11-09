@@ -164,6 +164,8 @@ interface PlayerSettingsSource {
     val meteredConnection: StateFlow<Boolean?>
     val preferUsbDac: StateFlow<Boolean>
     val prioritizeSpotifyCanvas: StateFlow<Boolean>
+    /** Whether Spotify Canvas is looked up at all; the other providers still are. */
+    val spotifyCanvasEnabled: StateFlow<Boolean>
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>

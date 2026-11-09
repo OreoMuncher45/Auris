@@ -86,10 +86,11 @@ object CanvasRepository {
         // stands instead.
         val album = song.albumName
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        val key = cacheKey("song|${song.videoId}", spotifyFirst)
+        val spotify = AppSettings.spotifyCanvasEnabled.value
+        val key = cacheKey("song|${song.videoId}", spotifyFirst, spotify)
 
         return resolve(key, album != null) {
-            if (spotifyFirst) {
+            if (spotifyFirst && spotify) {
                 firstHit(
                     { SpotifyCanvas.search(title, artist, album) },
                     { AppleMusicCanvas.search(title, artist, album) },
@@ -101,7 +102,9 @@ object CanvasRepository {
                     { AppleMusicCanvas.search(title, artist, album) },
                     { TidalCanvas.search(title, artist, album) },
                     { CommunityCanvas.search(title, artist, album) },
-                    { SpotifyCanvas.search(title, artist, album) },
+                    {
+                        if (spotify) SpotifyCanvas.search(title, artist, album) else null
+                    },
                 ) { it.matches(title, artist, album) }
             }
         }
@@ -118,6 +121,7 @@ object CanvasRepository {
         val key = cacheKey(
             base = "song|${song.videoId}",
             spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value,
+            spotifyEnabled = AppSettings.spotifyCanvasEnabled.value,
         )
         return synchronized(cache) { cache[key]?.artwork }
     }
@@ -136,8 +140,9 @@ object CanvasRepository {
         if (name.isBlank() || credit.isBlank()) return null
 
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        return resolve(cacheKey("album|$name|$credit", spotifyFirst), withAlbum = true) {
-            if (spotifyFirst) {
+        val spotify = AppSettings.spotifyCanvasEnabled.value
+        return resolve(cacheKey("album|$name|$credit", spotifyFirst, spotify), withAlbum = true) {
+            if (spotifyFirst && spotify) {
                 firstHit(
                     { SpotifyCanvas.searchAlbum(name, credit) },
                     { AppleMusicCanvas.searchAlbum(name, credit) },
@@ -149,15 +154,20 @@ object CanvasRepository {
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
-                    { SpotifyCanvas.searchAlbum(name, credit) },
+                    {
+                        if (spotify) SpotifyCanvas.searchAlbum(name, credit) else null
+                    },
                 ) { it.matches(name, credit, name) }
             }
         }
     }
 
     /** Priority is part of the question, so a toggle never reuses the other order's answer. */
-    private fun cacheKey(base: String, spotifyFirst: Boolean): String =
-        "$base|spotifyFirst=$spotifyFirst"
+    private fun cacheKey(
+        base: String,
+        spotifyFirst: Boolean,
+        spotifyEnabled: Boolean,
+    ): String = "$base|spotifyFirst=$spotifyFirst|spotify=$spotifyEnabled"
 
     private suspend fun resolve(
         key: String,

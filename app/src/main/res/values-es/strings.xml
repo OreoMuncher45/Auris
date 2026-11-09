@@ -487,6 +487,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Contrae el medio reproductor tras 5 segundos mientras se reproduce Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">Priorizar Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Probar Spotify antes que Apple Music y otros proveedores de portadas animadas</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Desactivado, Spotify sigue conectado pero su Canvas nunca se busca. Las portadas animadas de Apple Music, Tidal y la comunidad se siguen reproduciendo.</string>
     <string name="status">Estado</string>
     <string name="status_dialog_message">Lo que muestra tu cuenta mientras la presencia está activa.</string>
     <string name="status_dnd">No molestar</string>

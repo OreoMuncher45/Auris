@@ -207,6 +207,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
     override val preferUsbDac = MutableStateFlow(false)
     override val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    override val spotifyCanvasEnabled = MutableStateFlow(true)
     override val reduceAnimation = MutableStateFlow(false)
     override val reduceDynamicBlur = MutableStateFlow(false)
     override val showNerdStats = MutableStateFlow(false)

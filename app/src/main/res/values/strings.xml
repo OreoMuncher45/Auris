@@ -727,6 +727,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Collapse the half-player after 5 seconds while Spotify Canvas is playing</string>
     <string name="prioritize_spotify_canvas">Prioritize Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Try Spotify before Apple Music and other animated cover providers</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Off keeps Spotify connected but never looks up its Canvas. Apple Music, Tidal and community animated covers still play.</string>
     <string name="status">Status</string>
     <string name="status_dialog_message">What your account shows while presence is active.</string>
     <string name="status_dnd">Do not disturb</string>

@@ -458,6 +458,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Spotify Canvasの再生中、5秒後にハーフプレーヤーを折りたたみます</string>
     <string name="prioritize_spotify_canvas">Spotify Canvasを優先</string>
     <string name="prioritize_spotify_canvas_subtitle">Apple Musicなどのアニメーションカバーより先にSpotifyを試します</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">オフにするとSpotifyには接続したままですが、Canvasは検索されません。Apple Music、Tidal、コミュニティのアニメーションカバーは引き続き再生されます。</string>
     <string name="status">ステータス</string>
     <string name="status_dialog_message">プレゼンスが有効な間、アカウントに表示される内容です。</string>
     <string name="status_dnd">取り込み中</string>

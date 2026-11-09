@@ -458,6 +458,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">播放 Spotify Canvas 时，5 秒后收起半屏播放器</string>
     <string name="prioritize_spotify_canvas">优先使用 Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">先尝试 Spotify，再尝试 Apple Music 和其他动态封面来源</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">关闭后 Spotify 仍保持连接，但不再查找其 Canvas。Apple Music、Tidal 和社区的动态封面仍会播放。</string>
     <string name="status">状态</string>
     <string name="status_dialog_message">状态显示开启时，你的账号所展示的内容。</string>
     <string name="status_dnd">请勿打扰</string>

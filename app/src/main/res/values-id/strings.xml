@@ -458,6 +458,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Menciutkan setengah pemutar setelah 5 detik saat Spotify Canvas diputar</string>
     <string name="prioritize_spotify_canvas">Prioritaskan Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Coba Spotify sebelum Apple Music dan penyedia sampul animasi lainnya</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Saat dimatikan, Spotify tetap terhubung tetapi Canvas-nya tidak pernah dicari. Sampul animasi Apple Music, Tidal, dan komunitas tetap diputar.</string>
     <string name="status">Status</string>
     <string name="status_dialog_message">Apa yang ditampilkan akun Anda saat presence aktif.</string>
     <string name="status_dnd">Jangan ganggu</string>

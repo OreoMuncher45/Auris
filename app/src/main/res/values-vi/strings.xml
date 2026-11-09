@@ -1167,6 +1167,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Thu gọn nửa trình phát sau 5 giây khi Spotify Canvas đang phát</string>
     <string name="prioritize_spotify_canvas">Ưu tiên Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Thử Spotify trước Apple Music và các nhà cung cấp ảnh bìa động khác</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Khi tắt, Spotify vẫn được kết nối nhưng Canvas của nó sẽ không bao giờ được tìm kiếm. Ảnh bìa động của Apple Music, Tidal và cộng đồng vẫn phát.</string>
 
     <string name="source_needs_lossless_output">Cần đầu ra lossless · hãy dùng thiết bị hỗ trợ lossless</string>
     <string name="source_needs_lossless_bt_codec">Cần đầu ra lossless · Bluetooth đang dùng %1$s; hãy dùng thiết bị hỗ trợ lossless</string>

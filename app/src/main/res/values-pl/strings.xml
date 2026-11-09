@@ -437,6 +437,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">Zwija połowę odtwarzacza po 5 sekundach, gdy odtwarzany jest Spotify Canvas</string>
     <string name="prioritize_spotify_canvas">Preferuj Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">Próbuj Spotify przed Apple Music i innymi dostawcami animowanych okładek</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">Wyłączone pozostawia Spotify połączone, ale nigdy nie szuka jego Canvasu. Animowane okładki Apple Music, Tidal i społeczności nadal działają.</string>
     <string name="status">Status</string>
     <string name="status_dialog_message">Co pokazuje twoje konto podczas aktywności.</string>
     <string name="status_dnd">Nie przeszkadzać</string>
