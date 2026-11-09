@@ -100,6 +100,14 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
       and verified: run `42529150467` succeeded, four signed APKs, `isDraft:
       true`, and no `v3.0.9-draft` git tag — GitHub creates a draft's tag only
       on publish.
+- [x] Draft `v3.0.10-draft` (versionCode 110) cut from `feature/automix-core-v2`
+      and verified: run `42532929154` succeeded, four signed APKs, `isDraft:
+      true`, no git tag. First pass of the new Automix controls.
+- [x] Draft `v3.0.11-draft` (versionCode 111) cut from `feature/automix-core-v2`
+      and verified: run `42538458236` succeeded, four signed APKs, versionCode
+      111 with the same dev signer (`385af3b4…71ce`), `isDraft: true`, no git
+      tag. Edges resize the transition, the grid is a ruler along the drawing's
+      edges, and snapping is a magnet on bar lines.
 
 ## Automix panel and per-song choices (v3)
 
@@ -233,15 +241,32 @@ transition fell back to a plain fade.
 
 ### 14. Player chrome bugs reported in testing
 
-Reported from the 3.0.10 draft. Not Automix; queued behind the panel work.
+Reported from the 3.0.10 draft. Not Automix; fixed after the panel work, in the
+build after the one the Automix fix went out in.
 
-- [ ] Opening the full player from the mini player, and going back, leaves the
-      track title and artist partially hidden behind something — the text is
-      there but a layer is drawn over part of it. It is correct once the full
-      player is already up, so it is the transition between the two that is
-      wrong.
-- [ ] With the lyrics pane open the album art moves to the top left, which is
-      what is wanted. Opening the queue in that same state zooms the album art
-      slightly — the art was meant to stay as the lyrics pane leaves it, not
-      scale.
+- [x] Opening the full player from the mini player, and going back, left the
+      track title and artist partially hidden behind the artwork. The sleeve is
+      painted above the whole player while it docks, and the credits row sits in
+      the band the artwork's lower edge crosses, so the text was washed out by
+      its own cover for the length of the trip and came back the moment the
+      sheet settled. The row is now recorded and drawn back over the sleeve,
+      with the same fade the rest of the player has.
+- [x] With the lyrics pane open the album art moves to the top left. Opening the
+      queue from that state zoomed the art slightly in place: the uncrop that
+      the lyrics layout had applied was keyed on the lyrics alone, and the queue
+      is reached by closing them, so the picture re-cropped. It is keyed on the
+      player being collapsed into its header at all now.
+
+### 15. Spotify Canvas can be turned off without disconnecting Spotify
+
+- [x] A "Spotify Canvas" switch of its own. It starts on, and it is independent
+      of the sp_dc cookie and of the Spotify account, so Spotify can stay
+      connected for library and playback and simply never supply an animated
+      cover.
+- [x] Off means the Spotify source is not asked at all, not that it is asked
+      last: Apple Music, Tidal and the community index still answer, and a
+      track they have a clip for still plays one. Switching it off also clears
+      "Prioritize Spotify Canvas", which is hidden while it is off.
+- [x] The answer is cached per combination of priority and this switch, so
+      turning it off cannot serve a clip from a cache written while it was on.
 
