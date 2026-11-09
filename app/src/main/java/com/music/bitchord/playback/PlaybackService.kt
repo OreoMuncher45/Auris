@@ -2035,9 +2035,9 @@ class PlaybackService : MediaLibraryService() {
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
-            requestAnalysis = { item, durationMs ->
+            requestAnalysis = { item, durationMs, outgoing ->
                 item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
+                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, outgoing)
                 }
             },
             // The panel's demand: the same work, asked for at the listener's
@@ -2045,9 +2045,9 @@ class PlaybackService : MediaLibraryService() {
             // guard set aside. The bytes go out even if a fetch for the same
             // track is already in the air, because the lane the listener is
             // looking at is worth a second fetch.
-            forceAnalysisFor = { item, durationMs ->
+            forceAnalysisFor = { item, durationMs, outgoing ->
                 item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0)
+                    trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0, outgoing)
                 }
             },
             // How far each track's analysis fetch has got. The panel's

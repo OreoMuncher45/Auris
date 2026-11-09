@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.SystemClock
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.ANALYSIS_HEAD_SECONDS
+import com.music.bitchord.playback.smart.ANALYSIS_TAIL_SECONDS
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -155,6 +156,22 @@ object AudioCache {
      * from" into "the whole file".
      */
     private const val MAX_ANALYSIS_OPENING_BYTES = 12L * 1024 * 1024
+
+    /**
+     * The most the analyser's *tail* round will pull for one track.
+     *
+     * Sized the same way and bounded for the same reason as
+     * [MAX_ANALYSIS_OPENING_BYTES] — twelve seconds of 24-bit/192 kHz is about
+     * twelve megabytes, and [ANALYSIS_TAIL_SECONDS] is a little over twice the
+     * opening's window, so the ceiling is a little over twice its own. A bound
+     * rather than a target: [analysisTailBytes] sizes from the stream's real
+     * length and the track's own duration wherever both are stated.
+     *
+     * This is the number that keeps a lossless outgoing track affordable. Its
+     * whole-file pass would be thirty or forty megabytes and is capped
+     * elsewhere; the window it actually mixes out of is a fraction of one.
+     */
+    private const val MAX_ANALYSIS_TAIL_BYTES = 24L * 1024 * 1024
 
     /**
      * The bitrate assumed for a stream whose duration nobody has stated.
@@ -450,7 +467,13 @@ object AudioCache {
                 // Deleting the bytes is only half of it. The head fetch runs once
                 // per track per session, so without this the entry it just made
                 // room for is never refilled and the discard buys nothing.
-                uri.getQueryParameter("v")?.let(analysisHeads::remove)
+                uri.getQueryParameter("v")?.let { videoId ->
+                    analysisHeads.remove(videoId)
+                    // And the tail's own guard, for the same reason: the copy it
+                    // pulled was thrown off disk, so the next tick has to be free
+                    // to ask for a tail off whatever replaces it.
+                    analysisTails.remove(videoId)
+                }
             }
             .onFailure {
                 TrackLog.d(TAG, "undecodable rendition $key still in use: ${it.message}", about = about)
@@ -1931,6 +1954,211 @@ object AudioCache {
             } finally {
                 analysisOpeningsInFlight.remove(key)
                 endAnalysisFetch(key)
+            }
+        }
+    }
+
+    /**
+     * Seconds of a track's ending whose bytes have been asked for, per track.
+     *
+     * A size rather than a flag for the reason [analysisOpenings] is one, and
+     * keyed the same way — by video id for a YouTube-backed track, by cache key
+     * for a source-backed one.
+     */
+    private val analysisTails = ConcurrentHashMap<String, Double>()
+
+    /** Tracks with a tail fetch in the air, so a 250 ms tick asks once. */
+    private val analysisTailsInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * How many bytes a tail window of [durationSeconds] is, for a stream whose
+     * whole length is [total].
+     *
+     * The mirror of [analysisOpeningBytes], and it has to be: the analyser's
+     * gate measures against this number and the fetch sizes itself by it, so the
+     * two disagreeing is a fetch of one window and a pass that refuses another.
+     *
+     * Zero when either end of the ratio is missing. The tail is addressed
+     * *backwards* from the stream's own length, so unlike the opening there is
+     * no safe assumption to fall back on — a guessed length addresses a guess.
+     */
+    fun analysisTailBytes(total: Long, durationSeconds: Double): Long {
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return 0L
+        if (total <= 0L) return 0L
+        return (ANALYSIS_TAIL_SECONDS * (total / seconds) * ANALYSIS_OPENING_MARGIN).toLong()
+            .coerceAtLeast(PRELOAD_BYTES)
+            .coerceAtMost(minOf(total, MAX_ANALYSIS_TAIL_BYTES))
+    }
+
+    /**
+     * How many bytes of [rendition]'s **ending** are on disk, counted back
+     * [tailBytes] from the stream's own length.
+     *
+     * [Rendition.cachedPrefix] cannot answer this: it counts forward from byte
+     * zero, and the whole point of the tail is that it is the region a streamed
+     * track does not have yet. Contiguous from the tail's own start, not a sum
+     * over the span — a region with a hole in it is what the decoder stops at,
+     * so that is what the analyser's gate has to count.
+     */
+    fun cachedTailBytes(rendition: Rendition, tailBytes: Long): Long {
+        if (!::cache.isInitialized || rendition.contentLength <= 0L || tailBytes <= 0L) return 0L
+        val span = minOf(tailBytes, rendition.contentLength)
+        val position = rendition.contentLength - span
+        return runCatching { cache.getCachedLength(rendition.key, position, span) }
+            .getOrDefault(0L)
+            .coerceAtLeast(0L)
+    }
+
+    /**
+     * Asks for the end of a track's stream, for the analyser's tail pass.
+     *
+     * ## Why nothing else fetches this
+     *
+     * Every other writer works forwards from the beginning: read-ahead fetches
+     * the opening, the player fetches whatever it is about to play, and the
+     * analysis head round fetches the opening too. The end of a streamed track
+     * is therefore a region *nobody* downloads until playback has read its way
+     * there — which is the track's own play time late, and exactly when the
+     * transition it was meant to inform is due.
+     *
+     * The whole-track pass is the other way to get the same evidence, and it
+     * needs every byte the track will ever have on disk at once. It is capped
+     * ([MAX_ANALYSIS_TRACK_BYTES]) so a substituted lossless copy does not turn
+     * opening the Automix panel into a forty-megabyte download, which means that
+     * for anything past the cap it never completes at all. The tail is addressed
+     * from the end and costs a window ([ANALYSIS_TAIL_SECONDS]), so a lossless
+     * copy costs a fifth of a megabyte a second instead of the whole file.
+     *
+     * ## When it is asked for
+     *
+     * Only for the track that is *playing*: [com.music.bitchord.playback.smart.TrackAnalyzer]
+     * requests it from the outgoing side of the pair, because the outgoing side
+     * is the one whose exit is read. The arriving side needs its own opening,
+     * which the head round already fetches.
+     *
+     * A no-op without a duration — see [analysisTailBytes] — and once per track
+     * per session otherwise, with the guard cleared when a round comes back with
+     * the tail still missing so a failed fetch is retried rather than written
+     * off.
+     */
+    fun requestAnalysisTail(uri: Uri, durationSeconds: Double = 0.0, force: Boolean = false) {
+        if (!::cache.isInitialized || upstreamFactory == null) return
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return
+        val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
+        if (videoId == null) {
+            requestSourceAnalysisTail(uri, seconds, force)
+            return
+        }
+        if (!SourceRegistry.youtubeAnalysisEnabled()) return
+        if (!force && analysisTails[videoId] != null) return
+        if (!force && !analysisTailsInFlight.add(videoId)) return
+        if (force) analysisTailsInFlight.add(videoId)
+        // One writer per entry. The head round claims the same video id, and two
+        // writers on one key is how a half-written entry gets spliced from two
+        // encodings — see [analysisHeadSize]. A refused claim is not a failure:
+        // the next tick asks again, and by then the entry is free. Claimed
+        // *before* the track is marked as asked for, so a refusal does not leave
+        // a guard behind that says the tail was fetched when it never was.
+        if (!beginHeadRound(videoId, force)) {
+            analysisTailsInFlight.remove(videoId)
+            return
+        }
+        analysisTails[videoId] = seconds
+        scope.launch {
+            try {
+                val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull() ?: 0L
+                val want = analysisTailBytes(total, seconds)
+                if (total <= 0L || want <= 0L) {
+                    // Not re-armed: an unknown length is a fact about the
+                    // resolver rather than about this round, and asking again on
+                    // the next tick would spend a resolve four times a second
+                    // for the rest of the track's play time. The length arrives
+                    // from the head round, which records it the moment it has it
+                    // — see [recordContentLength] — and the tick then finds the
+                    // bytes already on disk.
+                    TrackLog.d(TAG, "analysis tail for $videoId not asked for: length unknown", videoId)
+                    return@launch
+                }
+                recordContentLength(videoId, total)
+                val position = (total - want).coerceAtLeast(0L)
+                val length = total - position
+                TrackLog.d(
+                    TAG,
+                    "analysis tail round for $videoId: total=$total tail=[$position, $total)",
+                    videoId,
+                )
+                fetch(
+                    cacheKey = videoId,
+                    // The lightweight YouTube Opus copy, for the same reason the
+                    // head round pins it: the base key is reserved for it, and a
+                    // substituted rendition lives under its own.
+                    uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)),
+                    position = position,
+                    length = length,
+                    pinKey = true,
+                )
+                val rendition = renditionsOf(uri).firstOrNull { it.key == videoId }
+                val held = rendition?.let { cachedTailBytes(it, want) } ?: 0L
+                if (held in 1 until want) {
+                    // Re-armed when the round made *progress* and still came up
+                    // short: the entry was free, the bytes were coming, and the
+                    // rest is worth asking for again. Not re-armed when nothing
+                    // landed at all — that is the entry being held by the player,
+                    // and playback is filling this very region as it goes, so the
+                    // tick will find the bytes on disk without another fetch. Not
+                    // re-arming it is also what keeps a failing network from
+                    // becoming four fetch attempts a second.
+                    analysisTails.remove(videoId)
+                }
+            } finally {
+                endHeadRound(videoId)
+                analysisTailsInFlight.remove(videoId)
+            }
+        }
+    }
+
+    /**
+     * The source-backed half of [requestAnalysisTail]: an addon-served track has
+     * no YouTube copy, so the tail comes off the stream the track itself plays
+     * from, under the key that stream resolves to.
+     */
+    private fun requestSourceAnalysisTail(uri: Uri, seconds: Double, force: Boolean) {
+        if (!AutomixAnalysisSource.schemeIsFetchable(uri.scheme)) return
+        val key = cacheKeyOf(uri)
+        val total = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        if (total <= 0L) {
+            // Addressable only from the end, and the end is a number we do not
+            // have. Nothing is lost by waiting: the head round records the
+            // length from the stream itself, and the next tick then sizes this
+            // properly — see [recordContentLength].
+            TrackLog.d(TAG, "analysis tail for $key not asked for: length unknown", key)
+            return
+        }
+        val want = analysisTailBytes(total, seconds)
+        if (want <= 0L) return
+        val position = (total - want).coerceAtLeast(0L)
+        val length = total - position
+        val rendition = renditionsOf(uri).firstOrNull { it.key == key }
+        if (rendition != null && cachedTailBytes(rendition, want) >= want && !force) return
+        if (!force && analysisTails[key] != null) return
+        if (!force && !analysisTailsInFlight.add(key)) return
+        analysisTails[key] = seconds
+        if (force) analysisTailsInFlight.add(key)
+        scope.launch {
+            try {
+                TrackLog.d(TAG, "analysis tail round for $key: total=$total tail=[$position, $total)", key)
+                // Pinned, as the source-backed head round pins its own key: the
+                // write must land in the entry the analyser will read, and the
+                // key factory answers partly from a global substitution setting
+                // that can change between the two.
+                fetch(key, uri, position, length, pinKey = true)
+                val held = renditionsOf(uri).firstOrNull { it.key == key }
+                    ?.let { cachedTailBytes(it, want) } ?: 0L
+                // Re-armed on progress, not on any shortfall; see the YouTube
+                // half of this pair for the reasoning.
+                if (held in 1 until want) analysisTails.remove(key)
+            } finally {
+                analysisTailsInFlight.remove(key)
             }
         }
     }

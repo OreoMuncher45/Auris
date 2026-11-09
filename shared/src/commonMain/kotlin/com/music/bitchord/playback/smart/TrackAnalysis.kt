@@ -100,6 +100,30 @@ data class TrackAnalysis(
      * curve exactly where it belongs.
      */
     val headEnergyCurve: List<EnergySample> = emptyList(),
+    /**
+     * The energy curve of the track's **ending**, measured by a tail-only pass.
+     *
+     * The other half of [headEnergyCurve], and it exists for the same reason
+     * its sibling does: a streamed track's last seconds are not on disk until
+     * the track has been played through, so the whole-track pass — the only
+     * thing that used to fill [energyCurve] — lands after the transition it was
+     * meant to describe, if it lands at all.
+     *
+     * The Automix panel draws the outgoing track over the *end* of its own
+     * timeline, so an opening-only curve is drawn entirely off-screen and the
+     * lane reads as empty however much of the opening was measured. This is the
+     * half that lands in that view, and the times are the track's own, so it
+     * lands exactly where the audio is.
+     *
+     * Kept out of [energyCurve] for the reason [headEnergyCurve] documents from
+     * the other end: the policy counts audible seconds from that curve, and a
+     * curve that covers only the last half-minute would describe a whole track
+     * from its outro. The policy reads the whole-track fields the tail pass
+     * fills in — [contentEndTime], [outroStartTime], [mixOutCandidates] — which
+     * are the measurements a streamed track used to go into its transition
+     * without.
+     */
+    val tailEnergyCurve: List<EnergySample> = emptyList(),
     /** Low-band energy, present only when the analyzer ran a band split. Drives the bass swap. */
     val lowEnergyCurve: List<EnergySample> = emptyList(),
     /**
@@ -131,6 +155,79 @@ data class TrackAnalysis(
 
 /** One point on an energy curve. [energy] is in whatever scale the analyzer chose. */
 data class EnergySample(val time: Double, val energy: Double)
+
+/**
+ * The envelope the Automix panel draws for a track.
+ *
+ * The whole track's curve where one has been measured, and otherwise the two
+ * *windows* that have — the opening from a head pass and the ending from a tail
+ * pass — in the track's own seconds.
+ *
+ * ## Why the windows are drawn together
+ *
+ * A streamed track is measured in pieces, and the piece that matters for the
+ * lower-quality case is not always the one that arrived first. The panel draws
+ * the outgoing track across the *end* of its own timeline, so a curve covering
+ * only the opening lands entirely off-screen and the lane reads as empty however
+ * much of the opening was measured — which is what "the analysis found the key
+ * and the BPM but the waveform is blank" was.
+ *
+ * The two windows are disjoint in time, which is what makes stitching them
+ * honest: the music at either end of the track is drawn where it is, and the
+ * middle — the part nobody has measured — is left blank rather than
+ * interpolated.
+ */
+val TrackAnalysis.panelEnergyCurve: List<EnergySample>
+    get() = when {
+        energyCurve.isNotEmpty() -> energyCurve
+        headEnergyCurve.isEmpty() && tailEnergyCurve.isEmpty() -> emptyList()
+        else -> (headEnergyCurve + tailEnergyCurve).sortedBy { it.time }
+    }
+
+/**
+ * A partial pass's answer merged into another's.
+ *
+ * The head pass measures a track's entry and the tail pass its exit, and both
+ * are published while the track is still playing — so the panel is drawn from
+ * whichever has landed, then from both. Each field is taken from the half that
+ * measured it, with `this` winning where both did: the head pass is where the
+ * policy's entry numbers come from, and a tail window's own tempo estimate is
+ * measured over thirty seconds of an outro, which is the least representative
+ * music in the track.
+ *
+ * The two beat grids are kept *together* rather than chosen between. They are
+ * disjoint in time, and the panel draws them along the edges of its lanes so a
+ * handoff can be snapped to the grid of the music it actually lands on.
+ *
+ * Order matters, and deliberately: `this` is the analysis whose measurements win
+ * where both halves have one. Callers merge the head pass into the tail pass —
+ * see [TrackAnalyzer] — so a note's tempo is never taken from thirty seconds of
+ * an outro over the opening's own estimate.
+ */
+fun TrackAnalysis.mergedWith(arriving: TrackAnalysis): TrackAnalysis = copy(
+    status = TrackAnalysis.STATUS_READY,
+    trackId = trackId,
+    duration = duration.takeIf { it > 0.0 } ?: arriving.duration,
+    bpm = bpm.takeIf { it > 0.0 } ?: arriving.bpm,
+    beatInterval = beatInterval.takeIf { it > 0.0 } ?: arriving.beatInterval,
+    beatConfidence = maxOf(beatConfidence, arriving.beatConfidence),
+    firstBeat = firstBeat.takeIf { it > 0.0 } ?: arriving.firstBeat,
+    downbeats = (downbeats + arriving.downbeats).distinct().sorted(),
+    phraseBoundaries = phraseBoundaries.ifEmpty { arriving.phraseBoundaries },
+    key = key.ifBlank { arriving.key },
+    keyConfidence = maxOf(keyConfidence, arriving.keyConfidence),
+    audibleStartTime = audibleStartTime ?: arriving.audibleStartTime,
+    pickupTime = pickupTime ?: arriving.pickupTime,
+    introEndTime = introEndTime.takeIf { it > 0.0 } ?: arriving.introEndTime,
+    contentEndTime = contentEndTime.takeIf { it > 0.0 } ?: arriving.contentEndTime,
+    outroStartTime = outroStartTime.takeIf { it > 0.0 } ?: arriving.outroStartTime,
+    mixInTime = mixInTime.takeIf { it > 0.0 } ?: arriving.mixInTime,
+    mixOutTime = mixOutTime.takeIf { it > 0.0 } ?: arriving.mixOutTime,
+    mixInCandidates = mixInCandidates.ifEmpty { arriving.mixInCandidates },
+    mixOutCandidates = mixOutCandidates.ifEmpty { arriving.mixOutCandidates },
+    headEnergyCurve = headEnergyCurve.ifEmpty { arriving.headEnergyCurve },
+    tailEnergyCurve = tailEnergyCurve.ifEmpty { arriving.tailEnergyCurve },
+)
 
 /**
  * A candidate point for a transition to enter or leave on. [score] is the

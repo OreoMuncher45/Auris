@@ -57,6 +57,23 @@ import java.util.Locale
 const val ANALYSIS_HEAD_SECONDS = 12.0
 
 /**
+ * How many seconds of a track's **ending** a tail-only pass measures.
+ *
+ * The outgoing half of a transition reads the track's exit — its mix-out anchor,
+ * its content end, and the envelope over its last seconds — and none of that is
+ * inside [ANALYSIS_HEAD_SECONDS]'s window. Matching [BeatTracker.WINDOW_SECONDS]
+ * would cost one inference; this is deliberately a little longer, because the
+ * panel's viewport is the transition window plus the music either side of it
+ * (`MIN_VIEW_SECONDS`, 44 s), and a lane that stops two thirds of the way
+ * across reads as a broken lane rather than as a partial one.
+ *
+ * Public because the cache fetches *for* this number, exactly as it does for
+ * [ANALYSIS_HEAD_SECONDS]: the analizer's gate and the fetch have to agree, or
+ * the fetch pulls a window the pass then refuses as too short.
+ */
+const val ANALYSIS_TAIL_SECONDS = 30.0
+
+/**
  * Produces [TrackAnalysis] for tracks that are about to be mixed, and hands it
  * to [TransitionPlanner].
  *
@@ -158,6 +175,64 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val provisional = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * The partial halves of a track's analysis, kept apart as each pass lands.
+     *
+     * A streamed track is measured in pieces: its opening from [analyzeHead],
+     * its ending from [analyzeTail], and the whole of it only once every byte
+     * the track will ever have is on disk — which for a track still playing is
+     * its own play time away. The panel is drawn from these pieces, so both are
+     * kept and re-merged rather than one publishing over the other.
+     *
+     * Kept *apart* rather than as one growing merge, because the merge has an
+     * order to it: the head pass's numbers are the ones the policy's entry
+     * evidence comes from, and a tail window's tempo is measured over the least
+     * representative music in the track. Storing the merged result and merging
+     * into *that* would make whichever pass finished last the authority on the
+     * tempo — the tail, half the time.
+     */
+    private val partials = ConcurrentHashMap<String, Partial>()
+
+    /** One track's two partial answers. Null until that half has been measured. */
+    private data class Partial(val head: TrackAnalysis? = null, val tail: TrackAnalysis? = null) {
+        /** The pair as one analysis, or null when neither half has landed. */
+        fun merged(): TrackAnalysis? {
+            val opening = head
+            val ending = tail
+            return when {
+                opening == null -> ending
+                ending == null -> opening
+                else -> opening.mergedWith(ending)
+            }
+        }
+    }
+
+    /**
+     * Tracks whose result is a **whole-track** answer: either restored from
+     * [store] or produced by [analyze].
+     *
+     * A partial pass must never publish over one of these. The two run
+     * concurrently — a head or tail pass queued a tick before the whole-track
+     * one landed is exactly the ordering that was observed — and a merged
+     * half-measurement replacing a complete one would take the mix-out anchor
+     * and the content end away from a transition that had them.
+     */
+    private val wholeResults = ConcurrentHashMap.newKeySet<String>()
+
+    /** Tracks with a tail pass in flight; see [analyzeTail]. */
+    private val tailsRunning = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Tail bytes on disk at the last tail attempt, per *rendition*.
+     *
+     * The same retry-on-growth shape as [headAttempts] and for the same reason:
+     * one attempt per track would spend it on a window that arrived
+     * half-written, and one per tick would re-decode the same short window four
+     * times a second. Keyed by rendition because a track can move between
+     * copies, and "how much of this file's ending is here" belongs to the file.
+     */
+    private val tailAttempts = ConcurrentHashMap<String, Long>()
+
+    /**
      * Cached prefix size, in bytes, at the last head attempt on each
      * *rendition*. See [headWorthTrying].
      *
@@ -177,6 +252,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * version of this hid exactly that.
      */
     private val headSkipLogged = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Tail-and-rendition pairs that have already reported waiting for an ending,
+     * for the same reason as [headSkipLogged].
+     */
+    private val tailSkipLogged = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * How many times each track's whole-track pass has been refused for
@@ -291,6 +372,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         fastExecutor.execute {
             val stored = store.load(trackId) ?: return@execute
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
+            // Marked whole before it is published, so a partial pass running
+            // beside this one cannot merge over it once it lands — see
+            // [wholeResults].
+            wholeResults.add(trackId)
             results.putIfAbsent(trackId, stored)
         }
     }
@@ -340,7 +425,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * to wait for and nothing to escalate through. See [LocalAudioSource] for
      * why that needed saying at all.
      */
-    fun request(trackId: String, uri: Uri, durationSeconds: Double) {
+    fun request(trackId: String, uri: Uri, durationSeconds: Double, outgoing: Boolean = false) {
         if (trackId.isBlank()) return
         // Before anything else this would spend: [analysisUriFor] alone can put
         // a catalogue match on the network for a track the party will never
@@ -387,9 +472,54 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             emptyList()
         } else {
             cache.renditionsOf(analysisUri)
-                .filter { it.isComplete && it.key !in badRenditions }
+                .filter { it.isAnalysable && it.key !in badRenditions }
         }
         val usableComplete = local || complete.isNotEmpty()
+
+        // The outgoing half of the pair, measured from its *end*.
+        //
+        // A track the listener is listening to is the one the panel draws down
+        // to its own last seconds and the one the planner mixes out of, and for
+        // a streamed track none of that music is on disk yet: every other writer
+        // works forwards from byte zero, so the end of a stream arrives when
+        // playback reaches it and not before. The whole-track pass covers the
+        // same ground and needs the entire file; this needs a window.
+        //
+        // Asked for here rather than when the transition is due, because that is
+        // the moment there is time to fetch it: the track's own play time.
+        // Skipped for a track on the device and for one already whole on disk,
+        // where the whole-track pass either has everything or is about to.
+        if (outgoing && !local && !usableComplete) {
+            val tailRendition = tailWorthTrying(analysisUri, durationSeconds)
+            if (tailRendition == null) {
+                // Nothing to read yet, so ask for the bytes. The cache guards
+                // this to one round per track and re-arms it when a round comes
+                // back empty, so a tick every 250 ms costs a set lookup.
+                cache.requestAnalysisTail(analysisUri, durationSeconds)
+            } else if (tailsRunning.add(trackId)) {
+                fastExecutor.execute {
+                    try {
+                        if (stopped) return@execute
+                        // A whole-track answer may have landed while this sat in
+                        // the queue, and it covers the ending by definition.
+                        if (trackId in wholeResults) return@execute
+                        Process.setThreadPriority(
+                            if (AppSettings.automixPerformanceMode.value == AutomixPerformanceMode.EFFICIENT) {
+                                Process.THREAD_PRIORITY_BACKGROUND
+                            } else {
+                                Process.THREAD_PRIORITY_DEFAULT
+                            },
+                        )
+                        analyzeTail(trackId, analysisUri, durationSeconds, tailRendition)
+                            ?.let { publishPartial(trackId, it, fromHead = false) }
+                    } catch (error: Throwable) {
+                        Log.w(TAG, "Tail analysis of $trackId failed", error)
+                    } finally {
+                        tailsRunning.remove(trackId)
+                    }
+                }
+            }
+        }
 
         val recorded = results[trackId]
         // Two things are worth superseding, and nothing else is. A provisional
@@ -514,24 +644,31 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 if (headOnly) {
                     // Marked before it is published, so a reader on the playback
                     // thread can never see a provisional result that is not
-                    // flagged as one.
+                    // flagged as one. Merged rather than assigned: the tail pass
+                    // may already have published the track's ending, and the two
+                    // measure different halves of it — see [partials].
                     analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)?.let { head ->
-                        provisional.add(trackId)
-                        results[trackId] = head
+                        publishPartial(trackId, head, fromHead = true)
                     }
                 } else {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
-                    val whole = outcome.analysis
-                    if (whole != null) {
-                        results[trackId] = whole
+                    val measured = outcome.analysis
+                    if (measured != null) {
+                        results[trackId] = measured
                         provisional.remove(trackId)
+                        // The partial halves are spent: they were the answer
+                        // until this one arrived, and merging them into it would
+                        // put a window of the outro back over the whole track's
+                        // own numbers.
+                        wholeResults.add(trackId)
+                        partials.remove(trackId)
                         shortDecodes.remove(trackId)
                         // Only the whole-track pass is persisted. A head result
                         // is missing everything past its window — the outro, the
                         // mix-out anchor, the energy curve — and storing one
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
-                        store.save(trackId, whole)
+                        store.save(trackId, measured)
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS
@@ -609,15 +746,231 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * fetch of the same bytes, and the analyzer's guards still stop a second
      * decode of the same file.
      */
-    fun force(trackId: String, uri: Uri, durationSeconds: Double) {
+    fun force(trackId: String, uri: Uri, durationSeconds: Double, outgoing: Boolean = false) {
         if (trackId.isBlank()) return
         if (stopped) return
         // The bytes first: everything else is downstream of them, and a
         // decode of nothing is a decode of nothing.
         cache.requestAnalysisHead(uri, durationSeconds, force = true)
+        // The outgoing track's lane is drawn over its ending, so that is the
+        // window the listener is waiting to see measured — and its bytes are the
+        // ones nothing else has fetched. See [AudioCache.requestAnalysisTail].
+        if (outgoing) cache.requestAnalysisTail(uri, durationSeconds, force = true)
         // Then the ordinary path, so a track whose bytes are already on disk
         // is measured now rather than at the next tick.
-        request(trackId, uri, durationSeconds)
+        request(trackId, uri, durationSeconds, outgoing)
+    }
+
+    /**
+     * Publishes one half of a track's analysis, merged with the half that has
+     * already landed.
+     *
+     * A streamed track is measured in pieces and the panel is drawn from
+     * whatever has arrived: the opening from a head pass, the ending from a tail
+     * pass, and nothing at all in between until the whole file is on disk. Each
+     * piece is merged into one result rather than replacing the last, because the
+     * two are genuinely different evidence about the same track — and because a
+     * reader that saw only the newer one would watch a track's tempo disappear
+     * when its outro arrived.
+     */
+    private fun publishPartial(trackId: String, piece: TrackAnalysis, fromHead: Boolean) {
+        // A whole-track answer always wins. It covers both halves, and the two
+        // passes run concurrently — a partial queued a tick before the whole
+        // one landed is the ordering that was actually observed.
+        if (trackId in wholeResults) return
+        val pair = partials.compute(trackId) { _, current ->
+            if (fromHead) (current ?: Partial()).copy(head = piece)
+            else (current ?: Partial()).copy(tail = piece)
+        } ?: return
+        val merged = pair.merged() ?: return
+        provisional.add(trackId)
+        results[trackId] = merged
+    }
+
+    /**
+     * A rendition whose **ending** is on disk far enough to decode a tail window
+     * from, claiming the attempt; null when nothing is there to read yet.
+     *
+     * The mirror of [headWorthTrying], with one deliberate difference: the
+     * rendition does *not* have to be complete. That is the whole point of this
+     * pass — the ending of a streamed track is the region that is not on disk
+     * until the track has been played to its end, and requiring completeness is
+     * what made the whole-track pass useless for it. What is required instead is
+     * that the region the pass will actually decode is there, measured as
+     * contiguous bytes from the tail's own start ([AudioCache.cachedTailBytes]),
+     * which is what the decoder stops at.
+     *
+     * Retried on growth rather than once, like the head: a window that arrived
+     * half-written is not a measurement, and one attempt per track would spend
+     * itself on exactly that.
+     */
+    private fun tailWorthTrying(uri: Uri, durationSeconds: Double): AudioCache.Rendition? {
+        // The window is addressed backwards from the stream's own length, so
+        // without a duration there is no end to count back from.
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        for (candidate in cache.renditionsOf(uri)) {
+            if (candidate.key in badRenditions) continue
+            val total = candidate.contentLength
+            if (total <= 0L) continue
+            val want = cache.analysisTailBytes(total, seconds)
+            if (want <= 0L) continue
+            val held = cache.cachedTailBytes(candidate, want)
+            if (held < want) {
+                if (tailSkipLogged.add("${candidate.key}@$total")) {
+                    Log.d(
+                        TAG,
+                        "Tail pass for ${candidate.key} waiting: ${held / 1024}kB of ${want / 1024}kB at the end",
+                    )
+                }
+                continue
+            }
+            if (tailAttempts[candidate.key] == held) continue
+            tailAttempts[candidate.key] = held
+            return candidate
+        }
+        return null
+    }
+
+    /**
+     * The track's **ending** only: the envelope over its last seconds, and the
+     * measurements the outgoing half of a transition reads.
+     *
+     * The mirror of [analyzeHead], and it exists for the mirror-image reason. The
+     * panel draws the outgoing track across the *end* of its own timeline and the
+     * policy mixes out of that end — content end, outro, mix-out anchors. None of
+     * those is inside the head pass's window, and for a streamed track nothing
+     * else measures them until the whole file is on disk: the outgoing side of
+     * every streamed transition used to be planned from no evidence at all, which
+     * is a plain fade and a lane with nothing drawn in it.
+     *
+     * The window is [ANALYSIS_TAIL_SECONDS], read through the same cache copy the
+     * whole-track pass reads — so a rendition that is still filling in is usable,
+     * which is the case this exists for.
+     *
+     * Everything here is a *measurement within the window*, stated in the track's
+     * own seconds. It says nothing about the middle of the track, which is why
+     * the curve goes to [TrackAnalysis.tailEnergyCurve] and not to `energyCurve`:
+     * the policy counts audible seconds from that one, and a curve covering only
+     * an outro would describe a whole track from its last half-minute.
+     */
+    private fun analyzeTail(
+        trackId: String,
+        uri: Uri,
+        durationSeconds: Double,
+        rendition: AudioCache.Rendition,
+    ): TrackAnalysis? {
+        val expected = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        // How much of an ending there are actually bytes for.
+        //
+        // The fetch that fills this window is bounded
+        // ([AudioCache.MAX_ANALYSIS_TAIL_BYTES]), so a rendition heavy enough to
+        // overflow that bound is measured over the window its capped round
+        // really covers rather than over one whose first megabytes are missing.
+        // That distinction matters: a region the source cannot read from its own
+        // start is not a shorter measurement, it is a decode that stops at the
+        // first hole — and the length the analyser asked for is the same number
+        // the fetch sized itself by, so this cannot disagree with it.
+        val want = cache.analysisTailBytes(rendition.contentLength, expected)
+        if (want <= 0L || rendition.contentLength <= 0L) return null
+        val held = cache.cachedTailBytes(rendition, want)
+        if (held <= 0L) return null
+        val bytesPerSecond = rendition.contentLength.toDouble() / expected
+        // A second of slack off the front of the window: the extractor seeks to a
+        // sync sample at or before where the window starts, and a seek into the
+        // gap before the cached bytes begin reads as the end of the file.
+        val window = minOf(ANALYSIS_TAIL_SECONDS, held / bytesPerSecond - TAIL_WINDOW_SLACK_SECONDS)
+        if (window < MIN_HEAD_SECONDS) {
+            Log.d(
+                TAG,
+                "Tail pass for $trackId has only ${"%.1f".format(Locale.ROOT, held / bytesPerSecond)}s " +
+                    "of bytes at its end; too short to measure",
+            )
+            return null
+        }
+        val start = max(0.0, expected - window)
+        val copy = Copy(key = rendition.key, rendition = rendition) {
+            cache.renditionDataSource(uri, rendition)
+        }
+        // The same guard the head and whole-track passes apply, for the same
+        // reason: a sibling rendition can be a different cut of the song — a
+        // radio edit, a version with a longer outro — and a mix-out anchor or a
+        // content end borrowed across that difference sits seconds off, which is
+        // worse than no anchor at all. Skipped for the copy the player is reading
+        // itself, which is the track by definition.
+        if (rendition.key != cache.cacheKeyOf(uri)) {
+            val length = copy.open()?.use(AudioDecoder::containerDurationSeconds)
+            if (length == null || length <= 0) {
+                Log.d(TAG, "Tail rendition ${rendition.key} for $trackId has no readable duration yet")
+                return null
+            }
+            if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
+                Log.d(
+                    TAG,
+                    "Tail rendition ${rendition.key} rejected for $trackId: " +
+                        "${"%.1f".format(Locale.ROOT, length)}s against " +
+                        "${"%.1f".format(Locale.ROOT, expected)}s expected",
+                )
+                badRenditions.add(rendition.key)
+                return null
+            }
+        }
+        // Features are derived here, unlike the whole-track pass's own tail
+        // region: this pass has nothing else to go on, and the DSP half is what
+        // measures a content end and the mix-out anchors the policy reads.
+        val tail = region(copy.open, start, expected, features = null, deriveFeatures = true)
+            ?: run {
+                if (stopped) return null
+                Log.d(TAG, "Tail pass for $trackId could not decode rendition ${rendition.key}")
+                return null
+            }
+        val grid = tail.grid
+        val features = tail.features
+        if (grid == null && features == null) {
+            Log.d(TAG, "Tail pass for $trackId produced nothing usable")
+            return null
+        }
+        // What was decoded, not what was asked for: a window the cache only
+        // part-covers decodes to where the bytes stop, and a content end read off
+        // three seconds is not a weaker measurement than one read off thirty, it
+        // is a different one. The next attempt gets more of the file.
+        if (tail.seconds < MIN_HEAD_SECONDS) {
+            Log.d(TAG, "Tail pass for $trackId decoded only ${"%.1f".format(Locale.ROOT, tail.seconds)}s; too short")
+            return null
+        }
+        // The features' own times start at the window, not at the track, and the
+        // extractor seeks to a sync sample at or before what was asked for — so
+        // the offset is what it actually decoded from, not [start].
+        val offset = tail.startSeconds
+        fun at(value: Double?): Double =
+            value?.takeIf { it > 0.0 }?.plus(offset)?.coerceIn(0.0, expected) ?: 0.0
+        Log.d(
+            TAG,
+            "Analysed tail of $trackId: bpm=${grid?.bpm ?: features?.bpm} " +
+                "contentEnd=${at(features?.contentEndTime)} mixOut=${features?.mixOutCandidates?.size ?: 0} " +
+                "over ${"%.1f".format(Locale.ROOT, tail.seconds)}s from " +
+                "${"%.1f".format(Locale.ROOT, offset)}s",
+        )
+        return TrackAnalysis(
+            status = TrackAnalysis.STATUS_READY,
+            trackId = trackId,
+            duration = expected,
+            bpm = grid?.bpm ?: features?.bpm ?: 0.0,
+            beatInterval = grid?.beatInterval ?: features?.beatInterval ?: 0.0,
+            beatConfidence = grid?.beatConfidence ?: features?.beatConfidence ?: 0.0,
+            firstBeat = grid?.firstBeat ?: features?.firstBeat ?: 0.0,
+            downbeats = grid?.downbeats.orEmpty(),
+            key = features?.key.orEmpty(),
+            keyConfidence = features?.keyConfidence ?: 0.0,
+            contentEndTime = at(features?.contentEndTime),
+            outroStartTime = at(features?.outroStartTime),
+            mixOutTime = at(features?.mixOutTime),
+            mixOutCandidates = features?.mixOutCandidates.orEmpty()
+                .map { MixCandidate(it.time + offset, it.score, it.type) },
+            // Kept apart from [TrackAnalysis.energyCurve] on purpose; see the
+            // field's own note and [analyzeHead]'s.
+            tailEnergyCurve = features?.energyCurve.orEmpty()
+                .map { EnergySample(it.time + offset, it.energy) },
+        )
     }
 
     /**
@@ -863,8 +1216,27 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /**
+     * Whether this rendition can be read through: every byte, or close enough
+     * that the whole-track decode will take it.
+     *
+     * [AudioCache.Rendition.isComplete] is the strict test, and it is stricter
+     * than the decode it gates. [structure] already refuses a decode that stops
+     * more than [MIN_DECODED_FRACTION] short of the track — so a rendition
+     * missing a couple of per cent was refused twice over: once by the fetch
+     * that could not finish it (the analysis round is capped, see
+     * [AudioCache.MAX_ANALYSIS_TRACK_BYTES]) and again here, for bytes the
+     * decoder would have tolerated. Nothing then measured the track whole, and
+     * for a copy past the cap that was permanent.
+     *
+     * The threshold is deliberately a little above [MIN_DECODED_FRACTION] so the
+     * decode's own tolerance has margin rather than being hit exactly.
+     */
+    private val AudioCache.Rendition.isAnalysable: Boolean
+        get() = contentLength > 0L && cachedPrefix >= contentLength * ANALYSABLE_FRACTION
+
+    /**
      * Picks which rendition of [uri]'s recording to analyse: the lightest one
-     * that is both complete and the same cut as the track being played.
+     * that is both readable and the same cut as the track being played.
      *
      * A recording can be on disk two or three times over — the Opus stream
      * YouTube served, a substituted source's copy, a later quality upgrade — and
@@ -886,16 +1258,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         uri: Uri,
         durationSeconds: Double,
     ): AudioCache.Rendition? {
-        val complete = cache.renditionsOf(uri)
-            .filter { it.isComplete && it.key !in badRenditions }
-        if (complete.isEmpty()) return null
+        val readable = cache.renditionsOf(uri)
+            .filter { it.isAnalysable && it.key !in badRenditions }
+        if (readable.isEmpty()) return null
 
         val expected = durationSeconds.takeIf { it.isFinite() && it > 0 }
         // Without a length to check a sibling against, sharing would be a guess,
         // so only the rendition actually being played can be trusted.
         if (expected == null) {
             val own = cache.cacheKeyOf(uri)
-            complete.firstOrNull { it.key == own }?.let { return it }
+            readable.firstOrNull { it.key == own }?.let { return it }
             // Nothing to cross-check against — but one copy is not ambiguous
             // either, and refusing it outright is a dead end rather than a
             // safeguard. [cacheKeyOf] answers with whichever rendition the key
@@ -909,7 +1281,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // choose wrongly between. With exactly one there is no choice being
             // made, and the worst case degrades from "never analysed" to "a grid
             // measured off the only audio we have".
-            return complete.singleOrNull()?.also {
+            return readable.singleOrNull()?.also {
                 Log.d(
                     TAG,
                     "Analysing $trackId from its only cached rendition ${it.key}; " +
@@ -918,11 +1290,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
         }
 
-        for (candidate in complete) {
+        for (candidate in readable) {
             val length = cache.renditionDataSource(uri, candidate)
                 .use(AudioDecoder::containerDurationSeconds)
             if (length == null || length <= 0) {
-                // Every candidate here is complete, so no more bytes are coming
+                // Every candidate here is readable, so no more bytes are coming
                 // to make the header readable: remembered for the reason below.
                 badRenditions.add(candidate.key)
                 continue
@@ -1297,6 +1669,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val grid: BeatTracker.Grid?,
         val vocalMask: DoubleArray?,
         val seconds: Double,
+        /**
+         * Where the decoded window actually starts in the track, in seconds.
+         *
+         * The extractor seeks to a sync sample at or before what was asked for,
+         * so this is not the `startSeconds` the caller passed. The model's beat
+         * times are already stated against it; the DSP features are not, and a
+         * pass that decodes anything other than a whole track has to add it — a
+         * tail window whose curve was left at zero would draw the track's
+         * ending at its opening.
+         */
+        val startSeconds: Double = 0.0,
         /** Only populated when the caller asked for it; see [region]'s `deriveFeatures`. */
         val features: TrackFeatures.Features? = null,
     )
@@ -1353,6 +1736,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
             vocalMask = features?.let { vocalMask(stereo, it, actualStart) },
             seconds = seconds,
+            startSeconds = actualStart,
             features = inputs.derived,
         )
     }
@@ -1465,7 +1849,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         wholeExecutor.shutdownNow()
         headAttempts.clear()
         headSkipLogged.clear()
+        tailAttempts.clear()
+        tailSkipLogged.clear()
         provisional.clear()
+        partials.clear()
+        wholeResults.clear()
+        tailsRunning.clear()
         restoreAttempted.clear()
         shortDecodes.clear()
         badRenditions.clear()
@@ -1508,6 +1897,27 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * refusing over that would refuse everything.
          */
         const val MIN_DECODED_FRACTION = 0.95
+
+        /**
+         * How much of a rendition's own length has to be on disk before the
+         * whole-track pass will read it; see [isAnalysable].
+         *
+         * Above [MIN_DECODED_FRACTION] on purpose: the decode's 5 % tolerance
+         * is for padding and rounding, and a rendition admitted at exactly that
+         * line would fail its own decode and burn a strike instead of being
+         * measured.
+         */
+        const val ANALYSABLE_FRACTION = 0.98
+
+        /**
+         * A second shaved off the front of a tail window before it is decoded.
+         *
+         * The window is drawn from the bytes on disk, and the extractor seeks to
+         * a sync sample at or *before* where it was asked to start — so a window
+         * that begins exactly at the first cached byte can be seeked into the gap
+         * in front of it, which reads as the end of the file. See [analyzeTail].
+         */
+        const val TAIL_WINDOW_SLACK_SECONDS = 1.0
 
         /**
          * The longest track the analyzer will decode whole.

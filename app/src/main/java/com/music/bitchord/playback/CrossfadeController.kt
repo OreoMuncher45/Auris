@@ -33,6 +33,7 @@ import com.music.bitchord.playback.smart.AutomixPreviewState
 import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.keysCompatible
+import com.music.bitchord.playback.smart.panelEnergyCurve
 import com.music.bitchord.playback.smart.planTransition
 import com.music.bitchord.playback.smart.tempoRatio
 import kotlinx.coroutines.CoroutineScope
@@ -150,8 +151,15 @@ class CrossfadeController(
      * that far ahead yet. The analyzer needs it to tell one rendition of a
      * recording from a differently-cut one before reusing an analysis across
      * them, and this class is the only place that already knows it.
+     *
+     * The third argument says which side of the pair the item is on. The
+     * analyser measures the track that is *playing* from both ends — its ending
+     * is what the outgoing half of a transition and the panel's upper lane read
+     * — and the track that is coming from its opening only. Fetching an outro
+     * for a track nobody is listening to yet would spend the listener's data on
+     * a window that will still be there in three minutes.
      */
-    private val requestAnalysis: (MediaItem, Long) -> Unit = { _, _ -> },
+    private val requestAnalysis: (MediaItem, Long, Boolean) -> Unit = { _, _, _ -> },
     /**
      * Asks for a media item's analysis *now*, rather than at the next tick's
      * noticing.
@@ -164,7 +172,7 @@ class CrossfadeController(
      *
      * Used by [forceAnalysis], which the panel asks for when it opens.
      */
-    private val forceAnalysisFor: (MediaItem, Long) -> Unit = { _, _ -> },
+    private val forceAnalysisFor: (MediaItem, Long, Boolean) -> Unit = { _, _, _ -> },
     /**
      * How far the fetch of a media item's analysis bytes has got, 0..1.
      *
@@ -886,9 +894,9 @@ class CrossfadeController(
             player.duration,
             current.claimedDurationMs() ?: 0L,
         )
-        forceAnalysisOf(current, duration)
+        forceAnalysisOf(current, duration, outgoing = true)
         player.nextItemOrNull()?.let { next ->
-            forceAnalysisOf(next, nextItemDurationMs(next))
+            forceAnalysisOf(next, nextItemDurationMs(next), outgoing = false)
         }
     }
 
@@ -899,9 +907,9 @@ class CrossfadeController(
      * measured, because there is no beat grid in a video to measure, and a
      * converted video-origin track is measured like any other audio.
      */
-    private fun forceAnalysisOf(item: MediaItem, durationMs: Long) {
+    private fun forceAnalysisOf(item: MediaItem, durationMs: Long, outgoing: Boolean) {
         if (!automixEligible(item.isVideo, item.isVideoOrigin)) return
-        forceAnalysisFor(item, durationMs)
+        forceAnalysisFor(item, durationMs, outgoing)
     }
 
     /**
@@ -1321,13 +1329,13 @@ class CrossfadeController(
         // the Automix panel has a lane for it and draws the transition window
         // over its end.
         if (automixEligible(currentItem.isVideo, currentItem.isVideoOrigin)) {
-            requestAnalysis(currentItem, duration)
+            requestAnalysis(currentItem, duration, true)
         }
         val nextItem = player.nextItemOrNull() ?: return
         // Video playback has no beat grid to measure; a converted video-origin
         // track does, and is measured like any other audio.
         if (!automixEligible(nextItem.isVideo, nextItem.isVideoOrigin)) return
-        requestAnalysis(nextItem, nextItemDurationMs(nextItem))
+        requestAnalysis(nextItem, nextItemDurationMs(nextItem), false)
     }
 
     /**
@@ -1442,21 +1450,19 @@ class CrossfadeController(
      * behind them.
      */
     private fun buildDigest(analysis: TrackAnalysis, provisional: Boolean): TrackAnalysisDigest {
-        // The whole track's envelope when there is one, and the opening's when
-        // there is not.
+        // The panel's own envelope: the whole track when it has been measured,
+        // and otherwise the two windows that have — the opening from a head pass
+        // and the ending from a tail pass. See [panelEnergyCurve], which owns
+        // that choice and the reasoning behind it.
         //
-        // A head-only pass measures the envelope of the window it decoded and
-        // drops it, because the policy counts audible seconds from that curve
-        // and a curve that stops thirty seconds in would describe an ending it
-        // never heard. The panel is not the policy: it draws a lane, and a
-        // lane with the opening drawn in it and the rest honestly blank is
-        // better than an empty one — and the times are the track's own, so it
-        // lands exactly where the audio is.
-        val curve = if (analysis.energyCurve.isNotEmpty()) {
-            analysis.energyCurve
-        } else {
-            analysis.headEnergyCurve
-        }
+        // A partial pass keeps its curve out of `energyCurve` on purpose,
+        // because the policy counts audible seconds from that one and a curve
+        // covering a single window would describe a whole track from it. The
+        // panel is not the policy: it draws a lane, the outgoing track is drawn
+        // across the *end* of its own timeline, and an opening-only curve lands
+        // entirely off-screen — which is what made the upper lane read as empty
+        // on every streamed track.
+        val curve = analysis.panelEnergyCurve
         val energy = curve.map { it.energy }
         val peak = energy.filter { it.isFinite() }.maxOrNull() ?: 0.0
         // The waveform's own envelope: the analyser's own resolution, with the
@@ -1479,7 +1485,14 @@ class CrossfadeController(
             audibleStart = analysis.audibleStartTime ?: 0.0,
             pickup = analysis.pickupTime ?: 0.0,
             introEnd = analysis.introEndTime,
-            contentEnd = analysis.contentEndTime,
+            contentEnd = analysis.contentEndTime.takeIf { it > 0.0 }
+                // A pass that has not measured the ending leaves this at zero,
+                // and zero is not "the track ends at the start" — the panel
+                // builds its viewport around this number and would open on the
+                // opening of a track the listener is hearing the end of. The
+                // duration is the honest answer until the tail pass arrives: it
+                // is where the transition window is drawn either way.
+                ?: if (analysis.isUsable) analysis.duration else 0.0,
             duration = analysis.duration,
             vocals = bucketize(analysis.vocalActivityMask, PANEL_BUCKETS, 1.0),
             energy = bucketize(energy, PANEL_BUCKETS, peak),
