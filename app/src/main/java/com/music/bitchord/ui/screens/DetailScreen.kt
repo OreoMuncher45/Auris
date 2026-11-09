@@ -141,6 +141,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.ARRIVAL_OVERSHOOT
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
@@ -154,6 +155,7 @@ import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
+import com.music.bitchord.ui.components.rememberArrivalProgress
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
@@ -1210,6 +1212,11 @@ private fun PageBackground(
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    // The picture's arrival: a quarter of a second of settle when the page
+    // opens, skipped outright where the listener has asked for no motion or the
+    // device has been judged too slow to spend frames on it.
+    val reduceMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val arrival = rememberArrivalProgress(page.browseId, enabled = !reduceMotion)
     // Not under a canvas: a still blurred over the foot of a moving clip would
     // freeze the bottom of the video into the wrong picture.
     val softenFoot = canvas == null && !reduceDynamicBlur &&
@@ -1238,7 +1245,16 @@ private fun PageBackground(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .matchParentSize()
-                    .background(palette.elevated),
+                    .background(palette.elevated)
+                    // The arrival: a hair of overshoot that settles, and the
+                    // opacity with it. Drawn rather than composed, so nothing
+                    // about this is re-measured on any frame of it.
+                    .graphicsLayer {
+                        val scale = 1f + ARRIVAL_OVERSHOOT * (1f - arrival)
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = arrival
+                    },
             )
 
             // Above the still art but below the scrim, so the scrim that
@@ -1273,7 +1289,13 @@ private fun PageBackground(
                         }
                         // Rectangle keeps the edges clamped to the picture's own
                         // colour rather than fading to transparent at the foot.
-                        .blur(SOFT_FOOT_BLUR, BlurredEdgeTreatment.Rectangle),
+                        .blur(SOFT_FOOT_BLUR, BlurredEdgeTreatment.Rectangle)
+                        // The same arrival as the sharp copy, and the same
+                        // opacity: a softened sleeve that came up to full
+                        // strength while the picture under it was still
+                        // settling would show the join for the length of the
+                        // animation.
+                        .graphicsLayer { alpha = arrival },
                 )
             }
 

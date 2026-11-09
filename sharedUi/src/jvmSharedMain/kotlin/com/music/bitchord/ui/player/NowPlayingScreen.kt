@@ -1936,7 +1936,15 @@ fun NowPlayingScreen(
         // Last, and drawn over everything: the search covers the whole player,
         // the queue behind it included. It is the one overlay here the listener
         // types into, so nothing may sit above it.
-        if (queueSearchOpen) {
+        // A short rise and fade rather than a cut: this screen arrives over the
+        // player, and a whole page appearing in one frame reads as the player
+        // having been replaced. The field takes focus as it composes either way,
+        // so nothing about it waits for the animation.
+        AnimatedVisibility(
+            visible = queueSearchOpen,
+            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 14 },
+            exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 18 },
+        ) {
             PlayerQueueSearchScreen(
                 onDismiss = { queueSearchOpen = false },
                 onAddToQueue = onAddToQueue,

@@ -305,6 +305,16 @@ as a fault, and the eye is on the movement more than the picture.
       dimming has cleared the bar.
 - [x] The play and pause glyphs hand over to each other instead of being
       swapped, in the full player and in the bar: one grows out of the other.
+- [x] A page that opens on a sleeve settles into it instead of cutting to it:
+      a quarter of a second of scale and opacity on the header artwork of an
+      album, playlist or artist page (see `ArrivalMotion.kt`). Drawn rather than
+      composed, so no frame of it re-measures anything, and skipped outright
+      where the listener has asked for no motion or the device has been judged
+      too slow to spend frames on it.
+- [x] The queue's search rises into place rather than cutting in over the
+      player, which is the difference between a screen arriving and the player
+      looking as though it had been replaced. The field takes focus as it
+      composes, so nothing about the search waits for the animation.
 - [ ] Still to come, each one to be looked at on a device before it ships:
       the player's own content sinking as the sheet closes rather than only
       fading; the artwork's slow living zoom; the album and artist pages
@@ -387,3 +397,64 @@ window dragged the arriving waveform out from under the finger.
       because something behind it was re-published is a lane the listener
       cannot work with. Nothing is adopted while a finger is down.
 
+
+### 18. Analysis in seconds, and controls that are not joined together
+
+**The head pass runs even when the whole file is on disk**
+
+- [x] The forced round the panel asks for pulls the track's bytes up front, so
+      the cache entry is usually *complete* before the analyser looks at it.
+      Completeness used to be the test that sent a track straight down the
+      whole-track lane — a full-file decode and two model windows — which
+      skipped the head pass entirely and left the panel empty for minutes on
+      the screen the listener had opened to watch it. The head pass now runs
+      whenever there is no answer yet, complete file or not, and publishes the
+      opening's BPM, grid and envelope in seconds; the whole-track pass
+      supersedes it on a later tick, from the same bytes, with no fetch left to
+      wait for.
+- [x] A provisional result is still not a reason to run the head pass again:
+      what it wants is bytes, and the escalation to the whole-track pass would
+      never be reached if the lane kept re-measuring its own answer.
+
+**Markers and waveforms are separate objects**
+
+- [x] The arriving lane is anchored **once**, from the planner's handoff, and
+      from then on only the listener's own drag moves it. It used to be
+      re-derived from the window's edge on every frame, which is the second
+      report of the same fault: "the lower waveform is still stuck to one of
+      the markers". The window now slides over both waveforms.
+- [x] A touch means one of three things and nothing else: a **marker** (the two
+      full-height edge handles) moves that edge of the window; the **arriving
+      lane** moves that waveform, by hand, with no magnet; the **playing lane**
+      moves the timeline. The box's body drag lives on the playing lane only,
+      so every touch on the arriving lane means "this waveform" and never "the
+      window".
+- [x] The waveforms are deliberately not magnetic. Lining two tracks up by ear
+      is the listener's business, and a magnet that took the decision away is
+      the "attached to a marker" complaint wearing a different hat. The window's
+      edges keep theirs, because a transition *is* made of whole bars.
+
+### 19. Playing from Downloads plays the file
+
+- [x] A downloaded track plays its file, always — network or not. The old rule
+      streamed it whenever a connection was up, and nothing else in the app
+      agreed with it: a queued download is skipped by the disk cache
+      (`AudioCache.noteSongs`) and by read-ahead (`AudioCache.prefetchQueue`),
+      named "Local Storage" by the stats panel, and badged with the file's own
+      bitrate. Only the item builder disagreed, quietly opening a
+      `bitchord://` stream that nothing had warmed, on a resolve nobody asked
+      for. That is the "plays from Downloads but keeps loading" report.
+- [x] The rung above the file still holds: a source that can serve a Lossless or
+      Hi-res copy outranks it (`SourceResolver.canServeLossless`), and the
+      ordinary second look swaps one in over the file — see
+      `PlaybackService.adoptFileBackedTrack` and `SwapPoint.upgradeBase`, which
+      builds the swapped item from the stream the track *would* have had, since
+      a `content://` path never reaches the resolver.
+- [x] A file that is already lossless is left alone (the decoder's own mime, not
+      the badge the download wrote), and a downloaded addon track is left alone
+      too: its file *is* the copy that source served, and the swap machinery is
+      keyed on the `v=` a YouTube id carries.
+- [x] `restoreStreamingAfterOffline` is gone. It handed queued downloads back to
+      the network when a connection returned, which is the same policy in the
+      other direction; the file is what plays now, whatever the network is
+      doing.
