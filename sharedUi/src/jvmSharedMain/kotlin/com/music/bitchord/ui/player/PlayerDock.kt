@@ -71,6 +71,52 @@ class PlayerDock {
     internal fun hasMiniArt(): Boolean = miniArt?.isAttached == true
 
     /**
+     * The mini player's title and artist, as last laid out.
+     *
+     * The other end of the credits' journey. The player's own title leaves
+     * the screen when the sheet closes and arrives in the bar, and the bar's
+     * text is in another window: the two are met in screen coordinates, the
+     * same way the cover is.
+     */
+    private var miniText: LayoutCoordinates? = null
+    private var miniTextTitlePx: Float = 0f
+
+    /**
+     * Reported by the mini player's text whenever it is placed.
+     *
+     * [titleSizePx] is the size of the bar's title in pixels, so the title
+     * that flies there can be scaled to meet it rather than to arrive beside
+     * it.
+     */
+    fun reportMiniText(coordinates: LayoutCoordinates, titleSizePx: Float) {
+        miniText = coordinates
+        miniTextTitlePx = titleSizePx
+    }
+
+    /** From the text leaving composition, so a stale rect is never flown to. */
+    fun releaseMiniText(coordinates: LayoutCoordinates) {
+        if (miniText === coordinates) {
+            miniText = null
+            miniTextTitlePx = 0f
+        }
+    }
+
+    internal fun hasMiniText(): Boolean = miniText?.isAttached == true
+
+    /** The bar's title and artist on screen, for the credits to land on. */
+    internal fun miniTextOnScreen(): Rect? {
+        val coordinates = miniText?.takeIf { it.isAttached } ?: return null
+        val size = coordinates.size.toSize()
+        return Rect(
+            coordinates.localToScreen(Offset.Zero),
+            coordinates.localToScreen(Offset(size.width, size.height)),
+        )
+    }
+
+    /** The bar's title size in pixels — see [reportMiniText]. */
+    internal fun miniTextTitlePx(): Float = miniTextTitlePx
+
+    /**
      * Both corners mapped through every transform above the cover, not its
      * position plus its laid-out size: the glass bar draws its player scaled,
      * and the artwork landed on a cover a fifth bigger than the one on screen.

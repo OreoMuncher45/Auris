@@ -5,9 +5,12 @@ import com.music.bitchord.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -15,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,6 +52,9 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -338,6 +345,28 @@ internal fun Modifier.playerDockArt(dock: PlayerDock?, corner: Dp): Modifier {
         .graphicsLayer { alpha = if (dock.coversMiniArt) 0f else 1f }
 }
 
+/**
+ * The mini player's title and artist as the other end of the player's own
+ * credits — see [PlayerDock].
+ *
+ * Reports where the text is and how big its title is, so the full player's
+ * title can fly into the bar and land on it rather than beside it. Nothing is
+ * hidden here: the bar's own text is under the sheet for the whole trip, and
+ * what the player draws on its way down is those same words arriving.
+ */
+@Composable
+internal fun Modifier.playerDockText(dock: PlayerDock?, titleSizePx: Float): Modifier {
+    if (dock == null) return this
+    val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    DisposableEffect(dock) {
+        onDispose { placed[0]?.let(dock::releaseMiniText) }
+    }
+    return this.onPlaced { coordinates ->
+        placed[0] = coordinates
+        dock.reportMiniText(coordinates, titleSizePx)
+    }
+}
+
 /** Frosted mini player that rides just above the floating tab bar. */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -420,12 +449,21 @@ fun MiniPlayer(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             Spacer(Modifier.width(10.dp))
+            // The bar's title, reported for the handover: the player's own
+            // title flies here when the sheet closes, and lands on these words
+            // rather than near them. The title alone, not the whole column —
+            // the title is what has to arrive in the right place, and the
+            // artist line follows it into the bar on its own.
+            val titleStyle = MaterialTheme.typography.titleMedium
+            val titlePx = with(LocalDensity.current) { titleStyle.fontSize.toPx() }
             Column(Modifier.weight(1f)) {
-                ExplicitSongTitle(
-                    song = song,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Box(Modifier.playerDockText(dock, titlePx)) {
+                    ExplicitSongTitle(
+                        song = song,
+                        style = titleStyle,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
                 Text(
                     text = song.artist,
                     style = MaterialTheme.typography.bodyMedium,
@@ -450,12 +488,55 @@ fun MiniPlayer(
                     },
                     modifier = Modifier.size(GLYPH_SLOT),
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(GLYPH_SIZE),
+                    // The glyph changes its mind rather than being replaced:
+                    // one shape grows out of the other, the same way the full
+                    // player's transport does it. A swap here is small on
+                    // screen, but it is the button people press most and the
+                    // one they watch while they press it.
+                    val pause by animateFloatAsState(
+                        targetValue = if (isPlaying) 1f else 0f,
+                        animationSpec = tween(
+                            durationMillis = 200,
+                            easing = FastOutSlowInEasing,
+                        ),
+                        label = "miniTransportShape",
                     )
+                    val transportLabel = stringResource(if (isPlaying) R.string.pause else R.string.play)
+                    Box(
+                        modifier = Modifier
+                            .size(GLYPH_SIZE)
+                            .clearAndSetSemantics {
+                                contentDescription = transportLabel
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val s = 1f + 0.16f * pause
+                                    scaleX = s
+                                    scaleY = s
+                                    alpha = 1f - pause
+                                },
+                        )
+                        Icon(
+                            imageVector = Icons.Rounded.Pause,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val s = 0.84f + 0.16f * pause
+                                    scaleX = s
+                                    scaleY = s
+                                    alpha = pause
+                                },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.width(TRANSPORT_GAP))

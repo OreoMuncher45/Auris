@@ -265,6 +265,14 @@ private val THUMB_SIZE = 66.dp
 private val HEADER_HEIGHT = 72.dp
 private val ART_TITLE_GAP = 20.dp
 /**
+ * The size of the player's own title and artist.
+ *
+ * Also the size the title has to be scaled from when it flies into the mini
+ * player, so the two ends of that journey are the same number rather than two
+ * numbers that happen to look alike.
+ */
+private val CREDITS_TITLE_SIZE = 20.sp
+/**
  * How much the hero banner's still artwork is scaled past its frame, measured
  * — twice, independently, to the same number — against Apple's player: 123.4%
  * of the width, a full-width banner cropping ~11.7% off each side. Scaling
@@ -528,14 +536,17 @@ private class DockFrame {
     var portalLeft = 0f
     var portalTop = 0f
     /**
-     * Where the credits row's own pixels begin, in the player's box.
+     * Where the player's own title and artist are, in the player's box.
      *
-     * Written while the row is laid out and read by the draw that puts it back
-     * over the artwork. A recorded layer carries no placement of its own, which
-     * is the same reason [portalLeft] and [portalTop] exist for the sleeve.
+     * Written while the credits are laid out and read by the draw that flies
+     * them into the mini player. A recorded layer carries no placement of its
+     * own, which is the same reason [portalLeft] and [portalTop] exist for
+     * the sleeve.
      */
     var creditsLeft = 0f
     var creditsTop = 0f
+    /** Whether the credits have been placed at least once. */
+    var creditsKnown = false
     /**
      * How much smaller than laid out the sleeve is drawn there. Always 1 for
      * the portrait sleeve, which is re-laid out at its size each frame; the
@@ -602,6 +613,42 @@ private fun artworkFitScale(width: Float, height: Float, aspect: Float?): Float 
     val drawnHeight = drawnWidth / aspect
     return minOf(width / drawnWidth, height / drawnHeight).coerceIn(0f, 1f)
 }
+
+/**
+ * The usual smoothstep: 0 below [edge0], 1 above [edge1], and eased in
+ * between.
+ *
+ * Used for the handovers — the title on its way into the bar, the cover on its
+ * way onto it — where a straight line would start or stop with a jolt and a
+ * curve reads as something being carried rather than something being moved.
+ */
+private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
+    if (edge1 <= edge0) return if (x >= edge1) 1f else 0f
+    val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+    return t * t * (3f - 2f * t)
+}
+
+/**
+ * How far the title has travelled towards the mini player's own title, for a
+ * sheet that is [progress] of the way through its travel.
+ *
+ * Home by 85% of the way. The sheet's own dimming has cleared the bar by
+ * then, so the words this one is replacing are already lit when it arrives —
+ * and the rest of the trip is short enough that the title is not sitting on
+ * the bar while the player is still over it.
+ */
+internal fun creditsTravel(progress: Float): Float = smoothStep(0f, 0.85f, progress)
+
+/**
+ * How much of the title is still there, for the same [progress].
+ *
+ * It holds its own for the whole trip — the text must never be missing while
+ * the sheet is moving, which is what a fade alone does to it — and dissolves
+ * into the bar's own title over the last stretch, where the two are in the
+ * same place and much the same size.
+ */
+internal fun creditsHandoverAlpha(progress: Float): Float =
+    1f - smoothStep(0.85f, 1f, progress)
 
 /**
  * Whether a player given the whole of a window this wide is still narrow enough
@@ -1949,13 +1996,35 @@ fun NowPlayingScreen(
     // The credits — the title and the artist — for the same trip.
     //
     // The sleeve is painted above the whole player while it travels, and the
-    // credits row sits in the band the artwork's lower edge crosses: on the way
-    // in or out of the full player the title and artist were washed out by
-    // their own cover until the sheet settled, at which point the sleeve
-    // returned to its proper place under them and the text came back. Recording
-    // the row and drawing it back over the sleeve is what keeps the credits the
-    // last thing on screen in both states.
+    // credits sit in the band the artwork's lower edge crosses: on the way in
+    // or out of the full player the title and artist were washed out by their
+    // own cover until the sheet settled, at which point the sleeve returned to
+    // its proper place under them and the text came back.
+    //
+    // They are recorded here and drawn over the sleeve, and they do not merely
+    // sit there: they travel to the mini player's own title and shrink to its
+    // size as they go, so the words leave one screen and arrive in the bar.
+    // A fade alone leaves a hole in the middle of the trip — the text is gone
+    // from the player and has not yet arrived in the bar, and the eye reads
+    // that hole as the title having been lost.
     val creditsLayer = rememberGraphicsLayer()
+
+    // Whether the title and artist are on their way into the mini player.
+    // Both ends of that decision have to agree: the credits are recorded
+    // instead of drawn, and the recorded layer is drawn over the sleeve, so
+    // one of them without the other loses the text entirely.
+    val creditsHandover: () -> Boolean = {
+        docking() && dock?.hasMiniText() == true
+    }
+
+    // How big the bar's title is compared with the player's. The title that
+    // flies between them is scaled by this, so it arrives at the size it is
+    // going to be rather than at the size it left.
+    val creditsTitleRatio: () -> Float = {
+        val mini = dock?.miniTextTitlePx() ?: 0f
+        val full = with(density) { CREDITS_TITLE_SIZE.toPx() }
+        if (mini > 0f && full > 0f) (mini / full).coerceIn(0.4f, 1.2f) else 1f
+    }
 
     // The player's own end of the docking, for whichever shape it takes: where
     // it sits on screen, the fade, and the artwork drawn over that fade.
@@ -1997,14 +2066,48 @@ fun NowPlayingScreen(
                     val portalScale = dockFrame.portalScale
                     scale(portalScale, portalScale, pivot = Offset.Zero) { drawLayer(sleeveLayer) }
                 }
-                // ...and then the credits, back on top of it. Everything else
-                // on the player is allowed to be behind the artwork while it
-                // leaves; the title and the artist are not, because the band
+                // ...and then the title and the artist, on their way into the
+                // bar. Everything else on the player is allowed to be behind
+                // the artwork while it leaves; these are not, because the band
                 // the artwork's lower edge crosses is theirs.
-                creditsLayer.alpha = dockFade().coerceAtLeast(DOCK_FADE_FLOOR)
-                translate(dockFrame.creditsLeft, dockFrame.creditsTop) { drawLayer(creditsLayer) }
-            } else {
-                creditsLayer.alpha = 1f
+                //
+                // They travel rather than fade: the position and the size are
+                // worked out against the mini player's own title, which is in
+                // another window and is found in screen coordinates. The sheet
+                // is `offset` below where it was when it was open, so a screen
+                // point is that much further down the player's own box.
+                val anchor = dockFrame.anchor
+                val offset = dock?.offset()
+                val target = dock?.miniTextOnScreen()
+                if (creditsHandover() && anchor != null && offset != null &&
+                    target != null && dockFrame.creditsKnown
+                ) {
+                    val progress = (1f - dockT()).coerceIn(0f, 1f)
+                    // The title travels first and hands over last. It is home
+                    // by the time the sheet's own dimming has cleared the bar
+                    // — so the words it is replacing are already lit when it
+                    // arrives — and the dissolve into them happens in place,
+                    // over the last stretch of the trip.
+                    val travel = creditsTravel(progress)
+                    val from = Offset(dockFrame.creditsLeft, dockFrame.creditsTop)
+                    val to = Offset(
+                        target.left - anchor.x - offset,
+                        target.top - anchor.y - offset,
+                    )
+                    val at = Offset(
+                        from.x + (to.x - from.x) * travel,
+                        from.y + (to.y - from.y) * travel,
+                    )
+                    // The bar's title is smaller than the player's. The title
+                    // that flies there has to end up the size it is going to
+                    // be, or it arrives as the right words at the wrong size.
+                    val ratio = creditsTitleRatio()
+                    val size = 1f + (ratio - 1f) * travel
+                    creditsLayer.alpha = creditsHandoverAlpha(progress)
+                    translate(at.x, at.y) {
+                        scale(size, size, pivot = Offset.Zero) { drawLayer(creditsLayer) }
+                    }
+                }
             }
         }
         // Never quite zero while docking. A layer at alpha 0 is skipped
@@ -3562,30 +3665,6 @@ fun NowPlayingScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // Where it is, for the draw that puts it back over the
-                        // sleeve while the player is docking into the mini
-                        // player. A recorded layer carries no placement, so the
-                        // difference between these two is what the portal
-                        // translates by.
-                        .onGloballyPositioned { coordinates ->
-                            val host = dockFrame.host
-                            if (host != null && host.isAttached && coordinates.isAttached) {
-                                val at = coordinates.positionInRoot() - host.positionInRoot()
-                                dockFrame.creditsLeft = at.x
-                                dockFrame.creditsTop = at.y
-                            }
-                        }
-                        // While docking the row is drawn by the player itself,
-                        // above the artwork, rather than here where the sleeve
-                        // would cover it. One node, one place in the layout:
-                        // only which pass paints it changes.
-                        .drawWithContent {
-                            if (docking()) {
-                                creditsLayer.record { this@drawWithContent.drawContent() }
-                            } else {
-                                drawContent()
-                            }
-                        }
                         // Collapsed, this row shares the header with the sleeve
                         // rather than sitting under it, and the two are not the
                         // same height — centring the credits in the taller of
@@ -3626,6 +3705,38 @@ fun NowPlayingScreen(
                     Column(
                         Modifier
                             .weight(1f)
+                            // Where the title and the artist are, for the draw
+                            // that flies them into the mini player. Measured in
+                            // the player's own box; the sheet's own travel is
+                            // added to it when the target is worked out.
+                            .onGloballyPositioned { coordinates ->
+                                val host = dockFrame.host
+                                if (host != null && host.isAttached && coordinates.isAttached) {
+                                    val at = coordinates.positionInRoot() - host.positionInRoot()
+                                    dockFrame.creditsLeft = at.x
+                                    dockFrame.creditsTop = at.y
+                                    dockFrame.creditsKnown = true
+                                }
+                            }
+                            // While the player is docking, the title and the
+                            // artist are drawn by the player itself, over the
+                            // artwork and on their way into the bar, rather
+                            // than here where the sleeve would cover them.
+                            // One node, one place in the layout: only which
+                            // pass paints it changes.
+                            //
+                            // Ahead of the scale below, so the recording holds
+                            // the scaled pixels rather than the unscaled ones:
+                            // the collapse into the header shrinks these two
+                            // lines, and a title that flew to the bar from the
+                            // unscaled size would jump as it left.
+                            .drawWithContent {
+                                if (creditsHandover()) {
+                                    creditsLayer.record { this@drawWithContent.drawContent() }
+                                } else {
+                                    drawContent()
+                                }
+                            }
                             // Scaling the already measured type is a draw-only
                             // operation. Animating fontSize forced both marquee
                             // texts through shaping and measurement every frame.
@@ -3672,7 +3783,7 @@ fun NowPlayingScreen(
                                 MarqueeText(
                                     text = song.title,
                                     style = MaterialTheme.typography.titleLarge.copy(
-                                        fontSize = 20.sp,
+                                        fontSize = CREDITS_TITLE_SIZE,
                                         shadow = playerShadow,
                                     ),
                                     color = ink,
@@ -3695,7 +3806,7 @@ fun NowPlayingScreen(
                                     },
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.W500,
-                                        fontSize = 20.sp,
+                                        fontSize = CREDITS_TITLE_SIZE,
                                         shadow = playerShadow,
                                     ),
                                     color = ink.copy(alpha = alphas.secondary),
