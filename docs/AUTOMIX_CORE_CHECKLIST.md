@@ -113,6 +113,11 @@ Target: `feature/automix-core-v2`, based on `b7744a0e` (last commit before Studi
       112 with the same dev signer (`385af3b4…71ce`), `isDraft: true`, no git
       tag, `libbitchord_analysis.so` present. The player-chrome fixes and the
       Spotify Canvas switch.
+- [x] Draft `v3.0.13-draft` (versionCode 113) cut from `feature/automix-core-v2`
+      and verified: run `42551054738` succeeded, four signed APKs, versionCode
+      113 with the same dev signer (`385af3b4…71ce`), `isDraft: true`, no git
+      tag. The title's journey into the mini player, and the play/pause glyph
+      handover.
 
 ## Automix panel and per-song choices (v3)
 
