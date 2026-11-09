@@ -166,6 +166,8 @@ import com.music.bitchord.ui.theme.AppFonts
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
+import com.music.bitchord.data.settings.HomeProvider
+import com.music.bitchord.util.AppRelaunch
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.settings.AudioQuality
@@ -227,6 +229,7 @@ fun SettingsScreen(
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val seamlessQualityUpgrade by AppSettings.seamlessQualityUpgrade.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
+    val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
@@ -338,6 +341,7 @@ fun SettingsScreen(
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
     var pickingDownloadQuality by remember { mutableStateOf(false) }
     var pickingAutomixPerformance by remember { mutableStateOf(false) }
+    var pickingHomeProvider by remember { mutableStateOf(false) }
     // What the last export or import did, shown on the row that did it rather
     // than as a toast: a backup is the one action here whose outcome nobody can
     // check by looking at the app afterwards. Held per direction, or an import's
@@ -825,6 +829,21 @@ fun SettingsScreen(
                     subtitle = stringResource(R.string.automix_performance_subtitle),
                     value = automixPerformance.localizedLabel(),
                     onClick = { pickingAutomixPerformance = true },
+                )
+            }
+            // The provider, next to the other decisions about how the app picks
+            // music for the listener. It sits here rather than with the account
+            // rows because it is a choice about the feed, not about a service
+            // connection — Spotify selected with nobody signed in still shows a
+            // home, from Spotify's public lists.
+            val homeProviderTitle = stringResource(R.string.home_provider)
+            row(homeProviderTitle, "provider", "spotify", "youtube", "algorithm", "flow") {
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = homeProviderTitle,
+                    subtitle = stringResource(R.string.home_provider_subtitle),
+                    value = homeProvider.localizedLabel(),
+                    onClick = { pickingHomeProvider = true },
                 )
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
@@ -2135,6 +2154,28 @@ fun SettingsScreen(
         }
     }
 
+    if (pickingHomeProvider) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingHomeProvider = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            HomeProviderSheet(
+                selected = homeProvider,
+                onSelect = { provider ->
+                    pickingHomeProvider = false
+                    if (provider != homeProvider) {
+                        // Written before the restart so the new process reads it,
+                        // and the restart is what makes it total: Flow's and
+                        // Autoplay's learning were trained against the provider
+                        // being left behind. See [HomeProvider] and [AppRelaunch].
+                        AppSettings.setHomeProvider(provider)
+                        AppRelaunch.relaunch(context)
+                    }
+                },
+            )
+        }
+    }
+
     if (pickingAutomixPerformance) {
         ModalBottomSheet(
             onDismissRequest = { pickingAutomixPerformance = false },
@@ -2440,6 +2481,94 @@ private fun AutomixPerformanceMode.localizedLabel(): String = stringResource(
         AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance
     },
 )
+
+/** The selected content provider, as the settings row shows it. */
+@Composable
+private fun HomeProvider.localizedLabel(): String = stringResource(
+    when (this) {
+        HomeProvider.YOUTUBE -> R.string.home_provider_youtube
+        HomeProvider.SPOTIFY -> R.string.spotify
+    },
+)
+
+/**
+ * Content-provider picker: which service's algorithm builds the homepage,
+ * Flow and Autoplay.
+ *
+ * Two rows now and room for more, which is why this is a list rather than a
+ * switch: a third provider is a row and an enum value, not a redesign.
+ *
+ * The note at the top says the app restarts, and it is not a warning to be
+ * scrolled past — it is the mechanism. Flow and Autoplay each carry learning
+ * trained against whichever provider built them, so the change is applied by
+ * starting over rather than by swapping a feed underneath a live session.
+ */
+@Composable
+private fun HomeProviderSheet(
+    selected: HomeProvider,
+    onSelect: (HomeProvider) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Row(Modifier.padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = stringResource(R.string.home_provider),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = stringResource(R.string.home_provider_restart),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+        HomeProvider.entries.forEach { provider ->
+            val chosen = provider == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(provider)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = provider.localizedLabel(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = stringResource(
+                            when (provider) {
+                                HomeProvider.YOUTUBE -> R.string.home_provider_youtube_subtitle
+                                HomeProvider.SPOTIFY -> R.string.home_provider_spotify_subtitle
+                            },
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.selected),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
+    }
+}
 
 /**
  * Hands the device's own effect panel this app's audio session.

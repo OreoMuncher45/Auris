@@ -66,6 +66,9 @@ internal object SpotifyHomeSource {
     /** How many matches may be in flight at once; each one is a search. */
     private const val MATCH_CONCURRENCY = 4
 
+    /** How many of the listener's top tracks and recent plays seed a Flow mix. */
+    private const val FLOW_SEEDS = 24
+
     /**
      * Spotify track id to the track this app will play for it.
      *
@@ -172,6 +175,46 @@ internal object SpotifyHomeSource {
     }
 
     /**
+     * Songs to seed Flow with, split the way the flow engine reads them.
+     *
+     * Two lists rather than one, because the engine weighs "what this listener
+     * keeps coming back to" differently from "what they put on lately": [top]
+     * is the former and [recent] the latter, which is the same distinction the
+     * YouTube side makes between a liked library and a play history.
+     */
+    internal data class FlowSeeds(val top: List<Song>, val recent: List<Song>) {
+        val isEmpty: Boolean get() = top.isEmpty() && recent.isEmpty()
+    }
+
+    /**
+     * The provider's contribution to a Flow mix.
+     *
+     * Signed in, that is the listener's own taste: their top tracks and what
+     * they played lately. Signed out there is no history to read, so Spotify's
+     * public featured list stands in — it is Spotify's curation and it is the
+     * same evidence a new listener's mix would be built from anyway.
+     *
+     * Returns empty rather than throwing when nothing could be read; the caller
+     * falls back to the YouTube seeds rather than handing the engine nothing.
+     */
+    suspend fun flowSeeds(): FlowSeeds = withContext(Dispatchers.IO) {
+        if (isSignedIn()) {
+            val top = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
+            val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
+            FlowSeeds(top = songs(top), recent = songs(recent))
+        } else {
+            val featured = runCatching { SpotifyWebApi.featuredPlaylists(limit = 2) }
+                .onFailure { Log.w(TAG, "featured playlists could not be read for Flow: ${it.message}") }
+                .getOrDefault(emptyList())
+            val tracks = featured.flatMap { playlist ->
+                runCatching { SpotifyWebApi.playlistTracks(playlist.id, limit = TRACKS_PER_ROW) }
+                    .getOrDefault(emptyList())
+            }
+            FlowSeeds(top = emptyList(), recent = songs(tracks))
+        }
+    }
+
+    /**
      * Matches each track to something playable, in parallel and bounded.
      *
      * The bound is not politeness: each match is a YouTube search, and a row of
@@ -179,22 +222,53 @@ internal object SpotifyHomeSource {
      * listener is already playing. Four at a time keeps a row landing in about a
      * second without the app's own playback waiting behind it.
      */
-    private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> = coroutineScope {
+    private suspend fun matched(tracks: List<SpotifyTrack>): List<Pair<SpotifyTrack, Song>> = coroutineScope {
         val gate = Semaphore(MATCH_CONCURRENCY)
-        tracks.map { track ->
+        tracks.distinctBy { it.id }.map { track ->
             async(Dispatchers.IO) {
                 val song = matches[track.id]
                     ?: gate.withPermit { SpotifyImporter.matchTrack(track) }
                         ?.also { matches[track.id] = it }
-                    ?: return@async null
-                ShelfItem(
-                    title = song.title.ifBlank { track.title },
-                    subtitle = song.artist.ifBlank { track.artist },
-                    thumbnailUrl = song.thumbnailUrl ?: track.imageUrl,
-                    videoId = song.videoId,
-                    browseId = null,
-                )
+                song?.let { track to it }
             }
         }.awaitAll().filterNotNull()
     }
+
+    /** The playable songs behind [tracks], for a seed pool. */
+    private suspend fun songs(tracks: List<SpotifyTrack>): List<Song> =
+        matched(tracks).map { (_, song) -> song }
+
+    /**
+     * The next tracks AutoPlay should queue, from Spotify's own evidence.
+     *
+     * The pool is the same one Flow is seeded from — top tracks, then what was
+     * played lately — because it is the only taste this provider has to go on,
+     * minus anything already queued and anything the listener has blocked.
+     *
+     * Empty when the pool runs dry, which after a few batches it will: Spotify's
+     * top and recent lists are finite, and this deliberately does not invent
+     * tracks to keep going. The caller falls back to YouTube's radio rather than
+     * letting AutoPlay go silent.
+     */
+    suspend fun autoplayTracks(exclude: Set<String>, limit: Int): List<Song> = withContext(Dispatchers.IO) {
+        if (limit <= 0) return@withContext emptyList()
+        val seeds = flowSeeds()
+        (seeds.top + seeds.recent)
+            .distinctBy { it.videoId }
+            .filterNot { it.videoId in exclude }
+            .filterNot(AppSettings::isSongBlocked)
+            .take(limit)
+    }
+
+    /** One row of [tracks], matched, or an empty list when none of them were. */
+    private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
+        matched(tracks).map { (track, song) ->
+            ShelfItem(
+                title = song.title.ifBlank { track.title },
+                subtitle = song.artist.ifBlank { track.artist },
+                thumbnailUrl = song.thumbnailUrl ?: track.imageUrl,
+                videoId = song.videoId,
+                browseId = null,
+            )
+        }
 }

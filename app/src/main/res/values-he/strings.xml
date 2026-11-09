@@ -1399,4 +1399,10 @@
     <string name="quick_picks_offline_empty">עדיין לא הורד דבר</string>
     <string name="quick_picks_play_all">נגן הכול</string>
     <string name="quick_picks_shuffle">ערבוב</string>
+    <string name="home_provider">Content source</string>
+    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider_youtube">YouTube Music</string>
+    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
+    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_restart">Auris will restart to apply this.</string>
 </resources>

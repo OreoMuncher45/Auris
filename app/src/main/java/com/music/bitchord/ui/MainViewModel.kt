@@ -4381,6 +4381,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Returns tagged Flow tracks ready for playSongs().
      */
     suspend fun buildFlowQueue(limit: Int = FlowEngine.INITIAL_TRACKS): List<Song> {
+        // The provider decides the evidence a mix is built from, for the same
+        // reason it decides the homepage: a Flow mix is a recommendation, and the
+        // service the listener chose is whose taste it should reflect. Nothing
+        // else changes — the engine, its weights, the skip and ban learning and
+        // the hourly refresh are all the same; only the seed pool is.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            val seeds = runCatching { SpotifyHomeSource.flowSeeds() }.getOrNull()
+            if (seeds != null && !seeds.isEmpty) {
+                return flowQueueFrom(
+                    FlowEngine.SeedPool(
+                        favorites = seeds.top,
+                        history = seeds.recent,
+                        quickPicks = emptyList(),
+                        moodPool = emptyList(),
+                    ),
+                    limit,
+                )
+            }
+            // Nothing could be read, so the YouTube seeds below are used rather
+            // than handing the engine an empty pool: a mix from the other
+            // provider is worse than none only in theory.
+        }
         val lib = (_library.value as? UiState.Success)?.data
         val favorites = (lib?.likedSongs.orEmpty() + lib?.librarySongs.orEmpty())
             .withoutBlockedArtists()
@@ -4395,12 +4417,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // songs the mood is made of. The unfiltered mix has no station and
         // asks for none.
         val moodPool = fetchFlowMoodPool(FlowStore.config.mood)
-        // Hidden acts can also arrive inside the engine's own radio lookups, so
-        // the finished queue is filtered as well. Ask for a little extra so a
-        // mix does not come back short after that pass.
+        return flowQueueFrom(
+            FlowEngine.SeedPool(favorites, history, quickPicks, moodPool),
+            limit,
+        )
+    }
+
+    /**
+     * One Flow mix from a seed pool.
+     *
+     * Shared by both providers so that everything after the seeds — the engine
+     * settings, the like and ban evidence, the blocked-artist pass, the
+     * de-duplication — is the same code for a Spotify mix as for a YouTube one.
+     * The extra tracks asked for past [limit] cover what the blocked-artist pass
+     * removes, which is why the buffer only exists when there is something to
+     * remove.
+     */
+    private suspend fun flowQueueFrom(seeds: FlowEngine.SeedPool, limit: Int): List<Song> {
         val buffer = if (AppSettings.blockedArtists.value.isEmpty()) 0 else 12
         return FlowEngine.buildInitialQueue(
-            seeds = FlowEngine.SeedPool(favorites, history, quickPicks, moodPool),
+            seeds = seeds,
             likeStatuses = likeStatuses.value,
             bannedIds = FlowStore.bannedIds.value,
             skipCounts = FlowStore.skipCounts.value,

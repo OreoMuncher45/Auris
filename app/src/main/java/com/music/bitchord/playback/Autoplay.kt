@@ -101,6 +101,33 @@ suspend fun loadAutoplayTracks(
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
 ): Result<List<Song>> {
+    // The provider decides who is asked what comes next, for the same reason it
+    // decides Flow's seeds: AutoPlay is a recommendation. The seed song is
+    // unchanged — a Spotify-provider session still continues from the song that
+    // is playing — and the queue-entry mapping below is shared, so a Spotify
+    // batch lands in the queue looking exactly like a YouTube one.
+    if (com.music.bitchord.data.settings.AppSettings.homeProvider.value ==
+        com.music.bitchord.data.settings.HomeProvider.SPOTIFY
+    ) {
+        val fromSpotify = runCatching {
+            com.music.bitchord.data.spotify.SpotifyHomeSource.autoplayTracks(
+                exclude = existing.mapTo(HashSet()) { it.videoId },
+                limit = limit,
+            )
+        }.getOrDefault(emptyList())
+        if (fromSpotify.isNotEmpty()) {
+            return Result.success(fromSpotify.map {
+                it.copy(
+                    radioName = seedSong.radioName,
+                    playbackSource = seedSong.playbackSource,
+                    playbackSourceType = seedSong.playbackSourceType,
+                    playbackSourceId = seedSong.playbackSourceId,
+                ).asQueueEntry(QueueTier.AUTOPLAY)
+            })
+        }
+        // Its pool is finite and can run dry. Falling through to YouTube's radio
+        // keeps AutoPlay on rather than silently stopping it.
+    }
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
     val extra = QueueBuilder.extend(existing, related, limit)
