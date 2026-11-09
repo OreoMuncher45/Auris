@@ -274,12 +274,6 @@ private val ART_TITLE_GAP = 20.dp
  */
 private const val HERO_ART_ZOOM = 1.234f
 /**
- * How far down the zoomed artwork drifts: 1.6% of the width, measured off the
- * same reference. Applied AFTER the scale in the same layer, about the
- * top-centre origin, so the zoom and the drift are one transform.
- */
-private const val HERO_ART_DRIFT = 0.016f
-/**
  * How far the mesh's dissolve seam sits below the banner's bottom edge. The
  * wash reading as starting at the artwork's own boundary made the blurred
  * region end abruptly where the art ended; pushing the seam down drags the
@@ -533,6 +527,15 @@ private class DockFrame {
     /** Where the sleeve's pixels land in the player, for drawing it on top. */
     var portalLeft = 0f
     var portalTop = 0f
+    /**
+     * Where the credits row's own pixels begin, in the player's box.
+     *
+     * Written while the row is laid out and read by the draw that puts it back
+     * over the artwork. A recorded layer carries no placement of its own, which
+     * is the same reason [portalLeft] and [portalTop] exist for the sleeve.
+     */
+    var creditsLeft = 0f
+    var creditsTop = 0f
     /**
      * How much smaller than laid out the sleeve is drawn there. Always 1 for
      * the portrait sleeve, which is re-laid out at its size each frame; the
@@ -1604,10 +1607,16 @@ fun NowPlayingScreen(
     // than as framing — and the same value is blended into as the player docks
     // onto the mini player, so the cover uncrops into that thumbnail instead of
     // cutting to it. One image, two zoom levels, and a movement between them.
-    val lyricsUncrop by animateFloatAsState(
-        targetValue = if (lyricsOpen) 1f else 0f,
+    //
+    // Keyed on the player being collapsed into its header at all, not on the
+    // lyrics specifically. The queue puts the artwork in the same place at the
+    // same size, and it is reached from the lyrics by *closing* them — so a
+    // target that followed the lyrics alone re-cropped the picture the moment
+    // the queue opened, and the thumbnail appeared to zoom in without moving.
+    val headerUncrop by animateFloatAsState(
+        targetValue = if (lyricsOpen || queueOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "lyricsUncrop",
+        label = "headerUncrop",
     )
     // How tall that banner is, worked out down in the layout where the sleeve's
     // own geometry is known. Zero until the first measure, which is fine: there
@@ -1937,6 +1946,16 @@ fun NowPlayingScreen(
     val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
     // The sleeve, drawn over the faded player while it docks — see the sleeve.
     val sleeveLayer = rememberGraphicsLayer()
+    // The credits — the title and the artist — for the same trip.
+    //
+    // The sleeve is painted above the whole player while it travels, and the
+    // credits row sits in the band the artwork's lower edge crosses: on the way
+    // in or out of the full player the title and artist were washed out by
+    // their own cover until the sheet settled, at which point the sleeve
+    // returned to its proper place under them and the text came back. Recording
+    // the row and drawing it back over the sleeve is what keeps the credits the
+    // last thing on screen in both states.
+    val creditsLayer = rememberGraphicsLayer()
 
     // The player's own end of the docking, for whichever shape it takes: where
     // it sits on screen, the fade, and the artwork drawn over that fade.
@@ -1978,6 +1997,14 @@ fun NowPlayingScreen(
                     val portalScale = dockFrame.portalScale
                     scale(portalScale, portalScale, pivot = Offset.Zero) { drawLayer(sleeveLayer) }
                 }
+                // ...and then the credits, back on top of it. Everything else
+                // on the player is allowed to be behind the artwork while it
+                // leaves; the title and the artist are not, because the band
+                // the artwork's lower edge crosses is theirs.
+                creditsLayer.alpha = dockFade().coerceAtLeast(DOCK_FADE_FLOOR)
+                translate(dockFrame.creditsLeft, dockFrame.creditsTop) { drawLayer(creditsLayer) }
+            } else {
+                creditsLayer.alpha = 1f
             }
         }
         // Never quite zero while docking. A layer at alpha 0 is skipped
@@ -3380,7 +3407,7 @@ fun NowPlayingScreen(
                                             0f
                                         }
                                     } ?: 0f
-                                    val uncrop = maxOf(lyricsUncrop, dockUncrop)
+                                    val uncrop = maxOf(headerUncrop, dockUncrop)
                                     val fit = artworkFitScale(size.width, size.height, art.aspect)
                                     val scale = zoom + (fit - zoom) * uncrop
                                     scaleX = scale
@@ -3390,8 +3417,14 @@ fun NowPlayingScreen(
                                     // uncropped the whole picture should sit in the
                                     // middle of the stage, so the anchor slides from
                                     // the top edge to the centre with it.
+                                    //
+                                    // No translation here: the banner's box is already
+                                    // pinned to the screen's own top edge, and a
+                                    // downward nudge on top of that showed a band of
+                                    // the mesh backdrop above the artwork — the gap
+                                    // reported as the safe area cutting the image.
+                                    // The zoom alone grows it downwards.
                                     transformOrigin = TransformOrigin(0.5f, 0.5f * uncrop)
-                                    translationY = size.width * HERO_ART_DRIFT * (1f - uncrop)
                                 } else Modifier,
                             )
                             .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
@@ -3529,6 +3562,30 @@ fun NowPlayingScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // Where it is, for the draw that puts it back over the
+                        // sleeve while the player is docking into the mini
+                        // player. A recorded layer carries no placement, so the
+                        // difference between these two is what the portal
+                        // translates by.
+                        .onGloballyPositioned { coordinates ->
+                            val host = dockFrame.host
+                            if (host != null && host.isAttached && coordinates.isAttached) {
+                                val at = coordinates.positionInRoot() - host.positionInRoot()
+                                dockFrame.creditsLeft = at.x
+                                dockFrame.creditsTop = at.y
+                            }
+                        }
+                        // While docking the row is drawn by the player itself,
+                        // above the artwork, rather than here where the sleeve
+                        // would cover it. One node, one place in the layout:
+                        // only which pass paints it changes.
+                        .drawWithContent {
+                            if (docking()) {
+                                creditsLayer.record { this@drawWithContent.drawContent() }
+                            } else {
+                                drawContent()
+                            }
+                        }
                         // Collapsed, this row shares the header with the sleeve
                         // rather than sitting under it, and the two are not the
                         // same height — centring the credits in the taller of
