@@ -254,8 +254,18 @@ build after the one the Automix fix went out in.
       painted above the whole player while it docks, and the credits row sits in
       the band the artwork's lower edge crosses, so the text was washed out by
       its own cover for the length of the trip and came back the moment the
-      sheet settled. The row is now recorded and drawn back over the sleeve,
-      with the same fade the rest of the player has.
+      sheet settled.
+- [x] A first attempt at that fix made it worse: the credits were drawn from
+      a recorded layer and faded with the player's own fade curve, which is
+      **zero for the whole of the trip** and only reaches full strength at the
+      very end. The title therefore vanished for the entire journey and popped
+      back at the end. The curve was the bug, not the layer.
+- [x] The title and the artist now travel. While the sheet is closing they are
+      recorded, drawn over the artwork, and carried to the mini player's own
+      title — found in screen coordinates, the way the cover is — shrinking to
+      the bar's title size as they go, and handing over in the last stretch
+      rather than blinking out of one screen and into the other. The same trip
+      in reverse opens the player.
 - [x] With the lyrics pane open the album art moves to the top left. Opening the
       queue from that state zoomed the art slightly in place: the uncrop that
       the lyrics layout had applied was keyed on the lyrics alone, and the queue
@@ -274,4 +284,25 @@ build after the one the Automix fix went out in.
       "Prioritize Spotify Canvas", which is hidden while it is off.
 - [x] The answer is cached per combination of priority and this switch, so
       turning it off cannot serve a clip from a cache written while it was on.
+
+### 16. Animation pass on the player
+
+Asked for after the 3.0.12 draft, whose docking animation went wrong. Motion
+is worth doing properly: a transition that is half a second of nothing reads
+as a fault, and the eye is on the movement more than the picture.
+
+- [x] The title and artist fly into the mini player rather than fading out of
+      one screen and appearing in another — the handover the cover already
+      had, extended to the words.
+- [x] The two curves that carry it are pinned down by tests, because a wrong
+      fade is what broke it: the title holds its own for the whole trip and
+      dissolves only once it is home, and it is home before the sheet's own
+      dimming has cleared the bar.
+- [x] The play and pause glyphs hand over to each other instead of being
+      swapped, in the full player and in the bar: one grows out of the other.
+- [ ] Still to come, each one to be looked at on a device before it ships:
+      the player's own content sinking as the sheet closes rather than only
+      fading; the artwork's slow living zoom; the album and artist pages
+      handing their artwork to the player; the queue and lyrics panels easing
+      rather than sliding; the settings rows settling in as the sheet opens.
 
