@@ -14,19 +14,19 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.16"
+        default: "3.0.17"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "116"
+        default: "117"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.16-draft"
+        default: "v3.0.17-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.16 — private preview"
+        default: "Auris 3.0.17 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
