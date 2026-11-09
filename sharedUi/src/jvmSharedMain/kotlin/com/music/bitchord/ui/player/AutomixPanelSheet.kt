@@ -92,14 +92,17 @@ import kotlin.math.roundToInt
  * the track that is playing; the lower is the one queued after it, placed so
  * that its cue point lands on the left edge of the box. The orange box is the
  * window the listener has asked the transition to happen in — the green line
- * at its left edge is the handoff itself — and the two edges can be moved
- * separately, so a blend can begin and end anywhere in the outgoing song.
+ * at its left edge is the handoff itself — and the two edges are dragged
+ * separately, so pulling one out lengthens the transition and pushing it in
+ * shortens it. A blend can begin and end anywhere in the outgoing song.
  *
- * Green dots mark the measured grid, and an edge snaps to them: what the
- * listener places is a musical place rather than an arbitrary one. The plan's
- * own placement is a grey hairline beside the box, drawn only when the two
- * disagree — a request the planner cannot execute is still shown, next to
- * what it did instead, rather than being quietly rewritten.
+ * Green rules along the top and bottom edges of the drawing are the measured
+ * grid: every beat a short tick, every bar line a longer bright one. An edge is
+ * pulled onto a bar line when the finger is already near one, and the line it
+ * took is lit, so a snap can be confirmed by eye as well as by the tick under
+ * the finger. The plan's own placement is a grey hairline beside the box, drawn
+ * only when the two disagree — a request the planner cannot execute is still
+ * shown, next to what it did instead, rather than being quietly rewritten.
  *
  * The coloured curves are the effects in flight: violet for the tone shape's
  * frequency response, amber for a filter ride, coral for the volume pair the

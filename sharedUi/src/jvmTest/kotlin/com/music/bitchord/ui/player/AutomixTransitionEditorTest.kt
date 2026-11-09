@@ -93,28 +93,27 @@ class AutomixTransitionEditorTest {
     }
 
     @Test
-    fun snappingLandsOnTheNearestBeat() {
+    fun theMagnetTakesTheNearestBarLine() {
         val digest = track()
-        assertEquals(11.0, automixSnapToBeat(11.1, digest)!!, 1e-9)
-        assertEquals(11.5, automixSnapToBeat(11.4, digest)!!, 1e-9)
-        // A downbeat is a beat too, and the nearest one wins like any other.
-        assertEquals(10.5, automixSnapToBeat(10.4, digest)!!, 1e-9)
+        // Downbeats every two seconds from 0.5; beats in between are not
+        // targets, because a transition is made of bars and a beat is a few
+        // pixels wide at any ordinary zoom.
+        assertEquals(10.5, automixSnapToBar(10.4, digest)!!, 1e-9)
+        assertEquals(10.5, automixSnapToBar(11.4, digest)!!, 1e-9)
+        assertEquals(12.5, automixSnapToBar(11.6, digest)!!, 1e-9)
     }
 
     @Test
-    fun snappingFollowsTheGridItWasGivenRatherThanTheTempo() {
-        // Downbeats that the tempo alone would not predict — the point being
-        // that the dots on screen are the grid, and the grid is what an edge
-        // lands on. The beats between them are still read off the interval.
+    fun theMagnetFollowsTheGridItWasGivenRatherThanTheTempo() {
         val digest = track().copy(downbeatTimes = listOf(3.0, 5.0, 7.0))
-        assertEquals(5.0, automixSnapToBeat(4.9, digest)!!, 1e-9)
-        assertEquals(3.5, automixSnapToBeat(3.4, digest)!!, 1e-9)
-        assertEquals(5.5, automixSnapToBeat(5.4, digest)!!, 1e-9)
+        assertEquals(5.0, automixSnapToBar(4.9, digest)!!, 1e-9)
+        assertEquals(3.0, automixSnapToBar(3.4, digest)!!, 1e-9)
+        assertEquals(7.0, automixSnapToBar(6.9, digest)!!, 1e-9)
     }
 
     @Test
-    fun snappingWithoutAGridSaysSo() {
-        assertNull(automixSnapToBeat(5.0, TrackAnalysisDigest()))
+    fun theMagnetWithoutAGridSaysSo() {
+        assertNull(automixSnapToBar(5.0, TrackAnalysisDigest()))
     }
 
     @Test

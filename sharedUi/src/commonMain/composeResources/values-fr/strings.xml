@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filtre</string>
     <string name="automix_row_overlap">Chevauchement</string>
     <string name="automix_row_volume">Volume</string>
-    <string name="automix_scrub_hint">Faites glisser le cadre pour déplacer la transition · glissez un bord pour placer une extrémité · glissez la piste du bas pour faire défiler</string>
+    <string name="automix_scrub_hint">Faites glisser le cadre pour le déplacer · glissez un bord pour l'allonger ou le raccourcir · glissez la piste du bas pour faire défiler</string>
     <string name="automix_style_dj_blend">mix DJ</string>
     <string name="automix_style_dj_filter">passage filtré</string>
     <string name="automix_style_equal_power">fondu à puissance constante</string>

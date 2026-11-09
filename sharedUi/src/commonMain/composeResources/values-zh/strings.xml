@@ -48,7 +48,7 @@
     <string name="automix_row_filter">滤波器</string>
     <string name="automix_row_overlap">重叠</string>
     <string name="automix_row_volume">音量</string>
-    <string name="automix_scrub_hint">拖动方框以移动过渡 · 拖动边缘以设置端点 · 拖动下层轨道以滚动</string>
+    <string name="automix_scrub_hint">拖动方框以移动 · 拖动边缘以延长或缩短 · 拖动下层轨道以滚动</string>
     <string name="automix_style_dj_blend">DJ 混音</string>
     <string name="automix_style_dj_filter">滤波交接</string>
     <string name="automix_style_equal_power">等功率淡入淡出</string>

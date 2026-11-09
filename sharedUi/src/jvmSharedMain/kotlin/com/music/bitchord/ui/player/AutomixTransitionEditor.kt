@@ -149,40 +149,21 @@ private fun AutomixWindow.contains(inner: AutomixWindow): Boolean {
 }
 
 /**
- * The beat nearest [time] on [digest]'s grid, or null when the track has no
- * grid to snap to.
+ * The bar line nearest [time] on [digest]'s grid, or null when the track has
+ * no grid at all.
  *
- * The grid is the downbeat list the analysis produced, with the three beats
- * between each pair of downbeats filled in from the measured beat interval.
- * Those are the same beats the drawing shows as dots, so what lights up under
- * the finger is exactly what the edge landed on.
+ * A bar line rather than a beat, because a bar is what a transition is made of:
+ * the planner works in whole bars, the product range is whole bars, and the
+ * beats between the bar lines are there to be *seen*, not to be landed on.
+ * Snapping to every beat, at any ordinary zoom, meant snapping to a few pixels —
+ * a drag quantised to distances too small to see, re-lighting its indicator
+ * several times a second, which reads as the box being stuck to the dots rather
+ * than as a placement being honoured.
  */
-internal fun automixSnapToBeat(time: Double, digest: TrackAnalysisDigest): Double? {
-    val downbeats = digest.downbeatTimes
-    if (downbeats.isEmpty()) return null
-    val beat = digest.beatInterval.takeIf { it > 0.0 && it.isFinite() }
-        ?: digest.bpm.takeIf { it > 0.0 }?.let { 60.0 / it }
-        ?: return null
-    var low = 0
-    var high = downbeats.size
-    while (low < high) {
-        val mid = (low + high) / 2
-        if (downbeats[mid] < time) low = mid + 1 else high = mid
-    }
-    var best = downbeats[min(low, downbeats.lastIndex)]
-    var bestDistance = abs(best - time)
-    for (index in max(0, low - 1)..min(downbeats.lastIndex, low)) {
-        val downbeat = downbeats[index]
-        for (step in 0..(BEATS_PER_BAR - 1)) {
-            val candidate = downbeat + step * beat
-            val distance = abs(candidate - time)
-            if (distance < bestDistance) {
-                bestDistance = distance
-                best = candidate
-            }
-        }
-    }
-    return best
+internal fun automixSnapToBar(time: Double, digest: TrackAnalysisDigest): Double? {
+    val bars = digest.downbeatTimes
+    if (bars.isEmpty()) return null
+    return bars.minByOrNull { abs(it - time) }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,14 +182,15 @@ internal fun automixSnapToBeat(time: Double, digest: TrackAnalysisDigest): Doubl
  * in, and the green line at its left edge is the handoff itself: the moment
  * the arriving track becomes audible.
  *
- * ## The size is whole bars, the place is anywhere
+ * ## The size is what the edges measure
  *
- * The planner works in whole bars, so the box does too: dragging an edge
- * takes the edge to the beat under the finger and re-derives the other edge
- * so the length stays a whole number of bars. That is what makes the box a
- * musical object rather than a freehand rectangle, and it is why a box can be
- * dropped anywhere in the song and still come back from the planner exactly
- * as it was drawn.
+ * The bar count is a consequence of where the two edges are, not a property the
+ * box carries: pulling an edge out lengthens the transition and pushing it in
+ * shortens it, exactly as far as the finger went. Both edges are kept on the
+ * planner's own terms — the size inside the four-to-thirty-two-bar range the
+ * product works in — and the edges are magnetically drawn to the bar lines the
+ * ruler shows, so a placement lands on a bar when it is near one and follows the
+ * finger when it is not.
  *
  * ## The drawing is the listener's, the hairline is the planner's
  *
@@ -405,68 +387,105 @@ internal fun AutomixTransitionEditor(
                 // half-claimed by it would silently stop moving the box.
                 var lastX = down.position.x
 
-                fun snap(raw: Double): Double {
-                    val placed = automixSnapToBeat(raw, track) ?: raw
-                    if (lastSnap == null || abs(placed - lastSnap!!) > 0.001) {
-                        lastSnap = placed
-                        snapped = placed
-                        latestOnSnap()
+                // ## The snap is a magnet, not a grid
+                //
+                // This used to be "wherever the finger is, take the nearest
+                // beat". At any ordinary zoom a beat is a handful of pixels
+                // apart, so that quantised the whole gesture to distances too
+                // small to see, fired a tick on every one of them, and lit a
+                // different dot several times a second: the box looked pinned
+                // to the dots and the drag rattled.
+                //
+                // What it is now: the edge follows the finger exactly, and is
+                // pulled onto a bar line only when the finger is already close
+                // to one. The pull is felt once, when it takes hold, which is
+                // what makes a snap readable rather than a rattle.
+                val lineSpacingPx = if (bar > 0.0) (bar / frozenSpan * width).toFloat() else 0f
+                val magnetPx = min(lineSpacingPx * SNAP_MAGNET_SHARE, SNAP_MAX_DP.toPx())
+
+                fun snap(raw: Double, x: Float): Double {
+                    val line = automixSnapToBar(raw, track)
+                    if (line != null && magnetPx > 0f && abs(xOf(line) - x) <= magnetPx) {
+                        if (lastSnap == null || abs(line - lastSnap!!) > 0.001) {
+                            lastSnap = line
+                            snapped = line
+                            latestOnSnap()
+                        }
+                        return line
                     }
-                    return placed
+                    // Left the magnet: the drawing stops claiming a snap at
+                    // once, and nothing is announced until the next one takes.
+                    lastSnap = null
+                    snapped = null
+                    return raw
                 }
 
-                /** Both edges on the track, in order, and the length untouched. */
+                /** The track's own limits, so nothing can be placed off it. */
+                fun ceilingOf(fallback: Double): Double =
+                    if (liveDuration > 0.0) liveDuration else fallback
+
+                /**
+                 * The window with its start moved and its exit left where it
+                 * was: what an edge drag does now.
+                 *
+                 * The size is a consequence of where the two edges are, so
+                 * pulling one edge out lengthens the transition and pushing it
+                 * in shortens it. It is kept inside the product range in whole
+                 * bars — a size below four bars cannot be executed and one
+                 * above thirty-two is not what anyone asked for.
+                 */
+                fun resizedFrom(to: Double, raw: Double): AutomixWindow {
+                    val lower = max(0.0, to - MAX_TRANSITION_BARS * bar)
+                    val upper = max(lower, to - MIN_TRANSITION_BARS * bar)
+                    return AutomixWindow(raw.coerceIn(lower, upper), to)
+                }
+
+                /** The same for the exit edge, with the start held still. */
+                fun resizedTo(from: Double, raw: Double): AutomixWindow {
+                    val ceiling = ceilingOf(raw)
+                    val lower = min(ceiling, from + MIN_TRANSITION_BARS * bar)
+                    val upper = max(lower, min(ceiling, from + MAX_TRANSITION_BARS * bar))
+                    return AutomixWindow(from, raw.coerceIn(lower, upper))
+                }
+
+                /** The whole box moved as one, at the size it already had. */
                 fun place(from: Double, to: Double) {
-                    val ceiling = if (liveDuration > 0.0) liveDuration else Double.MAX_VALUE
-                    val length = (to - from).coerceAtLeast(bar * MIN_TRANSITION_BARS)
-                    var newFrom = from.coerceIn(0.0, max(0.0, ceiling - length))
-                    if (newFrom + length > ceiling) newFrom = max(0.0, ceiling - length)
-                    live = AutomixWindow(newFrom, newFrom + length)
+                    val ceiling = ceilingOf(to)
+                    val shortest = bar * MIN_TRANSITION_BARS
+                    val longest = bar * MAX_TRANSITION_BARS
+                    val length = (to - from).coerceIn(shortest, max(shortest, longest))
+                    val newFrom = from.coerceIn(0.0, max(0.0, ceiling - length))
+                    live = AutomixWindow(newFrom, min(ceiling, newFrom + length))
                 }
-
-                /** The bars a raw span is worth, inside the range the planner works in. */
-                fun barsIn(span: Double): Int = ((span / bar).roundToInt())
-                    .coerceIn(MIN_TRANSITION_BARS, MAX_TRANSITION_BARS)
 
                 fun apply(x: Float) {
                     lastX = x
                     val raw = timeOf(x)
                     when (grabbed) {
-                        Grab.START_EDGE -> {
-                            // The handoff goes where the finger is; the size is
-                            // kept as the whole number of bars it already was, so
-                            // the exit edge follows rather than the request
-                            // becoming something the planner cannot execute.
-                            val placed = snap(raw)
-                            val bars = barsIn(opened.length)
-                            val length = bars * bar
-                            val ceiling = if (liveDuration > 0.0) liveDuration else Double.MAX_VALUE
-                            val from = placed.coerceIn(0.0, max(0.0, ceiling - length))
-                            live = AutomixWindow(from, min(ceiling, from + length))
-                        }
-                        Grab.END_EDGE -> {
-                            // Where the outgoing track is retired. Ending early
-                            // cuts its tail off, which the planner will not do
-                            // by itself and the listener may well want.
-                            val placed = snap(raw)
-                            val bars = barsIn(opened.length)
-                            val length = bars * bar
-                            val to = placed.coerceIn(0.0, if (liveDuration > 0.0) liveDuration else placed)
-                            live = AutomixWindow(max(0.0, to - length), to)
-                        }
+                        Grab.START_EDGE ->
+                            // The handoff edge follows the finger and the exit
+                            // stays put, so pulling this edge back lengthens the
+                            // transition and pushing it forward shortens it.
+                            live = resizedFrom(to = opened.end, raw = snap(raw, x))
+                        Grab.END_EDGE ->
+                            // The exit edge, the same way round: outwards is
+                            // longer, inwards retires the outgoing track earlier
+                            // and cuts its tail off — which the planner will not
+                            // do by itself and a listener may well want.
+                            live = resizedTo(from = opened.start, raw = snap(raw, x))
                         Grab.BODY -> {
                             // The box travels with the finger, keeping the reach
                             // it was taken hold with, so grabbing it anywhere
                             // moves it by the same amount the finger moved
                             // rather than jumping its edge to the touch.
                             val offset = down.position.x - boxLeft
-                            val placed = snap(timeOf(x - offset))
+                            val placed = snap(timeOf(x - offset), x)
                             place(placed, placed + opened.length)
                         }
                         Grab.HANDOFF -> {
                             // Put the handoff where the finger is; the exit
                             // follows, because the size is a size.
-                            val placed = snap(raw)
+                            val placed = snap(raw, x)
                             place(placed, placed + opened.length)
                         }
                         Grab.VIEW -> Unit
@@ -590,13 +609,8 @@ internal fun AutomixTransitionEditor(
             )
         }
 
-        // The grid the edges land on, as dots: downbeats longer and brighter,
-        // the beats between them dimmer. The one the last placement snapped to
-        // is lit, so a snap can be seen as well as felt.
-        drawBeatDots(current, upperTop + laneHeight / 2f, from, span, { it }, snapped)
-        if (hasNext) {
-            drawBeatDots(next, lowerTop + laneHeight / 2f, from, span, incomingMap, null)
-        }
+        // The grid the edges land on, as a ruler along the drawing's own edges:
+        // see [drawBeatRuler] for why it is there and not down the lane.
 
         if (inWindow && enabled) {
             // The window itself: a tint over both lanes, so the two waveforms
@@ -606,6 +620,15 @@ internal fun AutomixTransitionEditor(
                 topLeft = Offset(left, 0f),
                 size = Size(right - left, height),
             )
+        }
+
+        // The measured grid, as a ruler along the two outer edges of the
+        // drawing: the outgoing track's bars along the top, the arriving
+        // track's along the bottom. Drawn over the window tint so the scale
+        // stays readable through it.
+        drawBeatRuler(current, edgeY = 0f, downward = true, from = from, span = span, mapToAxis = { it }, lit = snapped)
+        if (hasNext) {
+            drawBeatRuler(next, edgeY = height, downward = false, from = from, span = span, mapToAxis = incomingMap, lit = null)
         }
 
         // The lines. Every one of them is the listener's own choice, drawn
@@ -770,17 +793,23 @@ private fun DrawScope.drawWaveform(
 }
 
 /**
- * The measured grid, as dots along the lane's centre line.
+ * The measured grid, as a ruler along a lane's own edge.
  *
  * Green, because the grid is what a placement snaps to and the handoff that
  * ends up on it is green too: the two are the same idea seen twice. Downbeats
- * are larger and brighter — they are the ones a bar count is counted in — and
- * the beat the last placement landed on is lit outright, so a snap can be
- * confirmed by eye as well as by the tick under the finger.
+ * are longer and brighter — they are the bar lines a transition is measured in,
+ * and the only ones an edge is pulled onto — and the bar line the last placement
+ * landed on is lit outright, so a snap can be confirmed by eye as well as by the
+ * tick under the finger.
+ *
+ * Along the edge rather than down the middle of the lane. Drawn at the centre it
+ * sat on top of the waveform and inside the box, where it read as a row of
+ * handles — something to be grabbed — rather than as a scale to be read against.
  */
-private fun DrawScope.drawBeatDots(
+private fun DrawScope.drawBeatRuler(
     digest: TrackAnalysisDigest,
-    mid: Float,
+    edgeY: Float,
+    downward: Boolean,
     from: Double,
     span: Double,
     mapToAxis: (Double) -> Double,
@@ -793,6 +822,9 @@ private fun DrawScope.drawBeatDots(
         ?: return
     val width = size.width
     val last = from + span
+    val direction = if (downward) 1f else -1f
+    val beatLength = 4.dp.toPx() * direction
+    val barLength = 9.dp.toPx() * direction
     for (downbeat in downbeats) {
         for (step in 0 until BEATS_PER_BAR) {
             val time = downbeat + step * beat
@@ -801,26 +833,38 @@ private fun DrawScope.drawBeatDots(
             if (axis > last) return
             val x = ((axis - from) / span * width).toFloat()
             if (x < 0f || x > width) continue
-            val down = step == 0
-            val snappedHere = lit != null && abs(time - lit) < 0.001
+            val isBar = step == 0
             when {
-                snappedHere -> {
-                    drawCircle(
+                lit != null && abs(time - lit) < 0.001 -> {
+                    val end = edgeY + barLength * 1.5f
+                    drawLine(
                         color = AutomixGreen.copy(alpha = 0.30f),
-                        radius = 7.dp.toPx(),
-                        center = Offset(x, mid),
+                        start = Offset(x, edgeY),
+                        end = Offset(x, end),
+                        strokeWidth = 5.dp.toPx(),
+                        cap = StrokeCap.Round,
                     )
-                    drawCircle(color = Color.White, radius = 3.dp.toPx(), center = Offset(x, mid))
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(x, edgeY),
+                        end = Offset(x, end),
+                        strokeWidth = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
                 }
-                down -> drawCircle(
+                isBar -> drawLine(
                     color = AutomixGreen.copy(alpha = 0.85f),
-                    radius = 2.4.dp.toPx(),
-                    center = Offset(x, mid),
+                    start = Offset(x, edgeY),
+                    end = Offset(x, edgeY + barLength),
+                    strokeWidth = 1.6.dp.toPx(),
+                    cap = StrokeCap.Round,
                 )
-                else -> drawCircle(
-                    color = AutomixGreen.copy(alpha = 0.42f),
-                    radius = 1.5.dp.toPx(),
-                    center = Offset(x, mid),
+                else -> drawLine(
+                    color = AutomixGreen.copy(alpha = 0.34f),
+                    start = Offset(x, edgeY),
+                    end = Offset(x, edgeY + beatLength),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round,
                 )
             }
         }
@@ -1005,9 +1049,24 @@ private const val VIEW_SLACK = 0.01
  * How close to an edge a finger has to land to take hold of it.
  *
  * Wide enough to be a target rather than a pixel hunt: the edge is a hairline,
- * and a listener reaching for it with a thumb should not have to be exact.
+ * and a listener reaching for it with a thumb should not have to be exact. It is
+ * capped against the box's own width in the gesture, so a short window still has
+ * a body to grab.
  */
 private val EDGE_HIT_DP = 26.dp
+
+/**
+ * How far along the gap between two bar lines the magnet reaches, as a share of
+ * that gap.
+ *
+ * Under a half, so there is always travel between one snap and the next: a
+ * magnet that reached half way would be a grid again, and a grid is what this
+ * replaced.
+ */
+private const val SNAP_MAGNET_SHARE = 0.34f
+
+/** A ceiling on the magnet, so a heavily zoomed-in view cannot snap from far off. */
+private val SNAP_MAX_DP = 14.dp
 
 /** Points across the tone curve; enough for a bell, few enough to stay smooth. */
 private const val EQ_CURVE_POINTS = 64

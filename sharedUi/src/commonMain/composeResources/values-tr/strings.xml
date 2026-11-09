@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filtre</string>
     <string name="automix_row_overlap">Çakışma</string>
     <string name="automix_row_volume">Ses</string>
-    <string name="automix_scrub_hint">Geçişi taşımak için kutuyu sürükleyin · bir ucu ayarlamak için kenarı sürükleyin · kaydırmak için alt şeridi sürükleyin</string>
+    <string name="automix_scrub_hint">Taşımak için kutuyu sürükleyin · uzatmak veya kısaltmak için kenarı sürükleyin · kaydırmak için alt şeridi sürükleyin</string>
     <string name="automix_style_dj_blend">DJ karışımı</string>
     <string name="automix_style_dj_filter">filtreli devir</string>
     <string name="automix_style_equal_power">sabit güç geçişi</string>

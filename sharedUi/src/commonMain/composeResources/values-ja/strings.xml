@@ -48,7 +48,7 @@
     <string name="automix_row_filter">フィルター</string>
     <string name="automix_row_overlap">重なり</string>
     <string name="automix_row_volume">音量</string>
-    <string name="automix_scrub_hint">ボックスをドラッグしてトランジションを移動 · 端をドラッグして端を決める · 下のレーンをドラッグしてスクロール</string>
+    <string name="automix_scrub_hint">ボックスをドラッグして移動 · 端をドラッグして長さを伸縮 · 下のレーンをドラッグしてスクロール</string>
     <string name="automix_style_dj_blend">DJブレンド</string>
     <string name="automix_style_dj_filter">フィルター付きハンドオフ</string>
     <string name="automix_style_equal_power">等電力フェード</string>

@@ -124,16 +124,23 @@ had.
 
 - [x] The orange box is the listener's own window: the handoff is its left
       edge and the exit where the outgoing track is retired is its right one.
-- [x] Either edge can be taken hold of on its own. The edge under the finger
-      snaps to the nearest measured beat and the other edge is re-derived so
-      the window is still a whole number of bars.
+- [x] Either edge can be taken hold of on its own, and the two ends move
+      independently: pulling the handoff edge back lengthens the transition,
+      pushing it in shortens it, and the exit edge does the same from the other
+      side. The size is what the two edges measure, kept inside the four-to-
+      thirty-two-bar range.
 - [x] Dragging the box itself moves it with the finger; dragging the upper
       lane (the outgoing waveform) puts the handoff under the finger.
 - [x] Dragging the lower lane scrolls the view, and the window is kept in
       sight.
-- [x] Green dots mark the measured grid, downbeats larger; the beat a
-      placement snapped to lights up, and a haptic tick fires when the snapped
-      beat changes.
+- [x] Green rules along the drawing's own top and bottom edges mark the
+      measured grid: every beat a short tick, every bar line a longer bright
+      one. The tick a placement took is lit, so a snap is confirmed by eye.
+- [x] Snapping is a magnet, not a grid: the edge follows the finger and is
+      pulled onto a bar line only when the finger is already near one, and the
+      tick fires when the pull takes hold rather than on every bar it crosses.
+      Snapping to every beat quantised a drag to a few pixels — invisible, and
+      it rattled.
 - [x] The finger-to-time mapping is frozen for the whole gesture, so the box
       cannot jump out from under the finger.
 - [x] There is no tap-anywhere behaviour: a stray touch does not move the
@@ -223,4 +230,18 @@ transition fell back to a plain fade.
       redraw on the playback clock.
 - [x] The waveform is folded to one column per pixel before it is drawn.
 - [x] The profile write is debounced and happens on its own thread.
+
+### 14. Player chrome bugs reported in testing
+
+Reported from the 3.0.10 draft. Not Automix; queued behind the panel work.
+
+- [ ] Opening the full player from the mini player, and going back, leaves the
+      track title and artist partially hidden behind something — the text is
+      there but a layer is drawn over part of it. It is correct once the full
+      player is already up, so it is the transition between the two that is
+      wrong.
+- [ ] With the lyrics pane open the album art moves to the top left, which is
+      what is wanted. Opening the queue in that same state zooms the album art
+      slightly — the art was meant to stay as the lyrics pane leaves it, not
+      scale.
 

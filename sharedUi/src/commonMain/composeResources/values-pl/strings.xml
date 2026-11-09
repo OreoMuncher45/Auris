@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Filtr</string>
     <string name="automix_row_overlap">Nakładanie</string>
     <string name="automix_row_volume">Głośność</string>
-    <string name="automix_scrub_hint">Przeciągnij ramkę, aby przesunąć przejście · przeciągnij krawędź, aby ustawić koniec · przeciągnij dolny pas, aby przewijać</string>
+    <string name="automix_scrub_hint">Przeciągnij ramkę, aby ją przesunąć · przeciągnij krawędź, aby wydłużyć lub skrócić · przeciągnij dolny pas, aby przewijać</string>
     <string name="automix_style_dj_blend">miks DJ</string>
     <string name="automix_style_dj_filter">przekazanie z filtrem</string>
     <string name="automix_style_equal_power">przenikanie o stałej mocy</string>

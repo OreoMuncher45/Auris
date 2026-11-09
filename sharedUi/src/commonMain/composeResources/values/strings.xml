@@ -49,7 +49,7 @@
     <string name="automix_row_filter">Filter</string>
     <string name="automix_row_overlap">Overlap</string>
     <string name="automix_row_volume">Volume</string>
-    <string name="automix_scrub_hint">Drag the box to move the transition · drag an edge to move an end · drag the lower lane to scroll</string>
+    <string name="automix_scrub_hint">Drag the box to move it · drag an edge to lengthen or shorten it · drag the lower lane to scroll</string>
     <string name="automix_stopped_in_party">Automix: stopped in listen together</string>
     <string name="automix_style_dj_blend">DJ blend</string>
     <string name="automix_style_dj_filter">Filtered handoff</string>

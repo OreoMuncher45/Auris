@@ -48,7 +48,7 @@
     <string name="automix_row_filter">Bộ lọc</string>
     <string name="automix_row_overlap">Chồng lấp</string>
     <string name="automix_row_volume">Âm lượng</string>
-    <string name="automix_scrub_hint">Kéo hộp để di chuyển chuyển tiếp · kéo cạnh để đặt một đầu · kéo làn dưới để cuộn</string>
+    <string name="automix_scrub_hint">Kéo hộp để di chuyển · kéo cạnh để kéo dài hoặc thu ngắn · kéo làn dưới để cuộn</string>
     <string name="automix_style_dj_blend">trộn DJ</string>
     <string name="automix_style_dj_filter">bàn giao có lọc</string>
     <string name="automix_style_equal_power">chuyển tiếp công suất đều</string>
