@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Brani scaricati mostrati</string>
     <string name="queue_search_added">Aggiunto alla coda</string>
     <string name="queue_search_will_play">Verrà riprodotto dopo</string>
+    <string name="queue_suggest_similar">Simili</string>
+    <string name="queue_suggest_artist">Dell\'artista</string>
+    <string name="queue_suggest_album">Dall\'album</string>
+    <string name="queue_search_nothing_here">Ancora niente qui</string>
 </resources>

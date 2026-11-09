@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Đang hiển thị bài hát đã tải</string>
     <string name="queue_search_added">Đã thêm vào hàng đợi</string>
     <string name="queue_search_will_play">Sẽ phát tiếp theo</string>
+    <string name="queue_suggest_similar">Tương tự</string>
+    <string name="queue_suggest_artist">Từ nghệ sĩ</string>
+    <string name="queue_suggest_album">Từ album</string>
+    <string name="queue_search_nothing_here">Chưa có gì ở đây</string>
 </resources>

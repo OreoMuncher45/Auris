@@ -271,4 +271,8 @@
     <string name="queue_search_offline">מציג שירים שהורדו</string>
     <string name="queue_search_added">נוסף לתור</string>
     <string name="queue_search_will_play">יושמע בהמשך</string>
+    <string name="queue_suggest_similar">דומים</string>
+    <string name="queue_suggest_artist">מהאמן</string>
+    <string name="queue_suggest_album">מהאלבום</string>
+    <string name="queue_search_nothing_here">אין כאן עדיין דבר</string>
 </resources>

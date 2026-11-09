@@ -1948,6 +1948,7 @@ fun NowPlayingScreen(
             exit = fadeOut(tween(120)) + scaleOut(tween(150), targetScale = 0.96f),
         ) {
             PlayerQueueSearchBox(
+                currentSong = song,
                 onDismiss = { queueSearchOpen = false },
                 onAddToQueue = onAddToQueue,
                 onPlayNext = onPlayNext,

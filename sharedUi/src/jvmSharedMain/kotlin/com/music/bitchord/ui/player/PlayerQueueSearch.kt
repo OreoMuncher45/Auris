@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueSuggestion
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -158,6 +159,12 @@ private const val MAX_BOX_HEIGHT_SHARE = 0.62f
  */
 @Composable
 internal fun PlayerQueueSearchBox(
+    /**
+     * The track that is playing, which the three suggestion tabs are built
+     * from: what sounds like it, who else it is by, what else is on its record.
+     * Null on a platform with nothing to ask, where the tabs are not offered.
+     */
+    currentSong: Song? = null,
     onDismiss: () -> Unit,
     onAddToQueue: (Song) -> Unit,
     onPlayNext: (Song) -> Unit,
@@ -168,6 +175,13 @@ internal fun PlayerQueueSearchBox(
     val focus = remember { FocusRequester() }
 
     var query by remember { mutableStateOf("") }
+    // Which list the box is showing while nothing is typed. The search tabs are
+    // the point of the box as much as the field is — a listener looking at the
+    // queue usually wants more of what is playing, not a name they already have
+    // — so one of them is always chosen rather than the box opening empty.
+    var tab by remember { mutableStateOf(QueueSuggestion.SIMILAR) }
+    var suggested by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var loadingSuggestions by remember { mutableStateOf(false) }
     var hits by remember { mutableStateOf<List<Song>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     // The catalogue could not be reached, and the list is the device's own
@@ -181,8 +195,19 @@ internal fun PlayerQueueSearchBox(
     val addedLabel = stringResource(Res.string.queue_search_added)
     val willPlayLabel = stringResource(Res.string.queue_search_will_play)
 
-    // The field is the reason the box exists; open the keyboard for it.
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    val suggestionsAvailable = currentSong != null
+
+    // A suggestion list is fetched for the chosen tab, and only while the field
+    // is empty — a name typed is a question the listener asked, and it wins
+    // over the one the box was going to ask on its behalf.
+    LaunchedEffect(tab, query, currentSong) {
+        val song = currentSong ?: return@LaunchedEffect
+        if (query.isNotBlank()) return@LaunchedEffect
+        loadingSuggestions = true
+        suggested = runCatching { PlayerPlatform.host.queueSuggestions(song, tab) }
+            .getOrDefault(emptyList())
+        loadingSuggestions = false
+    }
 
     // Live search: a name is typed and the answer follows, a beat after the
     // typing stops. Every keystroke cancels the one before it, so a slow
@@ -267,13 +292,59 @@ internal fun PlayerQueueSearchBox(
                         .padding(horizontal = 12.dp),
                 )
 
+                if (suggestionsAvailable) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, top = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        QueueSuggestion.entries.forEach { entry ->
+                            val chosen = entry == tab && query.isBlank()
+                            Text(
+                                text = stringResource(
+                                    when (entry) {
+                                        QueueSuggestion.SIMILAR -> Res.string.queue_suggest_similar
+                                        QueueSuggestion.ARTIST -> Res.string.queue_suggest_artist
+                                        QueueSuggestion.ALBUM -> Res.string.queue_suggest_album
+                                    },
+                                ),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal,
+                                ),
+                                color = if (chosen) Color.White else Color.White.copy(alpha = 0.55f),
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(
+                                        if (chosen) Color.White.copy(alpha = 0.14f) else Color.Transparent,
+                                    )
+                                    .clickable {
+                                        haptics.play(Haptic.Select)
+                                        // Choosing a tab abandons the typed name:
+                                        // the two are answers to the same question,
+                                        // and half-typed text under a list of an
+                                        // artist's songs would read as a filter
+                                        // that had not been applied.
+                                        query = ""
+                                        tab = entry
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
+
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(max = maxList.coerceAtLeast(80.dp)),
                 ) {
+                    val showingSuggestions = suggestionsAvailable && query.isBlank()
+                    val rows = if (showingSuggestions) suggested else hits
+                    val busy = if (showingSuggestions) loadingSuggestions else searching
                     when {
-                        searching && hits.isEmpty() -> CircularProgressIndicator(
+                        busy && rows.isEmpty() -> CircularProgressIndicator(
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .padding(vertical = 22.dp)
@@ -282,15 +353,14 @@ internal fun PlayerQueueSearchBox(
                             strokeWidth = 2.5.dp,
                         )
 
-                        query.isBlank() -> Text(
-                            text = stringResource(Res.string.queue_search_start),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.45f),
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-                        )
-
-                        hits.isEmpty() -> Text(
-                            text = stringResource(Res.string.queue_search_no_results),
+                        rows.isEmpty() -> Text(
+                            text = stringResource(
+                                if (showingSuggestions) {
+                                    Res.string.queue_search_nothing_here
+                                } else {
+                                    Res.string.queue_search_no_results
+                                },
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.5f),
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
@@ -305,7 +375,7 @@ internal fun PlayerQueueSearchBox(
                             ),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            items(hits, key = { it.videoId }) { song ->
+                            items(rows, key = { it.videoId }) { song ->
                                 QueueSearchRow(
                                     song = song,
                                     onAddToQueue = {

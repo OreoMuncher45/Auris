@@ -164,7 +164,9 @@ import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.ArtworkFlightLayer
 import com.music.bitchord.ui.components.SingSheet
+import com.music.bitchord.ui.components.cancelArtworkFlight
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.AccountProfileSelector
@@ -3876,7 +3878,13 @@ private fun BitChordApp(
                 // the same trade the player sheet makes, and the same one it
                 // makes well: a slide that keeps its frames beats a lens
                 // that tracks what passes underneath it.
-                LaunchedEffect(pageKey) { GlassMotion.nav.moved() }
+                LaunchedEffect(pageKey) {
+                    GlassMotion.nav.moved()
+                    // A page change leaves neither end of a flight where it was
+                    // measured, so whatever is in the air is dropped rather
+                    // than finished over a page it has nothing to do with.
+                    cancelArtworkFlight()
+                }
                 AnimatedContent(
                     targetState = pageKey,
                     // Tabs swap outright; everything else crossfades.
@@ -3986,6 +3994,9 @@ private fun BitChordApp(
                             key != "discord" && key != "replay" && key != "history" && key != "flow" &&
                             key != "library_show_all"
                     }
+                        // The travelling sleeve, over the page and under the bars: a
+                        // card's cover crossing the window into the page it opened.
+                        ArtworkFlightLayer()
                     // Held for the same reason, one step further on: a popped
                     // page is off the stack before it has finished animating
                     // out, so `live` goes null under it and it would spend its

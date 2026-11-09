@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Titres téléchargés affichés</string>
     <string name="queue_search_added">Ajouté à la file d\'attente</string>
     <string name="queue_search_will_play">Sera lu ensuite</string>
+    <string name="queue_suggest_similar">Similaires</string>
+    <string name="queue_suggest_artist">De l\'artiste</string>
+    <string name="queue_suggest_album">De l\'album</string>
+    <string name="queue_search_nothing_here">Rien ici pour le moment</string>
 </resources>

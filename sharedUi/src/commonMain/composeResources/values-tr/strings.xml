@@ -271,4 +271,8 @@
     <string name="queue_search_offline">İndirilen şarkılar gösteriliyor</string>
     <string name="queue_search_added">Sıraya eklendi</string>
     <string name="queue_search_will_play">Sırada çalacak</string>
+    <string name="queue_suggest_similar">Benzer</string>
+    <string name="queue_suggest_artist">Sanatçıdan</string>
+    <string name="queue_suggest_album">Albümden</string>
+    <string name="queue_search_nothing_here">Burada henüz bir şey yok</string>
 </resources>

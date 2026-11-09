@@ -294,4 +294,8 @@
     <string name="queue_search_offline">Showing downloaded songs</string>
     <string name="queue_search_added">Added to queue</string>
     <string name="queue_search_will_play">Will play next</string>
+    <string name="queue_suggest_similar">Similar</string>
+    <string name="queue_suggest_artist">From artist</string>
+    <string name="queue_suggest_album">From album</string>
+    <string name="queue_search_nothing_here">Nothing here yet</string>
 </resources>

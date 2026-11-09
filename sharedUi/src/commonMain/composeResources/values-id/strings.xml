@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Menampilkan lagu yang diunduh</string>
     <string name="queue_search_added">Ditambahkan ke antrean</string>
     <string name="queue_search_will_play">Akan diputar berikutnya</string>
+    <string name="queue_suggest_similar">Mirip</string>
+    <string name="queue_suggest_artist">Dari artis</string>
+    <string name="queue_suggest_album">Dari album</string>
+    <string name="queue_search_nothing_here">Belum ada apa-apa</string>
 </resources>

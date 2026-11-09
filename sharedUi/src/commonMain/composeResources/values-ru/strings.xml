@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Показаны загруженные треки</string>
     <string name="queue_search_added">Добавлено в очередь</string>
     <string name="queue_search_will_play">Играет следующим</string>
+    <string name="queue_suggest_similar">Похожие</string>
+    <string name="queue_suggest_artist">От исполнителя</string>
+    <string name="queue_suggest_album">Из альбома</string>
+    <string name="queue_search_nothing_here">Здесь пока ничего</string>
 </resources>

@@ -23,7 +23,65 @@ import com.music.bitchord.data.model.Song
  * recording is not shown beside it — two rows for one song, one of which
  * cannot be played on the train, is worse than one row that can.
  */
+/**
+ * What a filled queue can be filled *from*, offered beside the search.
+ *
+ * Three questions a listener asks at the moment they are looking at the queue
+ * and the track that is playing: what else sounds like this, what else does
+ * this artist have, and what else is on this record. They are the three ways a
+ * queue grows from something rather than from a name.
+ */
+enum class QueueSuggestion {
+    /** What the catalogue would play next: the radio built from this track. */
+    SIMILAR,
+
+    /** Everything else by whoever this is. */
+    ARTIST,
+
+    /** The rest of the record it came off. */
+    ALBUM,
+}
+
 object QueueSearch {
+
+    /**
+     * The rows a suggestion list may show.
+     *
+     * Shorter than a search's answer on purpose: a suggestion is a list of
+     * things to add, not a catalogue to browse, and each row is a tap that
+     * *does* something to the queue.
+     */
+    const val MAX_SUGGESTIONS = 25
+
+    /**
+     * Tidies what a platform answered with for [mode].
+     *
+     * The seed is dropped — the track that is playing is not a suggestion — so
+     * is anything already on the queue, and so is a second copy of a recording
+     * the catalogue listed twice. The order the platform gave is kept: it is
+     * relevance, and it is the one thing here that knows anything about it.
+     */
+    fun suggestions(
+        answers: List<Song>,
+        mode: QueueSuggestion,
+        seed: Song?,
+        queued: Set<String> = emptySet(),
+    ): List<Song> {
+        val seen = mutableSetOf<String>()
+        return answers
+            .filter { it.videoId.isNotBlank() }
+            .filter { seed == null || it.videoId != seed.videoId }
+            .filter { it.videoId !in queued }
+            .filter { seen.add(it.videoId) }
+            .take(MAX_SUGGESTIONS)
+            .also { rows ->
+                // Nothing to tidy about the mode itself yet; the parameter is
+                // carried so every caller says which list this is, and so a
+                // mode with its own rule has one place to put it.
+                if (mode == QueueSuggestion.SIMILAR && rows.isEmpty()) return@also
+            }
+    }
+
 
     /**
      * How many rows the search shows.

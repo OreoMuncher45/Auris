@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Mostrando canciones descargadas</string>
     <string name="queue_search_added">Añadida a la cola</string>
     <string name="queue_search_will_play">Se reproducirá a continuación</string>
+    <string name="queue_suggest_similar">Similares</string>
+    <string name="queue_suggest_artist">Del artista</string>
+    <string name="queue_suggest_album">Del álbum</string>
+    <string name="queue_search_nothing_here">Nada por aquí todavía</string>
 </resources>

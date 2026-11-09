@@ -271,4 +271,8 @@
     <string name="queue_search_offline">正在显示已下载的歌曲</string>
     <string name="queue_search_added">已添加到播放队列</string>
     <string name="queue_search_will_play">将接着播放</string>
+    <string name="queue_suggest_similar">相似歌曲</string>
+    <string name="queue_suggest_artist">来自歌手</string>
+    <string name="queue_suggest_album">来自专辑</string>
+    <string name="queue_search_nothing_here">这里还没有内容</string>
 </resources>

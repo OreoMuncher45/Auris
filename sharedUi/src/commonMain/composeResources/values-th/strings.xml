@@ -271,4 +271,8 @@
     <string name="queue_search_offline">แสดงเพลงที่ดาวน์โหลดไว้</string>
     <string name="queue_search_added">เพิ่มลงคิวแล้ว</string>
     <string name="queue_search_will_play">จะเล่นถัดไป</string>
+    <string name="queue_suggest_similar">คล้ายกัน</string>
+    <string name="queue_suggest_artist">จากศิลปิน</string>
+    <string name="queue_suggest_album">จากอัลบั้ม</string>
+    <string name="queue_search_nothing_here">ยังไม่มีอะไรที่นี่</string>
 </resources>

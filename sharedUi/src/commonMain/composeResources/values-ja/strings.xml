@@ -271,4 +271,8 @@
     <string name="queue_search_offline">ダウンロード済みの曲を表示中</string>
     <string name="queue_search_added">再生キューに追加しました</string>
     <string name="queue_search_will_play">次に再生します</string>
+    <string name="queue_suggest_similar">類似曲</string>
+    <string name="queue_suggest_artist">アーティストから</string>
+    <string name="queue_suggest_album">アルバムから</string>
+    <string name="queue_search_nothing_here">まだ何もありません</string>
 </resources>

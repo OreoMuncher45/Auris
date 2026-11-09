@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import com.music.bitchord.ui.components.artworkDeparture
+import com.music.bitchord.ui.components.rememberArtworkTap
 import com.music.bitchord.ui.components.ShelfRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1215,9 +1217,18 @@ internal fun ShelfCard(
     isPlaying: Boolean = false,
 ) {
     val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
+    // Tapping this card lifts its cover and flies it into the page it opens —
+    // see ArtworkFlight. The card is the departure and the page's sleeve is the
+    // arrival; neither knows about the other, and the flight is one picture
+    // moving between two measured rectangles.
+    val openWithFlight = rememberArtworkTap(
+        destination = item.browseId,
+        token = item,
+        onOpen = onClick,
+    )
     Column(
         modifier = modifier
-            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .longPressMenuClickable(onClick = openWithFlight, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
         when (item.browseId) {
@@ -1307,7 +1318,10 @@ internal fun ShelfCard(
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp))
                         .thumbnailBorder(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        // The cover this card flies from: measured where it is,
+                        // and drawn away while its own copy is in the air.
+                        .artworkDeparture(token = item, model = item.thumbnailUrl.artworkAt(CARD_ART_PX)),
                 ) {
                     AsyncImage(
                         model = item.thumbnailUrl.artworkAt(CARD_ART_PX),

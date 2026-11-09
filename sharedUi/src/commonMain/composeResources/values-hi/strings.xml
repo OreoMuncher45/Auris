@@ -271,4 +271,8 @@
     <string name="queue_search_offline">डाउनलोड किए गाने दिखाए जा रहे हैं</string>
     <string name="queue_search_added">कतार में जोड़ा गया</string>
     <string name="queue_search_will_play">अगला चलेगा</string>
+    <string name="queue_suggest_similar">समान</string>
+    <string name="queue_suggest_artist">कलाकार से</string>
+    <string name="queue_suggest_album">एल्बम से</string>
+    <string name="queue_search_nothing_here">अभी यहाँ कुछ नहीं</string>
 </resources>

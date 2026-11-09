@@ -105,4 +105,50 @@ class QueueSearchTest {
         )
         assertEquals(listOf("a"), QueueSearch.localMatches(tracks, "bounce").map { it.videoId })
     }
+
+    // -----------------------------------------------------------------------
+    // The three suggestion tabs
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `a suggestion list never names the track that is playing`() {
+        val seed = song("seed", "Bounce")
+        val rows = QueueSearch.suggestions(
+            answers = listOf(seed, song("other", "Aerials")),
+            mode = QueueSuggestion.SIMILAR,
+            seed = seed,
+        )
+        assertEquals(listOf("other"), rows.map { it.videoId })
+    }
+
+    @Test
+    fun `a suggestion list never repeats what is already queued`() {
+        val seed = song("seed", "Bounce")
+        val rows = QueueSearch.suggestions(
+            answers = listOf(song("queued", "Chop Suey"), song("fresh", "Aerials")),
+            mode = QueueSuggestion.ARTIST,
+            seed = seed,
+            queued = setOf("queued"),
+        )
+        assertEquals(listOf("fresh"), rows.map { it.videoId })
+    }
+
+    @Test
+    fun `a catalogue that lists a recording twice is not a reason to queue it twice`() {
+        val rows = QueueSearch.suggestions(
+            answers = listOf(song("dup", "Bounce"), song("dup", "Bounce")),
+            mode = QueueSuggestion.ALBUM,
+            seed = null,
+        )
+        assertEquals(listOf("dup"), rows.map { it.videoId })
+    }
+
+    @Test
+    fun `a suggestion list is a handful of things to add, not a catalogue`() {
+        val many = (1..80).map { song("id$it", "Song $it") }
+        assertEquals(
+            QueueSearch.MAX_SUGGESTIONS,
+            QueueSearch.suggestions(many, QueueSuggestion.SIMILAR, seed = null).size,
+        )
+    }
 }

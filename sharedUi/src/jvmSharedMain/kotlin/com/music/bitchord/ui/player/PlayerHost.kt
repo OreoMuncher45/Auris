@@ -142,6 +142,18 @@ interface PlayerHost {
      * fail.
      */
     suspend fun searchQueueSongs(query: String): QueueSearchResult = QueueSearchResult(emptyList())
+
+    /**
+     * The songs to offer for [song] under [mode]: what else sounds like it,
+     * what else the artist has, the rest of its record.
+     *
+     * A platform with no catalogue answers with nothing, which the box reads as
+     * an empty list rather than as a failure — there was nothing to fail.
+     */
+    suspend fun queueSuggestions(
+        song: Song,
+        mode: com.music.bitchord.playback.QueueSuggestion,
+    ): List<Song> = emptyList()
 }
 
 /** What the queue's search found. */

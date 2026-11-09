@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Pokazywanie pobranych utworów</string>
     <string name="queue_search_added">Dodano do kolejki</string>
     <string name="queue_search_will_play">Zagra następny</string>
+    <string name="queue_suggest_similar">Podobne</string>
+    <string name="queue_suggest_artist">Od wykonawcy</string>
+    <string name="queue_suggest_album">Z albumu</string>
+    <string name="queue_search_nothing_here">Jeszcze nic tu nie ma</string>
 </resources>

@@ -33,6 +33,7 @@ import com.music.bitchord.playback.AutomixAnalysisDemand
 import com.music.bitchord.playback.AutomixPreview
 import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.QueueSearch
+import com.music.bitchord.playback.QueueSuggestion
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
@@ -151,6 +152,63 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     // The queue's search. The phone is the platform that has both halves of
     // it: a catalogue to ask and a device to look in.
     override val queueSearchAvailable: Boolean get() = true
+
+    override suspend fun queueSuggestions(
+        song: Song,
+        mode: QueueSuggestion,
+    ): List<Song> {
+        // What the three questions are answered with, in order of how directly
+        // the catalogue can answer them.
+        val answers = when (mode) {
+            // The radio built from this track: exactly the list a listener
+            // means by "more like this", and the same one AutoPlay reads.
+            QueueSuggestion.SIMILAR ->
+                runCatching { YtMusicRepository.radio(song.videoId).getOrNull() }.getOrNull().orEmpty()
+
+            // The artist's own page when the row knew who they are, and a
+            // search by name when it did not — a row from a playlist or a home
+            // card frequently carries neither id.
+            QueueSuggestion.ARTIST -> runCatching {
+                val page = song.artistId?.let { YtMusicRepository.artistPage(it).getOrNull() }
+                page?.songs.orEmpty().ifEmpty {
+                    YtMusicRepository.search(song.artist, SearchFilter.SONGS).getOrNull()
+                        .orEmpty()
+                        .mapNotNull { row -> songOf(row) }
+                        .filter { it.artist.contains(song.artist, ignoreCase = true) }
+                }
+            }.getOrNull().orEmpty()
+
+            // The record, by its own browse id when the row carried one — which
+            // is the album page itself, not a search that might land on a
+            // compilation with the same name.
+            QueueSuggestion.ALBUM -> runCatching {
+                val id = song.albumId
+                val page = id?.takeIf { it.startsWith("MPREb") }?.let {
+                    YtMusicRepository.browseSongs(it).getOrNull()
+                }
+                page?.songs.orEmpty().ifEmpty {
+                    val album = song.albumName
+                    if (album.isNullOrBlank()) {
+                        emptyList()
+                    } else {
+                        YtMusicRepository.search("$album ${song.artist}", SearchFilter.SONGS)
+                            .getOrNull()
+                            .orEmpty()
+                            .mapNotNull { row -> songOf(row) }
+                            .filter { it.albumName.equals(album, ignoreCase = true) }
+                    }
+                }
+            }.getOrNull().orEmpty()
+        }
+        return QueueSearch.suggestions(answers, mode, seed = song)
+    }
+
+    /** One search row as a song, for the rows that are songs at all. */
+    private fun songOf(row: SearchResult): Song? = when (row) {
+        is SearchResult.TopTrack -> row.song
+        is SearchResult.Track -> row.song
+        is SearchResult.Browse -> null
+    }
 
     override suspend fun searchQueueSongs(query: String): QueueSearchResult {
         val term = query.trim()

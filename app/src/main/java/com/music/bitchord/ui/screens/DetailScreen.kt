@@ -142,6 +142,8 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.ARRIVAL_OVERSHOOT
+import com.music.bitchord.ui.components.artworkArrival
+import com.music.bitchord.ui.components.artworkArrivalDrawn
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
@@ -1243,9 +1245,18 @@ private fun PageBackground(
                 model = art,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                // The sleeve a card's cover flies into — see ArtworkFlight — and
+                // the moment it has drawn is the moment that cover may let go of
+                // it. The arrival below is for a page opened *without* a cover in
+                // the air, where there is nothing to land; the two are never seen
+                // at once.
+                onState = {
+                    if (it is AsyncImagePainter.State.Success) artworkArrivalDrawn(page.browseId)
+                },
                 modifier = Modifier
                     .matchParentSize()
                     .background(palette.elevated)
+                    .artworkArrival(page.browseId, corner = 0.dp, wash = palette.wash)
                     // The arrival: a hair of overshoot that settles, and the
                     // opacity with it. Drawn rather than composed, so nothing
                     // about this is re-measured on any frame of it.

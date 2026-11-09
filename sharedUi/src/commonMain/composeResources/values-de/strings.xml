@@ -271,4 +271,8 @@
     <string name="queue_search_offline">Heruntergeladene Songs werden angezeigt</string>
     <string name="queue_search_added">Zur Warteschlange hinzugefügt</string>
     <string name="queue_search_will_play">Wird als Nächstes gespielt</string>
+    <string name="queue_suggest_similar">Ähnlich</string>
+    <string name="queue_suggest_artist">Vom Künstler</string>
+    <string name="queue_suggest_album">Vom Album</string>
+    <string name="queue_search_nothing_here">Noch nichts hier</string>
 </resources>
