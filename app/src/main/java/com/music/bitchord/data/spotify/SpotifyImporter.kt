@@ -16,11 +16,16 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import kotlinx.serialization.json.put
 import okhttp3.Request
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -181,11 +186,18 @@ object SpotifyImporter {
     /** Tracks the embed page lists before it cuts off. */
     private const val EMBED_TRACK_LIMIT = 100
     private const val PAGE_SIZE = 100
-    private const val PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
-    private const val FETCH_PLAYLIST_HASH = "19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d"
 
-    /** Tracks from [start] to the end of the playlist, a page at a time. */
-    private fun fetchRemainingTracks(
+    /**
+     * Tracks from [start] to the end of the playlist, a page at a time.
+     *
+     * The embed page stops at its first hundred tracks, and the rest come
+     * from the web player's own query. That query's hash changes with every
+     * Spotify build — it used to be written down here, and it was stale, so
+     * every long playlist stopped at a hundred tracks without saying so. The
+     * hash now comes from the operation table, which is read off the player's
+     * own bundles, and the request is the same one the rest of the app makes.
+     */
+    private suspend fun fetchRemainingTracks(
         playlistId: String,
         token: String,
         start: Int,
@@ -193,39 +205,25 @@ object SpotifyImporter {
         val out = mutableListOf<SpotifyImportTrack>()
         var offset = start
         while (true) {
-            val variables = """{"uri":"spotify:playlist:$playlistId","offset":$offset,"limit":$PAGE_SIZE,"enableWatchFeedEntrypoint":false}"""
-            val extensions = """{"persistedQuery":{"version":1,"sha256Hash":"$FETCH_PLAYLIST_HASH"}}"""
-            val url = PATHFINDER_URL.toHttpUrl().newBuilder()
-                .addQueryParameter("operationName", "fetchPlaylist")
-                .addQueryParameter("variables", variables)
-                .addQueryParameter("extensions", extensions)
-                .build()
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT)
-                .header("Authorization", "Bearer $token")
-                .header("App-platform", "WebPlayer")
-                .header("Accept", "application/json")
-                .build()
-            val body = Http.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("HTTP ${response.code}")
-                response.body?.string().orEmpty()
+            val variables = buildJsonObject {
+                put("uri", "spotify:playlist:$playlistId")
+                put("offset", offset)
+                put("limit", PAGE_SIZE)
+                put("enableWatchFeedEntrypoint", false)
             }
-            val content = json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
-                ?.get("playlistV2")?.jsonObject?.get("content")?.jsonObject
-                ?: break
-            val items = content["items"]?.jsonArray ?: break
+            val data = SpotifyGraphQL.queryWithToken("fetchPlaylist", variables, token)
+            val content = data.obj("playlistV2")?.obj("content") ?: break
+            val items = content.arr("items").orEmpty()
             for (item in items) {
-                val data = item.jsonObject["itemV2"]?.jsonObject?.get("data")?.jsonObject ?: continue
-                val title = data["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+                val data = item.jsonObject.obj("itemV2")?.obj("data") ?: continue
+                val title = data.str("name")?.trim().orEmpty()
                 if (title.isEmpty()) continue
-                val artist = data["artists"]?.jsonObject?.get("items")?.jsonArray
-                    ?.mapNotNull { it.jsonObject["profile"]?.jsonObject?.get("name")?.jsonPrimitive?.content }
-                    ?.joinToString(", ")
-                    .orEmpty()
+                val artist = data.obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
+                    artist.jsonObject.obj("profile")?.str("name")
+                }.joinToString(", ")
                 out.add(SpotifyImportTrack(title = title, artist = artist))
             }
-            val total = content["totalCount"]?.jsonPrimitive?.content?.toIntOrNull() ?: break
+            val total = content.int("totalCount") ?: break
             offset += items.size
             if (items.isEmpty() || offset >= total) break
         }
@@ -270,4 +268,18 @@ object SpotifyImporter {
 
         Pair(songs, unmatched)
     }
+
+    // ── Small JSON helpers, matching the shape the web player answers in ──
+
+    private fun JsonObject.obj(key: String): JsonObject? =
+        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonObject }.getOrNull() }
+
+    private fun JsonObject.arr(key: String): JsonArray? =
+        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonArray }.getOrNull() }
+
+    private fun JsonObject.str(key: String): String? =
+        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.int(key: String): Int? =
+        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.intOrNull
 }

@@ -88,6 +88,41 @@ internal object SpotifyGraphQL {
      *   answers with errors of its own.
      */
     suspend fun query(operation: String, variables: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        // The operation is checked before the token. A name this build has
+        // never heard of must not reach the network at all, and going after a
+        // token first would spend a session — and, on a phone with no web view
+        // yet, a wait — on a request that was never going to be made.
+        if (SpotifyOps.hash(operation) == null) {
+            throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
+        }
+        val token = token()
+            ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
+        try {
+            queryWithToken(operation, variables, token)
+        } catch (error: SpotifyGraphQLException) {
+            // A stale token is worth one more try with a fresh one; a second
+            // refusal is a refusal.
+            if (!error.unauthorised) throw error
+            SpotifyToken.invalidate()
+            val fresh = token() ?: throw error
+            queryWithToken(operation, variables, fresh)
+        }
+    }
+
+    /**
+     * Runs [operation] with a token the caller already holds, and returns its
+     * `data`.
+     *
+     * For the callers that come with a token of their own — the importer
+     * reads one out of the embed page it has just loaded, and that token is
+     * the one the embed's session is signed with. Such a token cannot be
+     * renewed here: there is no session behind it to harvest a new one from.
+     */
+    suspend fun queryWithToken(
+        operation: String,
+        variables: JsonObject,
+        token: String,
+    ): JsonObject = withContext(Dispatchers.IO) {
         val hash = SpotifyOps.hash(operation)
             ?: throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
 
@@ -113,63 +148,51 @@ internal object SpotifyGraphQL {
             }
         }
 
-        var attempt = 0
-        while (true) {
-            attempt++
-            val token = token()
-                ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
-            val request = Request.Builder()
-                .url(ENDPOINT)
-                .post(body.toString().toRequestBody(mediaType))
-                .apply { headers(token).forEach { (name, value) -> header(name, value) } }
-                .build()
+        val request = Request.Builder()
+            .url(ENDPOINT)
+            .post(body.toString().toRequestBody(mediaType))
+            .apply { headers(token).forEach { (name, value) -> header(name, value) } }
+            .build()
 
-            val (code, payload, retryAfter) = try {
-                Http.client.newCall(request).execute().use { response ->
-                    Triple(
-                        response.code,
-                        response.body?.string().orEmpty(),
-                        response.header("Retry-After")?.trim()?.toIntOrNull(),
-                    )
-                }
-            } catch (error: Exception) {
-                throw SpotifyGraphQLException("the request failed: ${error.message}")
+        val (code, payload, retryAfter) = try {
+            Http.client.newCall(request).execute().use { response ->
+                Triple(
+                    response.code,
+                    response.body?.string().orEmpty(),
+                    response.header("Retry-After")?.trim()?.toIntOrNull(),
+                )
             }
-
-            when {
-                code == 429 -> {
-                    // The header is the server's own answer to "when may I try
-                    // again", and honouring it is the only thing that makes the
-                    // wait as short as it can be.
-                    val seconds = retryAfter ?: DEFAULT_RATE_LIMIT_SECONDS
-                    rateLimitedUntil = System.currentTimeMillis() + seconds.coerceIn(1, 900) * 1000L
-                    Log.w(TAG, "$operation: HTTP 429 — Spotify is rate limiting this device")
-                    throw SpotifyGraphQLException(
-                        "Spotify is rate limiting this device; it lifts in about ${seconds}s",
-                        rateLimited = true,
-                    )
-                }
-                // A stale token is worth one more try with a fresh one; a
-                // second refusal is a refusal.
-                code == 401 && attempt == 1 -> {
-                    SpotifyToken.invalidate()
-                    continue
-                }
-                code !in 200..299 ->
-                    throw SpotifyGraphQLException("Spotify refused $operation (HTTP $code)")
-            }
-
-            val root = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
-                ?: throw SpotifyGraphQLException("Spotify's answer to $operation was not JSON")
-            root["errors"]?.jsonArray?.firstOrNull()?.jsonObject?.let { error ->
-                val message = error["message"]?.jsonPrimitive?.contentOrNull
-                throw SpotifyGraphQLException(message ?: "Spotify's answer to $operation carried an error")
-            }
-            return@withContext root["data"]?.jsonObject
-                ?: throw SpotifyGraphQLException("Spotify's answer to $operation carried no data")
+        } catch (error: Exception) {
+            throw SpotifyGraphQLException("the request failed: ${error.message}")
         }
-        @Suppress("UNREACHABLE_CODE")
-        throw SpotifyGraphQLException("unreachable")
+
+        when {
+            code == 429 -> {
+                // The header is the server's own answer to "when may I try
+                // again", and honouring it is the only thing that makes the
+                // wait as short as it can be.
+                val seconds = retryAfter ?: DEFAULT_RATE_LIMIT_SECONDS
+                rateLimitedUntil = System.currentTimeMillis() + seconds.coerceIn(1, 900) * 1000L
+                Log.w(TAG, "$operation: HTTP 429 — Spotify is rate limiting this device")
+                throw SpotifyGraphQLException(
+                    "Spotify is rate limiting this device; it lifts in about ${seconds}s",
+                    rateLimited = true,
+                )
+            }
+            code == 401 ->
+                throw SpotifyGraphQLException("Spotify refused $operation (HTTP 401)", unauthorised = true)
+            code !in 200..299 ->
+                throw SpotifyGraphQLException("Spotify refused $operation (HTTP $code)")
+        }
+
+        val root = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: throw SpotifyGraphQLException("Spotify's answer to $operation was not JSON")
+        root["errors"]?.jsonArray?.firstOrNull()?.jsonObject?.let { error ->
+            val message = error["message"]?.jsonPrimitive?.contentOrNull
+            throw SpotifyGraphQLException(message ?: "Spotify's answer to $operation carried an error")
+        }
+        root["data"]?.jsonObject
+            ?: throw SpotifyGraphQLException("Spotify's answer to $operation carried no data")
     }
 
     /**
@@ -208,4 +231,6 @@ internal class SpotifyGraphQLException(
     message: String,
     /** Whether this was a rate limit rather than a refusal. */
     val rateLimited: Boolean = false,
+    /** Whether the backend refused the token rather than the request. */
+    val unauthorised: Boolean = false,
 ) : Exception(message)
