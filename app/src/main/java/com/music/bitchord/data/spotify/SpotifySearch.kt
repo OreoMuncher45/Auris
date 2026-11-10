@@ -57,9 +57,22 @@ internal object SpotifySearch {
     /**
      * Searches Spotify's catalogue for [query].
      *
-     * The tabs the filter asks for are asked at once: they are independent
-     * requests and the page wants all of them, so asking them in parallel is
-     * the difference between one round trip's wall time and four.
+     * ## More than one way to ask
+     *
+     * The tabs the filter asks for are answered by one operation on some
+     * builds and by a family of them on others, and a persisted query that is
+     * sent the wrong variables fails as a *whole request* — a 200 with an
+     * `errors` array, no `searchV2`, and a page that looks like a catalogue
+     * with nothing in it. Two things fix that, and both are here rather than
+     * in the parser: the variables each attempt sends are the complete set the
+     * web player itself sends for that operation (read off its own bundles,
+     * not guessed from the ones that looked necessary), and every attempt is
+     * tried in turn until one of them answers with a search section.
+     *
+     * The first attempt is the one the player's own sections use; the second
+     * is its search *page*; the third is the per-tab family that predates both
+     * and is still shipped. Which one answered is logged, because the next
+     * build will move them again and the log is how that is noticed.
      */
     suspend fun searchPage(
         query: String,
@@ -67,56 +80,191 @@ internal object SpotifySearch {
         offset: Int = 0,
     ): Page = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext Page(emptyList(), null)
-        // One operation answers for every tab now, and the variable it wants
-        // is `term` — the old four operations asked for `searchTerm`, and
-        // they are no longer in the web player at all. The answer has the
-        // same shape: `data.searchV2` holds a section per kind.
-        val variables = buildJsonObject {
-            put("term", query)
-            put("limit", limitOf(filter))
-            put("numberOfTopResults", limitOf(filter))
-        }
-        val root = runCatching { SpotifyGraphQL.query("assistedCurationSearch", variables) }
-            .onFailure { error ->
-                Log.w(TAG, "Spotify's search could not be read: ${error.message}")
+        val limit = limitOf(filter)
+
+        var section: JsonObject? = null
+        for (attempt in attempts(query, limit, offset)) {
+            val root = runCatching { SpotifyGraphQL.query(attempt.operation, attempt.variables) }
+                .onFailure { error ->
+                    Log.w(TAG, "Spotify's search via ${attempt.operation} failed: ${error.message}")
+                }
+                .getOrNull()
+            val answered = root?.obj("searchV2")
+            if (answered == null) {
+                if (root != null) {
+                    Log.w(TAG, "Spotify's ${attempt.operation} answered without a search section")
+                }
+                continue
             }
-            .getOrNull()
-        val section = root?.obj("searchV2")
-        if (section == null) {
-            Log.w(TAG, "Spotify's search came back without a search section")
-            return@withContext Page(emptyList(), null)
+            if (answered.hasNothing()) {
+                Log.d(TAG, "Spotify's ${attempt.operation} answered an empty search")
+                continue
+            }
+            Log.d(TAG, "Spotify's search answered by ${attempt.operation}")
+            section = answered
+            break
         }
 
+        // The per-tab family, when nothing above produced a section. Each of
+        // those operations serves exactly one kind, so the ones the filter
+        // wants are asked in turn.
+        if (section == null) {
+            val perTab = perTabSections(query, filter, limit, offset)
+            if (perTab != null && !perTab.hasNothing()) {
+                Log.d(TAG, "Spotify's search answered by the per-tab operations")
+                section = perTab
+            }
+        }
+
+        if (section == null) {
+            Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\"")
+            return@withContext Page(emptyList(), null)
+        }
+        return@withContext parse(section, filter, limit)
+    }
+
+    /** One way of asking Spotify for [query]. */
+    private data class Attempt(val operation: String, val variables: JsonObject)
+
+    /**
+     * The full variable set for each operation, as the web player sends it.
+     *
+     * Every key here was read off the player's own call sites. A missing one is
+     * not a smaller request — the persisted query declares its variables and a
+     * request that does not supply them is refused with an error rather than
+     * answered with defaults, which is what made search come back empty.
+     */
+    private fun attempts(query: String, limit: Int, offset: Int): List<Attempt> = listOf(
+        Attempt(
+            "assistedCurationSearch",
+            buildJsonObject {
+                put("term", query)
+                put("offset", offset)
+                put("limit", limit)
+                put("numberOfTopResults", limit)
+                put("includeEpisodeContentRatingsV2", true)
+            },
+        ),
+        Attempt(
+            "searchDesktop",
+            buildJsonObject {
+                put("searchTerm", query)
+                put("offset", offset)
+                put("limit", limit)
+                put("numberOfTopResults", limit)
+                put("includeAudiobooks", false)
+                put("includeArtistHasConcertsField", false)
+                put("includePreReleases", false)
+                put("includeAlbumPreReleases", false)
+                put("includeAuthors", false)
+                put("includeEpisodeContentRatingsV2", false)
+            },
+        ),
+    )
+
+    /** The tab-per-operation family, for a build where the two above are gone. */
+    private suspend fun perTabSections(
+        query: String,
+        filter: SearchFilter,
+        limit: Int,
+        offset: Int,
+    ): JsonObject? {
+        val wanted = when (filter) {
+            SearchFilter.SONGS -> listOf("searchTracks" to "tracksV2")
+            SearchFilter.ALBUMS -> listOf("searchAlbums" to "albumsV2")
+            SearchFilter.ARTISTS -> listOf("searchArtists" to "artists")
+            SearchFilter.PLAYLISTS -> listOf("searchPlaylists" to "playlists")
+            SearchFilter.ALL -> listOf(
+                "searchTracks" to "tracksV2",
+                "searchAlbums" to "albumsV2",
+                "searchArtists" to "artists",
+                "searchPlaylists" to "playlists",
+            )
+            // Podcasts and videos have no rows of their own in this app's
+            // search; the operations above are the only ones worth asking.
+            else -> emptyList()
+        }
+        val sections = HashMap<String, kotlinx.serialization.json.JsonElement>()
+        var answeredAny = false
+        for ((operation, key) in wanted) {
+            val variables = buildJsonObject {
+                put("searchTerm", query)
+                put("offset", offset)
+                put("limit", limit)
+                put("numberOfTopResults", limit)
+                put("includeAudiobooks", false)
+                put("includePreReleases", false)
+                put("includeAlbumPreReleases", false)
+                put("includeAuthors", false)
+                put("includeEpisodeContentRatingsV2", false)
+            }
+            val root = runCatching { SpotifyGraphQL.query(operation, variables) }
+                .onFailure { error ->
+                    Log.w(TAG, "Spotify's $operation failed: ${error.message}")
+                }
+                .getOrNull()
+            val section = root?.obj("searchV2") ?: continue
+            answeredAny = true
+            section[key]?.let { sections[key] = it }
+        }
+        return if (answeredAny) JsonObject(sections) else null
+    }
+
+    /** Whether every list in [this] section is empty. */
+    private fun JsonObject.hasNothing(): Boolean {
+        val lists = listOf("tracksV2", "albumsV2", "artists", "playlists", "topResultsV2")
+        return lists.all { key ->
+            obj(key)?.arr("items").isNullOrEmpty() && obj(key)?.arr("itemsV2").isNullOrEmpty()
+        }
+    }
+
+    /** Reads a search section into this app's rows. */
+    private suspend fun parse(section: JsonObject, filter: SearchFilter, limit: Int): Page {
         val trackItems = section.obj("tracksV2")?.arr("items").orEmpty()
         val albumItems = section.obj("albumsV2")?.arr("items").orEmpty()
         val artistItems = section.obj("artists")?.arr("items").orEmpty()
-        // Playlists are no longer a section of their own: they come back
-        // among the top results, each with the kind it is.
         val playlistItems = section.obj("playlists")?.arr("items").orEmpty()
-            .ifEmpty {
-                section.obj("topResultsV2")?.arr("itemsV2").orEmpty()
-                    .mapNotNull { item -> item.objOrNull()?.obj("item") }
-            }
+
+        // The top results, which are where a newer section build puts
+        // everything: each entry carries its own kind, so the four lists above
+        // can be empty while the answer is not.
+        val top = section.obj("topResultsV2")?.arr("itemsV2").orEmpty()
+            .mapNotNull { item -> item.objOrNull()?.obj("item")?.obj("data") }
+
+        /** A `data` object, whether it arrived in its own list or among the top results. */
+        fun dataOf(element: kotlinx.serialization.json.JsonElement): JsonObject? =
+            element.objOrNull()?.let { it.obj("data") ?: it.obj("item")?.obj("data") }
 
         val rows = mutableListOf<SearchResult>()
+
         if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
-            SpotifyHomeSource.matchTracks(parseTracks(trackItems)).forEach { song ->
-                rows += SearchResult.Track(song)
+            val trackData = (trackItems.mapNotNull(::dataOf) + top.filter { it.isTrack() })
+            val songs = SpotifyHomeSource.matchTracks(parseTracks(trackData))
+            // Said out loud, because this is the one step between a Spotify
+            // answer and an empty page: the catalogue can return twelve rows
+            // and the listener still see nothing, because none of them matched
+            // anything playable.
+            if (trackData.isNotEmpty() && songs.isEmpty()) {
+                Log.w(TAG, "Spotify's search found ${trackData.size} tracks, none of which matched anything playable")
             }
+            songs.forEach { rows += SearchResult.Track(it) }
         }
         if (filter == SearchFilter.ALBUMS || filter == SearchFilter.ALL) {
-            albumItems.mapNotNull { parseAlbum(it.objOrNull()?.obj("data")) }
+            (albumItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:album:") })
+                .mapNotNull(::parseAlbum)
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.ARTISTS || filter == SearchFilter.ALL) {
-            artistItems.mapNotNull { parseArtist(it.objOrNull()?.obj("data")) }
+            (artistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:artist:") })
+                .mapNotNull(::parseArtist)
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.PLAYLISTS || filter == SearchFilter.ALL) {
-            playlistItems.mapNotNull { parsePlaylist(it.objOrNull()?.obj("data")) }
+            (playlistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:playlist:") })
+                .mapNotNull(::parsePlaylist)
                 .forEach { rows += it.row() }
         }
-        Page(rows, null)
+        return Page(rows, null)
     }
 
     /** How many rows one tab is asked for. */
@@ -127,9 +275,14 @@ internal object SpotifySearch {
 
     // -- parsing ------------------------------------------------------------
 
-    private fun parseTracks(items: List<kotlinx.serialization.json.JsonElement>): List<SpotifyTrack> =
-        items.mapNotNull { element ->
-            val data = element.objOrNull()?.obj("item")?.obj("data") ?: return@mapNotNull null
+    /** Whether this `data` object is the kind [uriPrefix] names. */
+    private fun JsonObject.isKind(uriPrefix: String): Boolean =
+        str("uri").orEmpty().startsWith(uriPrefix)
+
+    private fun JsonObject.isTrack(): Boolean = isKind("spotify:track:")
+
+    private fun parseTracks(items: List<JsonObject>): List<SpotifyTrack> =
+        items.mapNotNull { data ->
             val uri = data.str("uri") ?: return@mapNotNull null
             if (!uri.startsWith("spotify:track:")) return@mapNotNull null
             val title = data.str("name").orEmpty()

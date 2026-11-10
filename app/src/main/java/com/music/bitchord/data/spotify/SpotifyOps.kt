@@ -80,12 +80,15 @@ internal object SpotifyOps {
         // `fetchPlaylist`, `fetchPlaylistContents` and `fetchPlaylistMetadata`
         // are one query, and the variables decide what comes back.
         "fetchPlaylistContents" to "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf",
-        // The catalogue search, as the current web player asks it. The older
-        // `searchTracks` / `searchAlbums` / `searchArtists` / `searchPlaylists`
-        // operations are gone from the player: one operation now answers for
-        // every tab, and the variable it wants is `term` rather than
-        // `searchTerm`.
+        // The catalogue search. Two families, because Spotify is shipping
+        // both: the assisted-curation operations (one per kind, on `term`) that
+        // power the search page's sections, and the older per-tab family that
+        // the results page and the "see all" pages still use, on `searchTerm`.
+        // Both are asked; whichever answers first is the one that exists.
         "assistedCurationSearch" to "f78953bf9207d73493c27284103f5aeb6e728876d5793851bf79bc706127ff70",
+        "searchDesktop" to "eef7cc54888d91bdd6802623477873caa3948ae173a0c34fd86827b267e94c03",
+        "assistedCurationSearchAlbum" to "e33489c81fdab1986d8b785fb9bf13993a2d5ff171190c575963f97e525870fe",
+        "assistedCurationSearchArtist" to "a562324cea8976b4d51f08cee971bb180ce9279c947d27e0814675220b160cf7",
         // What the search box offers while it is being typed.
         "searchSuggestions" to "f244254b94c0e824d458ac216e0f8406a73f2f69a9ff52831a2f78fa774ff6ce",
         "fetchLibraryTracks" to "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240",

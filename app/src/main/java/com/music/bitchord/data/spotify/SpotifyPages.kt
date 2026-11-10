@@ -78,6 +78,11 @@ internal object SpotifyPages {
             put("uri", "spotify:artist:$id")
             put("locale", "")
             put("preReleaseV2", false)
+            // Part of the operation's variable set, and the one this app was
+            // not sending: a persisted query refused for a missing variable
+            // reads as an artist Spotify does not have, which is how the
+            // "fans also like" expansion — and with it Flow — came back empty.
+            put("includeMusicVideoPreviews", false)
         }
         return parseArtistPage(SpotifyGraphQL.query("queryArtistOverview", variables))
     }

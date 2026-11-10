@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -114,19 +115,56 @@ internal object SpotifyAlgorithm {
      * must not answer with a tribute act called "Weeknd Radio".
      */
     private suspend fun artistIdFor(name: String): String? {
-        val variables = buildJsonObject {
-            put("term", name)
-            put("limit", 5)
-            put("numberOfTopResults", 5)
-        }
-        val root = runCatching { SpotifyGraphQL.query("assistedCurationSearch", variables) }.getOrNull()
-            ?: return null
-        val candidates = root.obj("searchV2")?.obj("artists")?.arr("items").orEmpty()
-            .mapNotNull { item -> item.objOrNull()?.obj("data") }
+        // The same complete variable set the web player sends, offset included:
+        // an operation asked without one of its variables is refused outright,
+        // and the refusal reads as "Spotify has no artist called X".
+        val candidates = searchArtistCandidates(name)
         val exact = candidates.firstOrNull { data ->
             data.obj("profile")?.str("name")?.equals(name, ignoreCase = true) == true
         } ?: candidates.firstOrNull()
         val uri = exact?.str("uri")?.takeIf { it.startsWith("spotify:artist:") } ?: return null
         return uri.substringAfterLast(':')
     }
+
+    /** Artists Spotify returns for [name], from either search operation. */
+    private suspend fun searchArtistCandidates(name: String): List<JsonObject> {
+        val attempts = listOf(
+            "assistedCurationSearch" to buildJsonObject {
+                put("term", name)
+                put("offset", 0)
+                put("limit", ARTIST_SEARCH_LIMIT)
+                put("numberOfTopResults", ARTIST_SEARCH_LIMIT)
+                put("includeEpisodeContentRatingsV2", true)
+            },
+            "searchArtists" to buildJsonObject {
+                put("searchTerm", name)
+                put("offset", 0)
+                put("limit", ARTIST_SEARCH_LIMIT)
+                put("numberOfTopResults", ARTIST_SEARCH_LIMIT)
+                put("includeAudiobooks", false)
+                put("includePreReleases", false)
+                put("includeAlbumPreReleases", false)
+                put("includeAuthors", false)
+                put("includeEpisodeContentRatingsV2", false)
+            },
+        )
+        for ((operation, variables) in attempts) {
+            val root = runCatching { SpotifyGraphQL.query(operation, variables) }
+                .onFailure { Log.w(TAG, "the artist lookup via $operation failed: ${it.message}") }
+                .getOrNull() ?: continue
+            val section = root.obj("searchV2") ?: continue
+            val artists = section.obj("artists")?.arr("items").orEmpty()
+                .mapNotNull { item -> item.objOrNull()?.obj("data") }
+            if (artists.isNotEmpty()) return artists
+            // The top results carry an artist too, when the section does not.
+            val top = section.obj("topResultsV2")?.arr("itemsV2").orEmpty()
+                .mapNotNull { item -> item.objOrNull()?.obj("item")?.obj("data") }
+                .filter { data -> data.str("uri").orEmpty().startsWith("spotify:artist:") }
+            if (top.isNotEmpty()) return top
+        }
+        return emptyList()
+    }
+
+    /** How many artist candidates one lookup asks for. */
+    private const val ARTIST_SEARCH_LIMIT = 5
 }
