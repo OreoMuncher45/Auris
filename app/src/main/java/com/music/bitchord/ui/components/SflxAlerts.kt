@@ -61,15 +61,13 @@ fun SflxInstallDialog(
     onDismiss: () -> Unit,
     onInstalled: () -> Unit,
 ) {
-    // The Mornye store, already in the field.
+    // Empty on purpose, and staying that way.
     //
-    // It was left empty before, which made this dialog a test of whether the
-    // listener knew the shape of a GitHub raw URL — and the shape is not
-    // guessable: the address they were given was a directory. The field still
-    // accepts any link, but it starts on the one that is known to work.
-    // Empty on purpose. Nothing is bundled, suggested or pre-filled: an addon
-    // store is something the listener adds by pasting its link, and a default
-    // is a recommendation this app has no business making.
+    // Nothing is bundled, suggested or pre-filled: an addon store is something
+    // the listener adds by pasting its own link. A default is a recommendation
+    // — "this is where addons come from" — and installing somebody else's code
+    // has to be the listener's decision, made with their own link, not this
+    // app's suggestion.
     var link by remember { mutableStateOf("") }
     var offer by remember { mutableStateOf<SflxCatalog.InstallOffer?>(null) }
     val state by SflxCatalog.install.collectAsStateWithLifecycle()
