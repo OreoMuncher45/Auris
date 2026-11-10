@@ -141,7 +141,6 @@ fun ClassipodHost(
     val discordRpc by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val discordQuality by AppSettings.discordShowAudioQuality.collectAsStateWithLifecycle()
     val discordDetails by AppSettings.discordUseDetails.collectAsStateWithLifecycle()
-    val atmosOn by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val dlQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDl by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val musicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
@@ -515,7 +514,6 @@ fun ClassipodHost(
                     AudioQuality.MEDIUM, AudioQuality.LOW,
                 ),
                 AppSettings::setAudioQualityCellular, ::advAudioPage),
-            tog("Dolby Atmos", atmosOn, AppSettings::setDolbyAtmos, ::advAudioPage),
             cyc("Download quality", dlQuality.label, dlQuality,
                 com.music.bitchord.data.settings.DownloadQuality.entries,
                 AppSettings::setDownloadQuality, ::advAudioPage),

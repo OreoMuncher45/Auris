@@ -484,9 +484,9 @@ class ModuleSource(
          * [atmosAllowed] is the two answers folded into one, because from here
          * they mean the same thing and neither is more binding than the other:
          * the device has no decoder
-         * ([DeviceCodecs.playsDolbyAtmos]) or the listener turned it off
-         * ([AppSettings.dolbyAtmos]). The caller keeps them apart only to say
-         * which it was in the log.
+         * ([DeviceCodecs.playsDolbyAtmos]) or the listener's quality rung does
+         * not ask for Atmos ([AppSettings.wantsDolbyAtmos]). The caller keeps
+         * them apart only to say which it was in the log.
          *
          * Caught *here*, where the module answers, rather than by ranking it
          * lower in [SourceResolver]: an Atmos rendition is routinely the only
