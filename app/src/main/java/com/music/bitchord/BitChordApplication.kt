@@ -44,6 +44,7 @@ import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlin.concurrent.thread
 
@@ -154,8 +155,19 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // not on this thread and not on anyone's way to a first frame; it
             // is throttled to once every six hours, because Spotify ships a
             // build about once a day.
-            CoroutineScope(Dispatchers.IO).launch {
-                com.music.bitchord.data.spotify.SpotifyOps.refresh()
+            //
+            // Its own scope with a handler that swallows: this is a cache of
+            // somebody else's hashes, and an exception escaping a coroutine
+            // with no handler kills the process. It did — a bad pattern read
+            // the player's page and threw "No group 1" a second after launch.
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                runCatching { com.music.bitchord.data.spotify.SpotifyOps.refresh() }
+                    .onFailure { error ->
+                        com.music.bitchord.data.DebugLog.w(
+                            "Spotify",
+                            "the operation refresh failed: ${error.message}",
+                        )
+                    }
             }
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and

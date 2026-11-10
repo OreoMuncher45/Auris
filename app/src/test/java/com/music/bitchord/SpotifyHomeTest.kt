@@ -221,6 +221,31 @@ class SpotifyHomeTest {
     }
 
     @Test
+    fun theBundleUrlsAreReadOutOfThePlayerPage() {
+        // The page names its own bundles, and the refresh fetches each of
+        // them. This is the read that killed the app: the pattern has no
+        // capture group, and it was read with `groupValues[1]`, so the first
+        // refresh after launch threw "No group 1" in a coroutine with no
+        // handler and the process died a second after start.
+        val page = """
+            <script src="https://open.spotifycdn.com/cdn/build/web-player/vendor.js"></script>
+            <script src="https://open.spotifycdn.com/cdn/build/web-player/home.js"></script>
+            <script src="https://open.spotifycdn.com/cdn/build/web-player/other.js"></script>
+        """.trimIndent()
+
+        val urls = SpotifyOps.bundleUrls(page)
+
+        assertEquals(3, urls.size)
+        assertTrue(urls.all { it.startsWith("https://open.spotifycdn.com/cdn/build/web-player/") })
+        assertTrue(urls.any { it.endsWith("/home.js") })
+    }
+
+    @Test
+    fun aPageWithNoBundlesYieldsNoUrlsRatherThanThrowing() {
+        assertEquals(emptyList<String>(), SpotifyOps.bundleUrls("<html><body>nothing here</body></html>"))
+    }
+
+    @Test
     fun anOperationThisBuildHasNeverHeardOfIsRefusedRatherThanSent() = runBlocking {
         // A request naming a hash the backend no longer has is refused, and a
         // request that is not made is not. So an unknown operation never

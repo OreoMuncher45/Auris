@@ -172,36 +172,58 @@ internal object SpotifyOps {
         refreshed = true
         if (!due()) return@withContext null
 
-        val html = get("https://open.spotify.com/") ?: return@withContext null
-        val urls = LinkedHashSet<String>()
-        BUNDLE.findAll(html).forEach { urls += it.groupValues[1] }
-        scriptBlock(html, "__CDN_FILE_URLS__")?.forEach { (_, value) ->
-            if (value.endsWith(".js") && value.contains("/web-player/")) urls += value
-        }
-        if (urls.isEmpty()) return@withContext null
+        // Nothing in here may throw. This runs in a bare coroutine at app
+        // start, where an exception is not a failed lookup but a dead app —
+        // and it did exactly that: the bundle pattern below was read with
+        // `groupValues[1]` although it has no capture group, so the first
+        // fetch of the player page threw "No group 1" and took the process
+        // with it. The table in use is a cache of a fact; failing to refresh
+        // it is a cache miss, not a reason to close the app.
+        runCatching {
+            val html = get("https://open.spotify.com/") ?: return@runCatching null
+            val urls = LinkedHashSet<String>()
+            bundleUrls(html).forEach { urls += it }
+            scriptBlock(html, "__CDN_FILE_URLS__")?.forEach { (_, value) ->
+                if (value.endsWith(".js") && value.contains("/web-player/")) urls += value
+            }
+            if (urls.isEmpty()) return@runCatching null
 
-        val found = HashMap<String, String>()
-        val gate = Semaphore(6)
-        coroutineScope {
-            urls.map { url -> async { gate.withPermit { runCatching { get(url) }.getOrNull() } } }
-                .awaitAll()
-        }.filterNotNull().forEach { body -> found += parseBundleOperations(body) }
+            val found = HashMap<String, String>()
+            val gate = Semaphore(6)
+            coroutineScope {
+                urls.map { url -> async { gate.withPermit { runCatching { get(url) }.getOrNull() } } }
+                    .awaitAll()
+            }.filterNotNull().forEach { body -> found += parseBundleOperations(body) }
 
-        // A partial read must not shrink the table: fewer operations than the
-        // bundled one means the bundles did not all arrive, which is a failure
-        // and not a new truth.
-        if (found.size < bundled.size / 2) {
-            Log.w(TAG, "the bundle read found only ${found.size} operations; keeping the table in use")
+            // A partial read must not shrink the table: fewer operations than the
+            // bundled one means the bundles did not all arrive, which is a failure
+            // and not a new truth.
+            if (found.size < bundled.size / 2) {
+                Log.w(TAG, "the bundle read found only ${found.size} operations; keeping the table in use")
+                markChecked()
+                return@runCatching null
+            }
+            val merged = bundled + found
+            table = merged
+            writeCache(merged)
             markChecked()
-            return@withContext null
+            Log.d(TAG, "read ${found.size} operations from the current build")
+            merged
+        }.getOrElse { error ->
+            Log.w(TAG, "the operation refresh failed: ${error.message}")
+            null
         }
-        val merged = bundled + found
-        table = merged
-        writeCache(merged)
-        markChecked()
-        Log.d(TAG, "read ${found.size} operations from the current build")
-        merged
     }
+
+    /**
+     * The player's own bundle URLs, as named in its page.
+     *
+     * The whole match is the URL — the pattern has no capture group, and
+     * reading `groupValues[1]` from it is what threw "No group 1" and killed
+     * the app at start. [it.value][MatchResult.value] is the match itself.
+     */
+    internal fun bundleUrls(html: String): List<String> =
+        BUNDLE.findAll(html).map { it.value }.toList()
 
     /** Writes the table beside the app's other cached files. */
     private fun writeCache(operations: Map<String, String>) {
