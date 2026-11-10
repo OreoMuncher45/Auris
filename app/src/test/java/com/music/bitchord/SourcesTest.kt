@@ -965,12 +965,21 @@ class SourcesTest {
      */
     @Test
     fun `always swaps to lossless`() {
-        val youtube = StreamFormat(codec = "opus", kbps = 160)
-        assertTrue(SourceResolver.worthSwapping(StreamFormat(codec = "flac"), youtube))
-        // Even against a lossy stream that is nominally the higher bitrate.
-        assertTrue(
-            SourceResolver.worthSwapping(StreamFormat(codec = "flac"), StreamFormat(codec = "aac", kbps = 320)),
-        )
+        val wifi = AppSettings.audioQualityWifi.value
+        // Pinned, because what is "worth swapping to" depends on what was asked
+        // for: on a Dolby rung a FLAC is a downgrade, which is the opposite
+        // question to the one this test asks.
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
+        try {
+            val youtube = StreamFormat(codec = "opus", kbps = 160)
+            assertTrue(SourceResolver.worthSwapping(StreamFormat(codec = "flac"), youtube))
+            // Even against a lossy stream that is nominally the higher bitrate.
+            assertTrue(
+                SourceResolver.worthSwapping(StreamFormat(codec = "flac"), StreamFormat(codec = "aac", kbps = 320)),
+            )
+        } finally {
+            AppSettings.audioQualityWifi.value = wifi
+        }
     }
 
     /**
@@ -1422,6 +1431,9 @@ class SourcesTest {
      */
     @Test
     fun `patient upgrade chooses the better later answer`() = runBlocking {
+        val wifi = AppSettings.audioQualityWifi.value
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
+        try {
         val playing = StreamFormat(codec = "opus", kbps = 141)
         val slowLossless = FakeSource("Ricky's Addon", answerAfterMs = 200, format = StreamFormat("flac"))
         val quickLossy = FakeSource("JioSaavn", answerAfterMs = 5, format = StreamFormat("mp4", kbps = 320))
@@ -1435,6 +1447,9 @@ class SourcesTest {
         assertEquals("Ricky's Addon", source.displayName)
         assertEquals("flac", stream.format.codec)
         assertFalse("the patient lookup cancelled the later source", slowLossless.cancelled)
+        } finally {
+            AppSettings.audioQualityWifi.value = wifi
+        }
     }
 
     /**

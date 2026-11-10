@@ -44,6 +44,16 @@ class AddonSourceTest {
     /** Every request the server saw, in order, for assertions about the wire. */
     private val seen = mutableListOf<RecordedRequest>()
 
+    /**
+     * The connection ceiling as it was before this class pinned it.
+     *
+     * Held so it can be put back. It used to be left pinned, which made this
+     * class decide what *other* classes were testing — the resolver asks this
+     * setting whether lossless is even wanted, so a later test about swapping to
+     * a FLAC failed on a value this one had chosen and never restored.
+     */
+    private var qualityBefore: AudioQuality = AudioQuality.LOSSLESS
+
     @Before
     fun setUp() {
         server = MockWebServer()
@@ -58,6 +68,7 @@ class AddonSourceTest {
         // Both are read on every stream answer. Pinned so a test asserting on
         // format never depends on what the machine running it can decode.
         DeviceCodecs.forced = true
+        qualityBefore = AppSettings.audioQualityWifi.value
         AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
     }
 
@@ -65,7 +76,7 @@ class AddonSourceTest {
     fun tearDown() {
         server.shutdown()
         DeviceCodecs.forced = null
-        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        AppSettings.audioQualityWifi.value = qualityBefore
     }
 
     // ── URL handling ──────────────────────────────────────────────────────
