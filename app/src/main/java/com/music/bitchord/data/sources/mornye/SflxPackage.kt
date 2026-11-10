@@ -43,6 +43,17 @@ object SflxPackages {
     const val SCRIPT_ENTRY = "index.js"
     const val ICON_ENTRY = "icon.png"
 
+    /**
+     * The icon's own names, in the order they are preferred.
+     *
+     * The format's own icon is `icon.png`, but the packages in the wild carry
+     * `icon.jpg` too — the YouTube Music one in Mornye's store does — and an
+     * icon the host cannot find is an extension that installs with no picture
+     * of itself. So the name is matched by prefix rather than exactly: any
+     * `icon.*` is the icon, and the first one found wins.
+     */
+    private val ICON_NAMES = listOf("icon.png", "icon.jpg", "icon.jpeg", "icon.webp")
+
     /** A manifest is a page of JSON; anything past this is not one. */
     private const val MAX_MANIFEST_BYTES = 512L * 1024
 
@@ -76,10 +87,15 @@ object SflxPackages {
                 val entry = zip.nextEntry ?: break
                 if (entry.isDirectory) continue
                 if (++entries > MAX_ENTRIES) throw SflxException("archive holds more than $MAX_ENTRIES entries")
-                when (entry.name.substringAfterLast('/')) {
-                    MANIFEST_ENTRY -> manifestText = readEntry(zip, entry, MAX_MANIFEST_BYTES).decodeToString()
-                    SCRIPT_ENTRY -> scriptText = readEntry(zip, entry, MAX_SCRIPT_BYTES).decodeToString()
-                    ICON_ENTRY -> icon = readEntry(zip, entry, MAX_ICON_BYTES)
+                when {
+                    entry.name.substringAfterLast('/') == MANIFEST_ENTRY ->
+                        manifestText = readEntry(zip, entry, MAX_MANIFEST_BYTES).decodeToString()
+                    entry.name.substringAfterLast('/') == SCRIPT_ENTRY ->
+                        scriptText = readEntry(zip, entry, MAX_SCRIPT_BYTES).decodeToString()
+                    // The first icon wins; a second one is ignored rather
+                    // than read twice.
+                    icon == null && ICON_NAMES.contains(entry.name.substringAfterLast('/').lowercase()) ->
+                        icon = readEntry(zip, entry, MAX_ICON_BYTES)
                     else -> Unit
                 }
             }

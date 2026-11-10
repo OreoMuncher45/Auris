@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.sources.mornye.InstalledSflx
 import com.music.bitchord.data.sources.mornye.SflxCatalog
+import com.music.bitchord.data.sources.mornye.SflxRegistry
 import com.music.bitchord.data.sources.mornye.SflxRegistryEntry
 import com.music.bitchord.data.sources.mornye.SflxSetting
 import kotlinx.coroutines.launch
@@ -59,7 +60,13 @@ fun SflxInstallDialog(
     onDismiss: () -> Unit,
     onInstalled: () -> Unit,
 ) {
-    var link by remember { mutableStateOf("") }
+    // The Mornye store, already in the field.
+    //
+    // It was left empty before, which made this dialog a test of whether the
+    // listener knew the shape of a GitHub raw URL — and the shape is not
+    // guessable: the address they were given was a directory. The field still
+    // accepts any link, but it starts on the one that is known to work.
+    var link by remember { mutableStateOf(SflxRegistry.MORNYE_STORE) }
     var offer by remember { mutableStateOf<SflxCatalog.InstallOffer?>(null) }
     val state by SflxCatalog.install.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -93,6 +100,14 @@ fun SflxInstallDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                TextButton(
+                    enabled = !fetching,
+                    onClick = {
+                        link = SflxRegistry.MORNYE_STORE
+                        offer = null
+                        scope.launch { SflxCatalog.inspect(SflxRegistry.MORNYE_STORE).onSuccess { offer = it } }
+                    },
+                ) { Text("Open the Mornye store") }
 
                 when (val current = offer) {
                     null -> Unit
@@ -103,6 +118,12 @@ fun SflxInstallDialog(
                         )
                         current.manufacturerLine()?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                        current.manifest.minAppVersion.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                "Built for Mornye $it or newer.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
                         if (current.manifest.permissions.networkHosts.isNotEmpty()) {
                             Text(
@@ -159,6 +180,8 @@ fun SflxInstallDialog(
 
 @Composable
 private fun StoreEntryRow(entry: SflxRegistryEntry, onInstall: () -> Unit) {
+    val installed = remember(entry.id) { SflxCatalog.installedOf(entry.id) }
+    val update = installed != null && SflxRegistry.isUpdate(entry, installed)
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -166,7 +189,20 @@ private fun StoreEntryRow(entry: SflxRegistryEntry, onInstall: () -> Unit) {
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("${entry.displayName} v${entry.version}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    buildString {
+                        append(entry.displayName)
+                        append(' ')
+                        append(entry.version)
+                        // A newer version than the one on disk is worth saying
+                        // out loud: the button is not "install", it is
+                        // "update", and the listener should know which one they
+                        // are about to do.
+                        if (update) append("  ·  update")
+                        else if (installed != null) append("  ·  installed")
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (entry.description.isNotBlank()) {
                     Text(
                         entry.description,
@@ -174,8 +210,11 @@ private fun StoreEntryRow(entry: SflxRegistryEntry, onInstall: () -> Unit) {
                         maxLines = 3,
                     )
                 }
+                SflxRegistry.hostNote(entry)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
             }
-            TextButton(onClick = onInstall) { Text("Install") }
+            TextButton(onClick = onInstall) { Text(if (update) "Update" else "Install") }
         }
     }
 }

@@ -66,6 +66,9 @@ object SflxCatalog {
     /** The host, once [init] has run. Null before that, and in a preview whose app never called it. */
     val host: SflxHost? get() = hostRef
 
+    /** The installed package with this id, when it is installed. */
+    fun installedOf(id: String): InstalledSflx? = _installed.value.firstOrNull { it.id == id }
+
     /**
      * Points the extension host at its directory and puts what is already
      * installed back on the sources list.
@@ -130,40 +133,58 @@ object SflxCatalog {
      * answer differently.
      */
     suspend fun inspect(link: String): Result<InstallOffer> {
-        val url = link.trim()
-        if (url.isEmpty()) return Result.failure(SflxException("Paste a link first"))
+        val candidates = SflxRegistry.candidates(link)
+        if (candidates.isEmpty()) return Result.failure(SflxException("Paste a link first"))
         _install.value = InstallState.Working("Fetching…")
-        val bytes = SflxDownloads.fetch(url).getOrElse { error ->
-            _install.value = InstallState.Failed(error.message ?: "Could not fetch that link")
-            return Result.failure(error)
-        }
-        // A registry is JSON; a package is a zip and its first two bytes are
-        // `PK`. Checking the shape rather than the file name is what makes a
-        // link with no extension at all — a `?raw=true` URL, a paste of the
-        // document itself — work the same.
-        val looksLikeJson = bytes.firstOrNull()?.toInt()?.toChar() == '{'
-        if (looksLikeJson) {
-            val entries = runCatching {
-                SflxRegistry.parse(bytes.decodeToString())
-            }.getOrNull()
-            if (entries != null) {
-                val usable = SflxRegistry.compatible(entries, appVersion)
-                _install.value = InstallState.Idle
-                if (usable.isEmpty()) {
-                    val failure = SflxException("That store lists no extensions this version can run")
-                    _install.value = InstallState.Failed(failure.message.orEmpty())
-                    return Result.failure(failure)
+
+        // Every address the link might really be, tried in turn.
+        //
+        // A store is published as a repository, and the address a listener has
+        // to hand over is usually some shape of that repository rather than the
+        // file itself — the repository root, a folder in it, the GitHub page.
+        // Fetching only the exact string that was pasted is what made the
+        // first version of this useless: the store's own root answered with a
+        // directory listing, and the screen said "not an extension package".
+        var lastError: String? = null
+        for (candidate in candidates) {
+            val bytes = SflxDownloads.fetch(candidate).getOrElse { error ->
+                lastError = error.message
+                null
+            } ?: continue
+
+            // A registry is JSON; a package is a zip and its first two bytes are
+            // `PK`. Checking the shape rather than the file name is what makes a
+            // link with no extension at all — a `?raw=true` URL, a paste of the
+            // document itself — work the same.
+            val looksLikeJson = bytes.firstOrNull()?.toInt()?.toChar() == '{'
+            if (looksLikeJson) {
+                val entries = runCatching {
+                    SflxRegistry.parse(bytes.decodeToString())
+                }.getOrNull()
+                if (entries != null) {
+                    _install.value = InstallState.Idle
+                    if (entries.isEmpty()) {
+                        val failure = SflxException("That store lists no extensions for this runtime")
+                        _install.value = InstallState.Failed(failure.message.orEmpty())
+                        return Result.failure(failure)
+                    }
+                    return Result.success(InstallOffer.Store(entries, candidate))
                 }
-                return Result.success(InstallOffer.Store(usable, url))
             }
+            val packageFile = runCatching { SflxPackages.read(bytes) }.getOrElse { error ->
+                lastError = error.message
+                null
+            } ?: continue
+            _install.value = InstallState.Idle
+            return Result.success(InstallOffer.Package(bytes, packageFile.manifest, candidate))
         }
-        val packageFile = runCatching { SflxPackages.read(bytes) }.getOrElse { error ->
-            val failure = SflxException("That link is not an extension package: ${error.message}")
-            _install.value = InstallState.Failed(failure.message.orEmpty())
-            return Result.failure(failure)
-        }
-        _install.value = InstallState.Idle
-        return Result.success(InstallOffer.Package(bytes, packageFile.manifest, url))
+
+        val failure = SflxException(
+            lastError?.let { "Could not read that link: $it" }
+                ?: "That link is not an extension package, and no store was found at it",
+        )
+        _install.value = InstallState.Failed(failure.message.orEmpty())
+        return Result.failure(failure)
     }
 
     /** Installs an inspected package. No digest is checked: there was nobody to state one. */

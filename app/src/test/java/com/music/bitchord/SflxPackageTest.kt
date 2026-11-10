@@ -182,7 +182,7 @@ class SflxPackageTest {
     }
 
     @Test
-    fun theRegistryIsReadAndFilteredByHostVersion() {
+    fun theRegistryIsReadAndTheBrokenEntryIsDropped() {
         val registry = """
             { "version": 1, "extensions": [
               { "id": "qobuz-web", "name": "qobuz-web", "display_name": "Qobuz Web", "version": "1.2.23",
@@ -201,8 +201,87 @@ class SflxPackageTest {
         assertEquals(2, entries.size)
         assertEquals("abc123", entries[0].sha256)
         assertEquals(listOf("lossless"), entries[0].tags)
-        assertEquals(listOf("qobuz-web"), SflxRegistry.compatible(entries, "4.9.1").map { it.id })
-        assertEquals(2, SflxRegistry.compatible(entries, "99.0").size)
+    }
+
+    @Test
+    fun anEntryIsNotFilteredByTheHostsVersion() {
+        // The publisher states the oldest *Mornye* that can run its package.
+        // This app is a different host on a different version line, so that
+        // number says nothing about whether the package works here — and
+        // treating it as though it did emptied the store before: thirteen of
+        // Mornye's fourteen extensions ask for a newer Mornye than this app's
+        // version number happens to be, and every one of them was hidden.
+        val registry = """
+            { "extensions": [
+              { "id": "qobuz-web", "name": "qobuz-web", "version": "1.2.23",
+                "download_url": "https://example/qobuz.sflx", "sha256": "abc", "min_app_version": "4.9.1" }
+            ] }
+        """.trimIndent()
+
+        val entry = SflxRegistry.parse(registry).single()
+
+        assertEquals("4.9.1", entry.minAppVersion)
+        // Kept, and the number is shown as what it is.
+        assertEquals("Built for Mornye 4.9.1 or newer", SflxRegistry.hostNote(entry))
+    }
+
+    @Test
+    fun aPackageForAnotherRuntimeIsNotOffered() {
+        // The Python packages in Mornye's unified catalog are not extensions
+        // that run slowly here; they are a different program in a different
+        // runtime.
+        val registry = """
+            { "extensions": [
+              { "id": "utilities", "name": "utilities", "version": "1.1.4",
+                "download_url": "https://example/u.sflx", "sha256": "abc", "runtime": "python" },
+              { "id": "spotify-web", "name": "spotify-web", "version": "1.10.6",
+                "download_url": "https://example/s.sflx", "sha256": "def", "runtime": "javascript" }
+            ] }
+        """.trimIndent()
+
+        assertEquals(listOf("spotify-web"), SflxRegistry.parse(registry).map { it.id })
+    }
+
+    @Test
+    fun aRepositoryLinkIsTurnedIntoTheAddressOfItsRegistry() {
+        // The address a listener is given is usually some shape of the
+        // repository rather than the file: the root, a folder, the GitHub page.
+        val root = "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension"
+        assertEquals(
+            listOf(
+                root,
+                "$root/main/registry.json",
+                "$root/main/registry-unified.json",
+                "$root/master/registry.json",
+                "$root/master/registry-unified.json",
+            ),
+            SflxRegistry.candidates(root),
+        )
+        assertEquals(
+            listOf(
+                "https://github.com/mornyeapp/Mornye-Extension",
+                "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry.json",
+                "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry-unified.json",
+                "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/master/registry.json",
+                "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/master/registry-unified.json",
+            ),
+            SflxRegistry.candidates("https://github.com/mornyeapp/Mornye-Extension"),
+        )
+        // A trailing slash is the same address, and the folder inside it is
+        // where the registry lives.
+        assertTrue(
+            SflxRegistry.candidates("$root/main/extensions/")
+                .contains("$root/main/extensions/registry.json"),
+        )
+    }
+
+    @Test
+    fun aLinkThatIsAlreadyTheFileIsLeftAlone() {
+        val exact = "https://example.com/store/registry.json"
+        assertEquals(listOf(exact), SflxRegistry.candidates(exact))
+        // A package link is not a repository, so nothing is guessed for it.
+        val pkg = "https://example.com/thing.sflx"
+        assertEquals(listOf(pkg), SflxRegistry.candidates(pkg))
     }
 
     @Test
@@ -282,7 +361,7 @@ class SflxPackageTest {
         fun entry(version: String) = com.music.bitchord.data.sources.mornye.SflxRegistryEntry(
             id = "qobuz-web", displayName = "Qobuz", version = version, description = "",
             downloadUrl = "https://example/q.sflx", sha256 = "ab", category = "download",
-            tags = emptyList(), minAppVersion = "", iconUrl = "",
+            tags = emptyList(), minAppVersion = "", iconUrl = "", runtime = "javascript",
         )
 
         assertTrue(SflxRegistry.isUpdate(entry("1.2.23"), installed))
