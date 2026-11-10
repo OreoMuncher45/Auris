@@ -261,16 +261,44 @@ class SflxHost(
 
             val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
             val prepared = rowFor(extensionId, trackId)
-            QuickJsExecutor.callExport(
-                moduleId = moduleIdOf(extensionId),
-                functionName = "getTrackStreamUrl",
-                args = listOf(quote(trackId), quote(requested), context(settingsFor(installed), prepared, wantsAtmos)),
-            ).mapCatching { raw ->
+            // The extension is asked for the wanted tier, and then for the ones
+            // below it, and the first answer that carries a URL wins.
+            //
+            // The extension does have a fallback ladder of its own, and it only
+            // walks it when the gateway says *why* it refused — a code like
+            // QUALITY_UNAVAILABLE. A refusal it cannot read (this gateway
+            // answers the Atmos request with a bare 400 and an empty body) is
+            // treated as a fault worth retrying, six times, and then reported —
+            // so a track with no Atmos mix failed to play at all rather than
+            // playing its lossless master, which is the wrong way round.
+            val tiers = SflxQuality.fallbacks(installed.manifest, requested)
+            var attempt: Result<String> = Result.failure(SflxException("the extension returned no stream URL"))
+            var chosenTier = requested
+            for (tier in tiers) {
+                val answer = QuickJsExecutor.callExport(
+                    moduleId = moduleIdOf(extensionId),
+                    functionName = "getTrackStreamUrl",
+                    args = listOf(quote(trackId), quote(tier), context(settingsFor(installed), prepared, wantsAtmos && tier == requested)),
+                )
+                if (answer.isSuccess && JSONObject(answer.getOrThrow()).optString("streamUrl", "").isNotBlank()) {
+                    attempt = answer
+                    chosenTier = tier
+                    break
+                }
+                attempt = answer
+                val why = answer.mapCatching { JSONObject(it).optString("error", "") }
+                    .getOrElse { it.message.orEmpty() }
+                Log.w(TAG, "sflx[$extensionId] $tier did not resolve '$trackId': $why")
+            }
+            attempt.mapCatching { raw ->
                 val answer = JSONObject(raw)
                 val url = answer.optString("streamUrl", "").takeIf { it.isNotBlank() }
                 if (url == null) {
                     val why = answer.optString("error", "").ifBlank { "the extension returned no stream URL" }
                     throw SflxException(why)
+                }
+                if (chosenTier != requested) {
+                    Log.d(TAG, "sflx[$extensionId] answered $requested with $chosenTier")
                 }
                 // What the extension said about the audio it resolved. It is a
                 // claim, not a measurement — the fields come from the file the
@@ -595,6 +623,36 @@ internal object SflxQuality {
         }
         return options.first().id
     }
+
+    /**
+     * [requested] first, then the tiers below it, so a refused Atmos or Hi-Res
+     * request can still be answered with the lossless master.
+     *
+     * Spatial falls to lossless, lossless falls to the next lossless, and a
+     * lossy tier is the last resort — the same ladder the manifest's own order
+     * describes, stopping at four attempts so a source that holds nothing for
+     * this track is not asked eight times.
+     */
+    fun fallbacks(manifest: SflxManifest, requested: String): List<String> {
+        val options = optionsOf(manifest)
+        if (options.isEmpty()) return listOf(requested)
+        val requestedKind = options.firstOrNull { it.id.equals(requested, ignoreCase = true) }?.kind.orEmpty()
+        val allowed = when (requestedKind) {
+            "spatial" -> listOf("lossless", "lossy")
+            "lossless" -> listOf("lossless", "lossy")
+            else -> listOf("lossy", "lossless")
+        }
+        val ordered = ArrayList<String>()
+        ordered += requested
+        for (kind in allowed) {
+            options.filter { it.kind == kind && !it.id.equals(requested, ignoreCase = true) }
+                .forEach { ordered += it.id }
+        }
+        return ordered.distinct().take(MAX_TIER_ATTEMPTS)
+    }
+
+    /** How many tiers one stream request may try. */
+    private const val MAX_TIER_ATTEMPTS = 4
 
     private fun optionsOf(manifest: SflxManifest): List<Quality> {
         val array = manifest.raw["qualityOptions"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()

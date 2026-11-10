@@ -3050,7 +3050,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (request.requestId != newestRequestId.get()) return@collectLatest
                     _results.value = page.fold(
                         onSuccess = { spotify ->
-                            publishedRows(
+                            // The rows are published the usual way, and a
+                            // page that comes back empty — or whose every row
+                            // is filtered out — says what the answer actually
+                            // contained. "No results" on its own is three
+                            // different faults wearing one sentence: the
+                            // catalogue had nothing, the answer was in a shape
+                            // this build cannot read, or Spotify's tracks
+                            // matched nothing playable.
+                            val published = publishedRows(
                                 rows = spotify.rows,
                                 continuation = null,
                                 nextOffset = spotify.nextOffset,
@@ -3059,6 +3067,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 filter = request.filter,
                                 source = request.source,
                             )
+                            if (published is UiState.Success) {
+                                published
+                            } else {
+                                UiState.Error(
+                                    "Spotify found nothing for \"" + request.query +
+                                        "\" — " + spotify.diagnostic,
+                                )
+                            }
                         },
                         onFailure = { failure -> UiState.Error(failure.friendly()) },
                     )

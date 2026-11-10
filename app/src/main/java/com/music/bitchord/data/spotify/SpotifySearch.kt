@@ -52,6 +52,16 @@ internal object SpotifySearch {
     data class Page(
         val rows: List<SearchResult>,
         val nextOffset: Int?,
+        /**
+         * What the answer contained, in numbers.
+         *
+         * An empty page has three very different causes — the catalogue had
+         * nothing, the answer arrived in a shape this build does not read, or
+         * Spotify's tracks could not be matched to anything playable — and from
+         * the outside all three are a blank list. This is what tells them
+         * apart, on screen and in the log.
+         */
+        val diagnostic: String = "",
     )
 
     /**
@@ -79,10 +89,12 @@ internal object SpotifySearch {
         filter: SearchFilter,
         offset: Int = 0,
     ): Page = withContext(Dispatchers.IO) {
-        if (query.isBlank()) return@withContext Page(emptyList(), null)
+        if (query.isBlank()) return@withContext Page(emptyList(), null, "the query was blank")
         val limit = limitOf(filter)
 
         var section: JsonObject? = null
+        var answeredBy = ""
+        var seen = ""
         val failures = mutableListOf<String>()
         for (attempt in attempts(query, limit, offset)) {
             val root = runCatching {
@@ -110,6 +122,8 @@ internal object SpotifySearch {
                 continue
             }
             Log.d(TAG, "Spotify's search answered by ${attempt.operation}")
+            answeredBy = attempt.operation
+            seen = counts(answered)
             section = answered
             break
         }
@@ -121,6 +135,8 @@ internal object SpotifySearch {
             val perTab = perTabSections(query, filter, limit, offset, failures)
             if (perTab != null && !perTab.hasNothing()) {
                 Log.d(TAG, "Spotify's search answered by the per-tab operations")
+                answeredBy = "the per-tab operations"
+                seen = counts(perTab)
                 section = perTab
             }
         }
@@ -133,7 +149,7 @@ internal object SpotifySearch {
             Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\": $why")
             throw SpotifyGraphQLException("Spotify could not answer that search — $why")
         }
-        return@withContext parse(section, filter, limit)
+        return@withContext parse(section, filter, limit, answeredBy, seen)
     }
 
     /** One way of asking Spotify for [query]. */
@@ -267,8 +283,23 @@ internal object SpotifySearch {
         }
     }
 
+    /** How many of each kind an answer carried, as one line. */
+    private fun counts(section: JsonObject): String {
+        fun size(key: String) = section.obj(key)?.arr("items")?.size
+            ?: section.obj(key)?.arr("itemsV2")?.size ?: 0
+        return "tracks=" + size("tracksV2") + " albums=" + size("albumsV2") +
+            " artists=" + size("artists") + " playlists=" + size("playlists") +
+            " top=" + (section.obj("topResultsV2")?.arr("itemsV2")?.size ?: 0)
+    }
+
     /** Reads a search section into this app's rows. */
-    private suspend fun parse(section: JsonObject, filter: SearchFilter, limit: Int): Page {
+    private suspend fun parse(
+        section: JsonObject,
+        filter: SearchFilter,
+        limit: Int,
+        answeredBy: String,
+        seen: String,
+    ): Page {
         val trackItems = section.obj("tracksV2")?.arr("items").orEmpty()
         val albumItems = section.obj("albumsV2")?.arr("items").orEmpty()
         val artistItems = section.obj("artists")?.arr("items").orEmpty()
@@ -285,6 +316,8 @@ internal object SpotifySearch {
             element.objOrNull()?.let { it.obj("data") ?: it.obj("item")?.obj("data") }
 
         val rows = mutableListOf<SearchResult>()
+        var found = 0
+        var matched = 0
 
         if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
             val trackData = (trackItems.mapNotNull(::dataOf) + top.filter { it.isTrack() })
@@ -296,6 +329,8 @@ internal object SpotifySearch {
             if (trackData.isNotEmpty() && songs.isEmpty()) {
                 Log.w(TAG, "Spotify's search found ${trackData.size} tracks, none of which matched anything playable")
             }
+            found = trackData.size
+            matched = songs.size
             songs.forEach { rows += SearchResult.Track(it) }
         }
         if (filter == SearchFilter.ALBUMS || filter == SearchFilter.ALL) {
@@ -313,7 +348,16 @@ internal object SpotifySearch {
                 .mapNotNull(::parsePlaylist)
                 .forEach { rows += it.row() }
         }
-        return Page(rows, null)
+        val diagnostic = buildString {
+            append("answered by ").append(answeredBy.ifBlank { "nothing" })
+            append(" (").append(seen.ifBlank { "no counts" }).append(')')
+            if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
+                append("; ").append(found).append(" tracks, ").append(matched).append(" playable")
+            }
+            append("; ").append(rows.size).append(" rows")
+        }
+        Log.d(TAG, "Spotify's search: " + diagnostic)
+        return Page(rows, null, diagnostic)
     }
 
     /** How many rows one tab is asked for. */

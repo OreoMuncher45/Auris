@@ -645,6 +645,11 @@ class SflxSignedSession(
         val url = endpoint(path) ?: throw SflxException("signed session baseUrl is not usable")
         val headers = signedHeaders(record, method, url, body, now(), randomHex(12))
             .toMutableMap()
+        // Mornye's own request adds this when the extension did not; a gateway
+        // that content-negotiates answers differently without it.
+        if (headers.keys.none { it.equals("accept", ignoreCase = true) }) {
+            headers["accept"] = "application/json"
+        }
         if (body.isNotEmpty()) headers["content-type"] = "application/json"
         headers.putAll(extras.mapKeys { it.key.lowercase(Locale.ROOT) })
         return request(method, url, body, headers)
