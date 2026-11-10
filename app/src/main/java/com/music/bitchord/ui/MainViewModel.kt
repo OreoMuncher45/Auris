@@ -2373,25 +2373,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadSpotifyHome(identity: String?, generation: Long) {
         homeContinuation = null
         viewModelScope.launch {
-            val shelves = runCatching { SpotifyHomeSource.shelves() }.getOrDefault(emptyList())
+            val outcome = runCatching { SpotifyHomeSource.shelves() }.getOrNull()
             if (!isCurrentHomeLoad(identity, generation)) return@launch
-            if (shelves.isEmpty()) {
-                // An error the listener can act on beats a blank page, and the
-                // likeliest cause is a token that could not be minted rather than
-                // an empty catalogue — see the provider's row logging.
-                _home.value = UiState.Error("Spotify returned nothing to show")
+            if (outcome == null || outcome.shelves.isEmpty()) {
+                // The provider's own words for it. An empty Spotify home has
+                // three unrelated causes — no token, a refused endpoint, and
+                // rows read but nothing matched on the YouTube side — and they
+                // need opposite fixes, so the message names the one that
+                // happened instead of saying "nothing to show" to all three.
+                _home.value = UiState.Error(outcome?.reason ?: "Spotify returned nothing to show")
                 return@launch
             }
-            publishHomeShelves(shelves)
+            publishHomeShelves(outcome.shelves)
         }
     }
 
     /** [refreshHome]'s Spotify half: the rows, read again rather than carried on. */
     private suspend fun refreshSpotifyHome(identity: String?) {
-        val shelves = runCatching { SpotifyHomeSource.shelves() }.getOrDefault(emptyList())
-        if (identity != listenerKey() || shelves.isEmpty()) return
+        val outcome = runCatching { SpotifyHomeSource.shelves() }.getOrNull() ?: return
+        if (identity != listenerKey() || outcome.shelves.isEmpty()) return
         homeSeenTitles.clear()
-        _homeRaw.value = shelves
+        _homeRaw.value = outcome.shelves
         publishHome()
     }
 
@@ -4388,20 +4390,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // the hourly refresh are all the same; only the seed pool is.
         if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
             val seeds = runCatching { SpotifyHomeSource.flowSeeds() }.getOrNull()
-            if (seeds != null && !seeds.isEmpty) {
-                return flowQueueFrom(
-                    FlowEngine.SeedPool(
-                        favorites = seeds.top,
-                        history = seeds.recent,
-                        quickPicks = emptyList(),
-                        moodPool = emptyList(),
-                    ),
-                    limit,
-                )
+            if (seeds == null || seeds.isEmpty) {
+                // Deliberately *not* falling back to the YouTube seeds.
+                //
+                // It did, and that is the bug this replaced: Spotify selected,
+                // Spotify unable to answer, and Flow quietly built a YouTube
+                // mix — a mix that looks like it works, is trained on the wrong
+                // provider, and hides the failure instead of showing it. An
+                // empty Flow says what is true.
+                return emptyList()
             }
-            // Nothing could be read, so the YouTube seeds below are used rather
-            // than handing the engine an empty pool: a mix from the other
-            // provider is worse than none only in theory.
+            return flowQueueFrom(
+                FlowEngine.SeedPool(
+                    favorites = seeds.top,
+                    history = seeds.recent,
+                    quickPicks = emptyList(),
+                    moodPool = emptyList(),
+                ),
+                limit,
+            )
         }
         val lib = (_library.value as? UiState.Success)?.data
         val favorites = (lib?.likedSongs.orEmpty() + lib?.librarySongs.orEmpty())

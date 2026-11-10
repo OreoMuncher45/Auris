@@ -1,6 +1,7 @@
 package com.music.bitchord.data.spotify
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
@@ -93,12 +94,67 @@ internal object SpotifyHomeSource {
      * the page. What was dropped is logged by name, which is the only way to tell
      * "Spotify refused this" from "there was nothing to show".
      */
-    suspend fun shelves(): List<HomeShelf> = withContext(Dispatchers.IO) {
-        val rows = if (isSignedIn()) signedInRows() else signedOutRows()
-        rows.ifEmpty {
-            Log.w(TAG, "no Spotify rows could be read; the home has nothing to show from this provider")
-            emptyList()
+    /**
+     * The provider's rows, in the order they should be drawn, plus — when there
+     * are none — why not.
+     *
+     * A caller cannot act on "nothing", and neither can the person testing it:
+     * an empty Spotify home has three quite different causes (no token minted
+     * from the web player, the catalogue endpoints refusing, or the rows being
+     * read and then dropped because nothing matched on the YouTube side), and
+     * they need opposite fixes. So the reason travels with the result and is
+     * shown, rather than being a line in a log nobody has.
+     */
+    data class HomeOutcome(val shelves: List<HomeShelf>, val reason: String? = null)
+
+    suspend fun shelves(): HomeOutcome = withContext(Dispatchers.IO) {
+        SpotifyWebApi.clearProblems()
+        // A token first, because everything downstream answers null without one
+        // and "Spotify returned nothing" would then be the wrong story entirely.
+        // Cached, so this costs the rest of the calls nothing.
+        val signedIn = isSignedIn()
+        val token = if (signedIn) SpotifyToken.accessToken() else SpotifyToken.anonymousToken()
+        if (token == null) {
+            return@withContext HomeOutcome(
+                emptyList(),
+                if (signedIn) {
+                    "Couldn't get a Spotify token for your account — the session may have expired."
+                } else {
+                    "Couldn't get a public Spotify token. Try again in a moment."
+                },
+            )
         }
+        val rows = if (signedIn) signedInRows() else signedOutRows()
+        if (rows.isNotEmpty()) return@withContext HomeOutcome(rows)
+        // The endpoint-level problems, if any, are the more specific answer: a
+        // refused call says exactly which URL and which status, where the local
+        // diagnostic can only say what the effect was.
+        val problems = SpotifyWebApi.problems()
+        HomeOutcome(
+            emptyList(),
+            buildString {
+                append(diagnostic ?: "Spotify returned no rows")
+                if (problems.isNotEmpty()) {
+                    append("\n\n")
+                    append(problems.joinToString("\n"))
+                }
+            },
+        )
+    }
+
+    /**
+     * What went wrong, for the empty state.
+     *
+     * Written by every step that can fail, so the last thing to fail is what the
+     * listener sees. Deliberately plain: it is read off a phone screen by
+     * somebody deciding whether to try again, report it, or sign in.
+     */
+    @Volatile
+    private var diagnostic: String? = null
+
+    private fun note(reason: String) {
+        diagnostic = reason
+        Log.w(TAG, reason)
     }
 
     /**
@@ -116,8 +172,12 @@ internal object SpotifyHomeSource {
         val featured = async { featuredRows(count = 2) }
 
         buildList {
-            row("Recently played", recent.await())?.let(::add)
-            row("On repeat", top.await())?.let(::add)
+            val recentTracks = recent.await()
+            val topTracks = top.await()
+            if (recentTracks == null) note("Spotify refused your listening history for this token")
+            if (topTracks == null) note("Spotify refused your top tracks for this token")
+            row("Recently played", recentTracks)?.let(::add)
+            row("On repeat", topTracks)?.let(::add)
         } + featured.await()
     }
 
@@ -141,15 +201,16 @@ internal object SpotifyHomeSource {
      */
     private suspend fun featuredRows(count: Int): List<HomeShelf> = coroutineScope {
         val playlists = runCatching { SpotifyWebApi.featuredPlaylists(limit = count) }
-            .onFailure { Log.w(TAG, "featured playlists could not be read: ${it.message}") }
+            .onFailure { note("Spotify's featured playlists call failed: ${it.message}") }
             .getOrDefault(emptyList())
         if (playlists.isEmpty()) {
+            note("Spotify returned no featured playlists for this ${if (isSignedIn()) "account" else "region"}")
             return@coroutineScope emptyList()
         }
         playlists.take(count).map { playlist ->
             async {
                 val tracks = runCatching { SpotifyWebApi.playlistTracks(playlist.id, limit = TRACKS_PER_ROW) }
-                    .onFailure { Log.w(TAG, "tracks of ${playlist.id} could not be read: ${it.message}") }
+                    .onFailure { note("Spotify returned nothing for '${playlist.name}'") }
                     .getOrDefault(emptyList())
                 row(playlist.name, tracks)
             }
@@ -166,9 +227,16 @@ internal object SpotifyHomeSource {
      */
     private suspend fun row(title: String, tracks: List<SpotifyTrack>?): HomeShelf? {
         if (tracks.isNullOrEmpty()) return null
-        val items = match(tracks.take(TRACKS_PER_ROW))
+        val wanted = tracks.take(TRACKS_PER_ROW)
+        val items = match(wanted)
         if (items.isEmpty()) {
-            Log.d(TAG, "row '$title' had ${tracks.size} tracks and none matched; dropped")
+            // The row was read and then lost, which is a different fault from
+            // the row never arriving — and the one that looks identical whether
+            // the listener is signed in to Spotify or not.
+            note(
+                "Read ${wanted.size} Spotify tracks ('${wanted.first().title}' by " +
+                    "${wanted.first().artist}) and none of them matched on YouTube Music",
+            )
             return null
         }
         return HomeShelf(title = title, items = items)
@@ -226,10 +294,20 @@ internal object SpotifyHomeSource {
         val gate = Semaphore(MATCH_CONCURRENCY)
         tracks.distinctBy { it.id }.map { track ->
             async(Dispatchers.IO) {
-                val song = matches[track.id]
-                    ?: gate.withPermit { SpotifyImporter.matchTrack(track) }
-                        ?.also { matches[track.id] = it }
-                song?.let { track to it }
+                val cached = matches[track.id]
+                if (cached != null) return@async track to cached
+                // Guarded: a matcher that throws would otherwise take the whole
+                // read down with it — the exception leaves awaitAll, the home
+                // read is caught as "nothing to show", and a search that failed
+                // looks exactly like a catalogue that refused. The first message
+                // is kept for the diagnostic.
+                val matched = runCatching { gate.withPermit { SpotifyImporter.matchTrack(track) } }
+                    .onFailure { note("Searching YouTube Music for '${track.title}' failed: ${it.message}") }
+                    .getOrNull()
+                matched?.let {
+                    matches[track.id] = it
+                    track to it
+                }
             }
         }.awaitAll().filterNotNull()
     }

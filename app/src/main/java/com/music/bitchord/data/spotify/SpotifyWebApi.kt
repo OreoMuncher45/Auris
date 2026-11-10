@@ -209,7 +209,10 @@ internal object SpotifyWebApi {
             val token = when (identity) {
                 Identity.USER -> SpotifyToken.accessToken()
                 Identity.ANY -> SpotifyToken.accessToken() ?: SpotifyToken.anonymousToken()
-            } ?: return@withContext null
+            } ?: run {
+                record("$path: no token could be minted (${identity.name})")
+                return@withContext null
+            }
 
             val url = "$BASE/$path".toHttpUrl().newBuilder()
                 .apply { query.forEach { (name, value) -> addQueryParameter(name, value) } }
@@ -226,20 +229,58 @@ internal object SpotifyWebApi {
                 .build()
 
             val response = runCatching { Http.client.newCall(request).execute() }.getOrNull()
-                ?: return@withContext null
+                ?: run {
+                    record("$path: the request did not complete")
+                    return@withContext null
+                }
             response.use { answered ->
                 if (answered.isSuccessful) {
                     return@withContext runCatching {
                         json.parseToJsonElement(answered.body?.string().orEmpty()) as? JsonObject
                     }.getOrNull()
                 }
-                if (answered.code != 401 || attempt == 1) return@withContext null
+                if (answered.code != 401 || attempt == 1) {
+                    // The status, by name, because the three causes of an empty
+                    // Spotify home need opposite fixes and "nothing to show"
+                    // cannot tell them apart: a 403 is Spotify refusing this
+                    // token or endpoint, a 429 is being throttled, and anything
+                    // with a body is a request this app got wrong.
+                    record("$path: HTTP ${answered.code}${bodyHint(answered)}")
+                    return@withContext null
+                }
                 // Stale token, not a refused one: mint again and take one more
                 // run at it.
                 SpotifyToken.invalidate()
             }
         }
         null
+    }
+
+    /**
+     * The first bit of an error body, for the diagnostic line.
+     *
+     * Spotify says *why* in the body of a refusal, and it is the difference
+     * between "this token may not read that" and "that endpoint no longer
+     * exists". Truncated, because it is going on a phone screen.
+     */
+    private fun bodyHint(response: okhttp3.Response): String {
+        val text = runCatching { response.peekBody(512).string() }.getOrNull().orEmpty()
+        return if (text.isBlank()) "" else " — ${text.replace(Regex("\\s+"), " ").take(160)}"
+    }
+
+    /** Which of the last calls failed and how, oldest first; see [record]. */
+    private val failures = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
+    /** Everything that has gone wrong since [clearProblems]. */
+    fun problems(): List<String> = failures.toList()
+
+    /** Clears [problems]; called at the start of a home read. */
+    fun clearProblems() {
+        failures.clear()
+    }
+
+    private fun record(problem: String) {
+        if (failures.size < 8) failures += problem
     }
 
     private fun JsonArray.firstImage(): String? = firstOrNull()

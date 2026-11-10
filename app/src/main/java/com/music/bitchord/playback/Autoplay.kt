@@ -125,8 +125,11 @@ suspend fun loadAutoplayTracks(
                 ).asQueueEntry(QueueTier.AUTOPLAY)
             })
         }
-        // Its pool is finite and can run dry. Falling through to YouTube's radio
-        // keeps AutoPlay on rather than silently stopping it.
+        // No fallback to YouTube's radio here either: on a Spotify session its
+        // pool is the only algorithm this app may follow, and a queue filled
+        // from the other provider is the same silent substitution Flow was
+        // doing. Nothing appended is the honest answer. See SpotifyHomeSource.
+        return Result.success(emptyList())
     }
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }

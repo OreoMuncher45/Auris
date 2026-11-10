@@ -89,7 +89,12 @@ internal object QuickJsExecutor {
      * ever holds engines this pool made, so a send to it cannot fail or block;
      * a receive is a caller waiting its turn.
      */
-    private class Pool(val jsCode: String, val fetchBase: String) {
+    private class Pool(
+        val moduleId: String,
+        val jsCode: String,
+        val fetchBase: String,
+        val acceptRegistered: Boolean,
+    ) {
         val free = Channel<QuickJs>(Channel.UNLIMITED)
         val lock = Mutex()
         /** Engines made or being made — the claim that stops two callers both growing the pool. */
@@ -116,7 +121,26 @@ internal object QuickJsExecutor {
 
     // ── Load ─────────────────────────────────────────────────────────────
 
-    suspend fun loadModule(moduleId: String, jsCode: String, fetchBase: String = ""): Result<Unit> {
+    suspend fun loadModule(
+        moduleId: String,
+        jsCode: String,
+        fetchBase: String = "",
+        /**
+         * Whether a module that registers itself instead of filling
+         * `module.exports` counts as loaded.
+         *
+         * Auris's own modules are CommonJS: they export `searchTracks` or
+         * `getTrackStreamUrl`, and the check below is what tells a working
+         * module from one that failed to initialise.
+         *
+         * Mornye `.sflx` extensions are not: they call `registerExtension({…})`
+         * and hang their API off a global — see [SflxShim] — because that is the
+         * contract their host defined. Both shapes land in the same place,
+         * `__spine_mod`, so the difference is one flag rather than a second
+         * executor.
+         */
+        acceptRegistered: Boolean = false,
+    ): Result<Unit> {
         val evicted = synchronized(engineLock) {
             if (pools.containsKey(moduleId)) {
                 TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) — ENGINE CACHE HIT")
@@ -134,12 +158,12 @@ internal object QuickJsExecutor {
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
-            runCatching { newEngine(jsCode, fetchBase) }
+            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered) }
                 .onSuccess { qjs ->
                     // The pool starts at one and grows only if two callers ever
                     // want this module at the same moment. A module that is
                     // never contended never pays for a second interpreter.
-                    val pool = Pool(jsCode, fetchBase)
+                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered)
                     pool.started = 1
                     pool.made += qjs
                     pool.free.trySend(qjs)
@@ -151,12 +175,17 @@ internal object QuickJsExecutor {
     }
 
     /** A fresh interpreter with [jsCode] evaluated into it, or a throw saying why not. */
-    private suspend fun newEngine(jsCode: String, fetchBase: String): QuickJs {
+    private suspend fun newEngine(
+        moduleId: String,
+        jsCode: String,
+        fetchBase: String,
+        acceptRegistered: Boolean,
+    ): QuickJs {
         val qjs = QuickJs.create(Dispatchers.Default)
         qjs.maxStackSize = 512 * 1024L
         try {
             bindConsole(qjs)
-            bindAsyncFetch(qjs, fetchBase)
+            bindAsyncFetch(qjs, moduleId, fetchBase)
 
             qjs.evaluate<String>(POLYFILLS)
             val cleanCode = preprocessModuleCode(jsCode)
@@ -164,6 +193,7 @@ internal object QuickJsExecutor {
             qjs.evaluate<String>(
                 """
                 var __spine_iife_error = null;
+                var __spine_accept_registered = ${if (acceptRegistered) "true" else "false"};
                 var __spine_mod = (function() {
                     try {
                         var module = { exports: {} };
@@ -172,6 +202,13 @@ internal object QuickJsExecutor {
                         $cleanCode
                         if (module.exports && (module.exports.searchTracks || module.exports.getTrackStreamUrl)) {
                             return module.exports;
+                        }
+                        // An extension that registered itself: its API is the
+                        // global object it handed over, which is the contract
+                        // Mornye's own host reads. See [loadModule]'s note.
+                        if (__spine_accept_registered && typeof globalThis.extension === 'object'
+                            && globalThis.extension) {
+                            return globalThis.extension;
                         }
                         return {};
                     } catch(e) {
@@ -217,7 +254,7 @@ internal object QuickJsExecutor {
         if (!mine) return pool.free.receive()
 
         return try {
-            newEngine(pool.jsCode, pool.fetchBase).also { fresh ->
+            newEngine(pool.moduleId, pool.jsCode, pool.fetchBase, pool.acceptRegistered).also { fresh ->
                 pool.lock.withLock { pool.made += fresh }
             }
         } catch (e: Throwable) {
@@ -381,7 +418,7 @@ internal object QuickJsExecutor {
 
     // ── Fetch binding ────────────────────────────────────────────────────
 
-    private suspend fun bindAsyncFetch(qjs: QuickJs, fetchBase: String) {
+    private suspend fun bindAsyncFetch(qjs: QuickJs, moduleId: String, fetchBase: String) {
         qjs.define("__spine") {
             asyncFunction("fetch", object : AsyncFunctionBinding<String> {
                 override suspend fun invoke(args: Array<Any?>): String {
