@@ -75,11 +75,26 @@ internal object SpotifyOps {
         // The listener's library, and one page of it.
         "libraryV3" to "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455",
         "fetchPlaylist" to "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf",
+        // The same persisted query under the name the web player gives it
+        // when it asks for a playlist's contents. The hash is the same one:
+        // `fetchPlaylist`, `fetchPlaylistContents` and `fetchPlaylistMetadata`
+        // are one query, and the variables decide what comes back.
+        "fetchPlaylistContents" to "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf",
+        // The catalogue search, as the current web player asks it. The older
+        // `searchTracks` / `searchAlbums` / `searchArtists` / `searchPlaylists`
+        // operations are gone from the player: one operation now answers for
+        // every tab, and the variable it wants is `term` rather than
+        // `searchTerm`.
+        "assistedCurationSearch" to "f78953bf9207d73493c27284103f5aeb6e728876d5793851bf79bc706127ff70",
+        // What the search box offers while it is being typed.
+        "searchSuggestions" to "f244254b94c0e824d458ac216e0f8406a73f2f69a9ff52831a2f78fa774ff6ce",
         "fetchLibraryTracks" to "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240",
         // An album's page and its tracks.
-        "getAlbum" to "11c9cad9cb24c4f9e25ef9456f68621cfd6006a90f679e729c1d2f2fd70dfe16",
+        "getAlbum" to "0b6ce3511e1b02e4a40fa95440f992acbe85080eb308af9194322d708fc1914f",
         // An artist's page: top tracks, discography, related.
-        "queryArtistOverview" to "9f8134ef565e78621f1e1793555bd6633c5ac144ae0f89604ed3ae3f80b3c8e6",
+        "queryArtistOverview" to "eafb1620d783ece118e72fbfede2b0064483e029d3c1aafafa1c2de0e25a89e7",
+        // An artist's own tracks, read on their own.
+        "getArtistNameAndTracks" to "0adaf1a1a8a94c7ed095639c4d9456d2b1cfac16ac511d5dd2b01b6dd89f748a",
         // What is new, for a listener who has not signed in.
         "queryWhatsNewFeed" to "d889c8c936ab192af8ced595427f5ba2acdf63478fdc0a181c8d477f8322630e",
         // Search, for the tabs a listener might reach for.

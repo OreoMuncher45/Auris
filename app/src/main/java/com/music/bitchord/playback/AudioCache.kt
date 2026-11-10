@@ -2606,6 +2606,11 @@ object AudioCache {
         // with the rest of the range.
         if (length > LOCK_PROBE_BYTES) {
             pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey)
+            // A shortfall here is either a lost race or a resource shorter
+            // than the probe — a DASH index is a few kilobytes and the probe
+            // asks for sixty-four of them. Either way there is nothing more
+            // to ask for: the first is another writer's entry, the second is
+            // a file that has already been fetched whole.
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
         pull(cacheKey, uri, position, length, pinKey)

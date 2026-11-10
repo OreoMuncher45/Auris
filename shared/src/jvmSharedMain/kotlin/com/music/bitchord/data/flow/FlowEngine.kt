@@ -153,6 +153,7 @@ object FlowEngine {
         config: FlowConfig = FlowConfig(),
         limit: Int = INITIAL_TRACKS,
         genreOf: (String) -> List<String> = { emptyList() },
+        relatedTracks: (suspend (Song) -> List<Song>)? = null,
     ): List<Song> {
         val favIds = seeds.favorites.map { it.videoId }.toSet()
         // A mood's own collections lead: the mix is about the mood, and the
@@ -182,8 +183,18 @@ object FlowEngine {
         val radioSeeds = pickRadioSeeds(ordered, seeds.favorites, config.tuner, seeds.moodPool)
         for (seed in radioSeeds) {
             if (expanded.size >= limit) break
-            val related = runCatching { YtMusicRepository.radio(seed.videoId).getOrNull() }
-                .getOrNull().orEmpty()
+            // Whose algorithm expands the mix is the provider's business, not
+            // the engine's: the caller hands in the one it wants, and the
+            // engine only weighs and filters what comes back. When no
+            // expander is handed in, this is a YouTube Music mix and the
+            // expander is YouTube Music's radio.
+            val expandedTracks = if (relatedTracks != null) {
+                runCatching { relatedTracks(seed) }.getOrDefault(emptyList())
+            } else {
+                runCatching { YtMusicRepository.radio(seed.videoId).getOrNull() }
+                    .getOrNull().orEmpty()
+            }
+            val related = expandedTracks
                 .filterNot { isExcluded(it, bannedIds, likeStatuses, skipCounts, config.tuner, genreOf) }
                 // Full Adventurous keeps liked tracks out of the expansion too.
                 .filterNot { config.tuner.discovery >= 0.85f && it.videoId in favIds }

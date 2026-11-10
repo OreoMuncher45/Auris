@@ -155,6 +155,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
@@ -1752,6 +1753,63 @@ private fun BitChordApp(
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
+    /**
+     * Plays a page's songs, waiting for a Spotify page's matches first.
+     *
+     * A Spotify page lists its tracks before it knows which of them this app
+     * can play, and a row that found no counterpart cannot be queued. Play
+     * pressed in the middle of that used to queue only what had matched by
+     * then — eight songs of a daily mix, and nothing after them. So the page
+     * is waited for, and the whole of it is queued.
+     *
+     * [index] is the row that was tapped, and it is the row that leads the
+     * queue; a page that was still matching has no such row yet, and then
+     * the first playable song leads.
+     */
+    val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit = browse@{ page, songs, index ->
+        val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
+        if (songs.none { it.isUnresolvedSpotify }) {
+            val at = index?.coerceIn(0, (songs.size - 1).coerceAtLeast(0)) ?: 0
+            playFrom(songs, at, source)
+            return@browse
+        }
+        scope.launch {
+            val ready = viewModel.resolvedSpotifySongs(page.browseId)
+            if (ready.isEmpty()) return@launch
+            val at = index
+                ?.let { wanted -> songs.getOrNull(wanted) }
+                ?.let { tapped -> ready.indexOfFirst { it.videoId == tapped.videoId } }
+                ?.takeIf { it >= 0 }
+                ?: 0
+            playFrom(ready, at, source)
+        }
+    }
+
+    /**
+     * Shuffles a page's songs, waiting for a Spotify page's matches first.
+     *
+     * The same wait as [playBrowsePage], and the same rule about what can be
+     * queued: a shuffle of a page that is still matching would shuffle the
+     * eight rows that had happened to match.
+     */
+    val playBrowsePageShuffled: (DetailPage, List<Song>) -> Unit = browse@{ page, songs ->
+        val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
+        if (songs.none { it.isUnresolvedSpotify }) {
+            if (songs.isEmpty()) return@browse
+            // Shuffle goes on first so the queue is built shuffled as it is
+            // set — the random pick here only decides which track leads it.
+            QueueShuffle.enableForNextQueue()
+            playFrom(songs, songs.indices.random(), source)
+            return@browse
+        }
+        scope.launch {
+            val ready = viewModel.resolvedSpotifySongs(page.browseId)
+            if (ready.isEmpty()) return@launch
+            QueueShuffle.enableForNextQueue()
+            playFrom(ready, ready.indices.random(), source)
+        }
+    }
+
     // Kept for entry points whose rows already carry their origin (notably a
     // collection action fetched before this callback). The explicit wrappers
     // below are preferred because a track's album is not necessarily where it
@@ -1957,6 +2015,10 @@ private fun BitChordApp(
                     existing = listOf(seed),
                     seedSong = seed,
                     limit = INITIAL_RADIO_TRACKS,
+                    // An explicit station, not a queue top-up: this is the
+                    // listener asking for a radio, so the provider's own
+                    // algorithm answers it rather than the seed pool.
+                    station = true,
                 ).getOrElse {
                     if (request == playRequestGeneration) {
                         Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
@@ -2615,8 +2677,14 @@ private fun BitChordApp(
         },
         searchSource = searchSource,
         onToggleSource = {
+            // Three sources, so the button cycles: YouTube, Spotify, the
+            // device's own folder, and round again.
             onSearchSourceChange(
-                if (searchSource == SearchSource.LIBRARY) SearchSource.YOUTUBE else SearchSource.LIBRARY,
+                when (searchSource) {
+                    SearchSource.YOUTUBE -> SearchSource.SPOTIFY
+                    SearchSource.SPOTIFY -> SearchSource.LIBRARY
+                    SearchSource.LIBRARY -> SearchSource.YOUTUBE
+                },
             )
         },
         onTapSearchIcon = {
@@ -4549,24 +4617,12 @@ private fun BitChordApp(
                             // time as the listener reaches the end of the list.
                             onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
                             onSongClick = { songs, index ->
-                                playFrom(
-                                    songs,
-                                    index,
-                                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
-                                )
+                                playBrowsePage(page, songs, index)
                             },
                             onSongLongPress = { openSongMenu(withAlbum(it)) },
                             onSongSwipe = onSongSwipe,
                             onShuffle = { songs ->
-                                // Shuffle goes on first so the queue is built shuffled
-                                // as it is set — the random pick here only decides
-                                // which track leads it.
-                                QueueShuffle.enableForNextQueue()
-                                playFrom(
-                                    songs,
-                                    songs.indices.random(),
-                                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
-                                )
+                                playBrowsePageShuffled(page, songs)
                             },
                             onSectionItemClick = { item ->
                                 item.browseId?.let { id ->
@@ -4850,10 +4906,17 @@ private fun BitChordApp(
                             onFilterChange = viewModel::onFilterChange,
                             // The podcasts filter goes with podcasts: a pill
                             // that only ever answers "nothing" is noise.
-                            availableFilters = if (podcastsEnabled) {
-                                com.music.bitchord.data.model.SearchFilter.entries
-                            } else {
-                                com.music.bitchord.data.model.SearchFilter.entries
+                            availableFilters = when {
+                                // Spotify's catalogue has no videos and no
+                                // shows, so a pill for either would be a pill
+                                // that answers from somewhere else.
+                                searchSource == SearchSource.SPOTIFY ->
+                                    com.music.bitchord.data.model.SearchFilter.entries.filter {
+                                        it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
+                                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS
+                                    }
+                                podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
+                                else -> com.music.bitchord.data.model.SearchFilter.entries
                                     .filter { it != com.music.bitchord.data.model.SearchFilter.PODCASTS }
                             },
                             results = results,
@@ -4992,6 +5055,7 @@ private fun BitChordApp(
                                 SegmentedControl(
                                     options = listOf(
                                         stringResource(R.string.search_source_youtube),
+                                        stringResource(R.string.search_source_spotify),
                                         stringResource(R.string.library),
                                     ),
                                     selectedIndex = searchSource.ordinal,

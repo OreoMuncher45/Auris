@@ -17,6 +17,7 @@ import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.presence.AndroidPresence
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
+import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.spotify.SPOTIFY_ALBUM_PREFIX
 import com.music.bitchord.data.spotify.SPOTIFY_ARTIST_PREFIX
@@ -126,7 +127,25 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** What the Search tab searches: YouTube Music, or the Local Music folder on this device. */
-enum class SearchSource { YOUTUBE, LIBRARY }
+/** How many tracks one Spotify expansion asks for. */
+private const val FLOW_EXPANSION = 8
+
+/**
+ * Where the Search tab looks.
+ *
+ * Three catalogues, three sets of answers. The order is the order the
+ * segmented control draws them in, and it is read by `ordinal` there.
+ */
+enum class SearchSource {
+    /** YouTube Music's own search. */
+    YOUTUBE,
+
+    /** Spotify's own catalogue, read through the web player's backend. */
+    SPOTIFY,
+
+    /** The Local Music folder on this device. */
+    LIBRARY,
+}
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -570,9 +589,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * up for the moment the narrower one takes rather than blanking the page
      * to a spinner.
      */
+    /** The job that is filling a Spotify page, so Play can wait for it. */
+    private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
     private data class SearchCacheEntry(
         val rows: List<SearchResult>,
         val continuation: String?,
+        /** Spotify's next page is an offset; YouTube Music's is a token. */
+        val nextOffset: Int? = null,
     )
 
     private data class SearchSession(
@@ -580,6 +604,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val requestId: Long,
         val filter: SearchFilter,
         val continuation: String?,
+        val nextOffset: Int? = null,
+        val source: SearchSource = SearchSource.YOUTUBE,
+        val query: String = "",
     )
 
     private val searchCache = LruCache<String, SearchCacheEntry>(SEARCH_CACHE_ENTRIES)
@@ -1880,6 +1907,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        // A Spotify session opens on Spotify's catalogue. The listener chose
+        // that provider, and the search tab answering from another catalogue
+        // is a surprise; the switcher is still there to pick another.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            _searchSource.value = SearchSource.SPOTIFY
+        }
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
@@ -2827,6 +2860,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The Library source answers from the device on every keystroke (see
         // [libraryResults]); YouTube's completions have nothing to add to it.
         if (_searchSource.value == SearchSource.LIBRARY) return
+        // Spotify's own completions are a different operation from YouTube
+        // Music's, and YouTube Music's completions under a Spotify search
+        // are answers from the wrong catalogue.
+        if (_searchSource.value == SearchSource.SPOTIFY) return
         // While typing, surface text completions — the pipeline already feeds
         // them through [suggestRequests] and publishes results via typeahead.
         suggestRequests.tryEmit(newValue)
@@ -2861,6 +2898,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         when (source) {
             SearchSource.LIBRARY -> loadLibrarySongs()
             SearchSource.YOUTUBE -> submitSearch()
+            SearchSource.SPOTIFY -> {
+                // Spotify has no videos tab, and a filter the request does
+                // not honour is a filter that lies: the pill says one thing
+                // and the list answers another.
+                if (_filter.value == SearchFilter.VIDEOS) _filter.value = SearchFilter.ALL
+                submitSearch()
+            }
         }
     }
 
@@ -2903,17 +2947,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private data class SearchRequest(
         val query: String,
         val filter: SearchFilter,
+        val source: SearchSource,
         val requestId: Long,
     )
 
-    private fun cacheKey(query: String, filter: SearchFilter) = "${filter.name}:$query"
+    /**
+     * The cache key of one answer.
+     *
+     * The source is in the key: Spotify's answer and YouTube Music's answer
+     * to the same words are different answers, and one of them must never be
+     * shown for the other.
+     */
+    private fun cacheKey(query: String, filter: SearchFilter, source: SearchSource) =
+        "${source.name}:${filter.name}:$query"
 
     /**
      * The results of the longest earlier query this one starts with — near
      * enough to leave up while the narrower search runs.
      */
-    private fun prefixMatch(query: String, filter: SearchFilter): List<SearchResult>? {
-        val prefix = "${filter.name}:"
+    private fun prefixMatch(query: String, filter: SearchFilter, source: SearchSource): List<SearchResult>? {
+        val prefix = "${source.name}:${filter.name}:"
         return searchCache.snapshot()
             .filterKeys { it.startsWith(prefix) && query.startsWith(it.removePrefix(prefix), true) }
             .maxByOrNull { it.key.length }
@@ -2936,7 +2989,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, id))
+        searchRequests.tryEmit(SearchRequest(query, _filter.value, _searchSource.value, id))
     }
 
     /**
@@ -2961,16 +3014,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
-                val key = cacheKey(request.query, request.filter)
+                val key = cacheKey(request.query, request.filter, request.source)
                 // Something to look at immediately: the exact answer if this
                 // query has been run before, otherwise the closest earlier
                 // one. Only fall back to a spinner with neither.
                 val exact = searchCache.get(key)
-                val cached = exact?.rows ?: prefixMatch(request.query, request.filter)
+                val cached = exact?.rows ?: prefixMatch(request.query, request.filter, request.source)
                 _results.value = cached?.let { UiState.Success(it.withoutBlockedArtists()) }
                     ?: UiState.Loading
                 if (exact != null) {
-                    searchSession = SearchSession(key, request.requestId, request.filter, exact.continuation)
+                    searchSession = SearchSession(
+                        key = key,
+                        requestId = request.requestId,
+                        filter = request.filter,
+                        continuation = exact.continuation,
+                        nextOffset = exact.nextOffset,
+                        source = request.source,
+                        query = request.query,
+                    )
+                    return@collectLatest
+                }
+
+                // Spotify has its own catalogue and its own backend. The
+                // search is asked there, and the rows it answers with are
+                // this app's rows: Spotify's collections open their own
+                // pages, and Spotify's tracks are matched to something that
+                // can play before they are drawn.
+                if (request.source == SearchSource.SPOTIFY) {
+                    val page = runCatching {
+                        com.music.bitchord.data.spotify.SpotifySearch.searchPage(
+                            request.query,
+                            request.filter,
+                        )
+                    }
+                    if (request.requestId != newestRequestId.get()) return@collectLatest
+                    _results.value = page.fold(
+                        onSuccess = { spotify ->
+                            publishedRows(
+                                rows = spotify.rows,
+                                continuation = null,
+                                nextOffset = spotify.nextOffset,
+                                key = key,
+                                requestId = request.requestId,
+                                filter = request.filter,
+                                source = request.source,
+                            )
+                        },
+                        onFailure = { failure -> UiState.Error(failure.friendly()) },
+                    )
                     return@collectLatest
                 }
 
@@ -3002,7 +3093,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // whether it succeeded or failed.
                 if (request.requestId != newestRequestId.get()) return@collectLatest
                 _results.value = result.fold(
-                    onSuccess = { page -> published(page, key, request.requestId) },
+                    onSuccess = { page ->
+                        published(page, key, request.requestId, request.filter, request.source)
+                    },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
             }
@@ -3015,8 +3108,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadMoreSearchResults() {
         val session = searchSession ?: return
-        val token = session.continuation ?: return
         if (_searchLoadingMore.value) return
+        if (session.source == SearchSource.SPOTIFY) {
+            loadMoreSpotifyResults(session)
+            return
+        }
+        val token = session.continuation ?: return
         _searchLoadingMore.value = true
         viewModelScope.launch {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
@@ -3028,6 +3125,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         .withoutBlockedArtists()
                     searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                     searchSession = session.copy(continuation = page.continuation)
+                    _results.value = UiState.Success(merged)
+                }
+                _searchLoadingMore.value = false
+            }
+        }
+    }
+
+    /**
+     * The next page of a Spotify search.
+     *
+     * Spotify pages by number rather than by a continuation token, so the
+     * session carries the offset the next page starts at. The rows are
+     * merged the same way YouTube Music's are.
+     */
+    private fun loadMoreSpotifyResults(session: SearchSession) {
+        val offset = session.nextOffset ?: return
+        _searchLoadingMore.value = true
+        viewModelScope.launch {
+            val next = runCatching {
+                com.music.bitchord.data.spotify.SpotifySearch.searchPage(
+                    session.query,
+                    session.filter,
+                    offset,
+                )
+            }
+            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+            if (stillCurrent) {
+                next.onSuccess { page ->
+                    val current = (_results.value as? UiState.Success)?.data.orEmpty()
+                    val merged = (current + page.rows)
+                        .distinctBy(::searchResultKey)
+                        .withoutBlockedArtists()
+                    searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
+                    searchSession = session.copy(nextOffset = page.nextOffset)
                     _results.value = UiState.Success(merged)
                 }
                 _searchLoadingMore.value = false
@@ -3115,13 +3246,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         page: YtMusicRepository.SearchPage,
         key: String,
         requestId: Long,
+        filter: SearchFilter,
+        source: SearchSource,
+    ): UiState<List<SearchResult>> = publishedRows(
+        rows = page.rows,
+        continuation = page.continuation,
+        nextOffset = null,
+        key = key,
+        requestId = requestId,
+        filter = filter,
+        source = source,
+    )
+
+    /**
+     * Publishes one page of results, and remembers where the next one starts.
+     *
+     * Shared by the two backends: what differs between them is only how the
+     * next page is addressed — a continuation token for YouTube Music, an
+     * offset for Spotify — and how the rows are made.
+     */
+    private fun publishedRows(
+        rows: List<SearchResult>,
+        continuation: String?,
+        nextOffset: Int?,
+        key: String,
+        requestId: Long,
+        filter: SearchFilter,
+        source: SearchSource,
     ): UiState<List<SearchResult>> {
-        val rows = page.rows.withoutBlockedArtists()
-        if (rows.isEmpty()) return UiState.Error(text(R.string.no_results))
-        searchCache.put(key, SearchCacheEntry(rows, page.continuation))
-        searchSession = SearchSession(key, requestId, _filter.value, page.continuation)
-        prefetchTopResult(rows)
-        return UiState.Success(rows)
+        val clean = rows.withoutBlockedArtists()
+        if (clean.isEmpty()) return UiState.Error(text(R.string.no_results))
+        searchCache.put(key, SearchCacheEntry(clean, continuation, nextOffset))
+        searchSession = SearchSession(
+            key = key,
+            requestId = requestId,
+            filter = filter,
+            continuation = continuation,
+            nextOffset = nextOffset,
+            source = source,
+            query = _query.value.trim(),
+        )
+        prefetchTopResult(clean)
+        return UiState.Success(clean)
     }
 
     private fun searchResultKey(row: SearchResult): String = when (row) {
@@ -3623,7 +3789,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             songs = UiState.Loading,
             type = BrowseType.PLAYLIST,
         )
-        viewModelScope.launch {
+        // The page's own job, kept so that Play can wait for it. A Spotify
+        // page is read in two stages — the tracks arrive, then each one is
+        // matched to something this app can play — and Play pressed between
+        // the two stages used to queue only the rows that had already
+        // matched: eight songs of a daily mix, and nothing after them.
+        val job = viewModelScope.launch {
             val playlistId = browseId.removePrefix(SPOTIFY_PAGE_PREFIX)
             fun setSongs(songs: UiState<List<Song>>) {
                 _detailStack.value = _detailStack.value.map {
@@ -3652,6 +3823,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, tracks, ::setSongs)
         }
+        spotifyPageJobs[browseId] = job
+    }
+
+    /**
+     * The songs of a Spotify page that this app can actually play.
+     *
+     * Waits for the page's own job first, so the answer is the whole page
+     * rather than whatever had matched by the time it was asked for. The
+     * rows that never found a counterpart are left out: they cannot be
+     * queued, and a queue that holds them is a queue that stops early.
+     */
+    suspend fun resolvedSpotifySongs(browseId: String): List<Song> {
+        spotifyPageJobs[browseId]?.join()
+        val list = (_detailStack.value.firstOrNull { it.browseId == browseId }?.songs as? UiState.Success<List<Song>>)
+            ?.data.orEmpty()
+        return list.filterNot { it.isUnresolvedSpotify }
     }
 
     private fun SpotifyTrack.asPendingSong() = Song(
@@ -4568,6 +4755,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     moodPool = emptyList(),
                 ),
                 limit,
+                // The expansion is Spotify's too: the station Spotify would
+                // start for the seed, or the artists Spotify puts beside the
+                // seed's artist. Expanding a Spotify mix through YouTube's
+                // radio is how this mix stopped being the listener's.
+                relatedTracks = { seed ->
+                    com.music.bitchord.data.spotify.SpotifyAlgorithm.more(seed, FLOW_EXPANSION)
+                },
             )
         }
         val lib = (_library.value as? UiState.Success)?.data
@@ -4600,7 +4794,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * removes, which is why the buffer only exists when there is something to
      * remove.
      */
-    private suspend fun flowQueueFrom(seeds: FlowEngine.SeedPool, limit: Int): List<Song> {
+    private suspend fun flowQueueFrom(
+        seeds: FlowEngine.SeedPool,
+        limit: Int,
+        relatedTracks: (suspend (Song) -> List<Song>)? = null,
+    ): List<Song> {
         val buffer = if (AppSettings.blockedArtists.value.isEmpty()) 0 else 12
         return FlowEngine.buildInitialQueue(
             seeds = seeds,
@@ -4610,6 +4808,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             config = FlowStore.config,
             limit = limit + buffer,
             genreOf = ::flowGenreOf,
+            relatedTracks = relatedTracks,
         ).withoutBlockedArtists().distinctBy { it.videoId }.take(limit)
     }
 
@@ -4759,7 +4958,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val out = current.toMutableList()
                 for (seed in tail) {
                     if (out.size >= current.size + limit) break
-                    val related = YtMusicRepository.radio(seed.videoId).getOrNull().orEmpty()
+                    // The top-up is the provider's algorithm as well: a mix
+                    // that starts as Spotify's and grows through YouTube's
+                    // radio is half Spotify and half YouTube.
+                    val related = if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+                        runCatching {
+                            com.music.bitchord.data.spotify.SpotifyAlgorithm.more(seed, FLOW_EXPANSION)
+                        }.getOrDefault(emptyList())
+                    } else {
+                        YtMusicRepository.radio(seed.videoId).getOrNull().orEmpty()
+                    }
                         .withoutBlockedArtists()
                         .filterNot { c ->
                             FlowEngine.isExcluded(

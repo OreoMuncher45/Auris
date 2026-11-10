@@ -100,6 +100,7 @@ suspend fun loadAutoplayTracks(
     existing: List<Song>,
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
+    station: Boolean = false,
 ): Result<List<Song>> {
     // The provider decides who is asked what comes next, for the same reason it
     // decides Flow's seeds: AutoPlay is a recommendation. The seed song is
@@ -113,6 +114,8 @@ suspend fun loadAutoplayTracks(
             com.music.bitchord.data.spotify.SpotifyHomeSource.autoplayTracks(
                 exclude = existing.mapTo(HashSet()) { it.videoId },
                 limit = limit,
+                seed = seedSong,
+                station = station,
             )
         }.getOrDefault(emptyList())
         if (fromSpotify.isNotEmpty()) {

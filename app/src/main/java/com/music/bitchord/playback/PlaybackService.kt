@@ -2222,6 +2222,9 @@ class PlaybackService : MediaLibraryService() {
                 existing = listOf(radioSeed),
                 seedSong = radioSeed,
                 limit = INITIAL_STATION_TRACKS,
+                // A station, asked for by the track that is playing: on a
+                // Spotify session that is Spotify's own mix of that track.
+                station = true,
             ).getOrElse {
                 TrackLog.w(
                     "BitChord",
@@ -5912,19 +5915,40 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         val warmedThrough: Long?
+        var lastBeat = 0L
         try {
             warmedThrough = withTimeoutOrNull(UPGRADE_AUDITION_MS) {
                 while (true) {
+                    val elapsed = SystemClock.elapsedRealtime() - startedAt
                     val verdict = withContext(Dispatchers.Main) {
-                        auditionVerdict(audition, at.duration, stream, meter.bytes.get())
+                        auditionVerdict(audition, at, stream, meter.bytes.get(), elapsed)
                     }
                     when (verdict) {
-                        is Audition.Ready -> return@withTimeoutOrNull verdict.bufferedTo
+                        is Audition.Ready -> {
+                            TrackLog.d("BitChord", "upgrade proved: ${verdict.why}")
+                            return@withTimeoutOrNull verdict.bufferedTo
+                        }
                         is Audition.Rejected -> {
                             TrackLog.w("BitChord", "upgrade dropped before it was heard: ${verdict.why}")
                             return@withTimeoutOrNull null
                         }
-                        Audition.Waiting -> delay(UPGRADE_PROVE_STEP_MS)
+                        is Audition.Waiting -> {
+                            // A heartbeat, once a second, saying what the
+                            // audition is doing. The silence this replaces
+                            // was the reason the last two attempts at this
+                            // bug ended in "never proved itself" with
+                            // nothing to act on: the wait had no state and
+                            // the timeout named no number.
+                            if (elapsed - lastBeat >= UPGRADE_BEAT_MS) {
+                                lastBeat = elapsed
+                                TrackLog.d(
+                                    "BitChord",
+                                    "upgrade waiting: ${verdict.why}",
+                                    about = mediaId,
+                                )
+                            }
+                            delay(UPGRADE_PROVE_STEP_MS)
+                        }
                     }
                 }
                 @Suppress("UNREACHABLE_CODE") null
@@ -5975,10 +5999,19 @@ class PlaybackService : MediaLibraryService() {
 
     /** How an audition in progress is coming along — see [auditionUpgrade]. */
     private sealed interface Audition {
-        data object Waiting : Audition
+        /**
+         * Not yet, and [why] says what is still missing.
+         *
+         * The reason this carries a line at all: the proof used to be a
+         * single question with a single answer, and a stream that could not
+         * satisfy it sat in silence for the whole window and then reported
+         * "never proved itself" — which names neither the state it reached
+         * nor the number it was stuck on. Every wait now says both.
+         */
+        class Waiting(val why: String) : Audition
 
         /** Good, and buffered through this position in the track. */
-        class Ready(val bufferedTo: Long) : Audition
+        class Ready(val bufferedTo: Long, val why: String) : Audition
 
         class Rejected(val why: String) : Audition
     }
@@ -5991,12 +6024,29 @@ class PlaybackService : MediaLibraryService() {
      * Main thread. Everything that has to be true before the audio is cut,
      * asked of the audition player rather than of the catalogue that made the
      * claims.
+     *
+     * The proof is deliberately a set of independent ways to be right rather
+     * than one arithmetic condition. It used to be one: "the buffered
+     * position has reached twelve seconds past the listener *and* a megabyte
+     * has been loaded". Both halves are right for a progressive file and both
+     * are wrong for a manifest, and a manifest is what a Dolby Atmos addon
+     * hands over:
+     *
+     *  - Its length is a few kilobytes, so the megabyte is never loaded and
+     *    the wait runs out with nothing said about why.
+     *  - Its audio arrives in segments under their own cache keys, so the
+     *    "loaded bytes" the player counted are the segments, not the file.
+     *
+     * The result was a Dolby Atmos upgrade found, fetched, decoded, buffered
+     * and then thrown away — the one thing the listener asked for, discarded
+     * for a number that describes a FLAC and not a DASH index.
      */
     private fun auditionVerdict(
         audition: ExoPlayer,
-        previousDuration: Long,
+        at: SwapPoint,
         stream: SourceStream,
         bytesLoaded: Long,
+        elapsedMs: Long,
     ): Audition {
         audition.playerError?.let {
             return Audition.Rejected("${it.errorCodeName} opening ${stream.format.summary}")
@@ -6009,50 +6059,89 @@ class PlaybackService : MediaLibraryService() {
         if (audition.playbackState == Player.STATE_ENDED) {
             return Audition.Rejected("replacement ended immediately")
         }
-        if (audition.playbackState != Player.STATE_READY) return Audition.Waiting
+        val state = audition.playbackState
         val length = audition.duration
-        if (length <= 0) return Audition.Waiting
-        if (previousDuration > 0 && abs(length - previousDuration) > upgradeLengthSlackMs) {
-            return Audition.Rejected("replacement is ${length}ms against ${previousDuration}ms")
+        val buffered = audition.bufferedPosition
+        val mime = audition.audioFormat?.sampleMimeType
+        val snapshot =
+            "state=$state duration=${length}ms buffered=${buffered}ms " +
+                "bytes=$bytesLoaded elapsed=${elapsedMs}ms mime=$mime"
+
+        if (state != Player.STATE_READY) return Audition.Waiting("not ready yet ($snapshot)")
+
+        // The length, when the source states one. A manifest that states none
+        // — a DASH index without a presentation duration — says nothing about
+        // the track's length, and silence is not evidence that it came up
+        // short. So an unknown length is not a reason to wait, and not a
+        // reason to refuse: the swap's own check catches a short replacement
+        // where the length is known (see [watchUpgrade]).
+        if (length > 0 && at.duration > 0 && abs(length - at.duration) > upgradeLengthSlackMs) {
+            return Audition.Rejected("replacement is ${length}ms against ${at.duration}ms")
         }
         // What the decoder was actually configured with, against what the
         // source said it was sending. The one failure mode a claim cannot
         // catch, because the claim is the thing that is wrong: a catalogue
         // advertising FLAC and serving a transcode buys a break in the audio
         // for no gain whatsoever.
-        val mime = audition.audioFormat?.sampleMimeType
         if (mime != null && stream.format.isLossless == true && !NerdStats.isLosslessMime(mime)) {
             return Audition.Rejected("promised ${stream.format.summary}, decoder was handed $mime")
         }
-        val buffered = audition.bufferedPosition
-        // Aimed at where the listener will be, not where they were when this
-        // started: the audition buffers ahead of a track that is still playing,
-        // so the window it has to cover keeps moving. On any connection worth
-        // upgrading over, buffering outruns playback and this converges in a
-        // couple of seconds; on one where it doesn't, the swap would have
-        // stalled anyway and the timeout is the right answer.
-        val wantedThrough = (player?.currentPosition ?: 0L) + UPGRADE_PREBUFFER_MS
-        // The only reason to settle for less: there is no more track to buffer.
-        //
-        // `isLoading` was tried here as a second escape — "the loader has
-        // stopped of its own accord, so this is as good as it gets" — and it
-        // was wrong every single time. [ChunkedDataSource] closes and reopens
-        // the upstream every two megabytes, and `isLoading` goes false in the
-        // gap between one range finishing and the next being asked for. A poll
-        // landing in that gap read it as a full buffer, so every upgrade was
-        // declared ready with roughly one chunk in hand and the swap then
-        // landed seconds past the end of it, back on the network:
-        //
-        // ```
-        //   upgrade to FLAC proved in 8701ms, buffered through 32496ms
-        //   upgrade landing at 39889ms, past the 32496ms warmed for it
-        // ```
-        if (buffered >= wantedThrough || audition.bufferedPercentage >= 100) {
-            // Measured: "buffered through 23466ms" with 2.7kB actually cached, and the swap then looped.
-            if (bytesLoaded < MIN_PROVEN_LOAD_BYTES) return Audition.Waiting
-            return Audition.Ready(buffered)
+
+        // Where the listener will be when the swap lands, and how much of the
+        // replacement has to reach that point for the cut to be silent.
+        val now = player?.currentPosition ?: 0L
+        // The floor: some audio past where the audition started, or the
+        // stream has not been shown to play at all.
+        val floor = at.position + MIN_PROVEN_BUFFER_MS
+        // The cover: enough to reach the listener's own position, so the swap
+        // lands inside the region that was warmed rather than past it.
+        val mustCover = now + MIN_SWAP_COVER_MS
+        // The aim: the window that makes the swap inaudible.
+        val wantedThrough = now + UPGRADE_PREBUFFER_MS
+
+        if (buffered < floor) return Audition.Waiting("no audio past the cut yet ($snapshot)")
+        if (buffered < mustCover) {
+            return Audition.Waiting("buffered to ${buffered}ms, short of the listener at ${now}ms ($snapshot)")
         }
-        return Audition.Waiting
+
+        // A manifest is fetched in pieces: the index, then a segment at a
+        // time, each under its own cache key. The megabyte the progressive
+        // proof insists on is a *file's* opening, and a manifest has none —
+        // so there the buffered position is the proof, because it was made
+        // out of the segments themselves.
+        val manifest = StreamContainer.manifestMimeOf(stream.url) != null
+
+        // The full proof: the whole window, warmed, with the bytes to back it.
+        if (buffered >= wantedThrough && bytesLoaded >= MIN_PROVEN_LOAD_BYTES) {
+            return Audition.Ready(buffered, "buffered through ${buffered}ms with ${bytesLoaded} bytes ($snapshot)")
+        }
+        // The manifest proof: the window, warmed, from a source that has no
+        // single file behind it.
+        if (manifest && buffered >= wantedThrough && bytesLoaded > 0L) {
+            return Audition.Ready(buffered, "manifest buffered through ${buffered}ms ($snapshot)")
+        }
+        // The whole-track proof: there is no more track to buffer, so the
+        // window can never be filled and waiting for it would time out on a
+        // stream that is already whole.
+        if (audition.bufferedPercentage >= 100 && bytesLoaded > 0L) {
+            return Audition.Ready(buffered, "the whole replacement is buffered ($snapshot)")
+        }
+        // The cover proof: the bytes are on disk and they reach the listener,
+        // even though the window is not full yet. The swap lands inside the
+        // warmed region, which is what the window was for.
+        if (bytesLoaded >= MIN_PROVEN_LOAD_BYTES) {
+            return Audition.Ready(buffered, "covered the listener with ${bytesLoaded} bytes ($snapshot)")
+        }
+        // The late proof: not a megabyte, but enough of one to play from, and
+        // the window has had long enough to be measured. This is the case the
+        // old single condition could not express — a Dolby Atmos stream at
+        // half a megabit a second reaches the listener's position long before
+        // it reaches a megabyte — and it is the case that used to end in
+        // "never proved itself".
+        if (elapsedMs >= UPGRADE_FALLBACK_MS && bytesLoaded >= MIN_FALLBACK_PROVEN_BYTES) {
+            return Audition.Ready(buffered, "settled after ${elapsedMs}ms with ${bytesLoaded} bytes ($snapshot)")
+        }
+        return Audition.Waiting("not enough yet ($snapshot)")
     }
 
     /**
@@ -6114,12 +6203,19 @@ class PlaybackService : MediaLibraryService() {
     ) {
         if (previousDuration <= 0) return
         scope.launch(TrackLog.about(mediaId)) {
+            // A replacement that states no length at all — a DASH index
+            // without a presentation duration — cannot be shown to be short,
+            // and a check that reverts on what it cannot measure throws away
+            // the upgrade it was meant to protect. Remembered here so the
+            // ceiling can tell "disagreed" from "said nothing".
+            var lengthUnknown = false
             val agreed = withTimeoutOrNull(UPGRADE_PROVE_MS) {
                 while (true) {
                     val current = player?.takeIf { it.currentMediaItem?.mediaId == mediaId }
                         ?: return@withTimeoutOrNull false
                     val now = current.duration
                     if (now > 0) return@withTimeoutOrNull abs(now - previousDuration) <= upgradeLengthSlackMs
+                    lengthUnknown = true
                     // The failure this whole check exists for, caught when it
                     // happens rather than at the ceiling: a replacement that
                     // came up short does not raise an error, it reaches the
@@ -6132,6 +6228,14 @@ class PlaybackService : MediaLibraryService() {
                 @Suppress("UNREACHABLE_CODE") false
             }
             if (agreed == true) return@launch
+            if (agreed == null && lengthUnknown) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade for $mediaId kept: its source states no length to check against",
+                    about = mediaId,
+                )
+                return@launch
+            }
             val player = player ?: return@launch
             val item = player.currentMediaItem ?: return@launch
             if (item.mediaId != mediaId) return@launch
@@ -10802,6 +10906,57 @@ class PlaybackService : MediaLibraryService() {
 
         /** Loaded media bytes an audition needs before its buffered position is believed. */
         const val MIN_PROVEN_LOAD_BYTES = UPGRADE_HEADER_BYTES
+
+        /**
+         * How much audio past the audition's own starting point has to be
+         * buffered before the replacement counts as playable at all.
+         *
+         * Two seconds: enough to say the stream decodes and carries audio,
+         * and small enough that a manifest's first segment — which can be
+         * several seconds long on its own — is not held up waiting for a
+         * second one.
+         */
+        const val MIN_PROVEN_BUFFER_MS = 2_000L
+
+        /**
+         * How far past the listener the replacement has to reach before the
+         * swap is allowed to land.
+         *
+         * The window the swap aims for is [UPGRADE_PREBUFFER_MS], but a
+         * connection that cannot fill it is a connection on which the swap
+         * would have stalled anyway. What it must never do is land *behind*
+         * the buffered region: the cut then falls on bytes nobody has, and
+         * the track restarts on the network. Two seconds of cover is the
+         * margin that keeps the landing inside what was warmed.
+         */
+        const val MIN_SWAP_COVER_MS = 2_000L
+
+        /**
+         * The bytes a slow replacement is allowed to be accepted on once the
+         * window has had long enough to be measured.
+         *
+         * A quarter of a megabyte is a few seconds of anything: enough to
+         * open on and to cross the cut on. It is the floor for the late
+         * proof, which exists for the streams the megabyte rule describes
+         * badly — a Dolby Atmos rendition at half a megabit a second reaches
+         * the listener long before it reaches a megabyte.
+         */
+        const val MIN_FALLBACK_PROVEN_BYTES = 256L * 1024L
+
+        /**
+         * How long the audition waits for the full window before the late
+         * proof is allowed to fire.
+         *
+         * Half the [UPGRADE_AUDITION_MS] ceiling: long enough that a slow
+         * but healthy stream gets its window, short enough that the ceiling
+         * is not the thing that decides. What fires at the ceiling without
+         * this is "never proved itself", which is how a working Dolby Atmos
+         * upgrade ended up in the bin.
+         */
+        const val UPGRADE_FALLBACK_MS = 12_000L
+
+        /** How often the audition says what it is waiting for. */
+        const val UPGRADE_BEAT_MS = 1_000L
 
         /**
          * Opening fetched after an upgrade so the track stays analysable. Four

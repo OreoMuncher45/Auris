@@ -98,6 +98,17 @@ internal object SpotifyHomeSource {
      */
     private val matches = ConcurrentHashMap<String, Song>()
 
+    /**
+     * The other way round: this app's track id to the Spotify track it came
+     * from.
+     *
+     * Needed because a station is asked for by a Spotify URI, and the queue
+     * holds this app's own ids — the track that is playing was matched from
+     * Spotify, and without the other direction the station it seeds could
+     * only be guessed at.
+     */
+    private val spotifyIds = ConcurrentHashMap<String, String>()
+
     /** Whether a listener's session can be read. */
     fun isSignedIn(): Boolean = AppSettings.spotifySpdcToken.value.isNotBlank()
 
@@ -341,22 +352,55 @@ internal object SpotifyHomeSource {
     /**
      * Flow's seeds, read from whichever backend will answer.
      *
-     * Signed in, the listener's own taste. The `/v1` history calls are tried
-     * first because they are the *better* evidence — months of listening
-     * rather than one shelf — but a rate-limited client refuses them, and the
-     * library is right there with an answer.
+     * Signed in, the listener's own taste. The web player's own library is
+     * asked first: Liked Songs is the closest thing to "top tracks" the
+     * library has, and it is the one collection that is unambiguously the
+     * listener's own. The `/v1` history calls come after it because they are
+     * *better* evidence - months of listening rather than one shelf - but a
+     * rate-limited client refuses them, and a refused call is one source of
+     * seeds not answering rather than a reason to build nothing.
      */
     private suspend fun ownedSeeds(): List<SpotifyTrack> {
+        val liked = runCatching { SpotifyLibrary.preview(SpotifyLibrary.LIKED_ID, FLOW_SEEDS) }
+            .onFailure { Log.w(TAG, "the Spotify library could not be read for Flow: ${it.message}") }
+            .getOrDefault(emptyList())
+        if (liked.isNotEmpty()) return liked
         val top = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
         if (top.isNotEmpty()) return top
         val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
         if (recent.isNotEmpty()) return recent
-        return runCatching {
-            // Liked Songs: the closest thing to "top tracks" the library has,
-            // and the one collection that is unambiguously the listener's own.
-            SpotifyLibrary.preview(SpotifyLibrary.LIKED_ID, FLOW_SEEDS)
-        }.onFailure { Log.w(TAG, "the Spotify library could not be read for Flow: ${it.message}") }
+        return emptyList()
+    }
+
+    /**
+     * Seeds for a listener who has not signed in.
+     *
+     * There is no history to read, so the public catalogue stands in: the
+     * home feed's own playlists - the editorial ones the web player shows a
+     * visitor - and their tracks. The public API's featured list is the
+     * fallback, and it is rate limited per client, so it is asked last.
+     */
+    private suspend fun publicSeeds(): List<SpotifyTrack> {
+        val feed = runCatching { homeFeed("") }.getOrNull()
+        val playlistIds = feed?.sections.orEmpty()
+            .flatMap { section -> section.cards }
+            .filter { card -> card.kind == SpotifyCard.Kind.PLAYLIST }
+            .map { card -> card.id }
+            .distinct()
+            .take(2)
+        val tracks = playlistIds.flatMap { id ->
+            runCatching { SpotifyLibrary.preview(id, TRACKS_PER_ROW) }
+                .onFailure { Log.w(TAG, "the public playlist '$id' could not be read for Flow: ${it.message}") }
+                .getOrDefault(emptyList())
+        }
+        if (tracks.isNotEmpty()) return tracks
+        val featured = runCatching { SpotifyWebApi.featuredPlaylists(limit = 2) }
+            .onFailure { Log.w(TAG, "featured playlists could not be read for Flow: ${it.message}") }
             .getOrDefault(emptyList())
+        return featured.flatMap { playlist ->
+            runCatching { SpotifyWebApi.playlistTracks(playlist.id, limit = TRACKS_PER_ROW) }
+                .getOrDefault(emptyList())
+        }
     }
 
     /**
@@ -392,14 +436,7 @@ internal object SpotifyHomeSource {
             val owned = ownedSeeds()
             FlowSeeds(top = songs(owned), recent = emptyList())
         } else {
-            val featured = runCatching { SpotifyWebApi.featuredPlaylists(limit = 2) }
-                .onFailure { Log.w(TAG, "featured playlists could not be read for Flow: ${it.message}") }
-                .getOrDefault(emptyList())
-            val tracks = featured.flatMap { playlist ->
-                runCatching { SpotifyWebApi.playlistTracks(playlist.id, limit = TRACKS_PER_ROW) }
-                    .getOrDefault(emptyList())
-            }
-            FlowSeeds(top = emptyList(), recent = songs(tracks))
+            FlowSeeds(top = emptyList(), recent = songs(publicSeeds()))
         }
     }
 
@@ -425,6 +462,7 @@ internal object SpotifyHomeSource {
                     .getOrNull()
                 matched?.let {
                     matches[track.id] = it
+                    spotifyIds[it.videoId] = track.id
                     track to it
                 }
             }
@@ -436,14 +474,55 @@ internal object SpotifyHomeSource {
         matched(tracks).map { (_, song) -> song }
 
     /**
-     * The next tracks AutoPlay should queue, from Spotify's own evidence.
+     * The playable songs behind [tracks], for a search.
      *
-     * Empty when the pool runs dry, which after a few batches it will. The
-     * caller falls back to YouTube's radio rather than letting AutoPlay go
-     * silent.
+     * A Spotify track is metadata: the audio comes from YouTube Music and the
+     * addons, so a Spotify row is worth showing only once it has been matched
+     * to something that can play. The match is remembered both ways, so a
+     * station can later be asked for by the Spotify id behind the track that
+     * is playing.
      */
-    suspend fun autoplayTracks(exclude: Set<String>, limit: Int): List<Song> = withContext(Dispatchers.IO) {
+    internal suspend fun matchTracks(tracks: List<SpotifyTrack>): List<Song> =
+        matched(tracks).map { (_, song) -> song }
+
+    /**
+     * The next tracks AutoPlay should queue, from Spotify's own algorithm.
+     *
+     * The seed is the song that is playing, and what comes next is Spotify's
+     * answer to it: the station Spotify would start for that song, or the
+     * artists Spotify puts beside that song's artist. Not the listener's
+     * liked list — that is what this used to serve, and a queue that repeats
+     * the songs you already loved is not AutoPlay, it is a shuffle of your
+     * library.
+     *
+     * The seed pool is the last resort, and only for what Spotify's own
+     * algorithm could not answer.
+     */
+    suspend fun autoplayTracks(
+        exclude: Set<String>,
+        limit: Int,
+        seed: Song? = null,
+        station: Boolean = false,
+    ): List<Song> = withContext(Dispatchers.IO) {
         if (limit <= 0) return@withContext emptyList()
+
+        if (seed != null) {
+            // An explicit station is Spotify's own mix of the track and
+            // nothing else; a queue top-up takes the same answer, because
+            // Spotify's station is the best thing this provider can say.
+            val algorithmic = if (station) {
+                SpotifyAlgorithm.station(seed, limit)
+            } else {
+                SpotifyAlgorithm.more(seed, limit)
+            }
+            val matched = algorithmic
+                .distinctBy { it.videoId }
+                .filterNot { it.videoId in exclude }
+                .filterNot(AppSettings::isSongBlocked)
+                .take(limit)
+            if (matched.isNotEmpty()) return@withContext matched
+        }
+
         val seeds = flowSeeds()
         (seeds.top + seeds.recent)
             .distinctBy { it.videoId }
@@ -451,6 +530,15 @@ internal object SpotifyHomeSource {
             .filterNot(AppSettings::isSongBlocked)
             .take(limit)
     }
+
+    /**
+     * The Spotify track id behind [song], or null.
+     *
+     * Known only for a track that was matched from Spotify in this process:
+     * the queue holds this app's own ids, and the Spotify id behind one is
+     * remembered when the match is made.
+     */
+    internal fun spotifyIdOf(song: Song): String? = spotifyIds[song.videoId]
 
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =

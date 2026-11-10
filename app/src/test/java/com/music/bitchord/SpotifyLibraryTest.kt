@@ -31,6 +31,37 @@ class SpotifyLibraryTest {
     }
 
     @Test
+    fun aPlaylistWithoutAStatedTotalDoesNotClaimTheFirstPageIsTheWhole() {
+        // The bug this guards: a page's own size was read as the playlist's
+        // length, so a playlist of thirty tracks stopped after the first
+        // short page — eight songs, and nothing after them.
+        val root = json.parseToJsonElement(
+            """
+            {"data":{"playlistV2":{"content":{"items":[
+              {"itemV2":{"data":{"name":"One","uri":"spotify:track:t1"}}},
+              {"itemV2":{"data":{"name":"Two","uri":"spotify:track:t2"}}}
+            ]}}}}
+            """.trimIndent(),
+        ).jsonObject
+        val page = parseTrackPage(root)
+        assertEquals(null, page.total)
+        assertEquals(2, page.raw)
+        assertEquals(2, page.items.size)
+    }
+
+    @Test
+    fun aStatedTotalIsKept() {
+        val root = json.parseToJsonElement(
+            """
+            {"data":{"playlistV2":{"content":{"totalCount":30,"items":[
+              {"itemV2":{"data":{"name":"One","uri":"spotify:track:t1"}}}
+            ]}}}}
+            """.trimIndent(),
+        ).jsonObject
+        assertEquals(30, parseTrackPage(root).total)
+    }
+
+    @Test
     fun tracksReadTitleArtistAndDuration() {
         val root = json.parseToJsonElement(
             """
@@ -44,7 +75,7 @@ class SpotifyLibraryTest {
             ]}}}}
             """.trimIndent(),
         ).jsonObject
-        val track = parseTrackPage(root).first.single()
+        val track = parseTrackPage(root).items.single()
         assertEquals("t1", track.id)
         assertEquals("Song", track.title)
         assertEquals("Artist", track.artist)

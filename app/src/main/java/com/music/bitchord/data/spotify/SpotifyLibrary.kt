@@ -44,6 +44,18 @@ data class SpotifyTrack(
 object SpotifyLibrary {
     /** The pseudo-playlist id for the Liked Songs collection, which has no playlist uri. */
     const val LIKED_ID = "liked"
+
+    /** How many tracks one page of a playlist asks for. */
+    private const val PAGE_SIZE = 100
+
+    /**
+     * How many pages one playlist may take.
+     *
+     * A bound, not a plan: a playlist with no stated length is asked again
+     * until Spotify answers with an empty page, and this is what stops a
+     * server that always answers with something from asking forever.
+     */
+    private const val MAX_PAGES = 100
     /** Spotify's own Liked Songs artwork, the purple heart; the collection has no cover of its own. */
     private const val LIKED_COVER = "https://misc.scdn.co/liked-songs/liked-songs-640.png"
 
@@ -85,16 +97,32 @@ object SpotifyLibrary {
     ): List<SpotifyTrack> = withContext(Dispatchers.IO) {
         val collected = mutableListOf<SpotifyTrack>()
         var offset = 0
-        while (true) {
-            val (items, total, raw) = if (playlistId == LIKED_ID) {
+        var pages = 0
+        while (pages < MAX_PAGES) {
+            val page = if (playlistId == LIKED_ID) {
                 likedPage(offset)
             } else {
                 trackPage(playlistId, offset)
             }
-            collected += items
-            offset += raw
+            collected += page.items
+            offset += page.raw
             onPage(collected.toList())
-            if (raw == 0 || offset >= total) break
+            pages++
+            if (page.raw == 0) break
+            val total = page.total
+            if (total != null) {
+                if (offset >= total) break
+            } else {
+                // The playlist never said how long it is, and that is not a
+                // licence to stop after the first page. A page that came
+                // back with eight entries is eight entries of a longer
+                // playlist: treating the page's own size as the playlist's
+                // total is what made a daily mix stop at eight songs with
+                // nothing more to come. So the next page is asked, and the
+                // one after that, until Spotify answers with an empty page
+                // — a short page is not the end, because the server caps
+                // its pages and a capped page is always short.
+            }
         }
         collected
     }
@@ -112,7 +140,7 @@ object SpotifyLibrary {
         } else {
             trackPage(playlistId, offset = 0, limit = limit)
         }
-        page.first
+        page.items
     }
 
     private suspend fun playlistPage(offset: Int): Triple<List<SpotifyPlaylist>, Int, Int> {
@@ -139,15 +167,20 @@ object SpotifyLibrary {
     private suspend fun trackPage(
         playlistId: String,
         offset: Int,
-        limit: Int = 100,
-    ): Triple<List<SpotifyTrack>, Int, Int> {
+        limit: Int = PAGE_SIZE,
+    ): TrackPage {
+        // The variables are the ones the web player itself sends for a
+        // playlist's contents. The operation, the hash and the shape of the
+        // answer are one thing — `fetchPlaylist`, `fetchPlaylistContents`
+        // and `fetchPlaylistMetadata` are the same persisted query under
+        // three names — and what decides the answer is the variables.
         val variables = buildJsonObject {
             put("uri", "spotify:playlist:$playlistId")
             put("offset", offset)
             put("limit", limit)
-            put("enableWatchFeedEntrypoint", false)
+            put("includeEpisodeContentRatingsV2", true)
         }
-        return parseTrackPage(gql("fetchPlaylist", variables))
+        return parseTrackPage(gql("fetchPlaylistContents", variables))
     }
 
     /**
@@ -169,8 +202,8 @@ object SpotifyLibrary {
 
     private suspend fun likedPage(
         offset: Int,
-        limit: Int = 100,
-    ): Triple<List<SpotifyTrack>, Int, Int> {
+        limit: Int = PAGE_SIZE,
+    ): TrackPage {
         val variables = buildJsonObject {
             put("offset", offset)
             put("limit", limit)
@@ -219,9 +252,25 @@ internal fun parsePlaylistPage(root: JsonObject): Triple<List<SpotifyPlaylist>, 
     return Triple(items, library.int("totalCount") ?: rawItems.size, rawItems.size)
 }
 
-/** The tracks kept, the playlist's total, and how many entries the page held before filtering. */
-internal fun parseTrackPage(root: JsonObject): Triple<List<SpotifyTrack>, Int, Int> {
-    val content = root.obj("data")?.obj("playlistV2")?.obj("content")
+/**
+ * One page of a playlist's tracks.
+ *
+ * [total] is how long the playlist is, when Spotify said — and null when it
+ * did not, which is a different thing from "the playlist ends here". The
+ * difference is the whole bug: a page's own size is not a playlist's length,
+ * and reading it as one stopped a long playlist after one short page.
+ */
+internal data class TrackPage(
+    val items: List<SpotifyTrack>,
+    val total: Int?,
+    val raw: Int,
+)
+
+/** The tracks kept, the playlist's total when it is known, and how many entries the page held. */
+internal fun parseTrackPage(root: JsonObject): TrackPage {
+    val playlist = root.obj("data")?.obj("playlistV2")
+        ?: throw IllegalStateException("Spotify playlist response was empty")
+    val content = playlist.obj("content")
         ?: throw IllegalStateException("Spotify playlist response was empty")
     val rawItems = content.arr("items").orEmpty()
     val items = rawItems.mapNotNull { element ->
@@ -242,11 +291,14 @@ internal fun parseTrackPage(root: JsonObject): Triple<List<SpotifyTrack>, Int, I
             imageUrl = album?.obj("coverArt")?.arr("sources")?.lastUrl(),
         )
     }
-    return Triple(items, content.int("totalCount") ?: rawItems.size, rawItems.size)
+    val total = content.int("totalCount")
+        ?: playlist.int("totalCount")
+        ?: playlist.int("totalLength")
+    return TrackPage(items = items, total = total, raw = rawItems.size)
 }
 
 /** The Liked Songs page: `me.library.tracks`, each entry wrapping the track under `track`. */
-internal fun parseLikedPage(root: JsonObject): Triple<List<SpotifyTrack>, Int, Int> {
+internal fun parseLikedPage(root: JsonObject): TrackPage {
     val tracks = root.obj("data")?.obj("me")?.obj("library")?.obj("tracks")
         ?: throw IllegalStateException("Spotify liked songs response was empty")
     val rawItems = tracks.arr("items").orEmpty()
@@ -268,7 +320,9 @@ internal fun parseLikedPage(root: JsonObject): Triple<List<SpotifyTrack>, Int, I
             imageUrl = album?.obj("coverArt")?.arr("sources")?.lastUrl(),
         )
     }
-    return Triple(items, tracks.int("totalCount") ?: rawItems.size, rawItems.size)
+    val library = root.obj("data")?.obj("me")?.obj("library")
+    val total = tracks.int("totalCount") ?: library?.int("totalCount")
+    return TrackPage(items = items, total = total, raw = rawItems.size)
 }
 
 /**

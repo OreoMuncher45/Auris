@@ -53,6 +53,19 @@ internal fun JsonObject.str(path: String): String? = walk(path)?.textOrNull()
 internal fun JsonObject.int(path: String): Int? = walk(path)?.numberOrNull()
 
 /**
+ * The widest picture a list of sources offers, by the width it states.
+ *
+ * Spotify lists an image's sizes in no fixed order — a 64px thumbnail can
+ * come last — so the list is read by width rather than by position.
+ */
+internal fun JsonArray.bestSourceUrl(): String? =
+    mapNotNull { source ->
+        val source = source.objOrNull() ?: return@mapNotNull null
+        val url = source.str("url") ?: return@mapNotNull null
+        url to (source.int("width") ?: 0)
+    }.maxByOrNull { it.second }?.first
+
+/**
  * The element at a dotted [path], or null.
  *
  * A path is a list of keys, each of which is a name in an object or an index
