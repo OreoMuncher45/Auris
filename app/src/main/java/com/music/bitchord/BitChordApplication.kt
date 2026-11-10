@@ -42,6 +42,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -156,18 +157,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // is throttled to once every six hours, because Spotify ships a
             // build about once a day.
             //
-            // Its own scope with a handler that swallows: this is a cache of
-            // somebody else's hashes, and an exception escaping a coroutine
-            // with no handler kills the process. It did — a bad pattern read
-            // the player's page and threw "No group 1" a second after launch.
-            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-                runCatching { com.music.bitchord.data.spotify.SpotifyOps.refresh() }
-                    .onFailure { error ->
-                        com.music.bitchord.data.DebugLog.w(
-                            "Spotify",
-                            "the operation refresh failed: ${error.message}",
-                        )
-                    }
+            // Its own scope, because an exception escaping a coroutine with no
+            // handler kills the process: this is a cache of somebody else's
+            // hashes, and a failed refresh is a cache miss rather than a reason
+            // to close the app. It was — a bad pattern read the player's page
+            // and threw "No group 1" a second after launch.
+            backgroundScope().launch {
+                com.music.bitchord.data.spotify.SpotifyOps.refresh()
             }
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and
@@ -208,7 +204,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // first would restore it into the value about to be wiped.
             restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
                 ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+            backgroundScope().launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
         com.music.bitchord.data.settings.MediaProgress.init(this)
@@ -271,7 +267,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // I/O; on the main thread it ran ahead of the first frame on the
             // first launch of every update. Off the main thread, the UI is
             // already up while it happens.
-            CoroutineScope(Dispatchers.IO).launch {
+            backgroundScope().launch {
                 SingletonImageLoader.get(this@BitChordApplication).let { loader ->
                     loader.memoryCache?.clear()
                     loader.diskCache?.clear()
@@ -283,6 +279,23 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
     }
+
+    /**
+     * A scope for the work that happens beside the app's start rather than on
+     * it.
+     *
+     * Its own supervisor and its own handler, because an exception escaping a
+     * coroutine with no handler kills the process. None of the work this
+     * scope carries is worth the app: a cache of somebody else's hashes, a
+     * session scope, an old image cache. It was — a Spotify hash refresh read
+     * a capture group its pattern did not have, threw "No group 1" a second
+     * after launch, and closed the app.
+     */
+    private fun backgroundScope(): CoroutineScope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, error ->
+            com.music.bitchord.data.DebugLog.w("BitChord", "background work failed: ${error.message}")
+        },
+    )
 
     /**
      * Artwork loading, which was previously left entirely on Coil's defaults.
