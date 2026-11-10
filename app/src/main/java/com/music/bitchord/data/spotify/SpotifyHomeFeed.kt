@@ -2,13 +2,7 @@ package com.music.bitchord.data.spotify
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Spotify's own home feed, as the web player draws it.
@@ -126,7 +120,7 @@ internal object SpotifyHomeFeedParser {
     }
 
     private fun parseSection(element: JsonElement): SpotifyHomeSection? {
-        val section = element.jsonObject
+        val section = element.objOrNull() ?: return null
         val data = section.obj("data")
         val title = data?.str("title.transformedLabel") ?: data?.str("title.text") ?: ""
         val subtitle = data?.str("subtitle.transformedLabel") ?: data?.str("subtitle.text") ?: ""
@@ -139,7 +133,7 @@ internal object SpotifyHomeFeedParser {
     }
 
     private fun parseChip(element: JsonElement): SpotifyChip? {
-        val chip = element.jsonObject
+        val chip = element.objOrNull() ?: return null
         val id = chip.str("id")?.takeIf { it.isNotBlank() } ?: return null
         val label = chip.str("label.transformedLabel") ?: chip.str("label.text") ?: id
         return SpotifyChip(
@@ -162,7 +156,7 @@ internal object SpotifyHomeFeedParser {
      * lower down.
      */
     internal fun parseCard(element: JsonElement): SpotifyCard? {
-        val item = element.jsonObject
+        val item = element.objOrNull() ?: return null
         val content = item.obj("content") ?: return null
         val data = content.obj("data") ?: return null
         val uri = data.str("uri") ?: content.str("uri") ?: item.str("uri") ?: return null
@@ -199,7 +193,7 @@ internal object SpotifyHomeFeedParser {
     private fun JsonObject.artists(): String {
         val items = obj("artists")?.arr("items").orEmpty()
         val names = items.mapNotNull { artist ->
-            artist.jsonObject.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
+            artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
         }
         if (names.isNotEmpty()) return names.joinToString(", ")
         // Some answers list the first artist under its own key.
@@ -216,30 +210,15 @@ internal object SpotifyHomeFeedParser {
     private fun JsonObject.bestImage(): String? {
         val sources = obj("coverArt")?.arr("sources").orEmpty()
             .ifEmpty { obj("visuals")?.obj("avatarImage")?.arr("sources").orEmpty() }
-            .ifEmpty { obj("images")?.arr("items").orEmpty().flatMap { it.jsonObject.arr("sources").orEmpty() } }
+            .ifEmpty { obj("images")?.arr("items").orEmpty().flatMap { it.objOrNull()?.arr("sources").orEmpty() } }
             .ifEmpty { obj("avatar")?.arr("sources").orEmpty() }
             .ifEmpty { obj("image")?.arr("sources").orEmpty() }
             .ifEmpty { obj("albumOfTrack")?.obj("coverArt")?.arr("sources").orEmpty() }
         return sources.mapNotNull { source ->
-            val url = source.jsonObject.str("url") ?: return@mapNotNull null
-            url to (source.jsonObject.int("width") ?: 0)
+            val source = source.objOrNull() ?: return@mapNotNull null
+            val url = source.str("url") ?: return@mapNotNull null
+            url to (source.int("width") ?: 0)
         }.maxByOrNull { it.second }?.first
     }
 
-    // ── Small JSON helpers, matching the shape the web player answers in ──
-
-    private fun JsonObject.obj(key: String): JsonObject? =
-        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonObject }.getOrNull() }
-
-    private fun JsonObject.arr(key: String): JsonArray? =
-        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonArray }.getOrNull() }
-
-    /** A value at a dotted path, as the answers spell it. */
-    private fun JsonObject.str(path: String): String? =
-        path.split('.').fold(this as JsonElement?) { element, key ->
-            element?.jsonObject?.get(key)
-        }?.takeIf { it !is JsonNull }?.jsonPrimitive?.contentOrNull
-
-    private fun JsonObject.int(key: String): Int? =
-        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.intOrNull
 }

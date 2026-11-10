@@ -3,13 +3,7 @@ package com.music.bitchord.data.spotify
 import com.music.bitchord.data.model.HomeShelf
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
@@ -122,7 +116,8 @@ internal object SpotifyPages {
         val album = root.obj("albumUnion")
             ?: throw IllegalStateException("Spotify album was not found")
         val tracks = album.obj("tracksV2")?.arr("items").orEmpty().mapNotNull { row ->
-            val track = row.jsonObject.obj("track") ?: row.jsonObject
+            val row = row.objOrNull() ?: return@mapNotNull null
+            val track = row.obj("track") ?: row
             parseTrack(track)
         }
         return Page(
@@ -146,16 +141,17 @@ internal object SpotifyPages {
             ?: throw IllegalStateException("Spotify artist was not found")
         val discography = artist.obj("discography")
         val tracks = discography?.obj("topTracks")?.arr("items").orEmpty().mapNotNull { row ->
-            val track = row.jsonObject.obj("track") ?: row.jsonObject
+            val row = row.objOrNull() ?: return@mapNotNull null
+            val track = row.obj("track") ?: row
             parseTrack(track)
         }
         val shelves = mutableListOf<HomeShelf>()
         discography?.obj("popularReleasesAlbums")?.arr("items").orEmpty()
-            .mapNotNull { item -> parseAlbumCard(item.jsonObject) }
+            .mapNotNull { item -> item.objOrNull()?.let { card -> parseAlbumCard(card) } }
             .takeIf { it.isNotEmpty() }
             ?.let { cards -> shelves += HomeShelf(title = "Popular releases", items = cards.mapNotNull { it.item() }) }
         artist.obj("relatedContent")?.obj("relatedArtists")?.arr("items").orEmpty()
-            .mapNotNull { item -> parseArtistCard(item.jsonObject) }
+            .mapNotNull { item -> item.objOrNull()?.let { card -> parseArtistCard(card) } }
             .takeIf { it.isNotEmpty() }
             ?.let { cards -> shelves += HomeShelf(title = "Fans also like", items = cards.mapNotNull { it.item() }) }
         return Page(
@@ -178,9 +174,10 @@ internal object SpotifyPages {
         val browse = root.obj("browse")
             ?: throw IllegalStateException("Spotify category was not found")
         val shelves = browse.obj("sections")?.arr("items").orEmpty().mapNotNull { section ->
-            val data = section.jsonObject.obj("data")
+            val section = section.objOrNull() ?: return@mapNotNull null
+            val data = section.obj("data")
             val title = data?.str("title.transformedLabel") ?: data?.str("title.text") ?: ""
-            val cards = section.jsonObject.obj("sectionItems")?.arr("items").orEmpty()
+            val cards = section.obj("sectionItems")?.arr("items").orEmpty()
                 .mapNotNull { item -> SpotifyHomeFeedParser.parseCard(item) }
             if (cards.isEmpty()) null else HomeShelf(title = title, items = cards.mapNotNull { it.item() })
         }
@@ -247,7 +244,7 @@ internal object SpotifyPages {
     /** The artists of a track or an album, as one line. */
     private fun JsonObject.artists(): String {
         val names = obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
-            artist.jsonObject.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
+            artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
         }
         if (names.isNotEmpty()) return names.joinToString(", ")
         return str("firstArtist.items.0.profile.name").orEmpty()
@@ -256,23 +253,9 @@ internal object SpotifyPages {
     /** The widest picture offered, by the width the answer states. */
     private fun JsonArray?.bestImage(): String? =
         this?.mapNotNull { source ->
-            val url = source.jsonObject.str("url") ?: return@mapNotNull null
-            url to (source.jsonObject.int("width") ?: 0)
+            val source = source.objOrNull() ?: return@mapNotNull null
+            val url = source.str("url") ?: return@mapNotNull null
+            url to (source.int("width") ?: 0)
         }?.maxByOrNull { it.second }?.first
 
-    // ── Small JSON helpers ──────────────────────────────────────────────
-
-    private fun JsonObject.obj(key: String): JsonObject? =
-        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonObject }.getOrNull() }
-
-    private fun JsonObject.arr(key: String): JsonArray? =
-        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonArray }.getOrNull() }
-
-    private fun JsonObject.str(path: String): String? =
-        path.split('.').fold(this as JsonElement?) { element, key ->
-            element?.jsonObject?.get(key)
-        }?.takeIf { it !is JsonNull }?.jsonPrimitive?.contentOrNull
-
-    private fun JsonObject.int(key: String): Int? =
-        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.intOrNull
 }

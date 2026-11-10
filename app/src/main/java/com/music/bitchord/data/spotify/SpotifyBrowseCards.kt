@@ -2,13 +2,7 @@ package com.music.bitchord.data.spotify
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * The public catalogue's own two lists: the grid of genres and moods, and
@@ -35,7 +29,7 @@ internal object SpotifyBrowseCards {
         val sections = root.obj("browseStart")?.obj("sections")?.arr("items").orEmpty()
         val cards = mutableListOf<SpotifyCard>()
         sections.forEach { section ->
-            val items = section.jsonObject.obj("sectionItems")?.arr("items").orEmpty()
+            val items = section.objOrNull()?.obj("sectionItems")?.arr("items").orEmpty()
             items.forEach { item ->
                 parseCategory(item)?.let(cards::add)
             }
@@ -44,7 +38,7 @@ internal object SpotifyBrowseCards {
     }
 
     private fun parseCategory(element: JsonElement): SpotifyCard? {
-        val item = element.jsonObject
+        val item = element.objOrNull() ?: return null
         val content = item.obj("content") ?: return null
         val uri = item.str("uri") ?: content.str("uri") ?: return null
         if (!uri.startsWith("spotify:page:")) return null
@@ -78,7 +72,7 @@ internal object SpotifyBrowseCards {
         val feed = root.obj("whatsNewFeedItems") ?: return emptyList()
         val items = feed.arr("items").orEmpty()
         return items.mapNotNull { item ->
-            val data = item.jsonObject.obj("content")?.obj("data") ?: return@mapNotNull null
+            val data = item.objOrNull()?.obj("content")?.obj("data") ?: return@mapNotNull null
             val uri = data.str("uri") ?: return@mapNotNull null
             if (!uri.startsWith("spotify:album:")) return@mapNotNull null
             val title = data.str("name") ?: return@mapNotNull null
@@ -97,7 +91,7 @@ internal object SpotifyBrowseCards {
     /** The artists of an album, as one line. */
     private fun JsonObject.artists(): String {
         val names = obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
-            artist.jsonObject.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
+            artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
         }
         if (names.isNotEmpty()) return names.joinToString(", ")
         return str("firstArtist.items.0.profile.name").orEmpty()
@@ -106,25 +100,9 @@ internal object SpotifyBrowseCards {
     /** The widest picture offered, by the width the answer states. */
     private fun JsonArray.bestImage(): String? =
         mapNotNull { source ->
-            val url = source.jsonObject.str("url") ?: return@mapNotNull null
-            url to (source.jsonObject.int("width") ?: 0)
+            val source = source.objOrNull() ?: return@mapNotNull null
+            val url = source.str("url") ?: return@mapNotNull null
+            url to (source.int("width") ?: 0)
         }.maxByOrNull { it.second }?.first
 
-    // ── Small JSON helpers ──────────────────────────────────────────────
-
-    private fun JsonObject.obj(key: String): JsonObject? =
-        this[key]?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonObject }.getOrNull() }
-
-    private fun JsonObject.arr(path: String): JsonArray? =
-        path.split('.').fold(this as JsonElement?) { element, key ->
-            element?.jsonObject?.get(key)
-        }?.takeIf { it !is JsonNull }?.let { runCatching { it.jsonArray }.getOrNull() }
-
-    private fun JsonObject.str(path: String): String? =
-        path.split('.').fold(this as JsonElement?) { element, key ->
-            element?.jsonObject?.get(key)
-        }?.takeIf { it !is JsonNull }?.jsonPrimitive?.contentOrNull
-
-    private fun JsonObject.int(key: String): Int? =
-        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.intOrNull
 }
