@@ -72,6 +72,13 @@ internal object SflxShim {
             // ── Host identity ────────────────────────────────────────────
             // An extension reads this to tell which host it is on, and to know
             // which of its own quality tiers are worth offering here.
+            // How long an extension may spend resolving one stream. Long
+            // enough for the retry ladder its authors wrote (five attempts with
+            // exponential backoff and jitter), short enough that a wedged
+            // request does not hold a QuickJS engine for the listener's whole
+            // song.
+            var __SFLX_BUDGET_MS = 60000;
+
             function __sflx_goString(value) {
                 return value === null || value === undefined ? '' : String(value);
             }
@@ -442,7 +449,18 @@ internal object SflxShim {
                     appVersion: function () { return __spine_sflx.appVersion; },
                     appUserAgent: function () { return AGENTS[0]; },
                     setDownloadStatus: function () { return true; },
-                    getResolutionRemainingMs: function () { return 0; },
+                    // The budget left for the operation in flight, in
+                    // milliseconds. Answering zero is not "no limit": the
+                    // extensions use it to decide whether they can afford a
+                    // retry, and `utils.getResolutionRemainingMs() <= delay`
+                    // throws "stream resolution timeout" *before the first
+                    // request* — which is where every Tidal and Qobuz stream
+                    // died while their searches were working fine.
+                    getResolutionRemainingMs: function () {
+                        var deadline = Number(globalThis.__sflx_deadline || 0);
+                        if (!deadline) return __SFLX_BUDGET_MS;
+                        return Math.max(0, deadline - Date.now());
+                    },
                     base64Encode: function (value) {
                         return arguments.length ? globalThis.__sflx_base64Encode(globalThis.__sflx_utf8(value)) : '';
                     },
@@ -894,6 +912,7 @@ internal object SflxShim {
             module.exports = {
                 searchTracks: async function (query, limit) {
                     var started = Date.now();
+                    globalThis.__sflx_deadline = started + __SFLX_BUDGET_MS;
                     // Awaited: `customSearch` is async in several extensions, and
                     // a promise read as a result is an empty list — which is
                     // exactly what every Tidal search reported.
@@ -919,6 +938,9 @@ internal object SflxShim {
                 },
 
                 getTrackStreamUrl: async function (trackId, quality, rawContext) {
+                    // The resolution budget starts here: the extension measures
+                    // its retries against it.
+                    globalThis.__sflx_deadline = Date.now() + __SFLX_BUDGET_MS;
                     var context = contextOf(rawContext);
                     var meta = { id: text(trackId), audioQuality: text(quality) };
                     var answered = function (url, error) {

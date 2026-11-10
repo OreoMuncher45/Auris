@@ -113,6 +113,18 @@ class SflxVerifyActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // The callback arrives in one of three ways, and all are handled.
+        //
+        // The verification page's own script tries, in order: a JavaScript
+        // bridge named `MornyeGrant` (in-app WebView), a `mornye://` deep link
+        // (external browser), and `window.opener` (popup). Chromium silently
+        // drops a script-initiated custom-scheme navigation with no user
+        // gesture, so the bridge is the only reliable path inside a WebView —
+        // and without it the page says "verified", nothing reaches this app,
+        // and the extension goes on asking.
+        if (handleDeepLink(intent)) return
+
         extensionId = intent.getStringExtra(EXTRA_ID)
         val displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
         val url = intent.getStringExtra(EXTRA_URL).orEmpty()
@@ -156,9 +168,15 @@ class SflxVerifyActivity : AppCompatActivity() {
             settings.databaseEnabled = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
-            settings.setSupportMultipleWindows(false)
+            settings.setSupportMultipleWindows(true)
+            settings.javaScriptCanOpenWindowsAutomatically = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            // The page's first delivery path. Its script looks for exactly
+            // these names, and posts either the bare grant or the whole
+            // deep-link URL.
+            addJavascriptInterface(GrantBridge(), "MornyeGrant")
+            addJavascriptInterface(GrantBridge(), "SpotiflacGrant")
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
@@ -172,7 +190,18 @@ class SflxVerifyActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     progress.visibility = ProgressBar.GONE
+                    // Some pages finish the challenge with `location.replace`
+                    // inside a frame or an XHR, where no navigation callback
+                    // fires for the URL that matters. Asking where the WebView
+                    // ended up catches those.
+                    if (url != null) handle(Uri.parse(url))
                 }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    if (url != null) handle(Uri.parse(url))
+                }
+
             }
         }
         webView = view
@@ -197,6 +226,46 @@ class SflxVerifyActivity : AppCompatActivity() {
     }
 
     /**
+     * What the verification page posts when it has a grant.
+     *
+     * Runs on a WebView's own thread, so it touches nothing but the host.
+     */
+    private inner class GrantBridge {
+        @android.webkit.JavascriptInterface
+        fun postMessage(payload: String?) {
+            val value = payload?.trim().orEmpty()
+            if (value.isEmpty()) return
+            Log.d(TAG, "sflx verification bridge received a grant")
+            deliver(value)
+        }
+    }
+
+    /**
+     * A grant from either delivery path.
+     *
+     * The page posts `target || grant`, where `target` is the deep link and
+     * `grant` is the bare token — so both arrive here, and both are accepted.
+     */
+    private fun deliver(payload: String) {
+        val looksLikeUrl = payload.contains("://")
+        val grant: String
+        val state: String?
+        if (looksLikeUrl) {
+            val uri = Uri.parse(payload)
+            grant = uri.getQueryParameter("grant").orEmpty()
+            state = uri.getQueryParameter("state")
+        } else {
+            grant = payload
+            state = null
+        }
+        if (grant.isBlank()) return
+        val ok = runCatching { SflxCatalog.host?.completeGrantForState(grant, state) == true }
+            .getOrDefault(false)
+        Log.d(TAG, "sflx verification: grant ${if (ok) "redeemed" else "refused"}")
+        if (ok) finishWith(true)
+    }
+
+    /**
      * Whether [uri] is the grant callback.
      *
      * Matched on the shape rather than one hard-coded host, because the scheme
@@ -212,19 +281,15 @@ class SflxVerifyActivity : AppCompatActivity() {
         if (grant.isEmpty()) return false
         val state = uri.getQueryParameter("state")
         val id = extensionId
-        if (id.isNullOrBlank()) return false
+        if (id.isNullOrBlank()) {
+            deliver(uri.toString())
+            return true
+        }
 
         val ok = runCatching { SflxCatalog.host?.completeGrant(id, grant, state) == true }
             .getOrDefault(false)
         Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
-        if (ok) {
-            finishWith(ok)
-        } else {
-            // A refused grant is worth saying out loud: the page has done its
-            // part and the host has not, and silently closing it reads as the
-            // captcha having failed.
-            finishWith(false)
-        }
+        finishWith(ok)
         return true
     }
 
@@ -233,6 +298,24 @@ class SflxVerifyActivity : AppCompatActivity() {
         finished = true
         setResult(if (verified) RESULT_OK else RESULT_CANCELED)
         finish()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    /**
+     * Redeems a grant delivered as a URL, and answers whether this launch was
+     * one — in which case there is no page to show.
+     */
+    private fun handleDeepLink(intent: Intent?): Boolean {
+        val uri = intent?.data ?: return false
+        if (uri.getQueryParameter("grant").isNullOrBlank()) return false
+        extensionId = intent.getStringExtra(EXTRA_ID)
+        deliver(uri.toString())
+        return true
     }
 
     override fun onDestroy() {

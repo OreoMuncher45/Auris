@@ -125,6 +125,33 @@ internal object SpotifyGraphQL {
     ): JsonObject = withContext(Dispatchers.IO) {
         val hash = SpotifyOps.hash(operation)
             ?: throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
+        queryWithHashAndToken(operation, variables, token, hash)
+    }
+
+    /**
+     * Runs [operation] against an explicit [hash], taking a token itself.
+     *
+     * Some clients that work today name a hash this app's operation table does
+     * not have — Spotify keeps more than one live at a time — so a caller with
+     * a hash of its own is not doing anything wrong, and this is the door it
+     * comes through.
+     */
+    suspend fun queryWithHash(
+        operation: String,
+        variables: JsonObject,
+        hash: String,
+    ): JsonObject = withContext(Dispatchers.IO) {
+        val token = token()
+            ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
+        queryWithHashAndToken(operation, variables, token, hash)
+    }
+
+    private suspend fun queryWithHashAndToken(
+        operation: String,
+        variables: JsonObject,
+        token: String,
+        hash: String,
+    ): JsonObject = withContext(Dispatchers.IO) {
 
         // Checked before the request, not after it: a standing limit is the
         // backend saying "this client is over its budget", and asking again

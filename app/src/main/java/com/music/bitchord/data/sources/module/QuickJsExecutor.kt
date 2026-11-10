@@ -110,6 +110,19 @@ internal object QuickJsExecutor {
         var started = 0
         /** Engines actually made, for closing them on unload. Guarded by [lock]. */
         val made = mutableListOf<QuickJs>()
+        /**
+         * Set when this module is being unloaded.
+         *
+         * A QuickJS engine cannot be closed while another thread is executing
+         * inside it, and closing one that is checked out is not a slow close —
+         * it is a hang that takes the calling thread with it. That is what made
+         * uninstalling an extension freeze the app: the extension was mid-search
+         * (playback retries it every couple of seconds) when its engine was
+         * closed from the settings sheet. The free engines are closed here; the
+         * one in flight closes itself when it comes back.
+         */
+        @Volatile
+        var retired = false
     }
 
     /** Whether [moduleId] still has a live pool, i.e. hasn't been evicted. */
@@ -364,7 +377,13 @@ internal object QuickJsExecutor {
                 // Back into circulation on every path, including a throw: an
                 // engine that is never returned is a slot the pool can never
                 // hand out again, and three of those would deadlock the module.
-                pool.free.trySend(qjs)
+                // A retired pool's engine is closed instead — here, on the
+                // thread that was using it, which is the only thread that may.
+                if (pool.retired) {
+                    runCatching { qjs.close() }
+                } else {
+                    pool.free.trySend(qjs)
+                }
             }
         }
     }
@@ -417,9 +436,17 @@ internal object QuickJsExecutor {
     // ── Unload ───────────────────────────────────────────────────────────
 
     fun unload(moduleId: String) {
-        val closing = synchronized(engineLock) { pools.remove(moduleId) }?.made.orEmpty()
-        closing.forEach { runCatching { it.close() } }
-        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId)")
+        val pool = synchronized(engineLock) { pools.remove(moduleId) } ?: return
+        pool.retired = true
+        // Only the engines nobody is inside. The rest close themselves as they
+        // are handed back — see the `finally` in [callExport].
+        var closed = 0
+        while (true) {
+            val engine = pool.free.tryReceive().getOrNull() ?: break
+            runCatching { engine.close() }
+            closed++
+        }
+        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId) (closed $closed idle engines)")
     }
 
     fun unloadAll() {

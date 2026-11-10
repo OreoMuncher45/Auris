@@ -85,7 +85,13 @@ internal object SpotifySearch {
         var section: JsonObject? = null
         val failures = mutableListOf<String>()
         for (attempt in attempts(query, limit, offset)) {
-            val root = runCatching { SpotifyGraphQL.query(attempt.operation, attempt.variables) }
+            val root = runCatching {
+                if (attempt.hash != null) {
+                    SpotifyGraphQL.queryWithHash(attempt.operation, attempt.variables, attempt.hash)
+                } else {
+                    SpotifyGraphQL.query(attempt.operation, attempt.variables)
+                }
+            }
                 .onFailure { error ->
                     Log.w(TAG, "Spotify's search via ${attempt.operation} failed: ${error.message}")
                     failures += "${attempt.operation}: ${error.message}"
@@ -131,7 +137,12 @@ internal object SpotifySearch {
     }
 
     /** One way of asking Spotify for [query]. */
-    private data class Attempt(val operation: String, val variables: JsonObject)
+    private data class Attempt(
+        val operation: String,
+        val variables: JsonObject,
+        /** An explicit persisted-query hash, when this attempt does not use the table. */
+        val hash: String? = null,
+    )
 
     /**
      * The full variable set for each operation, as the web player sends it.
@@ -172,6 +183,24 @@ internal object SpotifySearch {
                 put("includeAuthors", false)
                 put("includeEpisodeContentRatingsV2", false)
             },
+        ),
+        // The same operation under the hash the working desktop client uses,
+        // with exactly the variables it sends. Spotify keeps more than one
+        // persisted hash alive, and a hash that answers is worth trying rather
+        // than arguing about which build it came from.
+        Attempt(
+            "searchDesktop",
+            buildJsonObject {
+                put("searchTerm", query)
+                put("offset", offset)
+                put("limit", limit)
+                put("numberOfTopResults", 5)
+                put("includeAudiobooks", true)
+                put("includeArtistHasConcertsField", false)
+                put("includePreReleases", true)
+                put("includeAuthors", false)
+            },
+            hash = "fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c",
         ),
     )
 

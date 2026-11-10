@@ -128,12 +128,27 @@
         -->
         <activity
             android:name=".data.sources.mornye.SflxVerifyActivity"
-            android:exported="false"
+            android:exported="true"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.BitChord.Verify" />
+            android:theme="@style/Theme.BitChord.Verify">
+            <!--
+              The grant callback. The verification page ends by redirecting to
+              `mornye://session-grant?grant=…&state=…`, and when it does that
+              inside a browser rather than inside this app's WebView the system
+              is the one that routes it. Without this filter the link went
+              nowhere ("open in app" offered nothing), the grant was lost, and
+              the extension kept saying it needed verification.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mornye" android:host="session-grant" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".MainActivity"

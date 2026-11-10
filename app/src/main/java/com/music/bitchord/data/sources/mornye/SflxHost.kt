@@ -135,6 +135,41 @@ class SflxHost(
         SflxCatalog.refreshStatuses()
     }
 
+    /**
+     * Redeems a grant that arrived as a deep link, without knowing which
+     * extension it belongs to.
+     *
+     * That is the shape a callback really arrives in: the verification page
+     * redirects to `mornye://session-grant?grant=…&state=…`, the system hands
+     * the URL to this app, and the URL names the challenge — not the package.
+     * The `state` is what identifies the extension, so it is matched against
+     * the challenge this host issued. When there is no state to match on and
+     * exactly one extension is waiting, that one is it, because a grant that
+     * arrives while one challenge is outstanding cannot belong to another.
+     */
+    fun completeGrantForState(grant: String, state: String?): Boolean {
+        if (grant.isBlank()) return false
+        val waiting = store.list().mapNotNull { installed ->
+            sessionFor(installed)?.takeIf { it.pendingState() != null }?.let { installed to it }
+        }
+        val matched = waiting.filter { (_, session) ->
+            state != null && session.pendingState() == state
+        }.ifEmpty {
+            if (state == null && waiting.size == 1) waiting else emptyList()
+        }
+        for ((_, session) in matched) {
+            val ok = runCatching { session.completeGrant(grant, state ?: session.pendingState()) }
+                .getOrDefault(false)
+            if (ok) {
+                Log.d(TAG, "a verification grant arrived by deep link and was redeemed")
+                SflxCatalog.refreshStatuses()
+                return true
+            }
+        }
+        Log.w(TAG, "a verification grant arrived but matched no outstanding challenge")
+        return false
+    }
+
     /** A URL the listener must visit to verify [id], when one is pending. */
     fun verificationUrl(id: String): String? {
         val installed = store.find(id) ?: return null

@@ -67,7 +67,10 @@ fun SflxInstallDialog(
     // listener knew the shape of a GitHub raw URL — and the shape is not
     // guessable: the address they were given was a directory. The field still
     // accepts any link, but it starts on the one that is known to work.
-    var link by remember { mutableStateOf(SflxRegistry.MORNYE_STORE) }
+    // Empty on purpose. Nothing is bundled, suggested or pre-filled: an addon
+    // store is something the listener adds by pasting its link, and a default
+    // is a recommendation this app has no business making.
+    var link by remember { mutableStateOf("") }
     var offer by remember { mutableStateOf<SflxCatalog.InstallOffer?>(null) }
     val state by SflxCatalog.install.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -101,14 +104,6 @@ fun SflxInstallDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(
-                    enabled = !fetching,
-                    onClick = {
-                        link = SflxRegistry.MORNYE_STORE
-                        offer = null
-                        scope.launch { SflxCatalog.inspect(SflxRegistry.MORNYE_STORE).onSuccess { offer = it } }
-                    },
-                ) { Text("Open the Mornye store") }
 
                 when (val current = offer) {
                     null -> Unit
@@ -319,8 +314,16 @@ fun SflxSettingsDialog(
                 // source list's editor.
                 TextButton(
                     onClick = {
-                        SflxCatalog.remove(installed.id)
+                        // Dismissed first: the sheet describes a package that is
+                        // about to stop existing, and removal deletes files and
+                        // retires a JavaScript engine. Doing that on the main
+                        // thread is why uninstalling looked like a freeze.
                         onDismiss()
+                        scope.launch {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                SflxCatalog.remove(installed.id)
+                            }
+                        }
                     },
                 ) {
                     Text("Uninstall", color = MaterialTheme.colorScheme.error)

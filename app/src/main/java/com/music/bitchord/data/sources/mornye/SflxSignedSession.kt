@@ -199,6 +199,9 @@ class SflxSignedSession(
     /** The URL the listener should be shown for a pending verification, if any. */
     fun verificationUrl(): String? = pending?.authUrl?.takeIf { it.isNotBlank() }
 
+    /** The `state` of the challenge this host issued, so a callback can be matched to it. */
+    fun pendingState(): String? = pending?.state?.takeIf { it.isNotBlank() }
+
     /**
      * Bootstraps, if there is anything to bootstrap, and answers with the URL
      * the listener must visit — or null when the gateway already knows us.
