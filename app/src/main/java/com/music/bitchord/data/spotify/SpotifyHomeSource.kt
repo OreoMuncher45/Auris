@@ -64,6 +64,16 @@ internal object SpotifyHomeSource {
     /** How many featured playlists are opened into rows for a signed-out home. */
     private const val FEATURED_ROWS = 3
 
+    /**
+     * How many of the listener's own collections become rows.
+     *
+     * Four is a home screen: Liked Songs and three playlists. More would be a
+     * library, and a library this app already imports elsewhere — here it is
+     * the shape of a page, and every extra row is another page of tracks and
+     * another twelve searches on YouTube.
+     */
+    private const val LIBRARY_ROWS = 4
+
     /** How many matches may be in flight at once; each one is a search. */
     private const val MATCH_CONCURRENCY = 4
 
@@ -126,6 +136,11 @@ internal object SpotifyHomeSource {
         }
         val rows = if (signedIn) signedInRows() else signedOutRows()
         if (rows.isNotEmpty()) return@withContext HomeOutcome(rows)
+        // A standing rate limit is the one reason here that is both temporary
+        // and actionable, so it leads with when it lifts rather than with which
+        // URL refused — and it says what does work, because the answer is not
+        // "wait", it is "wait, or let Auris read your library".
+        val limited = SpotifyWebApi.rateLimitSecondsRemaining()
         // The endpoint-level problems, if any, are the more specific answer: a
         // refused call says exactly which URL and which status, where the local
         // diagnostic can only say what the effect was.
@@ -133,6 +148,15 @@ internal object SpotifyHomeSource {
         HomeOutcome(
             emptyList(),
             buildString {
+                if (limited > 0) {
+                    append("Spotify is rate limiting this device. ")
+                    append("It lifts in about ${'$'}limited second")
+                    append(if (limited == 1) "." else "s.")
+                    if (!signedIn) {
+                        append(" Signing in lets Auris read your library, which Spotify does not limit.")
+                    }
+                    append("\n\n")
+                }
                 append(diagnostic ?: "Spotify returned no rows")
                 if (problems.isNotEmpty()) {
                     append("\n\n")
@@ -167,6 +191,20 @@ internal object SpotifyHomeSource {
      * that happened today.
      */
     private suspend fun signedInRows(): List<HomeShelf> = coroutineScope {
+        // The listener's own library first, and on its own if it answers.
+        //
+        // This is not a preference, it is the difference between a home screen
+        // and a 429. The two backends are not equivalent to Spotify: the web
+        // player's own backend is what the rest of this app already reads a
+        // Spotify library through, and it answers a harvested token. The public
+        // `/v1` catalogue behind [SpotifyWebApi] rate limits per client, and the
+        // web player's client is shared by everyone harvesting a token from it —
+        // so it refuses, in the same way and at the same time, for every one of
+        // them. Measured: a signed-in home asking `/v1` for recently-played,
+        // top-tracks and featured playlists came back 429 on all three.
+        val library = libraryRows()
+        if (library.isNotEmpty()) return@coroutineScope library
+
         val recent = async { SpotifyWebApi.recentlyPlayed(limit = TRACKS_PER_ROW * 2) }
         val top = async { SpotifyWebApi.topTracks(limit = TRACKS_PER_ROW * 2) }
         val featured = async { featuredRows(count = 2) }
@@ -182,6 +220,34 @@ internal object SpotifyHomeSource {
     }
 
     /**
+     * The listener's Spotify library, opened into rows.
+     *
+     * Liked Songs first — it is the one collection every listener has and the
+     * one that is unambiguously "their" taste — then their playlists in the
+     * order Spotify lists them. The number of rows is capped because each row
+     * costs a page of tracks and then a YouTube search per track, so this is
+     * four requests and forty-odd searches rather than a library import.
+     */
+    private suspend fun libraryRows(): List<HomeShelf> = coroutineScope {
+        val playlists = runCatching { SpotifyLibrary.playlists(maxPages = 1) }.getOrElse { error ->
+            note("Couldn't read your Spotify library: ${error.message}")
+            return@coroutineScope emptyList()
+        }
+        if (playlists.isEmpty()) {
+            note("Your Spotify library has no playlists in it")
+            return@coroutineScope emptyList()
+        }
+        playlists.take(LIBRARY_ROWS).map { playlist ->
+            async {
+                val tracks = runCatching { SpotifyLibrary.preview(playlist.id, TRACKS_PER_ROW) }
+                    .onFailure { note("Couldn't read '${playlist.name}': ${it.message}") }
+                    .getOrDefault(emptyList())
+                row(playlist.name, tracks)
+            }
+        }.awaitAll().filterNotNull()
+    }
+
+    /**
      * Rows for a listener who has not signed in.
      *
      * There is no history to read, so the curation is Spotify's own: the featured
@@ -189,6 +255,29 @@ internal object SpotifyHomeSource {
      * sign-in instead of an empty page begging for one.
      */
     private suspend fun signedOutRows(): List<HomeShelf> = featuredRows(count = FEATURED_ROWS)
+
+    /**
+     * Flow's seeds, read from whichever backend will answer.
+     *
+     * Signed in, the listener's own taste. The `/v1` history calls are tried
+     * first because they are the *better* evidence — months of listening rather
+     * than one shelf — but a rate-limited client refuses them, and the library
+     * is right there with an answer. Falling back to it is what keeps Flow
+     * working on a provider whose history endpoints are throttled, instead of
+     * handing the mix nothing and letting it come up empty.
+     */
+    private suspend fun ownedSeeds(): List<SpotifyTrack> {
+        val top = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
+        if (top.isNotEmpty()) return top
+        val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
+        if (recent.isNotEmpty()) return recent
+        return runCatching {
+            // Liked Songs: the closest thing to "top tracks" the library has,
+            // and the one collection that is unambiguously the listener's own.
+            SpotifyLibrary.preview(SpotifyLibrary.LIKED_ID, FLOW_SEEDS)
+        }.onFailure { Log.w(TAG, "the Spotify library could not be read for Flow: ${it.message}") }
+            .getOrDefault(emptyList())
+    }
 
     /**
      * Spotify's featured playlists, each opened into a row of its first tracks.
@@ -267,9 +356,8 @@ internal object SpotifyHomeSource {
      */
     suspend fun flowSeeds(): FlowSeeds = withContext(Dispatchers.IO) {
         if (isSignedIn()) {
-            val top = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
-            val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
-            FlowSeeds(top = songs(top), recent = songs(recent))
+            val owned = ownedSeeds()
+            FlowSeeds(top = songs(owned), recent = emptyList())
         } else {
             val featured = runCatching { SpotifyWebApi.featuredPlaylists(limit = 2) }
                 .onFailure { Log.w(TAG, "featured playlists could not be read for Flow: ${it.message}") }

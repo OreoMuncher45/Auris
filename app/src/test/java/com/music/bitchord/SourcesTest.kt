@@ -881,17 +881,15 @@ class SourcesTest {
      * the switch is what decides.
      */
     @Test
-    fun `the Dolby Atmos rung is honoured with the master switch off`() {
+    fun `the Dolby Atmos rung is what asks for Atmos`() {
         val wifi = AppSettings.audioQualityWifi.value
         val cellular = AppSettings.audioQualityCellular.value
         val metered = AppSettings.meteredConnection.value
         AppSettings.meteredConnection.value = null
         AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
-        AppSettings.dolbyAtmos.value = false
         try {
             assertTrue(AppSettings.wantsDolbyAtmos)
         } finally {
-            AppSettings.dolbyAtmos.value = true
             AppSettings.audioQualityWifi.value = wifi
             AppSettings.audioQualityCellular.value = cellular
             AppSettings.meteredConnection.value = metered
@@ -912,7 +910,10 @@ class SourcesTest {
     @Test
     fun `prefers the immersive row over a lossless one when Atmos is wanted`() {
         DeviceCodecs.forced = true
-        AppSettings.dolbyAtmos.value = true
+        val wifi = AppSettings.audioQualityWifi.value
+        // The rung *is* the request now: there is no separate switch, which is
+        // what stops Lossless serving a spatial mix.
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
         try {
             val target = TrackMatcher.Target("Gehra Hua", "Shashwat Sachdev", durationSec = 362)
             val stereo = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
@@ -926,14 +927,19 @@ class SourcesTest {
             )
         } finally {
             DeviceCodecs.forced = null
+            // Restored, not left at Dolby: the rung is read by everything that
+            // asks for a stream, so a test that changes it changes what the
+            // next test in this class is testing.
+            AppSettings.audioQualityWifi.value = wifi
         }
     }
 
-    /** Switched off, the immersive row is just a row and lossless decides again. */
+    /** A rung that does not ask for Atmos is just a row, and lossless decides again. */
     @Test
-    fun `ignores the immersive row when the Atmos setting is off`() {
+    fun `ignores the immersive row when the rung does not ask for Atmos`() {
         DeviceCodecs.forced = true
-        AppSettings.dolbyAtmos.value = false
+        val wifi = AppSettings.audioQualityWifi.value
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         try {
             val target = TrackMatcher.Target("Gehra Hua", "Shashwat Sachdev", durationSec = 362)
             val stereo = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
@@ -947,7 +953,7 @@ class SourcesTest {
             )
         } finally {
             DeviceCodecs.forced = null
-            AppSettings.dolbyAtmos.value = true
+            AppSettings.audioQualityWifi.value = wifi
         }
     }
 

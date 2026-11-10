@@ -12,6 +12,7 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.CrashLog
+import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.flow.FlowStore
 import com.music.bitchord.data.liked.LikedCache
@@ -131,6 +132,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // to streaming uncached if the player somehow opens that early.
         thread(name = "startup-init") {
             SourceRegistry.init(this)
+            // The extension host, next to the source registry it adds rows to:
+            // installed packages are registered as sources here, which is what
+            // makes them take part in the ranking rather than being a list of
+            // their own that nothing consults.
+            SflxCatalog.init(this, BuildConfig.VERSION_NAME)
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and
             // belong in a cache AudioCache's own limit and eviction policy were

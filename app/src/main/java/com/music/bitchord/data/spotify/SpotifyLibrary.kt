@@ -54,16 +54,28 @@ object SpotifyLibrary {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val mediaType = "application/json; charset=utf-8".toMediaType()
 
-    /** Every playlist in the library, however many pages it takes. */
-    suspend fun playlists(): List<SpotifyPlaylist> = withContext(Dispatchers.IO) {
+    /**
+     * Playlists in the library, however many pages it takes.
+     *
+     * @param maxPages stop after this many pages; 0 reads all of them. The
+     *   library import wants the lot, because it is importing a library. The
+     *   home screen wants *a* shelf, and paging through four hundred playlists
+     *   to fill one is a lot of requests to answer a question nobody asked —
+     *   on a backend that rate limits per client, that difference is the whole
+     *   reason this parameter exists.
+     */
+    suspend fun playlists(maxPages: Int = 0): List<SpotifyPlaylist> = withContext(Dispatchers.IO) {
         val headers = authHeaders()
         val collected = mutableListOf<SpotifyPlaylist>()
         var offset = 0
+        var pages = 0
         while (true) {
             val (items, total, raw) = playlistPage(headers, offset)
             collected += items
             offset += raw
+            pages++
             if (raw == 0 || offset >= total) break
+            if (maxPages > 0 && pages >= maxPages) break
         }
         // Liked Songs is not a playlist to Spotify's library query, so it is
         // always offered first rather than depending on it turning up there.
@@ -96,6 +108,23 @@ object SpotifyLibrary {
         collected
     }
 
+    /**
+     * The first [limit] tracks of a playlist, in one request.
+     *
+     * The counterpart to [tracks]: that reads a playlist, this reads enough of
+     * one to draw it as a row on a home screen. Same backend, same credentials
+     * — the difference is that this one asks for a page and stops.
+     */
+    suspend fun preview(playlistId: String, limit: Int = 12): List<SpotifyTrack> = withContext(Dispatchers.IO) {
+        val headers = authHeaders()
+        val page = if (playlistId == LIKED_ID) {
+            likedPage(headers, offset = 0, limit = limit)
+        } else {
+            trackPage(headers, playlistId, offset = 0, limit = limit)
+        }
+        page.first
+    }
+
     private fun playlistPage(headers: Map<String, String>, offset: Int): Triple<List<SpotifyPlaylist>, Int, Int> {
         val variables = buildJsonObject {
             putJsonArray("filters") { add("Playlists") }
@@ -121,11 +150,12 @@ object SpotifyLibrary {
         headers: Map<String, String>,
         playlistId: String,
         offset: Int,
+        limit: Int = 100,
     ): Triple<List<SpotifyTrack>, Int, Int> {
         val variables = buildJsonObject {
             put("uri", "spotify:playlist:$playlistId")
             put("offset", offset)
-            put("limit", 100)
+            put("limit", limit)
             put("enableWatchFeedEntrypoint", false)
         }
         return parseTrackPage(gql("fetchPlaylist", PLAYLIST, variables, headers))
@@ -148,10 +178,14 @@ object SpotifyLibrary {
         largestSource(root.obj("data")?.obj("playlistV2")?.obj("images"))
     }
 
-    private fun likedPage(headers: Map<String, String>, offset: Int): Triple<List<SpotifyTrack>, Int, Int> {
+    private fun likedPage(
+        headers: Map<String, String>,
+        offset: Int,
+        limit: Int = 100,
+    ): Triple<List<SpotifyTrack>, Int, Int> {
         val variables = buildJsonObject {
             put("offset", offset)
-            put("limit", 100)
+            put("limit", limit)
         }
         return parseLikedPage(gql("fetchLibraryTracks", LIKED, variables, headers))
     }

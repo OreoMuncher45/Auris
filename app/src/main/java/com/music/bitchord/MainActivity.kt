@@ -140,6 +140,8 @@ import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.AppAnnouncements
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.sources.mornye.InstalledSflx
+import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
@@ -165,6 +167,8 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.ArtworkFlightLayer
+import com.music.bitchord.ui.components.SflxInstallDialog
+import com.music.bitchord.ui.components.SflxSettingsDialog
 import com.music.bitchord.ui.components.SingSheet
 import com.music.bitchord.ui.components.cancelArtworkFlight
 import com.music.bitchord.data.settings.LibrarySort
@@ -730,6 +734,16 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
+    /**
+     * The install-from-link sheet, and the extension whose own settings are open.
+     *
+     * Held here rather than inside the sources screen for the same reason every
+     * other alert is: the screen sits inside the subtree that carries
+     * `hazeSource`, so a frosted card drawn from within it comes out with no
+     * background. See [SourcesScreen]'s note on `onEditSource`.
+     */
+    var installingExtension by remember { mutableStateOf(false) }
+    var editingExtension by remember { mutableStateOf<InstalledSflx?>(null) }
     var confirmJioSaavn by remember { mutableStateOf(false) }
     var editingPartyServer by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
@@ -4221,6 +4235,10 @@ private fun BitChordApp(
                             onEditWebDav = { showWebDavEditor = true },
                             onEditSmb = { showSmbEditor = true },
                             onConfirmJioSaavn = { confirmJioSaavn = true },
+                            onInstallExtension = { installingExtension = true },
+                            onEditExtension = { id ->
+                                editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                            },
                         )
                     } else if (key == "listen_together") {
                         ListenTogetherScreen(
@@ -6821,6 +6839,26 @@ private fun BitChordApp(
             PartyServerEditor(
                 hazeState = hazeState,
                 onDismiss = { editingPartyServer = false },
+            )
+        }
+
+        if (installingExtension) {
+            SflxInstallDialog(
+                onDismiss = {
+                    installingExtension = false
+                    SflxCatalog.clearInstallState()
+                },
+                onInstalled = {
+                    installingExtension = false
+                    SflxCatalog.clearInstallState()
+                },
+            )
+        }
+
+        editingExtension?.let { installed ->
+            SflxSettingsDialog(
+                installed = installed,
+                onDismiss = { editingExtension = null },
             )
         }
 

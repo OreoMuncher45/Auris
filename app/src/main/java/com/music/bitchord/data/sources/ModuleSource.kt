@@ -7,6 +7,8 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.module.ModuleManager
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.SpineModule
+import com.music.bitchord.data.sources.mornye.SflxCatalog
+import com.music.bitchord.data.sources.mornye.SflxHost
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -45,9 +47,21 @@ class ModuleSource(
      */
     private val manager = ModuleManager()
 
+    /**
+     * Set when this source is an installed `.sflx` extension rather than a
+     * module index — its [SourceConfig.baseUrl] is `sflx://<id>`.
+     *
+     * Read once and kept, because it is the branch every method takes: an
+     * extension is asked the same questions as an index and answers them
+     * through [SflxCatalog] instead of over the network. See [SflxCatalog] for
+     * why an extension is a module source at all.
+     */
+    private val extensionId: String? = SflxHost.extensionIdOf(config.baseUrl)
+
     // ── Health ────────────────────────────────────────────────────────────
 
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
+        extensionId?.let { return@withContext extensionHealth(it) }
         if (config.baseUrl.isBlank()) {
             return@withContext SourceHealth.Rejected("A module index URL is required")
         }
@@ -62,6 +76,27 @@ class ModuleSource(
         } catch (e: Exception) {
             TrackLog.w(TAG, "module index fetch failed for ${config.displayName}: ${e.message}")
             SourceHealth.Unreachable(e.message ?: "Could not reach the module index")
+        }
+    }
+
+    /**
+     * Health for an installed extension, which is a question about the package
+     * rather than about a server.
+     *
+     * There is nothing to reach: the script is on this device. So the only two
+     * ways to be unhealthy are that the package is not there — removed on
+     * another screen, or under a row that outlived it — and that it declares no
+     * downloader, in which case it can describe tracks but never serve one and
+     * the listener should be told that rather than watching it fail a lookup.
+     */
+    private suspend fun extensionHealth(extensionId: String): SourceHealth {
+        val installed = SflxCatalog.host?.installed(extensionId)
+            ?: SflxCatalog.installed.value.firstOrNull { it.id == extensionId }
+            ?: return SourceHealth.Rejected("This extension is not installed any more")
+        return if (installed.manifest.isDownloadProvider) {
+            SourceHealth.Ok("Installed, v${installed.manifest.version}")
+        } else {
+            SourceHealth.Rejected("This extension only describes tracks — it cannot serve audio")
         }
     }
 
@@ -105,6 +140,7 @@ class ModuleSource(
     ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
+            extensionId?.let { return@withContext searchExtension(it, query, limit) }
             val indexUrl = config.baseUrl
             val baseUrl = indexUrl.substringBeforeLast("/")
 
@@ -185,6 +221,41 @@ class ModuleSource(
     }
 
     /**
+     * One extension's answers, mapped the same way a module's are.
+     *
+     * Deliberately the same shape as [searchOne] rather than a second kind of
+     * result: the row is a row, the id encodes the source it came from, and the
+     * tier is read off what the extension said about it. The one difference is
+     * where the answer comes from — this device rather than an index — and that
+     * is the whole of what "installed extension" means downstream.
+     */
+    private suspend fun searchExtension(extensionId: String, query: String, limit: Int): List<Song> {
+        val host = SflxCatalog.host ?: run {
+            TrackLog.w(TAG, "${config.displayName}: the extension host is not running")
+            return emptyList()
+        }
+        val response = host.search(extensionId, query, limit).getOrElse { error ->
+            TrackLog.w(TAG, "${config.displayName}: search failed — ${error.message}")
+            return emptyList()
+        }
+        return response.tracks.map { track ->
+            Song(
+                // Encoded exactly as a module's rows are, with the extension id
+                // in the module's place, so stream() routes back here without
+                // knowing which kind of source it is answering for.
+                videoId = SourceRegistry.trackKey(config.id, "$extensionId$MOD_SEPARATOR${track.id}"),
+                title = track.title,
+                artist = track.artist,
+                albumName = track.album.ifBlank { null },
+                thumbnailUrl = track.albumCover,
+                durationText = track.duration.takeIf { it > 0 }
+                    ?.let { "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}" },
+                sourceQuality = rowTier(track),
+            )
+        }
+    }
+
+    /**
      * What this row can be had at, from what the module said about *it*.
      *
      * Precedence is the whole point. A row stating `format: flac` or
@@ -227,6 +298,22 @@ class ModuleSource(
             val moduleId = trackId.substring(0, cut)
             val upstreamId = trackId.substring(cut + MOD_SEPARATOR.length)
 
+            // An installed extension: the package is on this device, so there is
+            // no index to fetch and no module to look up — the id in the track
+            // key *is* the extension. Everything after this point is shared,
+            // which is the reason an extension is registered as a module source
+            // in the first place.
+            val streamResponse = if (extensionId != null) {
+                val host = SflxCatalog.host ?: run {
+                    TrackLog.w(TAG, "${config.displayName}: the extension host is not running")
+                    return@withContext null
+                }
+                host.streamUrl(extensionId, upstreamId, request.tier).getOrElse { e ->
+                    TrackLog.w(TAG, "${config.displayName}: ${e.message}")
+                    return@withContext null
+                }
+            } else {
+
             // Find the module in the index, load it (cache hit after search),
             // then ask for the stream URL.
             val modules = manager.fetchIndex(config.baseUrl).getOrElse { e ->
@@ -242,7 +329,7 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
                 return@withContext null
             }
-            val streamResponse = manager.getStreamUrl(
+            manager.getStreamUrl(
                 loaded = loaded,
                 trackId = upstreamId,
                 quality = request.tier,
@@ -250,6 +337,7 @@ class ModuleSource(
             ).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
                 return@withContext null
+            }
             }
             val url = streamResponse.streamUrl?.ifBlank { null } ?: run {
                 TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")

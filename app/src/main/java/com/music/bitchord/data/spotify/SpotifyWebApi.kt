@@ -44,6 +44,15 @@ import okhttp3.Request
 internal object SpotifyWebApi {
 
     private const val BASE = "https://api.spotify.com/v1"
+
+    /**
+     * How long to hold off after a 429 that named no wait.
+     *
+     * Thirty seconds is short enough not to lose a listener who tapped
+     * something, and long enough that the retry is not part of the burst that
+     * caused the refusal.
+     */
+    private const val DEFAULT_RATE_LIMIT_SECONDS = 30
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** Which identity a call is made as; see the class note. */
@@ -214,6 +223,19 @@ internal object SpotifyWebApi {
                 return@withContext null
             }
 
+            // Checked before the request, not after it. Spotify's limit is per
+            // client, and the web player's client is shared by everyone who
+            // harvests a token from it — so a 429 says "this client is over its
+            // budget", not "you asked too much this second". Asking again while
+            // the limit stands is what turns one refusal into a home page of
+            // them, and it is how a listener gets locked out for longer than
+            // the limit would have taken.
+            val wait = rateLimitSecondsRemaining()
+            if (wait > 0) {
+                record("$path: skipped — Spotify's rate limit lifts in ${wait}s")
+                return@withContext null
+            }
+
             val url = "$BASE/$path".toHttpUrl().newBuilder()
                 .apply { query.forEach { (name, value) -> addQueryParameter(name, value) } }
                 .build()
@@ -238,6 +260,19 @@ internal object SpotifyWebApi {
                     return@withContext runCatching {
                         json.parseToJsonElement(answered.body?.string().orEmpty()) as? JsonObject
                     }.getOrNull()
+                }
+                if (answered.code == 429) {
+                    // The header is the server's own answer to "when may I try
+                    // again", and honouring it is the only thing that makes the
+                    // wait as short as it can be.
+                    val retryAfter = answered.header("Retry-After")?.trim()?.toIntOrNull()
+                        ?: DEFAULT_RATE_LIMIT_SECONDS
+                    rateLimitedUntil = System.currentTimeMillis() + retryAfter.coerceIn(1, 900) * 1000L
+                    record(
+                        "$path: HTTP 429 — Spotify is rate limiting this device. " +
+                            "It lifts in about ${retryAfter}s${bodyHint(answered)}",
+                    )
+                    return@withContext null
                 }
                 if (answered.code != 401 || attempt == 1) {
                     // The status, by name, because the three causes of an empty
@@ -270,6 +305,21 @@ internal object SpotifyWebApi {
 
     /** Which of the last calls failed and how, oldest first; see [record]. */
     private val failures = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
+    /**
+     * When Spotify's rate limit lifts, in epoch milliseconds; 0 when there is
+     * none.
+     *
+     * Kept across calls on purpose. The limit is on the *client*, so it belongs
+     * to the session rather than to any one request, and every endpoint in this
+     * class shares it.
+     */
+    @Volatile
+    private var rateLimitedUntil = 0L
+
+    /** Seconds left on Spotify's rate limit, or 0 when there is none. */
+    fun rateLimitSecondsRemaining(): Int =
+        ((rateLimitedUntil - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(0)
 
     /** Everything that has gone wrong since [clearProblems]. */
     fun problems(): List<String> = failures.toList()

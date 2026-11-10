@@ -58,14 +58,14 @@ class AddonSourceTest {
         // Both are read on every stream answer. Pinned so a test asserting on
         // format never depends on what the machine running it can decode.
         DeviceCodecs.forced = true
-        AppSettings.dolbyAtmos.value = true
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
     }
 
     @After
     fun tearDown() {
         server.shutdown()
         DeviceCodecs.forced = null
-        AppSettings.dolbyAtmos.value = true
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
     }
 
     // ── URL handling ──────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ class AddonSourceTest {
     fun `manual refresh asks again for a cached stream URL`() = runBlocking {
         // The Atmos rung is a request of its own; this test is counting the
         // ordinary one. Pinned off so the count is one lookup, not two.
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route("/manifest.json", manifest())
         route("/stream/track", json("""{"url":"https://cdn/old.flac","codec":"flac"}"""))
         val source = AddonSource(config())
@@ -335,7 +335,7 @@ class AddonSourceTest {
     @Test
     fun `an addon that enumerates no options is sent the tier verbatim`() = runBlocking {
         // No immersive attempt: this is the negotiation of the ordinary tier.
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac"}"""))
 
@@ -433,7 +433,7 @@ class AddonSourceTest {
      */
     @Test
     fun `atmos is explicitly declined when the setting is off`() = runBlocking {
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
 
@@ -483,7 +483,7 @@ class AddonSourceTest {
     /** The same override in the other direction: a declared `auto` is declined. */
     @Test
     fun `switching Atmos off overrides a declared auto default`() = runBlocking {
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route(
             "/manifest.json",
             json(
@@ -600,7 +600,7 @@ class AddonSourceTest {
      */
     @Test
     fun `the Dolby Atmos quality rung is enough with the master switch off`() = runBlocking {
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
         AppSettings.audioQualityCellular.value = AudioQuality.DOLBY
         try {
@@ -756,7 +756,7 @@ class AddonSourceTest {
      */
     @Test
     fun `without the hint the same addon answers with the stereo ladder`() = runBlocking {
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route("/manifest.json", manifest())
         server.dispatcher = atmosDispatcher("https://cdn.example.com/dash/tidal-atmos")
 
@@ -1040,7 +1040,7 @@ class AddonSourceTest {
     fun `a rate-limited request is waited out and retried`() = runBlocking {
         // The queue below is one stream lookup long; the immersive attempt
         // would consume it first. This test is about the 429, not the rung.
-        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
         route("/manifest.json", manifest())
         val answers = ArrayDeque(
             listOf(

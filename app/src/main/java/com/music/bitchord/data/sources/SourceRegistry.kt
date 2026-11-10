@@ -12,6 +12,7 @@ import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.DetectedFormat
 import com.music.bitchord.data.sources.addon.SourceFormats
+import com.music.bitchord.data.sources.mornye.SflxHost
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.audio.LosslessOutput
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -476,8 +477,44 @@ object SourceRegistry {
         publish(reordered + configs.value.filterNot { it.kind.isUserAdded })
     }
 
-    private fun publish(next: List<SourceConfig>, persist: Boolean = true) {
-        configs.value = next
+    /**
+     * Puts the installed extensions in [orderedIds], which is the order they
+     * will be asked in.
+     *
+     * A sibling of [reorderAddons] rather than the same function, because the
+     * two reorder different things in different ways. An addon is moved to the
+     * front of the list, since its whole kind ranks below everything the app
+     * ships. An extension is a `MODULE`-kind source living in the middle of the
+     * list, so it is moved *within its own group* and everything else keeps its
+     * place — otherwise dragging an extension would silently re-rank the
+     * addons, the modules and the built-ins against each other, which is not
+     * what the drag asked for and not visible on the screen it happened on.
+     */
+    fun reorderExtensions(orderedIds: List<String>) {
+        val extensions = configs.value.filter { isExtension(it) }
+        if (extensions.size < 2) return
+        val byId = extensions.associateBy { it.id }
+        val moved = orderedIds.mapNotNull(byId::get)
+        val missed = extensions.filterNot { config -> moved.any { it.id == config.id } }
+        val order = moved + missed
+        if (order.map { it.id } == extensions.map { it.id }) return
+        // Rebuilt by walking the whole list in order and taking the next
+        // extension from the new order wherever an extension used to be.
+        val next = order.iterator()
+        val rebuilt = configs.value.map { config ->
+            if (isExtension(config) && next.hasNext()) next.next() else config
+        }
+        publish(rebuilt)
+    }
+
+    /** Whether [config] is one row per installed extension rather than one per index. */
+    private fun isExtension(config: SourceConfig): Boolean =
+        config.baseUrl.startsWith(SflxHost.CONFIG_SCHEME, ignoreCase = true)
+
+    /** The installed-extension rows, in the order they will be asked in. */
+    fun extensions(): List<SourceConfig> = configs.value.filter { isExtension(it) }
+
+    private fun publish(next: List<SourceConfig>, persist: Boolean = true) {        configs.value = next
         // Rebuilt against the previous map so that an untouched source keeps
         // the instance it already had, rather than being replaced by an
         // identical-but-cold one every time an unrelated row is toggled.

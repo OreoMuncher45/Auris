@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -94,6 +95,12 @@ internal object QuickJsExecutor {
         val jsCode: String,
         val fetchBase: String,
         val acceptRegistered: Boolean,
+        /** Host globals evaluated before the module's own code. See [loadModule]. */
+        val preamble: String,
+        /** Code evaluated after it, to hand back the API it registered. */
+        val epilogue: String,
+        /** The only hosts this module may fetch, or null for no restriction. */
+        val allowedHosts: List<String>?,
     ) {
         val free = Channel<QuickJs>(Channel.UNLIMITED)
         val lock = Mutex()
@@ -119,6 +126,16 @@ internal object QuickJsExecutor {
     /** LRU map: access-ordered so the oldest-used entry is first. */
     private val pools = LinkedHashMap<String, Pool>(16, 0.75f, true)
 
+    /**
+     * Where a module's `storage` writes go.
+     *
+     * Installed once at start up — the extension host points it at a real
+     * directory; a preview run or a test leaves the in-memory default, so
+     * nothing written there can outlive the process that wrote it.
+     */
+    @Volatile
+    var storage: ModuleStorage = MemoryModuleStorage()
+
     // ── Load ─────────────────────────────────────────────────────────────
 
     suspend fun loadModule(
@@ -140,6 +157,40 @@ internal object QuickJsExecutor {
          * executor.
          */
         acceptRegistered: Boolean = false,
+        /**
+         * JavaScript evaluated in the engine *before* the module's own code —
+         * the host globals an extension was written against.
+         *
+         * Empty for this app's own modules, which assume nothing is installed
+         * for them. Non-empty for a Mornye extension, whose whole API is built
+         * on globals its host was expected to have defined first; see
+         * [SflxShim].
+         */
+        preamble: String = "",
+        /**
+         * JavaScript evaluated *after* it, inside the same closure.
+         *
+         * The counterpart to [preamble]: an extension registers itself rather
+         * than exporting anything, so something has to run afterwards and put
+         * that registration where the sandbox's call path looks — `module
+         * .exports`. Empty for a module that exports its own API.
+         */
+        epilogue: String = "",
+        /**
+         * The only host names the module may fetch, or null to allow any.
+         *
+         * Enforced in the fetch binding rather than in the JavaScript, because
+         * this is a permission and not a convenience: an extension declares the
+         * hosts it needs in its manifest, the listener installs it on the
+         * strength of that list, and a check performed by the code being
+         * checked is not a check.
+         *
+         * Matched exactly, or by a leading `*.` for a subdomain — the same rule
+         * the manifest's own parser documents, and deliberately not "any
+         * subdomain of" for a bare domain, which would let `*.example.com`
+         * match `evil-example.com`.
+         */
+        allowedHosts: List<String>? = null,
     ): Result<Unit> {
         val evicted = synchronized(engineLock) {
             if (pools.containsKey(moduleId)) {
@@ -158,12 +209,12 @@ internal object QuickJsExecutor {
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
-            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered) }
+            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts) }
                 .onSuccess { qjs ->
                     // The pool starts at one and grows only if two callers ever
                     // want this module at the same moment. A module that is
                     // never contended never pays for a second interpreter.
-                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered)
+                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts)
                     pool.started = 1
                     pool.made += qjs
                     pool.free.trySend(qjs)
@@ -180,12 +231,15 @@ internal object QuickJsExecutor {
         jsCode: String,
         fetchBase: String,
         acceptRegistered: Boolean,
+        preamble: String,
+        epilogue: String,
+        allowedHosts: List<String>?,
     ): QuickJs {
         val qjs = QuickJs.create(Dispatchers.Default)
         qjs.maxStackSize = 512 * 1024L
         try {
             bindConsole(qjs)
-            bindAsyncFetch(qjs, moduleId, fetchBase)
+            bindAsyncFetch(qjs, moduleId, fetchBase, allowedHosts)
 
             qjs.evaluate<String>(POLYFILLS)
             val cleanCode = preprocessModuleCode(jsCode)
@@ -199,7 +253,9 @@ internal object QuickJsExecutor {
                         var module = { exports: {} };
                         var exports = module.exports;
                         var self = {};
+                        $preamble
                         $cleanCode
+                        $epilogue
                         if (module.exports && (module.exports.searchTracks || module.exports.getTrackStreamUrl)) {
                             return module.exports;
                         }
@@ -254,7 +310,15 @@ internal object QuickJsExecutor {
         if (!mine) return pool.free.receive()
 
         return try {
-            newEngine(pool.moduleId, pool.jsCode, pool.fetchBase, pool.acceptRegistered).also { fresh ->
+            newEngine(
+                pool.moduleId,
+                pool.jsCode,
+                pool.fetchBase,
+                pool.acceptRegistered,
+                pool.preamble,
+                pool.epilogue,
+                pool.allowedHosts,
+            ).also { fresh ->
                 pool.lock.withLock { pool.made += fresh }
             }
         } catch (e: Throwable) {
@@ -418,7 +482,12 @@ internal object QuickJsExecutor {
 
     // ── Fetch binding ────────────────────────────────────────────────────
 
-    private suspend fun bindAsyncFetch(qjs: QuickJs, moduleId: String, fetchBase: String) {
+    private suspend fun bindAsyncFetch(
+        qjs: QuickJs,
+        moduleId: String,
+        fetchBase: String,
+        allowedHosts: List<String>?,
+    ) {
         qjs.define("__spine") {
             asyncFunction("fetch", object : AsyncFunctionBinding<String> {
                 override suspend fun invoke(args: Array<Any?>): String {
@@ -428,6 +497,21 @@ internal object QuickJsExecutor {
                     val headersJson = args[2]?.toString() ?: "{}"
                     val body = args[3]?.toString()
                     val url = resolveUrl(rawUrl, fetchBase)
+
+                    if (!mayReach(url, allowedHosts)) {
+                        // Answered in the response shape rather than thrown, for
+                        // the same reason the network error below is: an
+                        // extension checks `response.ok`, and a refusal it can
+                        // read is one it can report. A thrown exception here
+                        // would surface as a stack trace inside its own code.
+                        TrackLog.w(TAG, "  ✗ fetch refused for $moduleId: $url is not in its permissions")
+                        return JSONObject().apply {
+                            put("status", 0)
+                            put("ok", false)
+                            put("body", "Blocked: $url is not permitted by this extension's manifest")
+                            put("headers", JSONObject())
+                        }.toString()
+                    }
 
                     TrackLog.d(TAG, "  → fetch $method ${redactModuleUrl(url)}")
                     val result = fetchUrlSync(url, method, headersJson, body)
@@ -440,6 +524,38 @@ internal object QuickJsExecutor {
                         put("headers", result.headers)
                     }
                     return respObj.toString()
+                }
+            })
+            // ── Persistent state ─────────────────────────────────────────
+            // Synchronous by contract: extensions call `storage.get(key)` and
+            // use the answer inline, so this cannot be a promise. The call runs
+            // on the interpreter's own worker thread, never the main thread —
+            // see [ModuleStorage].
+            function("storageGet", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    val key = args.getOrNull(0)?.toString() ?: return "null"
+                    val value = storage.get(moduleId, key) ?: return "null"
+                    // Returned as a JSON string literal so the JavaScript side
+                    // can tell "the text is the word null" from "there is
+                    // nothing stored" — the two would otherwise be the same
+                    // value and an extension would lose its session on the
+                    // first run after someone stored the string "null".
+                    return JSONObject.quote(value)
+                }
+            })
+            function("storageSet", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    val key = args.getOrNull(0)?.toString() ?: return "error"
+                    val value = args.getOrNull(1)?.toString() ?: return "error"
+                    return runCatching { storage.set(moduleId, key, value) }
+                        .fold(onSuccess = { "ok" }, onFailure = { "error" })
+                }
+            })
+            function("storageRemove", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    val key = args.getOrNull(0)?.toString() ?: return "error"
+                    return runCatching { storage.remove(moduleId, key) }
+                        .fold(onSuccess = { "ok" }, onFailure = { "error" })
                 }
             })
             asyncFunction("setTimeout", object : AsyncFunctionBinding<String> {
@@ -504,6 +620,41 @@ internal object QuickJsExecutor {
             var clearTimeout = function(id) {};
             """.trimIndent()
         )
+    }
+
+    // ── Permissions ──────────────────────────────────────────────────────
+
+    /**
+     * Whether a module holding [allowedHosts] may reach [url].
+     *
+     * Null means "no restriction", which is what this app's own modules get:
+     * they are shipped by the app, and the list would be a formality. An
+     * extension's list comes from a manifest written by a stranger, so it is
+     * enforced.
+     *
+     * A URL that cannot be parsed is refused rather than allowed: the check
+     * exists to stop a request, and "unparseable" is not a reason to let one
+     * through. Hosts are compared without case and without a port, because
+     * `Example.com:443` and `example.com` are the same host to a server.
+     *
+     * `*.` is a subdomain wildcard and nothing else — `*.spotify.com` matches
+     * `api.spotify.com` and `open.spotify.com` but not `spotify.com` itself,
+     * and not `notspotify.com`. That is the manifest format's own rule; see
+     * [SflxPermissions.allowsHost].
+     */
+    private fun mayReach(url: String, allowedHosts: List<String>?): Boolean {
+        if (allowedHosts == null) return true
+        val host = url.toHttpUrlOrNull()?.host?.lowercase(Locale.ROOT) ?: return false
+        return allowedHosts.any { pattern ->
+            val allowed = pattern.trim().lowercase(Locale.ROOT)
+            when {
+                allowed.isEmpty() -> false
+                // `*.example.com` is a subdomain wildcard: it must leave the dot
+                // in place, or `evilexample.com` would match it.
+                allowed.startsWith("*.") -> host.endsWith(allowed.substring(1))
+                else -> host == allowed
+            }
+        }
     }
 
     // ── URL resolution ───────────────────────────────────────────────────

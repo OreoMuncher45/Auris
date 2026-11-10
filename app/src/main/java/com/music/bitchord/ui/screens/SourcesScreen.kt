@@ -100,6 +100,8 @@ import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.mornye.SflxCatalog
+import com.music.bitchord.data.sources.mornye.SflxHost
 import com.music.bitchord.ui.components.AddonEditorAlert
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
@@ -143,10 +145,18 @@ fun SourcesScreen(
     onEditSmb: () -> Unit,
     /** Opens the full-window warning before JioSaavn is opted into. */
     onConfirmJioSaavn: () -> Unit,
+    /** Opens the install-from-link sheet for a Mornye `.sflx` extension. */
+    onInstallExtension: () -> Unit,
+    /** Opens one installed extension's own settings, by manifest id. */
+    onEditExtension: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val configs by SourceRegistry.configs.collectAsStateWithLifecycle()
+    // Installed extensions are module-kind sources whose address is `sflx://…`.
+    // Named out here because they are drawn in their own group below and must
+    // not be drawn in the one above as well.
+    val extensions = configs.filter { SflxHost.extensionIdOf(it.baseUrl) != null }
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
@@ -263,7 +273,10 @@ fun SourcesScreen(
             // under a second heading would break the one thing this screen is
             // for.
             val addons = configs.filter { it.kind.isUserAdded }
-            val fixed = configs.filterNot { it.kind.isUserAdded }
+            // Extensions are filtered out here — see the `extensions` list at
+            // the top of the screen — so that they are drawn once, in their own
+            // group, where they can be named and opened.
+            val fixed = configs.filterNot { it.kind.isUserAdded || SflxHost.extensionIdOf(it.baseUrl) != null }
                 .sortedBy { it.kind.rank }
 
             val row: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit =
@@ -332,6 +345,53 @@ fun SourcesScreen(
             RowDivider()
             AddSourceRow(
                 onClick = { onEditSource(SourceConfig(kind = SourceKind.ADDON)) },
+            )
+        }
+
+        // Installed extensions, in their own group.
+        //
+        // A group rather than rows inside the one above, because they are not
+        // something the listener typed a URL for: they are packages on this
+        // device, each with its own name, version, settings and remove button.
+        // The group also owns the way in — a link — which is the only door this
+        // app has to an extension, since none is bundled with it.
+        SettingsGroup(header = "Extensions") {
+            if (extensions.isEmpty()) {
+                SettingsRow(
+                    title = "No extensions installed",
+                    subtitle = "Extensions are separate downloads. Paste a link to add one.",
+                )
+            } else {
+                val extensionRow: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit =
+                    { position, config, handle ->
+                        val manifest = SflxCatalog.installed.value.firstOrNull { config.id == SflxCatalog.configIdOf(it.id) }
+                        SourceRow(
+                            position = position,
+                            config = config,
+                            health = health[config.id],
+                            skippedByQuality = config.enabled && !ceiling.permits(config.kind),
+                            awaitingOutput = if (config.enabled && config.awaitsLosslessOutput) losslessOutput else null,
+                            onMetered = metered == true,
+                            ceiling = ceiling,
+                            // The row's tap opens the extension's *own* settings,
+                            // not a URL editor: there is no address to type, and
+                            // the questions worth asking are the ones its
+                            // manifest declared.
+                            onClick = { onEditExtension(SflxHost.extensionIdOf(config.baseUrl).orEmpty()) },
+                            onToggle = { SourceRegistry.setEnabled(config.id, it) },
+                            handle = handle,
+                        )
+                    }
+                ReorderableAddons(
+                    addons = extensions,
+                    onReorder = { SourceRegistry.reorderExtensions(it.map(SourceConfig::id)) },
+                    row = extensionRow,
+                )
+            }
+            RowDivider()
+            AddSourceRow(
+                onClick = onInstallExtension,
+                title = "Install from a link",
             )
         }
 
@@ -669,7 +729,7 @@ private const val SWAP_THRESHOLD = 0.6f
  * put another one in here".
  */
 @Composable
-private fun AddSourceRow(onClick: () -> Unit) {
+private fun AddSourceRow(onClick: () -> Unit, title: String? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -690,7 +750,12 @@ private fun AddSourceRow(onClick: () -> Unit) {
         Spacer(Modifier.width(ICON_GAP))
         Column(Modifier.weight(1f)) {
             Text(
-                text = stringResource(R.string.add_addon),
+                // Two calls to this row, two different things being added: a
+                // source the listener pastes a URL for, and an extension
+                // package. The label is what tells them apart, and the detail
+                // line underneath stays the same because the instruction — paste
+                // a link — is the same.
+                text = title ?: stringResource(R.string.add_addon),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
