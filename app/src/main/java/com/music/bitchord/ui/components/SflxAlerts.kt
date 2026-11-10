@@ -312,7 +312,22 @@ fun SflxSettingsDialog(
                 },
             ) { Text("Save") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                // The way out. An extension is the listener's own install, so
+                // removing it belongs on its own sheet and not only in the
+                // source list's editor.
+                TextButton(
+                    onClick = {
+                        SflxCatalog.remove(installed.id)
+                        onDismiss()
+                    },
+                ) {
+                    Text("Uninstall", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
     )
 }
 
@@ -343,8 +358,8 @@ private fun SessionStatusBlock(
             when {
                 status.authenticated && expiry != null -> "Verified, until $expiry."
                 status.authenticated -> "Verified."
-                status.error.isNotBlank() -> "Could not check the session: ${status.error}"
-                else -> "This extension asks you to prove you are a person before it serves anything."
+                status.error.isNotBlank() -> "The sign-in page could not be opened: ${status.error}"
+                else -> "This addon wants a session with its service before it serves anything. Verify opens that page."
             },
             style = MaterialTheme.typography.bodySmall,
         )

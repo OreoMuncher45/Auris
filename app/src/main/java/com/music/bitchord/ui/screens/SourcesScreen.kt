@@ -13,7 +13,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.music.bitchord.playback.audio.LosslessOutput
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -150,6 +152,8 @@ fun SourcesScreen(
     onInstallExtension: () -> Unit,
     /** Opens one installed extension's own settings, by manifest id. */
     onEditExtension: (String) -> Unit,
+    /** A plain tap on an extension's row: open its verification page. */
+    onVerifyExtension: (String) -> Unit = onEditExtension,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -377,11 +381,14 @@ fun SourcesScreen(
                             onMetered = metered == true,
                             ceiling = ceiling,
                             statusBadge = extensionStatuses[extensionId]?.badge(),
-                            // The row's tap opens the extension's *own* settings,
-                            // not a URL editor: there is no address to type, and
-                            // the questions worth asking are the ones its
-                            // manifest declared.
-                            onClick = { onEditExtension(SflxHost.extensionIdOf(config.baseUrl).orEmpty()) },
+                            // Tap is the way through the door: an extension
+                            // that cannot serve anything until the listener
+                            // has proved themselves opens that page. Hold
+                            // opens its own settings — the questions its
+                            // manifest declared, and the way to remove it —
+                            // because there is no address to type.
+                            onClick = { onVerifyExtension(extensionId) },
+                            onLongClick = { onEditExtension(extensionId) },
                             onToggle = { SourceRegistry.setEnabled(config.id, it) },
                             handle = handle,
                         )
@@ -860,6 +867,12 @@ private fun SourceRow(
     health: SourceHealth?,
     onClick: (() -> Unit)?,
     onToggle: (Boolean) -> Unit,
+    /**
+     * What a press-and-hold does. For an extension that is its own settings —
+     * the questions its manifest declared, and the way to remove it — while a
+     * plain tap is the thing that unblocks it: the verification page.
+     */
+    onLongClick: (() -> Unit)? = null,
     /** The extension's signed-session state, when it has one. See [SourceStatusBadge]. */
     statusBadge: SourceStatusBadge? = null,
     /** On, but skipped by the ceiling the current connection is set to. */
@@ -881,10 +894,18 @@ private fun SourceRow(
     // switch stays where the user left it, so the row reads "on, but not
     // today" rather than "off".
     val dimmed = !config.enabled || skippedByQuality || awaitingOutput != null
+    val rowModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            onClick = { onClick?.invoke() },
+            onLongClick = onLongClick,
+        )
+    } else {
+        Modifier.clickable(enabled = onClick != null) { onClick?.invoke() }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .then(rowModifier)
             .heightIn(min = 60.dp)
             .padding(horizontal = ROW_INSET, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1006,8 +1027,7 @@ private data class SourceStatusBadge(val text: String, val warning: Boolean)
 
 private fun SflxSignedSession.Snapshot.badge(): SourceStatusBadge = when {
     authenticated -> SourceStatusBadge("Verified${expiryNote()}", false)
-    error.isNotBlank() -> SourceStatusBadge("Session check failed: $error", true)
-    else -> SourceStatusBadge("Needs verification — open the addon to verify", true)
+    else -> SourceStatusBadge("Needs verification — tap to verify", true)
 }
 
 private fun SflxSignedSession.Snapshot.expiryNote(): String {

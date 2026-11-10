@@ -83,16 +83,19 @@ internal object SpotifySearch {
         val limit = limitOf(filter)
 
         var section: JsonObject? = null
+        val failures = mutableListOf<String>()
         for (attempt in attempts(query, limit, offset)) {
             val root = runCatching { SpotifyGraphQL.query(attempt.operation, attempt.variables) }
                 .onFailure { error ->
                     Log.w(TAG, "Spotify's search via ${attempt.operation} failed: ${error.message}")
+                    failures += "${attempt.operation}: ${error.message}"
                 }
                 .getOrNull()
             val answered = root?.obj("searchV2")
             if (answered == null) {
                 if (root != null) {
                     Log.w(TAG, "Spotify's ${attempt.operation} answered without a search section")
+                    failures += "${attempt.operation}: no search section"
                 }
                 continue
             }
@@ -109,7 +112,7 @@ internal object SpotifySearch {
         // those operations serves exactly one kind, so the ones the filter
         // wants are asked in turn.
         if (section == null) {
-            val perTab = perTabSections(query, filter, limit, offset)
+            val perTab = perTabSections(query, filter, limit, offset, failures)
             if (perTab != null && !perTab.hasNothing()) {
                 Log.d(TAG, "Spotify's search answered by the per-tab operations")
                 section = perTab
@@ -117,8 +120,12 @@ internal object SpotifySearch {
         }
 
         if (section == null) {
-            Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\"")
-            return@withContext Page(emptyList(), null)
+            // Not an empty catalogue: an unanswered question. Saying so is the
+            // difference between a listener retyping the query and a listener
+            // who knows Spotify refused every operation this build offers.
+            val why = failures.distinct().take(3).joinToString("; ").ifBlank { "no operation answered" }
+            Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\": $why")
+            throw SpotifyGraphQLException("Spotify could not answer that search — $why")
         }
         return@withContext parse(section, filter, limit)
     }
@@ -138,7 +145,12 @@ internal object SpotifySearch {
         Attempt(
             "assistedCurationSearch",
             buildJsonObject {
+                // Both spellings of the term are sent. The operation's own
+                // variable is `term` on this build, but a renamed variable is
+                // exactly the thing that moves between builds, an unused
+                // variable is ignored, and a missing one fails the request.
                 put("term", query)
+                put("searchTerm", query)
                 put("offset", offset)
                 put("limit", limit)
                 put("numberOfTopResults", limit)
@@ -149,6 +161,7 @@ internal object SpotifySearch {
             "searchDesktop",
             buildJsonObject {
                 put("searchTerm", query)
+                put("term", query)
                 put("offset", offset)
                 put("limit", limit)
                 put("numberOfTopResults", limit)
@@ -168,6 +181,7 @@ internal object SpotifySearch {
         filter: SearchFilter,
         limit: Int,
         offset: Int,
+        failures: MutableList<String>? = null,
     ): JsonObject? {
         val wanted = when (filter) {
             SearchFilter.SONGS -> listOf("searchTracks" to "tracksV2")
@@ -189,6 +203,7 @@ internal object SpotifySearch {
         for ((operation, key) in wanted) {
             val variables = buildJsonObject {
                 put("searchTerm", query)
+                put("term", query)
                 put("offset", offset)
                 put("limit", limit)
                 put("numberOfTopResults", limit)
@@ -201,9 +216,14 @@ internal object SpotifySearch {
             val root = runCatching { SpotifyGraphQL.query(operation, variables) }
                 .onFailure { error ->
                     Log.w(TAG, "Spotify's $operation failed: ${error.message}")
+                    failures?.add("$operation: ${error.message}")
                 }
                 .getOrNull()
-            val section = root?.obj("searchV2") ?: continue
+            val section = root?.obj("searchV2")
+            if (section == null) {
+                if (root != null) failures?.add("$operation: no search section")
+                continue
+            }
             answeredAny = true
             section[key]?.let { sections[key] = it }
         }

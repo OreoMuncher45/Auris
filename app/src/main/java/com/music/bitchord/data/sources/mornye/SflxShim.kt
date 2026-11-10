@@ -76,7 +76,7 @@ internal object SflxShim {
                 return value === null || value === undefined ? '' : String(value);
             }
 
-            var __spine_sflx = {
+            var __spine_sflx = globalThis.__spine_sflx = {
                 id: $id,
                 version: $version,
                 appVersion: ${jsString(appVersion)},
@@ -518,29 +518,70 @@ internal object SflxShim {
             // ── HTTP ─────────────────────────────────────────────────────
             // Both spellings, because extensions use both: `fetch` in the web
             // shape it already returns, and `http.*` for the older call style.
-            // Both go through the sandbox's own fetch, so the manifest's
-            // network permissions are enforced in one place.
+            // `http.*` is SYNCHRONOUS here, as it is in Mornye: an extension
+            // written against that host reads `http.get(url).status` without
+            // awaiting anything, and handing it a promise is how every Tidal
+            // search came back "HTTP undefined" while the request itself
+            // returned 200.
+            //
+            // The result is shaped like both worlds: the plain fields the Go-era
+            // extensions read (`status`, `body`, `headers`) and the Response
+            // methods the web ones call (`text()`, `json()`), plus a `then` so
+            // the few extensions that treat it as a promise still work.
+            function __sflx_http(url, method, headers, body) {
+                var failure = function (error) {
+                    return {
+                        ok: false, status: 0, statusCode: 0, statusText: 'Network Error',
+                        body: '', headers: {}, error: error,
+                        text: function () { return ''; },
+                        json: function () { return undefined; }
+                    };
+                };
+                if (typeof __spine === 'undefined' || typeof __spine.httpSync !== 'function') {
+                    return failure('this host has no http bridge');
+                }
+                var raw;
+                try {
+                    raw = JSON.parse(__spine.httpSync(
+                        __sflx_goString(url),
+                        __sflx_goString(method || 'GET'),
+                        JSON.stringify(headers && typeof headers === 'object' ? headers : {}),
+                        body === null || body === undefined ? null
+                            : (typeof body === 'string' ? body : JSON.stringify(body))
+                    ));
+                } catch (e) {
+                    return failure(__sflx_goString(e && e.message ? e.message : e));
+                }
+                if (raw && raw.error) return failure(__sflx_goString(raw.error));
+                var text = raw && raw.body !== undefined && raw.body !== null ? String(raw.body) : '';
+                var parsed;
+                var hasParsed = false;
+                return {
+                    ok: !!(raw && raw.ok),
+                    status: raw && typeof raw.status === 'number' ? raw.status : 0,
+                    statusCode: raw && typeof raw.status === 'number' ? raw.status : 0,
+                    statusText: raw && raw.ok ? 'OK' : 'Error',
+                    body: text,
+                    headers: (raw && raw.headers) || {},
+                    text: function () { return text; },
+                    json: function () {
+                        if (!hasParsed) {
+                            hasParsed = true;
+                            try { parsed = JSON.parse(text); } catch (e) { parsed = undefined; }
+                        }
+                        return parsed;
+                    },
+                    arrayBuffer: function () { throw new Error('Not implemented'); }
+                };
+            }
+
             globalThis.http = {
-                get: function (url, headers) { return globalThis.http.request(url, null, 'GET', headers); },
-                post: function (url, body, headers) { return globalThis.http.request(url, body, 'POST', headers); },
-                put: function (url, body, headers) { return globalThis.http.request(url, body, 'PUT', headers); },
-                patch: function (url, body, headers) { return globalThis.http.request(url, body, 'PATCH', headers); },
-                delete: function (url, body, headers) { return globalThis.http.request(url, body, 'DELETE', headers); },
-                request: function (url, body, method, headers) {
-                    if (!arguments.length) return { ok: false, status: 0, statusText: 'Network Error', error: 'URL is required' };
-                    var options = { method: method || 'GET' };
-                    if (headers && typeof headers === 'object') options.headers = headers;
-                    if (body !== undefined && body !== null && options.method !== 'GET') {
-                        options.body = typeof body === 'string' ? body : JSON.stringify(body);
-                    }
-                    try {
-                        // Returns the promise the sandbox's fetch returns; an
-                        // extension that awaited http.get() keeps working.
-                        return globalThis.fetch(url, options);
-                    } catch (e) {
-                        return { ok: false, status: 0, statusText: 'Network Error', error: String(e && e.message ? e.message : e) };
-                    }
-                },
+                get: function (url, headers) { return __sflx_http(url, 'GET', headers, null); },
+                post: function (url, body, headers) { return __sflx_http(url, 'POST', headers, body); },
+                put: function (url, body, headers) { return __sflx_http(url, 'PUT', headers, body); },
+                patch: function (url, body, headers) { return __sflx_http(url, 'PATCH', headers, body); },
+                delete: function (url, headers) { return __sflx_http(url, 'DELETE', headers, null); },
+                request: function (url, body, method, headers) { return __sflx_http(url, method || 'GET', headers, body); },
                 clearCookies: function () { return true; }
             };
 
@@ -667,7 +708,22 @@ internal object SflxShim {
             // can still usually mint a new one on demand.
             if (typeof extension.initialize === 'function') {
                 try {
-                    extension.initialize(globalThis.__spine_sflx.settings);
+                    // Mornye hands `initialize` the settings map itself, and an
+                    // extension reads `config.publicToken`. Some of these were
+                    // written against a host that wrapped it, and read
+                    // `config.settings.publicToken` — so the argument carries
+                    // both: every value at the top level, and the same object
+                    // under `settings` and `config`.
+                    var given = (globalThis.__spine_sflx && globalThis.__spine_sflx.settings) || {};
+                    var settingsArg = {};
+                    if (given && typeof given === 'object') {
+                        for (var key in given) settingsArg[key] = given[key];
+                    }
+                    settingsArg.settings = given;
+                    settingsArg.config = given;
+                    settingsArg.appVersion = globalThis.__spine_sflx && globalThis.__spine_sflx.appVersion
+                        ? globalThis.__spine_sflx.appVersion : '';
+                    extension.initialize(settingsArg);
                 } catch (error) {
                     console.log('[sflx] initialize() failed: ' + (error && error.message ? error.message : error));
                 }
@@ -771,12 +827,43 @@ internal object SflxShim {
                 };
             }
 
+            function isArray(value) {
+                return Object.prototype.toString.call(value) === '[object Array]';
+            }
+
+            // One node, as a list of rows — the shapes extensions use are
+            // `[...]`, `{items:[...]}`, `{tracks:[...]}` and a few synonyms.
+            function listOf(node) {
+                if (!node) return null;
+                if (isArray(node)) return node;
+                var direct = firstOf(node.tracks, node.results, node.items, node.songs, node.itemsV2);
+                if (isArray(direct)) return direct;
+                if (direct && isArray(direct.items)) return direct.items;
+                return null;
+            }
+
+            /**
+             * The rows in whatever an extension called a search result.
+             *
+             * Extensions disagree about this, and the disagreements are all
+             * legitimate: some answer a list, some `{tracks:{items}}`, and the
+             * ones written against the Go backend answer
+             * `{success:true,data:{items}}`. Reading only the first shape is
+             * how a search that returned sixteen kilobytes of JSON came back
+             * as an empty list.
+             */
             function tracksOf(result) {
-                if (!result) return [];
-                if (Object.prototype.toString.call(result) === '[object Array]') return result;
-                var list = firstOf(result.tracks, result.results, result.items, result.songs);
-                if (Object.prototype.toString.call(list) === '[object Array]') return list;
-                if (list && Object.prototype.toString.call(list.items) === '[object Array]') return list.items;
+                var found = listOf(result);
+                if (found) return found;
+                var wrappers = ['data', 'body', 'payload', 'result', 'response'];
+                for (var i = 0; i < wrappers.length; i++) {
+                    var inner = result ? result[wrappers[i]] : null;
+                    var list = listOf(inner);
+                    if (list) return list;
+                    var deep = inner ? (inner.data || inner.items || inner.tracks) : null;
+                    var deeper = listOf(deep);
+                    if (deeper) return deeper;
+                }
                 return [];
             }
 
@@ -805,9 +892,12 @@ internal object SflxShim {
             }
 
             module.exports = {
-                searchTracks: function (query, limit) {
+                searchTracks: async function (query, limit) {
                     var started = Date.now();
-                    var result = search(query, limit);
+                    // Awaited: `customSearch` is async in several extensions, and
+                    // a promise read as a result is an empty list — which is
+                    // exactly what every Tidal search reported.
+                    var result = await search(query, limit);
                     var rows = [];
                     var candidates = tracksOf(result);
                     for (var i = 0; i < candidates.length; i++) {
@@ -828,7 +918,7 @@ internal object SflxShim {
                     });
                 },
 
-                getTrackStreamUrl: function (trackId, quality, rawContext) {
+                getTrackStreamUrl: async function (trackId, quality, rawContext) {
                     var context = contextOf(rawContext);
                     var meta = { id: text(trackId), audioQuality: text(quality) };
                     var answered = function (url, error) {
@@ -865,7 +955,7 @@ internal object SflxShim {
                         var options = {
                             preparedContext: { track: context.track || null }
                         };
-                        var outcome = extension.download(text(trackId), text(quality), '', null, options);
+                        var outcome = await extension.download(text(trackId), text(quality), '', null, options);
                         if (outcome && outcome.success === false) {
                             failure = text(firstOf(outcome.error_message, outcome.error, outcome.reason));
                         }

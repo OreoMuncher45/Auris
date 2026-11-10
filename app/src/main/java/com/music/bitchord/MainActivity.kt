@@ -4315,6 +4315,31 @@ private fun BitChordApp(
                             onEditExtension = { id ->
                                 editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
                             },
+                            // A tap is the extension's door, and which door
+                            // depends on the extension: one that signs its
+                            // requests gets its verification page, and one
+                            // that does not has nothing to verify — so a tap
+                            // opens its settings, which is the only thing it
+                            // has to show. Hold always opens the settings.
+                            onVerifyExtension = { id ->
+                                val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                                if (installed != null && SflxCatalog.host?.sessionStatus(id) != null) {
+                                    scope.launch {
+                                        val url = withContext(Dispatchers.IO) {
+                                            SflxCatalog.beginVerification(id)
+                                        }
+                                        if (url == null && editingExtension == null) {
+                                            // Nothing to open: the gateway
+                                            // already knows this install, or it
+                                            // refused. The settings sheet says
+                                            // which, and holds Verify.
+                                            editingExtension = installed
+                                        }
+                                    }
+                                } else {
+                                    editingExtension = installed
+                                }
+                            },
                         )
                     } else if (key == "listen_together") {
                         ListenTogetherScreen(

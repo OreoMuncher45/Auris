@@ -182,6 +182,13 @@ class SflxVerifyActivity : AppCompatActivity() {
         root.addView(view)
         setContentView(root)
 
+        // A floating dialog measures itself WRAP_CONTENT, and a weighted WebView
+        // inside that is zero pixels tall — which is what made this page look
+        // like an empty black box with a Close button. The page is the point, so
+        // the window is given a real size before anything loads.
+        val height = (resources.displayMetrics.heightPixels * 0.85f).toInt()
+        window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
+
         if (url.isBlank()) {
             finish()
             return

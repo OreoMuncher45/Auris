@@ -604,6 +604,50 @@ internal object QuickJsExecutor {
                     }
                 })
             }
+            // ── Synchronous HTTP ─────────────────────────────────────────
+            // Mornye's `http.*` are synchronous: an extension written against
+            // that host reads `http.get(url).status` without awaiting it, and a
+            // promise here is `undefined` — which is exactly the
+            // "customSearch failed: HTTP undefined" every Tidal search produced
+            // while the fetch itself was returning 200 with 16 KB of JSON.
+            function("httpSync", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    val rawUrl = args.getOrNull(0)?.toString().orEmpty()
+                    if (rawUrl.isEmpty()) {
+                        return JSONObject()
+                            .put("ok", false).put("status", 0).put("body", "")
+                            .put("headers", JSONObject()).put("error", "URL is required")
+                            .toString()
+                    }
+                    val method = args.getOrNull(1)?.toString()?.ifBlank { "GET" } ?: "GET"
+                    val headersJson = args.getOrNull(2)?.toString().orEmpty().ifBlank { "{}" }
+                    val body = args.getOrNull(3)?.toString()?.takeIf { it != "null" }
+                    val url = resolveUrl(rawUrl, fetchBase)
+                    if (!mayReach(url, allowedHosts)) {
+                        return JSONObject()
+                            .put("ok", false).put("status", 0).put("body", "")
+                            .put("headers", JSONObject())
+                            .put("error", "Blocked: $url is not permitted by this extension's manifest")
+                            .toString()
+                    }
+                    return runCatching {
+                        val result = fetchUrlSync(url, method, headersJson, body)
+                        JSONObject()
+                            .put("ok", result.code in 200..299)
+                            .put("status", result.code)
+                            .put("body", result.body)
+                            .put("headers", result.headers)
+                            .toString()
+                    }.getOrElse { error ->
+                        TrackLog.w(TAG, "  ✗ httpSync $method ${redactModuleUrl(url)} failed: ${error.message}")
+                        JSONObject()
+                            .put("ok", false).put("status", 0).put("body", "")
+                            .put("headers", JSONObject())
+                            .put("error", error.message ?: "request failed")
+                            .toString()
+                    }
+                }
+            })
             // ── Digests ──────────────────────────────────────────────────
             // `utils.sha256` and friends are host functions in Mornye, and three
             // extensions sign their own requests with them. Doing the digests

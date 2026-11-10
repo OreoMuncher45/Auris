@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources.mornye
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.module.ModuleSearchResponse
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.ModuleStreamResponse
@@ -55,6 +56,20 @@ class SflxHost(
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SflxSignedSession>()
 
     /**
+     * Whether this extension's source row is switched on.
+     *
+     * Checked here, at the only places an extension is ever run, because the
+     * surfaces that ask — playback, the upgrade walk, a download — each build
+     * their own candidate list, and one of them asking a switched-off source is
+     * a switch that does not work. A switched-off extension is not loaded, not
+     * searched, and cannot raise a verification prompt.
+     */
+    private fun enabled(installed: InstalledSflx): Boolean {
+        val configId = SflxCatalog.configIdOf(installed.id) ?: return true
+        return SourceRegistry.config(configId)?.enabled ?: true
+    }
+
+    /**
      * The signed-session client for [installed], or null when its manifest does
      * not declare one.
      */
@@ -67,7 +82,10 @@ class SflxHost(
                 config = config,
                 directory = directory,
                 onVerificationRequired = { url ->
-                    SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                    // A switched-off extension must not put a page on screen.
+                    if (enabled(installed)) {
+                        SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                    }
                 },
             )
         }
@@ -100,6 +118,7 @@ class SflxHost(
      */
     fun beginVerification(id: String): String? {
         val installed = store.find(id) ?: return null
+        if (!enabled(installed)) return null
         val session = sessionFor(installed) ?: return null
         val url = runCatching { session.requestVerification() }.getOrNull() ?: return null
         if (url.isNotBlank()) {
@@ -156,6 +175,9 @@ class SflxHost(
             if (query.isBlank()) return@withContext Result.success(ModuleSearchResponse())
             val installed = store.find(extensionId)
                 ?: return@withContext Result.failure(SflxException("'$extensionId' is not installed"))
+            if (!enabled(installed)) {
+                return@withContext Result.failure(SflxException("'${installed.manifest.displayName}' is turned off"))
+            }
             load(installed).getOrElse { return@withContext Result.failure(it) }
 
             val settings = settingsFor(installed)
@@ -196,6 +218,9 @@ class SflxHost(
                 return@withContext Result.failure(
                     SflxException("'${installed.manifest.displayName}' describes tracks and cannot serve audio"),
                 )
+            }
+            if (!enabled(installed)) {
+                return@withContext Result.failure(SflxException("'${installed.manifest.displayName}' is turned off"))
             }
             load(installed).getOrElse { return@withContext Result.failure(it) }
 

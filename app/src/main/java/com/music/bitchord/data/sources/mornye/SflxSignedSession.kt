@@ -84,6 +84,10 @@ class SflxSignedSession(
     @Volatile
     private var granted = false
 
+    /** Why the last verification attempt produced no page. Shown in the UI. */
+    @Volatile
+    private var lastVerificationError: String = ""
+
     private data class Pending(
         val authUrl: String,
         val callback: String,
@@ -186,7 +190,7 @@ class SflxSignedSession(
             verificationRequired = status.optBoolean("verification_required"),
             expiresAt = status.optString("expires_at"),
             authUrl = status.optString("auth_url"),
-            error = "",
+            error = lastVerificationError,
         )
     }.getOrElse {
         Snapshot(true, false, false, "", "", it.message.orEmpty())
@@ -201,7 +205,15 @@ class SflxSignedSession(
      */
     fun requestVerification(): String? = runCatching {
         val bootstrap = bootstrap()
-        if (bootstrap is Bootstrap.Challenge) bootstrap.url else null
+        if (bootstrap is Bootstrap.Challenge) {
+            lastVerificationError = ""
+            bootstrap.url
+        } else {
+            lastVerificationError = "this gateway already knows this install"
+            null
+        }
+    }.onFailure { error ->
+        lastVerificationError = error.message ?: "the gateway did not answer"
     }.getOrNull()
 
     // ── Bootstrap ────────────────────────────────────────────────────────
