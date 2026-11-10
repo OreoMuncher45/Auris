@@ -334,17 +334,17 @@ internal object SpotifySearch {
         }
         if (filter == SearchFilter.ALBUMS || filter == SearchFilter.ALL) {
             (albumItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:album:") })
-                .mapNotNull(::parseAlbum)
+                .mapNotNull { parseAlbum(cardDataOf(it)) }
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.ARTISTS || filter == SearchFilter.ALL) {
             (artistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:artist:") })
-                .mapNotNull(::parseArtist)
+                .mapNotNull { parseArtist(cardDataOf(it)) }
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.PLAYLISTS || filter == SearchFilter.ALL) {
             (playlistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:playlist:") })
-                .mapNotNull(::parsePlaylist)
+                .mapNotNull { parsePlaylist(cardDataOf(it)) }
                 .forEach { rows += it.row() }
         }
         val diagnostic = buildString {
@@ -367,28 +367,73 @@ internal object SpotifySearch {
 
     // -- parsing ------------------------------------------------------------
 
+    /** The card's own object, from whichever wrapper the list used. */
+    private fun cardDataOf(element: kotlinx.serialization.json.JsonElement): JsonObject? {
+        val item = element.objOrNull() ?: return null
+        item.obj("data")?.let { return it }
+        item.obj("item")?.let { inner -> return inner.obj("data") ?: inner }
+        return item
+    }
+
     /** Whether this `data` object is the kind [uriPrefix] names. */
     private fun JsonObject.isKind(uriPrefix: String): Boolean =
         str("uri").orEmpty().startsWith(uriPrefix)
 
     private fun JsonObject.isTrack(): Boolean = isKind("spotify:track:")
 
+    /**
+     * One track's own object, from whichever wrapper the answer used.
+     *
+     * The client that works names three shapes — `item.data`, `item.track`, the
+     * item itself — and the search page's own sections add `item.item.data`.
+     * Reading only one of them is what turned a `tracks=8` answer into "0
+     * tracks": every item was there, and none of them was where this looked.
+     */
+    private fun trackDataOf(item: JsonObject): JsonObject? {
+        item.obj("data")?.let { return it }
+        item.obj("track")?.let { return it }
+        item.obj("item")?.let { inner ->
+            inner.obj("data")?.let { return it }
+            inner.obj("track")?.let { return it }
+            return inner
+        }
+        return item
+    }
+
+    /**
+     * A track's Spotify id, from its `uri` or from the `id` next to it.
+     *
+     * Both spellings are real: a `uri` of `spotify:track:<id>` and a bare `id`.
+     * Requiring the uri — and dropping everything without one — is how a row
+     * that had an id all along was discarded.
+     */
+    private fun spotifyTrackIdOf(data: JsonObject): String? {
+        val uri = data.str("uri").orEmpty()
+        if (uri.startsWith("spotify:track:")) return uri.substringAfterLast(':')
+        val id = data.str("id").orEmpty()
+        return id.takeIf { it.isNotBlank() && !it.contains(':') }
+    }
+
     private fun parseTracks(items: List<JsonObject>): List<SpotifyTrack> =
-        items.mapNotNull { data ->
-            val uri = data.str("uri") ?: return@mapNotNull null
-            if (!uri.startsWith("spotify:track:")) return@mapNotNull null
+        items.mapNotNull { item ->
+            val data = trackDataOf(item) ?: return@mapNotNull null
+            val id = spotifyTrackIdOf(data) ?: return@mapNotNull null
             val title = data.str("name").orEmpty()
             if (title.isBlank()) return@mapNotNull null
-            val album = data.obj("albumOfTrack")
+            val album = data.obj("albumOfTrack") ?: data.obj("album")
             SpotifyTrack(
-                id = uri.substringAfterLast(':'),
+                id = id,
                 title = title,
                 artist = artistsOf(data),
                 album = album?.str("name"),
                 durationMs = data.obj("duration")?.int("totalMilliseconds")
                     ?: data.obj("trackDuration")?.int("totalMilliseconds")
+                    ?: data.obj("duration")?.int("milliseconds")
                     ?: 0,
-                imageUrl = album?.obj("coverArt")?.arr("sources")?.bestSourceUrl(),
+                imageUrl = album?.obj("coverArt")?.arr("sources")?.bestSourceUrl()
+                    ?: data.obj("coverArt")?.arr("sources")?.bestSourceUrl()
+                    ?: data.obj("images")?.arr("items")?.firstOrNull()?.objOrNull()
+                        ?.arr("sources")?.bestSourceUrl(),
             )
         }
 
@@ -440,6 +485,11 @@ internal object SpotifySearch {
 
     /** The artists of a track, album or playlist, as one line. */
     private fun artistsOf(data: JsonObject): String {
+        // A plain byline, for the shapes that state one ("MISFIRE" rather than a
+        // list of profiles). `str` answers null for an object, so this cannot
+        // shadow the structured reading below.
+        data.str("artists")?.takeIf { it.isNotBlank() }?.let { return it }
+        data.str("artist")?.takeIf { it.isNotBlank() }?.let { return it }
         val names = data.obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
             artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
         }

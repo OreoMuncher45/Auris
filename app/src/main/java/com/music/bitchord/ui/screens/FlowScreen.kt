@@ -586,7 +586,9 @@ private fun FlowTunerGroup(
 ) {
     SettingsGroup(
         header = stringResource(R.string.flow_tuner),
-        footer = stringResource(R.string.flow_draft_hint),
+        // No footer: the Apply button says what applying means, and a sentence
+        // explaining that nothing has happened yet is a sentence about the
+        // implementation rather than about the mix.
         topSpacing = 8.dp,
     ) {
         FlowTunerSlider(
