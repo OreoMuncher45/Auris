@@ -474,8 +474,17 @@ internal object SflxShim {
                         if (!isFinite(ms) || ms <= 0) return true;
                         // Synchronous, like the host this stands in for: an
                         // extension calling sleep() is spacing out its own
-                        // requests and does not await the answer.
-                        var until = Date.now() + Math.min(Math.trunc(ms), 30000);
+                        // requests and does not await the answer, so there is
+                        // nothing to suspend on.
+                        //
+                        // Capped well below the original host's ceiling, though,
+                        // and this is the reason: the wait is spent spinning on
+                        // one of the app's shared worker threads, because the
+                        // interpreter is not a goroutine that can park. A second
+                        // is a backoff; thirty was a worker thread taken away
+                        // from playback for as long as somebody's retry policy
+                        // felt like.
+                        var until = Date.now() + Math.min(Math.trunc(ms), 1000);
                         while (Date.now() < until) { /* spin, as the original does */ }
                         return true;
                     },
