@@ -2,8 +2,6 @@ package com.music.bitchord.data.sources.addon
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.module.SharedCalls
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -129,11 +127,21 @@ class AddonClient(rawBaseUrl: String) {
      * so trimming the list is the caller's job. Nothing else here is negotiable
      * either: the spec fixes the path, the parameter name and the shape coming
      * back.
+     *
+     * @param wantsAtmos whether the spatial mix is wanted for this question.
+     *   It is asked for on the search as well as on the stream, because a
+     *   catalogue that publishes the immersive mix as its own row — Tidal does
+     *   — offers it as a row or not at all, and a search that did not ask
+     *   would never bring it back to be preferred.
      */
-    suspend fun search(query: String, tier: String): Result<List<AddonTrack>> {
+    suspend fun search(
+        query: String,
+        tier: String,
+        wantsAtmos: Boolean = false,
+    ): Result<List<AddonTrack>> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return Result.success(emptyList())
-        val params = settingsFor(tier)
+        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos))
         return searches.get(
             // The parameters are in the key because they are in the request:
             // the same query at a different quality is a different question,
@@ -162,7 +170,7 @@ class AddonClient(rawBaseUrl: String) {
         // Atmos, because those are the stereo fallback after the immersive
         // rung missed — the shape the reference host uses, and what stops a
         // failed Atmos attempt from being answered with the same mix again.
-        val atmos = if (tier == TIER_ATMOS) ATMOS_AUTO else ATMOS_NONE
+        val atmos = atmosHint(tier == TIER_ATMOS)
         val params = settingsFor(tier, atmos = atmos)
         return streams.get(
             key = keyOf(trackId, params.toString()),
@@ -201,13 +209,13 @@ class AddonClient(rawBaseUrl: String) {
      *
      * Last comes `atmos`, which is the one parameter here that is not about
      * quality. See [atmosHint]; unlike `quality`, it is set rather than filled
-     * in, so it also replaces a default the manifest declared. [stream] passes
-     * its own value: `auto` on the immersive rung and `none` on the stereo
-     * rungs below it — see there.
+     * in, so it also replaces a default the manifest declared. [search] and
+     * [stream] each pass their own value: `auto` when the question is about
+     * the immersive mix and `none` when it is not — see there.
      */
     private suspend fun settingsFor(
         tier: String,
-        atmos: String = atmosHint(),
+        atmos: String,
     ): Map<String, String> {
         val declared = manifest().getOrNull()?.settings.orEmpty()
         val params = LinkedHashMap<String, String>()
@@ -227,9 +235,9 @@ class AddonClient(rawBaseUrl: String) {
     }
 
     /**
-     * `auto` when this device and this user both want immersive audio, `none`
-     * otherwise — the standard `?atmos=` hint the spec defines for hosts, sent
-     * on every request.
+     * `auto` when this question is about the immersive mix, `none` otherwise —
+     * the standard `?atmos=` hint the spec defines for hosts, sent on every
+     * request.
      *
      * Without it an addon holding an Atmos mix has no way to know it may serve
      * one, so it takes its default branch and sends stereo. That is the whole
@@ -243,7 +251,7 @@ class AddonClient(rawBaseUrl: String) {
      *    mode, where a track with no immersive mix is an error rather than a
      *    stereo answer — which would turn every ordinary track on an
      *    Atmos-capable addon into a miss. `auto` is try-Atmos-then-stereo.
-     *  - **It is asked for, not asserted.** Both gates are the same two the
+     *  - **It is asked for, not asserted.** The gate is the same one the
      *    playback side enforces in
      *    [ModuleSource.unplayable][com.music.bitchord.data.sources.ModuleSource.unplayable],
      *    so an addon is only ever offered Atmos when an Atmos answer would
@@ -252,24 +260,23 @@ class AddonClient(rawBaseUrl: String) {
      *    `putIfAbsent`, on the reasoning that an addon declaring its own
      *    `atmos` setting had said what it wants. That reasoning is wrong under
      *    the manifest's own contract: a declared value is a *default for a host
-     *    that has no preference*, and this host does — the Settings switch.
-     *    An addon whose schema defaults `atmos` to `off` therefore never served
+     *    that has no preference*, and this host does — the rung in force. An
+     *    addon whose schema defaults `atmos` to `off` therefore never served
      *    an immersive mix no matter what the listener turned on, which is
      *    exactly a report of "Atmos is enabled but not working, with the same
-     *    addon". `none` when the gates are shut is the other half: it tells an
+     *    addon". `none` when the gate is shut is the other half: it tells an
      *    addon that defaults to `auto` not to send a mix this device would only
      *    refuse. Addons that have never heard of the parameter ignore it, which
      *    is the same basis on which `quality` is already sent
      *    unconditionally.
      *
-     * Nothing here names a particular addon. The decoder probe is cached per
-     * process and the settings read is a flow's current value, so this costs
-     * nothing on the IO thread it already runs on.
+     * The gate is the request rather than a setting, so the two questions
+     * stay apart: the file being saved and the stream being played each ask
+     * for the spatial mix or do not, and a lossless request is answered with
+     * a lossless file even while a Dolby stream is playing.
      */
-    private fun atmosHint(): String {
-        val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
-        return if (wanted) ATMOS_AUTO else ATMOS_NONE
-    }
+    private fun atmosHint(wantsAtmos: Boolean): String =
+        if (wantsAtmos) ATMOS_AUTO else ATMOS_NONE
 
     /**
      * The option in [options] that best answers a request for [tier], or null

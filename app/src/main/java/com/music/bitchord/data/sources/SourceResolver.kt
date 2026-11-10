@@ -64,11 +64,14 @@ object SourceResolver {
         // sources. It was a switch whose only real effect was to downgrade the
         // one source that could do better.
         return when {
-            // The immersive rung is the lossless walk plus an Atmos answer
-            // preferred ahead of it: a track with no Atmos master must still
-            // play its FLAC, and [preferred]/[isBetter] already put an
-            // immersive rendition first when one is on offer.
-            ceiling == AudioQuality.DOLBY || ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
+            // The immersive rung is its own request rather than the lossless
+            // one with a flag on it: the two answers are different files, and a
+            // request that could not say which it wanted would be answered
+            // with the spatial mix by every source that holds one. The
+            // fallback is the lossless walk — a track with no Atmos master must
+            // still play its FLAC.
+            ceiling == AudioQuality.DOLBY -> StreamRequest.Atmos
+            ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
             ceiling.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
             else -> StreamRequest.Capped(ceiling.maxKbps)
         }
@@ -100,6 +103,11 @@ object SourceResolver {
     fun requestForDownload(
         quality: DownloadQuality = AppSettings.downloadQuality.value,
     ): StreamRequest = when {
+        // The immersive rung first, because it is the one that also wants a
+        // bit-exact answer: the walk it asks for is the spatial mix where the
+        // catalogue holds one and the lossless ladder below it where it does
+        // not.
+        quality.wantsAtmos -> StreamRequest.Atmos
         quality.keepsLossless -> StreamRequest.Lossless
         quality.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
         else -> StreamRequest.Capped(quality.maxKbps)
@@ -160,7 +168,7 @@ object SourceResolver {
         // asking first. This is the whole reason the list is ordered — it is
         // what makes "my own FLAC of this, if I have one, else stream it"
         // expressible.
-        if (request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
+        if (request.wantsLossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
                 val upgraded = matchAndStream(source, target, request) ?: continue
@@ -559,16 +567,16 @@ object SourceResolver {
         request: StreamRequest = requestForDownload(),
     ): SourceStream? = coroutineScope {
         if (target.title.isBlank()) return@coroutineScope null
-        val wantsLossless = when (request) {
-            is StreamRequest.Lossless -> true
-            is StreamRequest.Best -> false
-            // Standard, and the one rung the sources are no use for: it is a
-            // ceiling of 128kbps chosen to fit more on the device, and a source
-            // has no way to be asked for *that* rung rather than for the best it
-            // has. JioSaavn's 320 is not a better answer to it, it is the wrong
-            // answer to it. YouTube's ladder is the only one that can be capped.
-            is StreamRequest.Capped -> return@coroutineScope null
-        }
+        // Standard, and the one rung the sources are no use for: it is a
+        // ceiling of 128kbps chosen to fit more on the device, and a source
+        // has no way to be asked for *that* rung rather than for the best it
+        // has. JioSaavn's 320 is not a better answer to it, it is the wrong
+        // answer to it. YouTube's ladder is the only one that can be capped.
+        if (request is StreamRequest.Capped) return@coroutineScope null
+        // The immersive rung counts as bit-exact: it falls back down the
+        // lossless ladder rather than to a lossy file, so a source that can
+        // only offer a FLAC is still the right source to ask.
+        val wantsLossless = request.wantsLossless
         // [SourceRegistry.active] rather than the playback list: a download is
         // not budgeted by the connection's streaming ceiling. What it keeps is
         // [DownloadQuality]'s answer and what it may spend is
@@ -764,7 +772,7 @@ object SourceResolver {
      * below it.
      */
     internal fun immersiveRungActive(): Boolean =
-        AppSettings.effectiveAudioQuality == AudioQuality.DOLBY && DeviceCodecs.playsDolbyAtmos
+        DeviceCodecs.playsDolbyAtmos && requestForNow().wantsAtmos
 
     /**
      * Whether two runtimes are close enough to be the same recording, for a
@@ -1098,6 +1106,7 @@ object SourceResolver {
         matches: List<Song>,
         target: TrackMatcher.Target,
         wantsLossless: Boolean,
+        wantsAtmos: Boolean = atmosWanted(),
     ): List<Song> {
         val sameLength = matches.filter { TrackMatcher.withinSeconds(it, target, SAME_RECORDING_SEC) }
         val eligible = sameLength.ifEmpty { matches }
@@ -1110,7 +1119,7 @@ object SourceResolver {
         // [streamBest] stops at the first row that answers, and an Atmos
         // answer on a device that cannot play it was already refused upstream
         // by [ModuleSource.unplayable].
-        if (atmosWanted()) {
+        if (wantsAtmos) {
             val immersiveFirst = eligible.sortedByDescending { it.sourceQuality == ModuleSource.DOLBY }
             if (immersiveFirst.firstOrNull()?.sourceQuality == ModuleSource.DOLBY) return immersiveFirst
         }
@@ -1122,11 +1131,14 @@ object SourceResolver {
 
     /**
      * Whether an immersive mix is worth preferring right now — device
-     * capability plus the listener's answer, which is either the master switch
-     * or the Dolby Atmos rung on this connection. The same two gates the
-     * playback side enforces in [ModuleSource.unplayable] and the addon path
-     * sends its `?atmos=` hint on, asked in the one place that chooses between
-     * rows.
+     * capability plus the listener's answer, which is the Dolby Atmos rung on
+     * this connection. The same two gates the playback side enforces in
+     * [ModuleSource.unplayable] and the addon path sends its `?atmos=` hint on,
+     * asked in the one place that chooses between rows.
+     *
+     * The default for [preferred], and the *streaming* answer: a request that
+     * carries its own signal — the immersive rung, or a download that asked
+     * for the spatial mix — passes it in instead.
      */
     private fun atmosWanted(): Boolean =
         DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
@@ -1137,8 +1149,13 @@ object SourceResolver {
         target: TrackMatcher.Target,
         request: StreamRequest,
     ): SourceStream? {
-        val wantsLossless = request is StreamRequest.Lossless
-        val ordered = preferred(matches, target, wantsLossless)
+        val wantsLossless = request.wantsLossless
+        // The request's own signal, not the streaming rung's: a download that
+        // asked for the spatial mix wants it even when the stream on this
+        // connection is plain lossless, and a download that did not ask for it
+        // must not be given one because the stream happens to be Dolby.
+        val wantsAtmos = DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
+        val ordered = preferred(matches, target, wantsLossless, wantsAtmos)
         var settleFor: SourceStream? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId

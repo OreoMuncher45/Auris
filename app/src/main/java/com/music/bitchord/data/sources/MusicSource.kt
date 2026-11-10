@@ -75,11 +75,51 @@ sealed interface StreamRequest {
     /** Bit-exact, whatever it costs. Sources that can't do it should say so rather than substitute. */
     data object Lossless : StreamRequest
 
+    /**
+     * The immersive mix where the catalogue holds one, and the bit-exact
+     * ladder below it where it does not.
+     *
+     * Its own rung rather than a flag on [Lossless], because the two answers
+     * it gives are different files: E-AC-3 JOC is a lossy spatial mix and a
+     * FLAC is the same recording without the room. A request that wanted
+     * "lossless, and Atmos if there is one" could not say which of the two it
+     * would take, and a source that filed the spatial mix under the lossless
+     * tier would answer a lossless request with it.
+     *
+     * So the immersive walk is its own request: an Atmos answer settles it,
+     * and a bit-exact one settles it too — a track with no spatial master
+     * still has a file worth keeping.
+     */
+    data object Atmos : StreamRequest
+
     /** A transcode at or below [maxKbps]. What a metered connection asks for. */
     data class Capped(val maxKbps: Int) : StreamRequest
 
     /** Whatever the source considers its best lossy rendition. */
     data object Best : StreamRequest
+
+    /**
+     * Whether a bit-exact answer is wanted.
+     *
+     * True for [Atmos] as well as [Lossless]: the immersive rung falls back
+     * down the bit-exact ladder rather than to a lossy file, so a source that
+     * can only offer a FLAC is still the right source to ask.
+     */
+    val wantsLossless: Boolean
+        get() = this is Lossless || this is Atmos
+
+    /**
+     * Whether an immersive answer is wanted.
+     *
+     * Read from the request rather than from a setting, because the answer
+     * belongs to one question: a file being kept and a stream being played
+     * are two questions, and a listener who asked for the spatial mix on the
+     * stream did not ask for it in the file they save. A setting that decided
+     * both at once gave a Lossless download an Atmos file on any connection
+     * whose streaming rung was Dolby.
+     */
+    val wantsAtmos: Boolean
+        get() = this is Atmos
 }
 
 /**

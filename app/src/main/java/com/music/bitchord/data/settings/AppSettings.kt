@@ -112,6 +112,13 @@ enum class OutputPcmMode(val label: String) {
  * while configured sources can supply their own AAC or lossless copy. And
  * [LOSSLESS] has no streaming counterpart at all: it is the only rung that lets
  * a configured source's bit-exact file end up as a file on disk.
+ *
+ * [DOLBY] is the one rung that asks for something other than a copy of the
+ * recording: the spatial mix, where the catalogue holds one, and the bit-exact
+ * ladder below it where it does not. It is a rung of its own rather than a
+ * modifier on [LOSSLESS] because the two are different files — E-AC-3 JOC is
+ * lossy and spatial, FLAC is neither — and a listener who picked one deserves
+ * the file they picked rather than the other one.
  */
 enum class DownloadQuality(
     /** Ceiling for the YouTube Opus ladder. [Int.MAX_VALUE] means "whichever rung is best". */
@@ -122,15 +129,32 @@ enum class DownloadQuality(
     val perTrack: String,
     /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
     val keepsLossless: Boolean,
+    /**
+     * Whether this rung asks for the immersive mix.
+     *
+     * Its own statement rather than something read off the streaming rung: the
+     * file being kept and the stream being played are two questions, and a
+     * listener who asked for Dolby Atmos while streaming did not ask for a
+     * spatial mix in the file they save — nor the other way round.
+     */
+    val wantsAtmos: Boolean = false,
 ) {
     STANDARD(128, "Standard", "~128 kbps Opus · fits more on the device", "~4 MB", false),
     HIGH(Int.MAX_VALUE, "High", "Best audio on offer; source quality first", "~8 MB", false),
     LOSSLESS(
         Int.MAX_VALUE,
         "Lossless",
-        "Bit-exact if a source has it, best Opus if not",
+        "Up to hi-res · never the spatial mix",
         "~35 MB",
         true,
+    ),
+    DOLBY(
+        Int.MAX_VALUE,
+        "Dolby Atmos",
+        "Immersive E-AC-3 where held, lossless below it",
+        "~20 MB",
+        true,
+        wantsAtmos = true,
     ),
 }
 

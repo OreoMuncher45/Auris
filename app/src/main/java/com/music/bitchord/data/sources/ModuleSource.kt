@@ -362,9 +362,9 @@ class ModuleSource(
                 bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
             )
             val playsAtmos = DeviceCodecs.playsDolbyAtmos
-            if (unplayable(format, atmosAllowed = playsAtmos && AppSettings.wantsDolbyAtmos)) {
+            if (unplayable(format, atmosAllowed = playsAtmos && request.wantsAtmos)) {
                 val why = if (playsAtmos) {
-                    "which is switched off in Settings"
+                    "which this request did not ask for"
                 } else {
                     "which this device has no decoder for"
                 }
@@ -443,7 +443,7 @@ class ModuleSource(
      */
     private fun settingsFor(request: StreamRequest): Map<String, String> = mapOf(
         "quality" to request.tier,
-        "fallbackMode" to if (request is StreamRequest.Lossless) "strict" else "flexible",
+        "fallbackMode" to if (request.wantsLossless) "strict" else "flexible",
         // Whether an immersive rendition is wanted at all, which the tier
         // above cannot express: `LOSSLESS` is a statement about bit-exactness
         // and Atmos is not bit-exact, so a module reading only the tier has to
@@ -452,16 +452,26 @@ class ModuleSource(
         // guess FLAC and a device that can render the spatial mix never gets
         // offered it. This says it outright.
         //
+        // Read off the request rather than off a setting, because the request
+        // is the question: a module asked for a file on a Dolby rung is told
+        // yes, and a module asked for a plain lossless file is told no even
+        // when the stream being played right now is Dolby.
+        //
         // Repeats what [unplayable] enforces on the way back rather than
         // replacing it. A module is somebody else's JavaScript and is free to
         // ignore anything it is handed — the Tidal one ignores the tier and
         // asks its backend for `MAX` regardless — so this is the polite ask
         // and the check on the response is the guarantee.
-        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos).toString(),
+        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && request.wantsAtmos).toString(),
     )
 
     private val StreamRequest.tier: String
         get() = when (this) {
+            // The module protocol has no immersive tier of its own: the
+            // spatial mix is asked for with the bit-exact tier and the
+            // `dolbyAtmos` flag above, which is how the reference module
+            // answers it.
+            is StreamRequest.Atmos -> LOSSLESS
             is StreamRequest.Lossless -> LOSSLESS
             is StreamRequest.Best -> HIGH
             is StreamRequest.Capped -> if (maxKbps <= LOW_CEILING_KBPS) LOW else HIGH
@@ -572,9 +582,9 @@ class ModuleSource(
          * [atmosAllowed] is the two answers folded into one, because from here
          * they mean the same thing and neither is more binding than the other:
          * the device has no decoder
-         * ([DeviceCodecs.playsDolbyAtmos]) or the listener's quality rung does
-         * not ask for Atmos ([AppSettings.wantsDolbyAtmos]). The caller keeps
-         * them apart only to say which it was in the log.
+         * ([DeviceCodecs.playsDolbyAtmos]) or the request in hand does not ask
+         * for Atmos. The caller keeps them apart only to say which it was in
+         * the log.
          *
          * Caught *here*, where the module answers, rather than by ranking it
          * lower in [SourceResolver]: an Atmos rendition is routinely the only

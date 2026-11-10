@@ -2456,6 +2456,7 @@ private fun DownloadQuality.localizedLabel(): String = stringResource(
         DownloadQuality.STANDARD -> R.string.standard
         DownloadQuality.HIGH -> R.string.high
         DownloadQuality.LOSSLESS -> R.string.lossless
+        DownloadQuality.DOLBY -> R.string.dolby_atmos
     },
 )
 

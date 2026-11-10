@@ -137,7 +137,7 @@ object QualityUpgrade {
      * rather than a pass to queue here.
      */
     internal fun needsLosslessFollowUp(format: StreamFormat): Boolean {
-        if (SourceResolver.requestForNow() !is StreamRequest.Lossless) return false
+        if (!SourceResolver.requestForNow().wantsLossless) return false
         if (SourceResolver.immersiveRungActive()) return false
         return format.isLossless != true && !format.isDolbyAtmos
     }

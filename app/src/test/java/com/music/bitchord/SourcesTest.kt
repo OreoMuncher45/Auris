@@ -7,6 +7,7 @@ import com.music.bitchord.data.jiosaavn.selectBestSaavnStream
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.permits
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.ModuleSource
@@ -852,9 +853,10 @@ class SourcesTest {
 
     /**
      * The Dolby Atmos rung is additive, not a cap: it budgets like Lossless,
-     * every source may still answer, and the request is the same lossless one
-     * with an immersive answer preferred ahead of it. A track with no spatial
-     * master therefore plays its FLAC rather than failing the rung.
+     * every source may still answer, and the request it makes is the immersive
+     * one — the lossless walk with a spatial answer preferred ahead of it. A
+     * track with no spatial master therefore plays its FLAC rather than
+     * failing the rung.
      */
     @Test
     fun `the Dolby Atmos rung budgets like lossless and asks every source`() {
@@ -864,9 +866,38 @@ class SourcesTest {
         AppSettings.meteredConnection.value = null
         AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
         try {
-            assertEquals(StreamRequest.Lossless, SourceResolver.requestForNow())
+            val request = SourceResolver.requestForNow()
+            assertEquals(StreamRequest.Atmos, request)
+            assertTrue(request.wantsLossless)
+            assertTrue(request.wantsAtmos)
             assertTrue(AppSettings.wantsDolbyAtmos)
             SourceKind.entries.forEach { kind -> assertTrue(AudioQuality.DOLBY.permits(kind)) }
+        } finally {
+            AppSettings.audioQualityWifi.value = wifi
+            AppSettings.audioQualityCellular.value = cellular
+            AppSettings.meteredConnection.value = metered
+        }
+    }
+
+    /**
+     * The two questions stay apart: the stream being played and the file being
+     * kept are asked separately, and neither decides the other.
+     *
+     * This is the bug the request-scoped signal exists to kill. The signal used
+     * to be one setting read by everything, so a Lossless *download* was
+     * served an Atmos file on any connection whose streaming rung was Dolby —
+     * the file was not the one the rung named.
+     */
+    @Test
+    fun `the streaming rung and the download rung are asked separately`() {
+        val wifi = AppSettings.audioQualityWifi.value
+        val cellular = AppSettings.audioQualityCellular.value
+        val metered = AppSettings.meteredConnection.value
+        AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        try {
+            assertFalse(SourceResolver.requestForDownload(DownloadQuality.LOSSLESS).wantsAtmos)
+            assertTrue(SourceResolver.requestForDownload(DownloadQuality.DOLBY).wantsAtmos)
         } finally {
             AppSettings.audioQualityWifi.value = wifi
             AppSettings.audioQualityCellular.value = cellular

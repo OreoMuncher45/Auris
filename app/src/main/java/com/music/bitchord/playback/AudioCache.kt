@@ -553,9 +553,13 @@ object AudioCache {
      * key the "atmos on" file was never written to, so the setting actually
      * takes effect on replay; flipping back on reads the original file again
      * rather than re-fetching it.
+     *
+     * Read off the request in force rather than off a setting, so the bucket
+     * matches what the sources were actually asked for — the immersive rung
+     * is what puts an Atmos file there, and nothing else does.
      */
     private fun atmosKeySuffix(): String =
-        if (DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos) "" else "-noatmos"
+        if (DeviceCodecs.playsDolbyAtmos && SourceResolver.requestForNow().wantsAtmos) "" else "-noatmos"
 
     /**
      * Which kind of server a cache entry's bytes came from, as recorded by

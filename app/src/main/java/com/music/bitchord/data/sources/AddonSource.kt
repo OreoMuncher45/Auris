@@ -2,7 +2,6 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.AddonManifest
@@ -198,7 +197,12 @@ class AddonSource(
             if (query.isBlank()) return@withContext emptyList()
             if (!admitted("a search")) return@withContext emptyList()
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
-            val tracks = client.search(query, tier).getOrElse { failure ->
+            // The immersive mix is asked for on the search too, when the
+            // request wants it: a catalogue that publishes the spatial mix as
+            // its own row offers it as a row or not at all, and a search that
+            // did not ask would never bring it back to be preferred.
+            val wantsAtmos = request != null && atmosWanted(request)
+            val tracks = client.search(query, tier, wantsAtmos).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 return@withContext emptyList()
             }
@@ -250,6 +254,7 @@ class AddonSource(
             // so a failed Atmos+FLAC attempt still ends on the best stereo copy
             // this addon has rather than on YouTube.
             var settleFor: SourceStream? = null
+            val atmosAllowed = atmosWanted(request)
             for (tier in tiersFor(request)) {
                 val result = client.stream(trackId, tier)
                 val answer = result.getOrNull()
@@ -262,7 +267,7 @@ class AddonSource(
                         if (failure !is AddonNotFound) {
                             TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId at $tier — ${failure?.message}")
                         }
-                        fromRow(trackId, tier)
+                        fromRow(trackId, tier, atmosAllowed)
                     }
                     answer.url.isBlank() -> {
                         // The addon answered, and said it has nothing for this
@@ -274,9 +279,9 @@ class AddonSource(
                             "${config.displayName}: no $tier stream for $trackId" +
                                 (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
                         )
-                        fromRow(trackId, tier)
+                        fromRow(trackId, tier, atmosAllowed)
                     }
-                    else -> openable(answer.url, answer, trackId, tier)
+                    else -> openable(answer.url, answer, trackId, tier, atmosAllowed)
                 }
                 if (stream == null) continue
 
@@ -291,7 +296,11 @@ class AddonSource(
                     }
                     continue
                 }
-                if (request !is StreamRequest.Lossless) return@withContext stream
+                // The immersive rung is satisfied by a bit-exact answer too: it
+                // falls back down the lossless ladder rather than to a lossy
+                // file, so a track with no spatial master still has one worth
+                // keeping.
+                if (!request.wantsLossless) return@withContext stream
                 if (format.isDolbyAtmos || format.isLossless == true || format.statesNothingLossy) {
                     return@withContext stream
                 }
@@ -310,20 +319,25 @@ class AddonSource(
      * same track: jumping from the immersive rung straight to `lossless` skips
      * the only rung that names the hi-res copy. `high` is last and only reached
      * when nothing above it answered; it is the floor, not a peer.
+     *
+     * The immersive rung is walked only when the request asks for it *and* the
+     * device can decode the answer. A phone with no spatial decoder is never
+     * offered one — [ModuleSource.unplayable] would refuse it on the way back
+     * — so asking would spend a request to be told no.
      */
     private fun tiersFor(request: StreamRequest): List<String> = when {
-        request !is StreamRequest.Lossless -> listOf(request.tier)
-        atmosWanted() -> listOf(
+        request.wantsAtmos && DeviceCodecs.playsDolbyAtmos -> listOf(
             AddonClient.TIER_ATMOS,
             AddonClient.TIER_HI_RES,
             AddonClient.TIER_LOSSLESS,
             AddonClient.TIER_HIGH,
         )
-        else -> listOf(
+        request.wantsLossless -> listOf(
             AddonClient.TIER_LOSSLESS,
             AddonClient.TIER_HI_RES,
             AddonClient.TIER_HIGH,
         )
+        else -> listOf(request.tier)
     }
 
     /** Whether a format has said nothing that rules lossless out — see `SourceResolver.streamBest`. */
@@ -341,11 +355,11 @@ class AddonSource(
      * addon that serves permanent direct links and treats `/stream` as optional
      * is otherwise unplayable here for no good reason.
      */
-    private fun fromRow(trackId: String, tier: String): SourceStream? {
+    private fun fromRow(trackId: String, tier: String, atmosAllowed: Boolean): SourceStream? {
         val row = rows[trackId] ?: return null
         val url = row.streamURL?.ifBlank { null } ?: return null
         TrackLog.d(TAG, "${config.displayName}: using the search row's own URL for $trackId")
-        return openable(url, AddonStream(url = url, format = row.format), trackId, tier)
+        return openable(url, AddonStream(url = url, format = row.format), trackId, tier, atmosAllowed)
     }
 
     /**
@@ -365,14 +379,25 @@ class AddonSource(
      */
     /**
      * Whether this request should go looking for an immersive answer: the
-     * phone can decode one and the listener asked for one — by the master
-     * switch or by the Dolby Atmos quality rung on this connection. The same
-     * two answers [SourceResolver] and [ModuleSource.unplayable] read.
+     * phone can decode one and the request asked for one — the Dolby Atmos
+     * rung on the stream, or the Dolby Atmos rung on a download.
+     *
+     * Read off the request rather than off a setting, so the file being kept
+     * and the stream being played are two questions: a Lossless download is
+     * answered with a lossless file even while a Dolby stream is playing, and
+     * a Dolby download is answered with the spatial mix even while the stream
+     * is plain lossless.
      */
-    private fun atmosWanted(): Boolean =
-        DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
+    private fun atmosWanted(request: StreamRequest): Boolean =
+        DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
 
-    private fun openable(url: String, answer: AddonStream, trackId: String, tier: String): SourceStream? {
+    private fun openable(
+        url: String,
+        answer: AddonStream,
+        trackId: String,
+        tier: String,
+        atmosAllowed: Boolean,
+    ): SourceStream? {
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
                 TAG,
@@ -390,9 +415,9 @@ class AddonSource(
 
         val format = formatOf(answer, url, tier)
         val playsAtmos = DeviceCodecs.playsDolbyAtmos
-        if (ModuleSource.unplayable(format, atmosAllowed = atmosWanted())) {
+        if (ModuleSource.unplayable(format, atmosAllowed = atmosAllowed)) {
             val why = if (playsAtmos) {
-                "which is switched off in Settings"
+                "which this request did not ask for"
             } else {
                 "which this device has no decoder for"
             }
@@ -414,7 +439,7 @@ class AddonSource(
                 "ATMOS",
                 "${config.displayName}: $trackId → ${format.summary} " +
                     "(${answer.transport ?: "no transport"}, decoder=$playsAtmos, " +
-                    "atmos=${AppSettings.wantsDolbyAtmos})",
+                    "atmos=$atmosAllowed)",
             )
         }
 
@@ -513,6 +538,11 @@ class AddonSource(
     /** What this app asks an addon for, in the vocabulary the reference host uses. */
     private val StreamRequest.tier: String
         get() = when (this) {
+            // The immersive rung has no tier of its own in this vocabulary —
+            // it is `atmos`, and it is asked for on the stream walk rather than
+            // as the search's quality. The search asks for the bit-exact tier
+            // and lets the walk below it find the spatial mix.
+            is StreamRequest.Atmos -> AddonClient.TIER_LOSSLESS
             is StreamRequest.Lossless -> AddonClient.TIER_LOSSLESS
             is StreamRequest.Best -> AddonClient.TIER_HIGH
             is StreamRequest.Capped ->
