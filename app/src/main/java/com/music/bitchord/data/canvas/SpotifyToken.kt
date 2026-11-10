@@ -440,6 +440,25 @@ internal object SpotifyToken {
     }
 
     /**
+     * The web player's own build number, as the page states it.
+     *
+     * Two things need it: the `spotify-app-version` header the web player's
+     * own backend expects, and the operation table's freshness — Spotify ships
+     * a build about once a day, and a request that names an old one is
+     * refused.
+     */
+    suspend fun clientVersion(): String? = withContext(Dispatchers.IO) { session()?.clientVersion }
+
+    /**
+     * The `sp_t` cookie the web player hands to every visitor.
+     *
+     * The home feed asks for it by name, and a browser id is what it is: one
+     * per install, kept across launches, so Spotify sees a returning visitor
+     * rather than a new one every time the app starts.
+     */
+    suspend fun spToken(): String? = withContext(Dispatchers.IO) { session()?.deviceId }
+
+    /**
      * [SessionInfo.clientVersion] and [SessionInfo.deviceId] both come off the
      * plain, unauthenticated web player page — the client version from a JSON
      * blob it embeds for itself, the device id from the `sp_t` cookie it hands

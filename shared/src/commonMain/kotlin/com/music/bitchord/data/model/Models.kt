@@ -406,6 +406,39 @@ data class HomeShelf(
 )
 
 /**
+ * What a home page says above its shelves.
+ *
+ * A list of shelves is enough for a page of rows, and that is all YouTube's
+ * home has ever needed. Spotify's own home is not that: it opens with a
+ * greeting, a row of chips the page can be narrowed by, and a grid of quick
+ * access tiles before the shelves begin.
+ *
+ * None of that is carried inside a shelf, because none of it is a shelf: the
+ * greeting belongs to the page, the chips belong to the page, and the tiles
+ * are a grid rather than a row. Putting them in a shelf and giving the shelf
+ * an empty title would draw a heading over nothing and make the page's
+ * structure a thing every reader has to decode.
+ */
+data class HomeHeader(
+    /** "Good evening", or whatever the provider says. */
+    val greeting: String? = null,
+    /** The quick-access grid at the top of the page. */
+    val shortcuts: List<ShelfItem> = emptyList(),
+    /** The chips the page can be narrowed by. */
+    val chips: List<HomeChip> = emptyList(),
+    /** The chip in force, or "" for the whole page. */
+    val chip: String = "",
+)
+
+/** One chip on a home page, and the chips that open beside it. */
+data class HomeChip(
+    /** The provider's own id for it, sent back when it is picked. */
+    val id: String,
+    val label: String,
+    val subChips: List<HomeChip> = emptyList(),
+)
+
+/**
  * These shelves minus any that mostly repeat one already on the page, or one earlier in this
  * batch. YouTube serves the same new releases from FEmusic_new_releases ("Albums & singles") and
  * FEmusic_explore ("New albums & singles"), lightly reordered under a different heading, so a

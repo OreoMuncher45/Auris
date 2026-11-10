@@ -1,0 +1,263 @@
+package com.music.bitchord.data.spotify
+
+import android.content.Context
+import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.Http
+import com.music.bitchord.data.canvas.CANVAS_UA
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import okhttp3.Request
+import java.io.File
+
+/**
+ * Spotify's persisted GraphQL operations: a name and a hash.
+ *
+ * ## What this is
+ *
+ * The web player does not send its queries as text. It sends a *name* and a
+ * hash, and Spotify's own backend has the text stored against that hash. The
+ * hash therefore changes whenever Spotify ships a build, and a request naming
+ * an old hash is refused — which is not a rate limit, and is not fixed by
+ * waiting.
+ *
+ * This app's Spotify reads had already rotted: the hashes it carried for the
+ * library and the playlist pages are older than the ones the current web
+ * player uses. Nothing in the app noticed. A refused hash and an empty
+ * library look exactly the same from the outside, and the only clue was a log
+ * line nobody reads.
+ *
+ * ## Why it is fetched rather than written down
+ *
+ * The table can be read off the web player's own bundles: each one defines
+ * its operations as `new X("name","query","hash")`. The page names its build
+ * and lists its bundles, so the current table is one page fetch and a handful
+ * of JavaScript downloads away — a few hundred kilobytes, once a day, and
+ * only when the build has actually changed.
+ *
+ * The bundled table below is the fallback, not the source: it is what the app
+ * knows before it has looked, and it is what a failed refresh falls back to.
+ * A refresh that produces fewer operations than the bundled table has is
+ * treated as a failed refresh rather than a smaller table, because a partial
+ * read of six megabytes of JavaScript is a failure and not a new truth.
+ */
+internal object SpotifyOps {
+
+    private const val TAG = "SpotifyOps"
+
+    /**
+     * The operations this app asks for, with the hashes the web player used
+     * when they were written down.
+     *
+     * Provenance: the hashes are the ones the current web player ships, read
+     * the same way [refresh] reads them. They are kept here so the app works
+     * before it has looked, and so a failed look is not a broken app.
+     */
+    private val bundled: Map<String, String> = mapOf(
+        // The home feed: greeting, chips and the sections behind the page.
+        "home" to "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1",
+        // The public catalogue's category grid.
+        "browseAll" to "dbd8b55e09a58afc52eab438bc228ba28fd72ac2f2148c6c26354980e4579001",
+        // One category's page.
+        "browsePage" to "f5c4e6d668f5716464a231c1cc8b22c1cbf6ad68b09929fd7de813a30581298b",
+        // The listener's library, and one page of it.
+        "libraryV3" to "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455",
+        "fetchPlaylist" to "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf",
+        "fetchLibraryTracks" to "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240",
+        // An album's page and its tracks.
+        "getAlbum" to "11c9cad9cb24c4f9e25ef9456f68621cfd6006a90f679e729c1d2f2fd70dfe16",
+        // An artist's page: top tracks, discography, related.
+        "queryArtistOverview" to "9f8134ef565e78621f1e1793555bd6633c5ac144ae0f89604ed3ae3f80b3c8e6",
+        // What is new, for a listener who has not signed in.
+        "queryWhatsNewFeed" to "d889c8c936ab192af8ced595427f5ba2acdf63478fdc0a181c8d477f8322630e",
+        // Search, for the tabs a listener might reach for.
+        "searchTracks" to "b02683192a98dde7966b5e6655a79eeb62713eab703eda9902c932818dd52751",
+        "searchAlbums" to "202cb3305e31e5a0767ba7925f28bd728cf8f8b0217e6da43909056071cd70e9",
+        "searchArtists" to "7bf95d754fdbe32c8b161fbbe54d1ae50974900df4dce4c8f1afcbcad153224d",
+        "searchPlaylists" to "d520014e748f9ea44f7707d8df1819867ac1205e8b7f3e28f22fe5fc858921b1",
+        // The cover art of a collection whose own page does not carry one.
+        "lookupChildEntities" to "91ce02e32b19123de231dc8de91fe4b9ab84eca087d4c015549308d77fbb6d10",
+    )
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    /** The table in use: the fetched one when there is one, the bundled one otherwise. */
+    @Volatile
+    private var table: Map<String, String> = bundled
+
+    /** Where the fetched table is kept, and when it was last looked at. */
+    private var cache: File? = null
+    private var checkedAt: File? = null
+
+    /** Whether a refresh has already been tried in this process. */
+    @Volatile
+    private var refreshed = false
+
+    /**
+     * The hash for [name], or null when this build has never heard of it.
+     *
+     * Null rather than a stale hash on purpose: a request naming a hash the
+     * backend no longer has is refused, and a request that is not made is not.
+     */
+    fun hash(name: String): String? = table[name]
+
+    /**
+     * Reads the fetched table off disk, if there is one.
+     *
+     * Called once at start. The table is a cache of a fact about Spotify, not
+     * state of the listener's, so a stale one on disk is still better than
+     * the bundled one — the bundled one is a snapshot of a day that has
+     * passed.
+     */
+    fun init(context: Context) {
+        val directory = File(context.filesDir, "spotify")
+        if (!directory.isDirectory && !directory.mkdirs()) return
+        cache = File(directory, "ops.json")
+        checkedAt = File(directory, "ops.checked")
+        val cached = cache?.takeIf { it.isFile }?.let { file ->
+            runCatching {
+                json.parseToJsonElement(file.readText()).jsonObject["operations"]?.jsonObject
+                    ?.mapNotNull { (name, value) ->
+                        value.jsonObject["hash"]?.jsonPrimitive?.content
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { name to it }
+                    }
+                    ?.toMap()
+            }.getOrNull()
+        }
+        if (!cached.isNullOrEmpty()) {
+            // The fetched table wins, but never loses an operation the bundled
+            // table knows: a bundle that no longer mentions one is not a
+            // retraction.
+            table = bundled + cached
+        }
+    }
+
+    /**
+     * Whether a look at the current build is due.
+     *
+     * Not within [minGapMs] of the last one. Every cold start fetched the
+     * player page before, and every Spotify build its megabytes of bundles,
+     * next to the page loading the same; Spotify ships a build about a day,
+     * so anything more often than that is the same answer asked twice.
+     */
+    fun due(now: Long = System.currentTimeMillis(), minGapMs: Long = CHECK_GAP_MS): Boolean {
+        val last = checkedAt?.takeIf { it.isFile }?.let { runCatching { it.readText().trim().toLong() }.getOrNull() }
+            ?: return true
+        return now - last !in 0 until minGapMs
+    }
+
+    /**
+     * Fetches the current build and reads its operations out of it.
+     *
+     * Returns the new table when the build changed, null when it did not, when
+     * the look was not due, or when the look failed. Nothing here throws: a
+     * failed look leaves the table in use, which is the whole point of having
+     * one bundled.
+     */
+    suspend fun refresh(): Map<String, String>? = withContext(Dispatchers.IO) {
+        if (refreshed) return@withContext null
+        refreshed = true
+        if (!due()) return@withContext null
+
+        val html = get("https://open.spotify.com/") ?: return@withContext null
+        val urls = LinkedHashSet<String>()
+        BUNDLE.findAll(html).forEach { urls += it.groupValues[1] }
+        scriptBlock(html, "__CDN_FILE_URLS__")?.forEach { (_, value) ->
+            if (value.endsWith(".js") && value.contains("/web-player/")) urls += value
+        }
+        if (urls.isEmpty()) return@withContext null
+
+        val found = HashMap<String, String>()
+        val gate = Semaphore(6)
+        coroutineScope {
+            urls.map { url -> async { gate.withPermit { runCatching { get(url) }.getOrNull() } } }
+                .awaitAll()
+        }.filterNotNull().forEach { body -> found += parseBundleOperations(body) }
+
+        // A partial read must not shrink the table: fewer operations than the
+        // bundled one means the bundles did not all arrive, which is a failure
+        // and not a new truth.
+        if (found.size < bundled.size / 2) {
+            Log.w(TAG, "the bundle read found only ${found.size} operations; keeping the table in use")
+            markChecked()
+            return@withContext null
+        }
+        val merged = bundled + found
+        table = merged
+        writeCache(merged)
+        markChecked()
+        Log.d(TAG, "read ${found.size} operations from the current build")
+        merged
+    }
+
+    /** Writes the table beside the app's other cached files. */
+    private fun writeCache(operations: Map<String, String>) {
+        val file = cache ?: return
+        runCatching {
+            val payload = buildJsonObject {
+                putJsonObject("operations") {
+                    operations.forEach { (name, hash) ->
+                        putJsonObject(name) { put("hash", hash) }
+                    }
+                }
+            }
+            file.writeText(payload.toString())
+        }
+    }
+
+    private fun markChecked() {
+        runCatching { checkedAt?.writeText(System.currentTimeMillis().toString()) }
+    }
+
+    /** A `<script id="…">` block of the page, decoded and read as JSON. */
+    private fun scriptBlock(html: String, id: String): Map<String, String>? {
+        val match = Regex("""<script id="$id"[^>]*>([^<]+)</script>""").find(html) ?: return null
+        val raw = match.groupValues[1].trim()
+        val decoded = runCatching { String(java.util.Base64.getDecoder().decode(raw), Charsets.UTF_8) }
+            .getOrDefault(raw)
+        return runCatching {
+            json.parseToJsonElement(decoded).jsonObject.mapValues { (_, value) ->
+                (value as? JsonPrimitive)?.content.orEmpty()
+            }
+        }.getOrNull()
+    }
+
+    private fun get(url: String): String? = runCatching {
+        val request = Request.Builder().url(url).header("User-Agent", CANVAS_UA).build()
+        Http.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            response.body?.string()
+        }
+    }.getOrNull()
+
+    /** The least time between two looks at Spotify's current build. */
+    const val CHECK_GAP_MS = 6 * 3_600_000L
+
+    /**
+     * The operations named in one bundle.
+     *
+     * The bundles define their operations as `new X("name","query","hash")`.
+     * Only the name and the hash are wanted — the query text is Spotify's own
+     * and is never sent, because the backend has it already.
+     */
+    internal fun parseBundleOperations(body: String): Map<String, String> =
+        OP.findAll(body).associate { it.groupValues[1] to it.groupValues[3] }
+
+    private val BUNDLE = Regex("""https://open\.spotifycdn\.com/cdn/build/web-player/[^"']+?\.js""")
+
+    /** `new X("name","query","hash")`, as the bundles define their operations. */
+    private val OP = Regex("""new [\w$]+(?:\.[\w$]+)?\("(\w+)","(query|mutation|subscription)","([0-9a-f]{64})"""")
+}

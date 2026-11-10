@@ -18,7 +18,11 @@ import com.music.bitchord.data.presence.AndroidPresence
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
+import com.music.bitchord.data.spotify.SPOTIFY_ALBUM_PREFIX
+import com.music.bitchord.data.spotify.SPOTIFY_ARTIST_PREFIX
+import com.music.bitchord.data.spotify.SPOTIFY_CATEGORY_PREFIX
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
+import com.music.bitchord.data.spotify.SpotifyPages
 import com.music.bitchord.data.spotify.SpotifyImporter
 import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.data.spotify.SpotifyTrack
@@ -41,6 +45,7 @@ import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.DetailPage
+import com.music.bitchord.data.model.HomeHeader
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.isQuickPicksShelfTitle
 import com.music.bitchord.data.model.withQuickPicks
@@ -152,6 +157,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * of being painted over the top of it.
      */
     private val _homeRaw = MutableStateFlow<List<HomeShelf>>(emptyList())
+
+    /**
+     * What the page says above its shelves: a greeting, a grid of shortcuts,
+     * and the chips it can be narrowed by.
+     *
+     * Null for a provider whose home is nothing but shelves — YouTube's has
+     * never had a header, and this is not a change to it. Spotify's home has
+     * all three, because Spotify's own does.
+     */
+    private val _homeHeader = MutableStateFlow<HomeHeader?>(null)
+    val homeHeader: StateFlow<HomeHeader?> = _homeHeader.asStateFlow()
+
+    /**
+     * The chip the Spotify home is narrowed by.
+     *
+     * Kept here rather than in the screen, because the chip is part of the
+     * *request*: Spotify's feed is asked for again with the chip in force,
+     * and the answer replaces the page rather than filtering it.
+     */
+    private val homeFacet = MutableStateFlow("")
 
     /**
      * The quick-picks row's own songs, kept whether the row is on the page
@@ -2293,6 +2318,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homeShelfTitles.value = emptyList()
         _homeQuickPicksItems.value = emptyList()
         _homeRaw.value = emptyList()
+        // The header is *kept* while the page reloads. The chips in it are the
+        // way back to the whole feed: a page that hid them while it loaded —
+        // and again when the load failed — left a listener who had narrowed the
+        // page stuck in the narrowed page. Only a change of provider clears
+        // it, because only then is it another provider's header.
+        if (AppSettings.homeProvider.value != HomeProvider.SPOTIFY) {
+            _homeHeader.value = null
+        }
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2372,27 +2405,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun loadSpotifyHome(identity: String?, generation: Long) {
         homeContinuation = null
+        val facet = homeFacet.value
         viewModelScope.launch {
-            val outcome = runCatching { SpotifyHomeSource.shelves() }.getOrNull()
+            val outcome = runCatching { SpotifyHomeSource.page(facet) }.getOrNull()
             if (!isCurrentHomeLoad(identity, generation)) return@launch
-            if (outcome == null || outcome.shelves.isEmpty()) {
+            if (outcome == null || outcome.isEmpty) {
                 // The provider's own words for it. An empty Spotify home has
-                // three unrelated causes — no token, a refused endpoint, and
-                // rows read but nothing matched on the YouTube side — and they
-                // need opposite fixes, so the message names the one that
-                // happened instead of saying "nothing to show" to all three.
+                // several unrelated causes — no token, a refused endpoint, a
+                // feed read and found to hold no cards — and they need opposite
+                // fixes, so the message names the one that happened instead of
+                // saying "nothing to show" to all of them.
                 _home.value = UiState.Error(outcome?.reason ?: "Spotify returned nothing to show")
                 return@launch
             }
+            _homeHeader.value = outcome.header
             publishHomeShelves(outcome.shelves)
         }
     }
 
+    /**
+     * The chip the listener picked.
+     *
+     * Spotify's feed is asked for again with the chip in force and the answer
+     * replaces the page: the chip is not a filter over the shelves already
+     * drawn, it is a different question to Spotify.
+     *
+     * Picking the chip that is already in force does nothing. The way back to
+     * the whole page is the close button beside the chip, which is where
+     * Spotify puts it — a chip that undid itself on a second tap would make
+     * the row a toggle nobody could read the state of.
+     */
+    fun selectHomeChip(chip: String) {
+        if (AppSettings.homeProvider.value != HomeProvider.SPOTIFY) return
+        if (homeFacet.value == chip) return
+        homeFacet.value = chip
+        loadHome()
+    }
+
     /** [refreshHome]'s Spotify half: the rows, read again rather than carried on. */
     private suspend fun refreshSpotifyHome(identity: String?) {
-        val outcome = runCatching { SpotifyHomeSource.shelves() }.getOrNull() ?: return
-        if (identity != listenerKey() || outcome.shelves.isEmpty()) return
+        val outcome = runCatching { SpotifyHomeSource.page(homeFacet.value) }.getOrNull() ?: return
+        if (identity != listenerKey() || outcome.isEmpty) return
         homeSeenTitles.clear()
+        _homeHeader.value = outcome.header
         _homeRaw.value = outcome.shelves
         publishHome()
     }
@@ -3311,6 +3366,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openSpotifyPage(browseId, title, subtitle, thumbnailUrl)
             return
         }
+        // An album, an artist or a category from Spotify's home. Each of them
+        // is a card on that page, and a card that opens nothing is a dead end,
+        // so each has a page of its own — read through Spotify's own
+        // operations, the way the web player reads them.
+        if (browseId.startsWith(SPOTIFY_ALBUM_PREFIX) ||
+            browseId.startsWith(SPOTIFY_ARTIST_PREFIX) ||
+            browseId.startsWith(SPOTIFY_CATEGORY_PREFIX)
+        ) {
+            openSpotifyCollection(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
         val resolved = browseTypeOf(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
@@ -3559,7 +3625,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
         viewModelScope.launch {
             val playlistId = browseId.removePrefix(SPOTIFY_PAGE_PREFIX)
-            fun open() = _detailStack.value.any { it.browseId == browseId }
             fun setSongs(songs: UiState<List<Song>>) {
                 _detailStack.value = _detailStack.value.map {
                     if (it.browseId == browseId) it.copy(songs = songs) else it
@@ -3585,27 +3650,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 setSongs(UiState.Error(text(R.string.spotify_empty_tracks)))
                 return@launch
             }
-            val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
-            coroutineScope {
-                tracks.forEachIndexed { index, track ->
-                    launch {
-                        gate.withPermit {
-                            if (!open()) return@withPermit
-                            val match = runCatching { SpotifyImporter.matchTrack(track) }.getOrNull()
-                            val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
-                                ?: track.asPendingSong().let {
-                                    it.copy(videoId = SPOTIFY_MISSING_PREFIX + track.id)
-                                }
-                            _detailStack.value = _detailStack.value.map { page ->
-                                val list = (page.songs as? UiState.Success<List<Song>>)?.data
-                                if (page.browseId == browseId && list != null && index < list.size) {
-                                    page.copy(songs = UiState.Success(list.toMutableList().also { it[index] = found }))
-                                } else page
-                            }
-                        }
-                    }
-                }
-            }
+            matchSpotifyTracks(browseId, tracks, ::setSongs)
         }
     }
 
@@ -3619,6 +3664,121 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         },
         albumName = album,
     )
+
+    /**
+     * An album, an artist or a category from Spotify's home.
+     *
+     * The page is pushed with what the card already knew — its title, its
+     * picture — and fills in when Spotify answers: its own name, its own
+     * cover, its tracks and its shelves.
+     *
+     * The tracks are matched to what this app can play the same way a
+     * playlist's are: the rows go up as soon as they are read, marked as
+     * still waiting for their YouTube Music version, and the matches swap in
+     * as they arrive. A page of forty tracks that takes a minute to match is
+     * a page that can be played from while it finishes.
+     */
+    private fun openSpotifyCollection(
+        browseId: String,
+        title: String,
+        subtitle: String,
+        thumbnailUrl: String?,
+    ) {
+        val artist = browseId.startsWith(SPOTIFY_ARTIST_PREFIX)
+        val album = browseId.startsWith(SPOTIFY_ALBUM_PREFIX)
+        _detailStack.value += DetailPage(
+            browseId = browseId,
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = thumbnailUrl,
+            songs = UiState.Loading,
+            type = when {
+                artist -> BrowseType.ARTIST
+                album -> BrowseType.ALBUM
+                else -> BrowseType.OTHER
+            },
+        )
+        viewModelScope.launch {
+            fun setSongs(songs: UiState<List<Song>>) {
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId == browseId) it.copy(songs = songs) else it
+                }
+            }
+            fun fillIn(page: SpotifyPages.Page) {
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId != browseId) return@map it
+                    it.copy(
+                        title = page.title.ifBlank { it.title },
+                        subtitle = page.subtitle.ifBlank { it.subtitle },
+                        thumbnailUrl = page.imageUrl ?: it.thumbnailUrl,
+                        sections = page.shelves,
+                    )
+                }
+            }
+            val page = runCatching {
+                when {
+                    artist -> SpotifyPages.artist(browseId.removePrefix(SPOTIFY_ARTIST_PREFIX))
+                    album -> SpotifyPages.album(browseId.removePrefix(SPOTIFY_ALBUM_PREFIX))
+                    else -> SpotifyPages.category(browseId.removePrefix(SPOTIFY_CATEGORY_PREFIX))
+                }
+            }.getOrElse { error ->
+                // A category has no tracks of its own — it is shelves of
+                // playlists and albums — so an empty track list is not a
+                // failure there. It is only a failure when the page has
+                // nothing at all.
+                setSongs(UiState.Error(error.message ?: text(R.string.failed)))
+                return@launch
+            }
+            fillIn(page)
+            if (page.tracks.isEmpty()) {
+                // Nothing to match, but the shelves are still the page.
+                setSongs(UiState.Success(emptyList()))
+                return@launch
+            }
+            matchSpotifyTracks(browseId, page.tracks, ::setSongs)
+        }
+    }
+
+    /**
+     * The tracks of a Spotify page, matched to what this app will play.
+     *
+     * Shared by the playlist page and the collection pages, because the
+     * matching is the same: a row goes up as soon as the track is read, each
+     * marked as still waiting for its YouTube Music version, and the matches
+     * swap in as they arrive — so the page can be played from before the last
+     * song has been found.
+     */
+    private suspend fun matchSpotifyTracks(
+        browseId: String,
+        tracks: List<SpotifyTrack>,
+        setSongs: (UiState<List<Song>>) -> Unit,
+    ) {
+        setSongs(UiState.Success(tracks.map { it.asPendingSong() }))
+        val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
+        coroutineScope {
+            tracks.forEachIndexed { index, track ->
+                launch {
+                    gate.withPermit {
+                        // The page may have been closed while the search was
+                        // running; the match is then thrown away rather than
+                        // pushed onto a page that is no longer there.
+                        if (_detailStack.value.none { it.browseId == browseId }) return@withPermit
+                        val match = runCatching { SpotifyImporter.matchTrack(track) }.getOrNull()
+                        val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
+                            ?: track.asPendingSong().let {
+                                it.copy(videoId = SPOTIFY_MISSING_PREFIX + track.id)
+                            }
+                        _detailStack.value = _detailStack.value.map { page ->
+                            val list = (page.songs as? UiState.Success<List<Song>>)?.data
+                            if (page.browseId == browseId && list != null && index < list.size) {
+                                page.copy(songs = UiState.Success(list.toMutableList().also { it[index] = found }))
+                            } else page
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fun reloadLocalDetail(browseId: String) {
         viewModelScope.launch {

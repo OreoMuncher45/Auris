@@ -1,11 +1,7 @@
 package com.music.bitchord.data.spotify
 
-import com.music.bitchord.data.Http
-import com.music.bitchord.data.canvas.CANVAS_UA
-import com.music.bitchord.data.canvas.SpotifyToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -19,12 +15,21 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /** A Spotify playlist's page id in the detail stack: this plus the playlist id (or [SpotifyLibrary.LIKED_ID]). */
 const val SPOTIFY_PAGE_PREFIX = "spotify:playlist:"
+
+/** A Spotify album's page id: this plus the album id. */
+const val SPOTIFY_ALBUM_PREFIX = "spotify:album:"
+
+/** A Spotify artist's page id: this plus the artist id. */
+const val SPOTIFY_ARTIST_PREFIX = "spotify:artist:"
+
+/** A Spotify show's page id: this plus the show id. */
+const val SPOTIFY_SHOW_PREFIX = "spotify:show:"
+
+/** A Spotify category's page id: this plus the page id. */
+const val SPOTIFY_CATEGORY_PREFIX = "spotify:page:"
 
 data class SpotifyPlaylist(
     val id: String,
@@ -43,16 +48,10 @@ data class SpotifyTrack(
 )
 
 object SpotifyLibrary {
-    private const val GQL = "https://api-partner.spotify.com/pathfinder/v2/query"
-    private const val LIBRARY = "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3"
-    private const val PLAYLIST = "346811f856fb0b7e4f6c59f8ebea78dd081c6e2fb01b77c954b26259d5fc6763"
     /** The pseudo-playlist id for the Liked Songs collection, which has no playlist uri. */
     const val LIKED_ID = "liked"
     /** Spotify's own Liked Songs artwork, the purple heart; the collection has no cover of its own. */
     private const val LIKED_COVER = "https://misc.scdn.co/liked-songs/liked-songs-640.png"
-    private const val LIKED = "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240"
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-    private val mediaType = "application/json; charset=utf-8".toMediaType()
 
     /**
      * Playlists in the library, however many pages it takes.
@@ -65,12 +64,11 @@ object SpotifyLibrary {
      *   reason this parameter exists.
      */
     suspend fun playlists(maxPages: Int = 0): List<SpotifyPlaylist> = withContext(Dispatchers.IO) {
-        val headers = authHeaders()
         val collected = mutableListOf<SpotifyPlaylist>()
         var offset = 0
         var pages = 0
         while (true) {
-            val (items, total, raw) = playlistPage(headers, offset)
+            val (items, total, raw) = playlistPage(offset)
             collected += items
             offset += raw
             pages++
@@ -91,14 +89,13 @@ object SpotifyLibrary {
         playlistId: String,
         onPage: (List<SpotifyTrack>) -> Unit = {},
     ): List<SpotifyTrack> = withContext(Dispatchers.IO) {
-        val headers = authHeaders()
         val collected = mutableListOf<SpotifyTrack>()
         var offset = 0
         while (true) {
             val (items, total, raw) = if (playlistId == LIKED_ID) {
-                likedPage(headers, offset)
+                likedPage(offset)
             } else {
-                trackPage(headers, playlistId, offset)
+                trackPage(playlistId, offset)
             }
             collected += items
             offset += raw
@@ -116,16 +113,15 @@ object SpotifyLibrary {
      * — the difference is that this one asks for a page and stops.
      */
     suspend fun preview(playlistId: String, limit: Int = 12): List<SpotifyTrack> = withContext(Dispatchers.IO) {
-        val headers = authHeaders()
         val page = if (playlistId == LIKED_ID) {
-            likedPage(headers, offset = 0, limit = limit)
+            likedPage(offset = 0, limit = limit)
         } else {
-            trackPage(headers, playlistId, offset = 0, limit = limit)
+            trackPage(playlistId, offset = 0, limit = limit)
         }
         page.first
     }
 
-    private fun playlistPage(headers: Map<String, String>, offset: Int): Triple<List<SpotifyPlaylist>, Int, Int> {
+    private suspend fun playlistPage(offset: Int): Triple<List<SpotifyPlaylist>, Int, Int> {
         val variables = buildJsonObject {
             putJsonArray("filters") { add("Playlists") }
             put("order", null as String?)
@@ -143,11 +139,10 @@ object SpotifyLibrary {
             put("folderUri", null as String?)
             put("includeFoldersWhenFlattening", false)
         }
-        return parsePlaylistPage(gql("libraryV3", LIBRARY, variables, headers))
+        return parsePlaylistPage(gql("libraryV3", variables))
     }
 
-    private fun trackPage(
-        headers: Map<String, String>,
+    private suspend fun trackPage(
         playlistId: String,
         offset: Int,
         limit: Int = 100,
@@ -158,7 +153,7 @@ object SpotifyLibrary {
             put("limit", limit)
             put("enableWatchFeedEntrypoint", false)
         }
-        return parseTrackPage(gql("fetchPlaylist", PLAYLIST, variables, headers))
+        return parseTrackPage(gql("fetchPlaylist", variables))
     }
 
     /**
@@ -174,12 +169,11 @@ object SpotifyLibrary {
             put("limit", 1)
             put("enableWatchFeedEntrypoint", false)
         }
-        val root = gql("fetchPlaylist", PLAYLIST, variables, authHeaders())
+        val root = gql("fetchPlaylist", variables)
         largestSource(root.obj("data")?.obj("playlistV2")?.obj("images"))
     }
 
-    private fun likedPage(
-        headers: Map<String, String>,
+    private suspend fun likedPage(
         offset: Int,
         limit: Int = 100,
     ): Triple<List<SpotifyTrack>, Int, Int> {
@@ -187,50 +181,23 @@ object SpotifyLibrary {
             put("offset", offset)
             put("limit", limit)
         }
-        return parseLikedPage(gql("fetchLibraryTracks", LIKED, variables, headers))
+        return parseLikedPage(gql("fetchLibraryTracks", variables))
     }
 
-    private suspend fun authHeaders(): Map<String, String> {
-        val token = SpotifyToken.accessToken()
-            ?: throw IllegalStateException("Spotify sign-in expired")
-        return buildMap {
-            put("Authorization", "Bearer $token")
-            put("Accept", "application/json")
-            put("app-platform", "WebPlayer")
-            put("Origin", "https://open.spotify.com")
-            put("Referer", "https://open.spotify.com/")
-            put("User-Agent", CANVAS_UA)
-            SpotifyToken.clientToken()?.let { put("Client-Token", it) }
-        }
-    }
-
-    private fun gql(operation: String, hash: String, variables: JsonObject, headers: Map<String, String>): JsonObject {
-        val body = buildJsonObject {
-            put("variables", variables)
-            put("operationName", operation)
-            putJsonObject("extensions") {
-                putJsonObject("persistedQuery") {
-                    put("version", 1)
-                    put("sha256Hash", hash)
-                }
-            }
-        }
-        val request = Request.Builder()
-            .url(GQL)
-            .post(body.toString().toRequestBody(mediaType))
-            .apply { headers.forEach { (name, value) -> header(name, value) } }
-            .build()
-        val text = Http.client.newCall(request).execute().use { response ->
-            val payload = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw IllegalStateException("Spotify $operation failed (${response.code})")
-            }
-            payload
-        }
-        val root = json.parseToJsonElement(text).jsonObject
-        val error = root.arr("errors")?.firstOrNull()?.jsonObject?.str("message")
-        if (!error.isNullOrBlank()) throw IllegalStateException(error)
-        return root
+    /**
+     * Runs a persisted operation and hands back the answer in the shape the
+     * parsers above read: the whole document, with its `data` under `data`.
+     *
+     * The client that runs it is [SpotifyGraphQL], which knows the current
+     * hash for the operation, the headers the web player sends and what to do
+     * with a refusal. The hashes used to be written down here, and they had
+     * gone stale: Spotify changes the hash of an operation with every build,
+     * and a stale hash is refused in a way that looks exactly like an empty
+     * library.
+     */
+    private suspend fun gql(operation: String, variables: JsonObject): JsonObject {
+        val data = SpotifyGraphQL.query(operation, variables)
+        return buildJsonObject { put("data", data) }
     }
 }
 

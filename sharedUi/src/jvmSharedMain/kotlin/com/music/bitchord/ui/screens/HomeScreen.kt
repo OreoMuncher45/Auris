@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.music.bitchord.ui.components.artworkDeparture
 import com.music.bitchord.ui.components.rememberArtworkTap
 import com.music.bitchord.ui.components.ShelfRow
@@ -59,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cached
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
@@ -68,6 +71,8 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.data.flow.FlowRules
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
+import com.music.bitchord.data.model.HomeChip
+import com.music.bitchord.data.model.HomeHeader
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
@@ -105,6 +110,15 @@ private val HOME_TITLE_LIFT = 28.dp
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
+/**
+ * The shelf name the quick-access tiles are reported under.
+ *
+ * They are not a shelf, but every card on the page carries the name of the
+ * row it came from — it is what the playback source is called — so the tiles
+ * need one too.
+ */
+private const val SHORTCUT_SHELF_TITLE = "Shortcuts"
+
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
@@ -126,6 +140,29 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     /** The page's heading, or null for none — the desktop's pages carry no heading. */
     title: String?,
+    /**
+     * What the page says above its shelves.
+     *
+     * A greeting, a row of chips and a grid of quick-access tiles. Spotify's
+     * own home has all three, and they are not shelves: a greeting is not a
+     * row of things, a chip is not a filter over what is already drawn, and
+     * the tiles are a grid rather than a carousel. So they arrive separately
+     * rather than as a shelf with an empty title, which would draw a heading
+     * over nothing and make the page's structure something every reader has
+     * to decode.
+     *
+     * Null for a provider whose home is nothing but shelves — YouTube's has
+     * never had a header.
+     */
+    header: HomeHeader? = null,
+    /**
+     * A chip was picked.
+     *
+     * The chip is part of the *request*: the provider is asked again with it
+     * in force and the answer replaces the page. It is not a filter over the
+     * shelves already drawn.
+     */
+    onChipSelected: ((String) -> Unit)? = null,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
     /** When true, the sign-in banner is hidden (the user dismissed it). */
@@ -192,7 +229,13 @@ fun HomeScreen(
                 contentPadding
             },
         ) {
-            if (title != null) {
+            // The provider's own greeting replaces the page's heading when it
+            // has one: Spotify's home opens with "Good evening", and putting
+            // "Listen now" above that would be two headings for one page.
+            val greeting = header?.greeting?.takeIf { it.isNotBlank() }
+            if (greeting != null) {
+                item(key = "home:greeting") { HomeGreeting(greeting) }
+            } else if (title != null) {
                 item { HomeTitle(title) }
             }
             if (!signedIn && onSignIn != null && !signInBannerDismissed) {
@@ -201,6 +244,19 @@ fun HomeScreen(
                         onSignIn = onSignIn,
                         onDismiss = onDismissSignInBanner,
                         modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+            }
+            // The chips stay on screen while the page behind them reloads, and
+            // after a failure: they are the way back to the whole feed, and a
+            // page that hides them on an error leaves the listener stuck.
+            val pageHeader = header
+            if (pageHeader != null && (pageHeader.chips.isNotEmpty() || pageHeader.chip.isNotBlank())) {
+                item(key = "home:chips") {
+                    HomeChipRow(
+                        chips = pageHeader.chips,
+                        selected = pageHeader.chip,
+                        onSelect = onChipSelected,
                     )
                 }
             }
@@ -222,6 +278,20 @@ fun HomeScreen(
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                    }
+                    // The quick-access grid: the little square tiles above the
+                    // shelves, the way Spotify's own home opens. A grid rather
+                    // than a row, and not a shelf — a shelf would put a heading
+                    // over it and a carousel would stretch two tiles across a
+                    // phone screen.
+                    header?.shortcuts?.takeIf { it.isNotEmpty() }?.let { shortcuts ->
+                        item(key = "home:shortcuts") {
+                            HomeShortcutGrid(
+                                shortcuts = shortcuts,
+                                onItemClick = { item -> onItemClick(item, SHORTCUT_SHELF_TITLE) },
+                                onItemLongPress = onItemLongPress,
+                            )
+                        }
                     }
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
@@ -643,6 +713,233 @@ private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
             style = style,
             color = MaterialTheme.colorScheme.onBackground,
         )
+    }
+}
+
+/**
+ * The provider's own greeting — Spotify's "Good evening".
+ *
+ * It takes the heading's place rather than sitting under it: the page has one
+ * heading, and "Listen now" above "Good evening" would be two of them.
+ */
+@Composable
+private fun HomeGreeting(greeting: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
+        Text(
+            text = greeting,
+            style = MaterialTheme.typography.displayLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
+/**
+ * The row of chips the page can be narrowed by.
+ *
+ * Spotify's own row: *All*, then the feeds it offers — Music, Podcasts,
+ * Audiobooks. Their labels come from Spotify and are therefore already in the
+ * listener's language; only *All* is ours, because only *All* is a chip
+ * Spotify does not have.
+ *
+ * A chip in force is shown with the chips that open beside it, joined to it
+ * as one shape, and a close button in front of it: the way back to the whole
+ * page. The chips stay on screen while the page reloads and after a failure,
+ * because they are the way out of a narrowed page that came back empty.
+ */
+@Composable
+private fun HomeChipRow(
+    chips: List<HomeChip>,
+    selected: String,
+    onSelect: ((String) -> Unit)?,
+) {
+    val parent = chips.firstOrNull { it.id == selected }
+        ?: chips.firstOrNull { chip -> chip.subChips.any { it.id == selected } }
+    val subs = parent?.subChips.orEmpty()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (selected.isNotBlank()) {
+            // The way back to the whole page, as one round button.
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onSelect?.invoke("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.home_chip_all),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            // The picked chip and the ones that open beside it, joined: one
+            // shape, so they read as one control rather than as a row of them.
+            // The chip in force may not be in the list at all — the feed
+            // changed under it — and then there is no parent to draw, only the
+            // way back.
+            if (parent != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HomePill(
+                        label = parent.label,
+                        selected = true,
+                        shape = if (subs.isEmpty()) HomePillShape else HomeJoinedStart,
+                    ) { onSelect?.invoke(parent.id) }
+                    subs.forEachIndexed { index, sub ->
+                        HomePill(
+                            label = sub.label,
+                            selected = sub.id == selected,
+                            shape = if (index == subs.lastIndex) HomeJoinedEnd else RoundedCornerShape(4.dp),
+                        ) { onSelect?.invoke(sub.id) }
+                    }
+                }
+            }
+        } else {
+            HomePill(label = stringResource(Res.string.home_chip_all), selected = true) {
+                onSelect?.invoke("")
+            }
+            chips.forEach { chip ->
+                HomePill(label = chip.label) { onSelect?.invoke(chip.id) }
+            }
+        }
+    }
+}
+
+/** The pill's own shape: a full round. */
+private val HomePillShape = RoundedCornerShape(50)
+
+/** The left half of two pills joined together. */
+private val HomeJoinedStart = RoundedCornerShape(
+    topStartPercent = 50,
+    bottomStartPercent = 50,
+    topEndPercent = 15,
+    bottomEndPercent = 15,
+)
+
+/** The right half of two pills joined together. */
+private val HomeJoinedEnd = RoundedCornerShape(
+    topStartPercent = 15,
+    bottomStartPercent = 15,
+    topEndPercent = 50,
+    bottomEndPercent = 50,
+)
+
+/** One chip: a pill, dark when it is not in force and lit when it is. */
+@Composable
+private fun HomePill(
+    label: String,
+    selected: Boolean = false,
+    shape: androidx.compose.ui.graphics.Shape = HomePillShape,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clip(shape)
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The quick-access grid at the top of the page.
+ *
+ * Two columns on a phone, more on a wide window: each tile is a small square
+ * of artwork and the name beside it, the way Spotify's own home opens. The
+ * names are the listener's — their liked songs, the things they jumped back
+ * into — so the grid is the one part of the page that is unmistakably theirs.
+ */
+@Composable
+private fun HomeShortcutGrid(
+    shortcuts: List<ShelfItem>,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)? = null,
+) {
+    BoxWithConstraints {
+        // Two columns on a phone; a wider window gets more, so the tiles do
+        // not stretch into banners.
+        val columns = if (maxWidth >= 720.dp) 4 else 2
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            shortcuts.chunked(columns).forEach { rowItems ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rowItems.forEach { item ->
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .longPressMenuClickable(
+                                    onClick = { onItemClick(item) },
+                                    onLongClick = onItemLongPress?.let { { it(item) } },
+                                )
+                                .contextClick(onItemLongPress?.let { { it(item) } }),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AsyncImage(
+                                model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    // A row with one tile short of a full row still has to
+                    // fill the width, or the tile it does have stretches.
+                    repeat(columns - rowItems.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
     }
 }
 

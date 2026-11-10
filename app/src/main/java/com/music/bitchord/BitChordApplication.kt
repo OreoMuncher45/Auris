@@ -113,6 +113,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         if (!isLowRamDevice(this)) GlassShaderWarmup.warmUp()
         // The per-app language picker, which YouTube Music's `hl` follows.
         Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.language }
+        // Spotify's own labels — the greeting, the chips, every shelf title —
+        // come back in the language the request asks for. Same source as
+        // InnerTube's `hl`: the per-app language picker.
+        com.music.bitchord.data.spotify.SpotifyGraphQL.language = {
+            AppCompatDelegate.getApplicationLocales().get(0)?.language
+        }
         LyricsTranslation.cacheDir = cacheDir
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
@@ -137,6 +143,20 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // makes them take part in the ranking rather than being a list of
             // their own that nothing consults.
             SflxCatalog.init(this, BuildConfig.VERSION_NAME)
+            // Spotify's operation table, read off the disk first so a request
+            // made in the first seconds uses the current hashes rather than
+            // the ones the app shipped with.
+            com.music.bitchord.data.spotify.SpotifyOps.init(this)
+            // …and refreshed from Spotify's own bundles in the background.
+            // The hashes change with every Spotify build, and a request naming
+            // an old one is refused in a way that looks exactly like an empty
+            // page. The lookup is several megabytes of JavaScript, so it is
+            // not on this thread and not on anyone's way to a first frame; it
+            // is throttled to once every six hours, because Spotify ships a
+            // build about once a day.
+            CoroutineScope(Dispatchers.IO).launch {
+                com.music.bitchord.data.spotify.SpotifyOps.refresh()
+            }
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and
             // belong in a cache AudioCache's own limit and eviction policy were
