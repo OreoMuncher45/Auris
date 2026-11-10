@@ -308,7 +308,7 @@ class ModuleSource(
                     TrackLog.w(TAG, "${config.displayName}: the extension host is not running")
                     return@withContext null
                 }
-                host.streamUrl(extensionId, upstreamId, request.tier).getOrElse { e ->
+                host.streamUrl(extensionId, upstreamId, request.tier, request.wantsAtmos).getOrElse { e ->
                     TrackLog.w(TAG, "${config.displayName}: ${e.message}")
                     return@withContext null
                 }

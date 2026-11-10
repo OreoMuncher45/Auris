@@ -63,6 +63,35 @@ object SflxCatalog {
     private val _install = MutableStateFlow<InstallState>(InstallState.Idle)
     val install: StateFlow<InstallState> = _install.asStateFlow()
 
+    /**
+     * Each extension's signed-session state, for the rows that show it.
+     *
+     * Kept here rather than read from the host inside composition: the check
+     * reads a file per extension, and doing that on every recomposition of a
+     * reorderable list is the kind of work that turns a scroll into a stutter.
+     * It is refreshed when something that can change it happens — an install, a
+     * removal, a grant — and read from a flow in between.
+     */
+    private val _statuses = MutableStateFlow<Map<String, SflxSignedSession.Snapshot>>(emptyMap())
+    val statuses: StateFlow<Map<String, SflxSignedSession.Snapshot>> = _statuses.asStateFlow()
+
+    /** Re-reads every extension's signed-session state. Cheap; call after a change. */
+    fun refreshStatuses() {
+        val host = hostRef ?: return
+        _statuses.value = runCatching { host.sessionStatuses() }.getOrDefault(emptyMap())
+    }
+
+    /**
+     * Starts the verification page for [id]. Blocking — the challenge comes from
+     * the gateway — so callers run it off the main thread.
+     */
+    fun beginVerification(id: String): String? = hostRef?.beginVerification(id)
+
+    /** Forgets [id]'s stored session. */
+    fun clearSession(id: String) {
+        hostRef?.clearSession(id)
+    }
+
     /** The host, once [init] has run. Null before that, and in a preview whose app never called it. */
     val host: SflxHost? get() = hostRef
 
@@ -88,7 +117,9 @@ object SflxCatalog {
         val store = SflxStore(directory)
         this.store = store
         this.appVersion = appVersion
-        this.hostRef = SflxHost(store, appVersion)
+        SflxVerify.init(context)
+        val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
+        this.hostRef = SflxHost(store, appVersion, sessions)
         Log.d(TAG, "sflx store at $directory")
         refresh()
     }
@@ -99,6 +130,7 @@ object SflxCatalog {
         val packages = runCatching { store.list() }.getOrDefault(emptyList())
         _installed.value = packages
         syncSources(packages)
+        refreshStatuses()
     }
 
     // ── Install ──────────────────────────────────────────────────────────
@@ -301,4 +333,14 @@ object SflxCatalog {
     }
 
     private const val DIRECTORY = "extensions"
+
+    /**
+     * Where signed-session records live, one JSON per gateway scope.
+     *
+     * Separate from the packages because a record is a credential, not part of
+     * an extension: reinstalling the extension must not throw it away, and
+     * two extensions that declare the same namespace share it exactly as
+     * Mornye's own store does.
+     */
+    private const val SIGNED_SESSIONS_DIRECTORY = "signed_sessions"
 }

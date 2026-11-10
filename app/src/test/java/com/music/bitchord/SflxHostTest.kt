@@ -140,6 +140,51 @@ class SflxHostTest {
         assertEquals("LOSSLESS", SflxQuality.forTier(losslessOnly, "HIGH"))
     }
 
+    @Test
+    fun `the three kinds decide what an immersive request may be answered with`() {
+        val manifest = SflxManifestParser.parse(
+            """
+            {"name":"spatial","type":["download_provider"],
+             "qualityOptions":[
+               {"id":"ATMOS","kind":"spatial"},
+               {"id":"HI_RES","kind":"lossless"},
+               {"id":"MP3_320","kind":"lossy"}]}
+            """.trimIndent(),
+        )
+        // Lossless may reach Hi-Res and never the immersive mix.
+        assertEquals("HI_RES", SflxQuality.forTier(manifest, "LOSSLESS"))
+        assertEquals("MP3_320", SflxQuality.forTier(manifest, "HIGH"))
+        // The immersive request prefers the spatial tier, and is the only
+        // request that is allowed to.
+        assertEquals("ATMOS", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))
+    }
+
+    @Test
+    fun `a kind is inferred from the id when the manifest omits it`() {
+        val manifest = SflxManifestParser.parse(
+            """
+            {"name":"old","type":["download_provider"],
+             "qualityOptions":[{"id":"hi_res"},{"id":"DOLBY_ATMOS"},{"id":"aac_160"}]}
+            """.trimIndent(),
+        )
+        // "hi_res" is lossless by name, "DOLBY_ATMOS" is spatial, and the AAC
+        // one is what a lossy request gets.
+        assertEquals("hi_res", SflxQuality.forTier(manifest, "LOSSLESS"))
+        assertEquals("DOLBY_ATMOS", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))
+        assertEquals("aac_160", SflxQuality.forTier(manifest, "HIGH"))
+    }
+
+    @Test
+    fun `a spatial request falls back to lossless and not the other way round`() {
+        val manifest = SflxManifestParser.parse(
+            """
+            {"name":"spatialless","type":["download_provider"],
+             "qualityOptions":[{"id":"HI_RES","kind":"lossless"},{"id":"MP3_320","kind":"lossy"}]}
+            """.trimIndent(),
+        )
+        assertEquals("HI_RES", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))
+    }
+
     // ── Routing ──────────────────────────────────────────────────────────
 
     @Test

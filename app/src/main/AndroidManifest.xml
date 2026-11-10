@@ -120,6 +120,21 @@
           the screen. adjustResize leaves the offset to the inset, which is the
           one the bar is already written against.
         -->
+        <!--
+          The extension verification page. Opened by the extension host when a
+          gateway asks for a captcha; it hosts the WebView that receives the
+          grant callback, which is why it lives in this app and not in the
+          system browser — the challenge cookies have to come back to us.
+        -->
+        <activity
+            android:name=".data.sources.mornye.SflxVerifyActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.BitChord.Verify" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

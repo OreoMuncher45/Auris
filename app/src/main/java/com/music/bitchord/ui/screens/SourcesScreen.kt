@@ -102,6 +102,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.data.sources.mornye.SflxHost
+import com.music.bitchord.data.sources.mornye.SflxSignedSession
 import com.music.bitchord.ui.components.AddonEditorAlert
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
@@ -157,6 +158,7 @@ fun SourcesScreen(
     // Named out here because they are drawn in their own group below and must
     // not be drawn in the one above as well.
     val extensions = configs.filter { SflxHost.extensionIdOf(it.baseUrl) != null }
+    val extensionStatuses by SflxCatalog.statuses.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
@@ -365,6 +367,7 @@ fun SourcesScreen(
                 val extensionRow: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit =
                     { position, config, handle ->
                         val manifest = SflxCatalog.installed.value.firstOrNull { config.id == SflxCatalog.configIdOf(it.id) }
+                        val extensionId = SflxHost.extensionIdOf(config.baseUrl).orEmpty()
                         SourceRow(
                             position = position,
                             config = config,
@@ -373,6 +376,7 @@ fun SourcesScreen(
                             awaitingOutput = if (config.enabled && config.awaitsLosslessOutput) losslessOutput else null,
                             onMetered = metered == true,
                             ceiling = ceiling,
+                            statusBadge = extensionStatuses[extensionId]?.badge(),
                             // The row's tap opens the extension's *own* settings,
                             // not a URL editor: there is no address to type, and
                             // the questions worth asking are the ones its
@@ -856,6 +860,8 @@ private fun SourceRow(
     health: SourceHealth?,
     onClick: (() -> Unit)?,
     onToggle: (Boolean) -> Unit,
+    /** The extension's signed-session state, when it has one. See [SourceStatusBadge]. */
+    statusBadge: SourceStatusBadge? = null,
     /** On, but skipped by the ceiling the current connection is set to. */
     skippedByQuality: Boolean = false,
     /** On, but its addon needs a lossless output and this is what is connected instead. Null when not waiting. */
@@ -956,6 +962,18 @@ private fun SourceRow(
                 },
                 maxLines = 2,
             )
+            statusBadge?.let { badge ->
+                Text(
+                    text = badge.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (badge.warning) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 2,
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         Switch(
@@ -976,9 +994,32 @@ private fun SourceRow(
     }
 }
 
+/**
+ * What an extension's signed session is doing, as one line under its name.
+ *
+ * An extension whose manifest declares a `signedSession` cannot serve anything
+ * until the gateway has let it in, and the two states a listener can act on are
+ * "not verified yet" and "verified, until". A null badge is the honest answer
+ * for an extension that never asked for a session — it has no state to show.
+ */
+private data class SourceStatusBadge(val text: String, val warning: Boolean)
+
+private fun SflxSignedSession.Snapshot.badge(): SourceStatusBadge = when {
+    authenticated -> SourceStatusBadge("Verified${expiryNote()}", false)
+    error.isNotBlank() -> SourceStatusBadge("Session check failed: $error", true)
+    else -> SourceStatusBadge("Needs verification — open the addon to verify", true)
+}
+
+private fun SflxSignedSession.Snapshot.expiryNote(): String {
+    val at = SflxSignedSession.parseTime(expiresAt) ?: return ""
+    val text = java.text.DateFormat
+        .getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+        .format(java.util.Date(at))
+    return " · until $text"
+}
+
 @Composable
-private fun AudioQuality.localizedLabel(): String = stringResource(
-    when (this) {
+private fun AudioQuality.localizedLabel(): String = stringResource(    when (this) {
         AudioQuality.LOW -> R.string.low
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high

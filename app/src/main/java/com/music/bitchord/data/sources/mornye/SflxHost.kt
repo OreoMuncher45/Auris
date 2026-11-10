@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.File
 import java.util.Locale
 
 /**
@@ -40,7 +41,102 @@ class SflxHost(
     private val store: SflxStore,
     /** This app's version, for the `minAppVersion` check and for `appVersion()`. */
     private val appVersion: String,
+    /**
+     * Where signed-session records live — `<filesDir>/signed_sessions`.
+     *
+     * Null disables signed sessions outright, which is what a test harness or a
+     * preview gets: a session record is a credential, and one written by a run
+     * that was never a real install is a credential nobody asked for.
+     */
+    private val signedSessionsDirectory: File? = null,
 ) {
+
+    /** One signed-session client per extension, made on first use. */
+    private val sessions = java.util.concurrent.ConcurrentHashMap<String, SflxSignedSession>()
+
+    /**
+     * The signed-session client for [installed], or null when its manifest does
+     * not declare one.
+     */
+    fun sessionFor(installed: InstalledSflx): SflxSignedSession? {
+        val directory = signedSessionsDirectory ?: return null
+        val config = SignedSessionConfig.from(installed.manifest) ?: return null
+        return sessions.computeIfAbsent(installed.id) {
+            SflxSignedSession(
+                extensionId = installed.id,
+                config = config,
+                directory = directory,
+                onVerificationRequired = { url ->
+                    SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                },
+            )
+        }
+    }
+
+    /** The signed-session state of [id], or null when it has no signed session. */
+    fun sessionStatus(id: String): SflxSignedSession.Snapshot? {
+        val installed = store.find(id) ?: return null
+        return sessionFor(installed)?.snapshot()
+    }
+
+    /**
+     * Every installed extension's signed-session state, keyed by id.
+     *
+     * Only extensions that declare a `signedSession` appear: a row with no
+     * status at all is a row that has nothing to verify, and an empty badge on
+     * every extension that never asked for a session would be noise.
+     */
+    fun sessionStatuses(): Map<String, SflxSignedSession.Snapshot> =
+        store.list().mapNotNull { installed ->
+            sessionFor(installed)?.let { installed.id to it.snapshot() }
+        }.toMap()
+
+    /**
+     * Starts a verification for [id] and returns the URL the page was opened on.
+     *
+     * The bootstrap that produces the challenge is a network call, so this is
+     * meant to be called off the main thread — see the Sources screen, which
+     * runs it in its own scope.
+     */
+    fun beginVerification(id: String): String? {
+        val installed = store.find(id) ?: return null
+        val session = sessionFor(installed) ?: return null
+        val url = runCatching { session.requestVerification() }.getOrNull() ?: return null
+        if (url.isNotBlank()) {
+            SflxVerify.open(installed.id, installed.manifest.displayName, url)
+        }
+        SflxCatalog.refreshStatuses()
+        return url
+    }
+
+    /** Forgets [id]'s stored session; the next request bootstraps again. */
+    fun clearSession(id: String) {
+        val installed = store.find(id) ?: return
+        runCatching { sessionFor(installed)?.clear() }
+        SflxCatalog.refreshStatuses()
+    }
+
+    /** A URL the listener must visit to verify [id], when one is pending. */
+    fun verificationUrl(id: String): String? {
+        val installed = store.find(id) ?: return null
+        return sessionFor(installed)?.verificationUrl()
+    }
+
+    /**
+     * Redeems the grant the verification page handed back.
+     *
+     * @param state the `state` the page echoed; checked against the challenge
+     *   this host issued, so a callback for someone else's challenge is ignored
+     *   rather than stored as this listener's session.
+     */
+    fun completeGrant(id: String, grant: String, state: String? = null): Boolean {
+        val installed = store.find(id) ?: return false
+        val session = sessionFor(installed) ?: return false
+        val ok = runCatching { session.completeGrant(grant, state) }.getOrDefault(false)
+        Log.d(TAG, "sflx[$id] grant ${if (ok) "accepted" else "refused"}")
+        SflxCatalog.refreshStatuses()
+        return ok
+    }
 
     /** Every installed extension, in install order. */
     fun installed(): List<InstalledSflx> = store.list()
@@ -87,7 +183,12 @@ class SflxHost(
      * already knew — and the URL its own resolution produces is taken before
      * any bytes move.
      */
-    suspend fun streamUrl(extensionId: String, trackId: String, quality: String): Result<ModuleStreamResponse> =
+    suspend fun streamUrl(
+        extensionId: String,
+        trackId: String,
+        quality: String,
+        wantsAtmos: Boolean = false,
+    ): Result<ModuleStreamResponse> =
         withContext(Dispatchers.IO) {
             val installed = store.find(extensionId)
                 ?: return@withContext Result.failure(SflxException("'$extensionId' is not installed"))
@@ -98,12 +199,12 @@ class SflxHost(
             }
             load(installed).getOrElse { return@withContext Result.failure(it) }
 
-            val requested = SflxQuality.forTier(installed.manifest, quality)
+            val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
             val prepared = rowFor(extensionId, trackId)
             QuickJsExecutor.callExport(
                 moduleId = moduleIdOf(extensionId),
                 functionName = "getTrackStreamUrl",
-                args = listOf(quote(trackId), quote(requested), context(settingsFor(installed), prepared)),
+                args = listOf(quote(trackId), quote(requested), context(settingsFor(installed), prepared, wantsAtmos)),
             ).mapCatching { raw ->
                 val answer = JSONObject(raw)
                 val url = answer.optString("streamUrl", "").takeIf { it.isNotBlank() }
@@ -111,14 +212,23 @@ class SflxHost(
                     val why = answer.optString("error", "").ifBlank { "the extension returned no stream URL" }
                     throw SflxException(why)
                 }
+                // What the extension said about the audio it resolved. It is a
+                // claim, not a measurement — the fields come from the file the
+                // extension was about to write, which this host never sees — and
+                // it is treated as one everywhere downstream.
+                val meta = answer.optJSONObject("track")
                 ModuleStreamResponse(
                     streamUrl = url,
                     track = ModuleStreamTrack(
                         id = trackId,
-                        // The tier the extension was asked for is what it says
-                        // it is serving. It is a claim, not a measurement, and
-                        // is treated as one everywhere downstream.
-                        audioQuality = answer.optJSONObject("track")?.optString("audioQuality").orEmpty(),
+                        audioQuality = meta?.optString("audioQuality").orEmpty(),
+                        mimeType = meta?.optString("mimeType")?.takeIf { it.isNotBlank() },
+                        bitDepth = meta?.optInt("bitDepth", 0)?.takeIf { it > 0 },
+                        sampleRate = meta?.optDouble("sampleRate", 0.0)?.takeIf { it > 0 },
+                        bitrate = meta?.optInt("bitrate", 0)?.takeIf { it > 0 },
+                        audioModes = meta?.optJSONArray("audioModes")?.let { modes ->
+                            (0 until modes.length()).mapNotNull { modes.optString(it).takeIf { s -> s.isNotBlank() } }
+                        }?.takeIf { it.isNotEmpty() },
                     ),
                 )
             }
@@ -143,6 +253,7 @@ class SflxHost(
             return Result.failure(SflxException("could not read ${installed.scriptFile.name}: ${error.message}"))
         }
         Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
+        val session = sessionFor(installed)
         return QuickJsExecutor.loadModule(
             moduleId = moduleIdOf(installed.id),
             jsCode = script,
@@ -151,6 +262,7 @@ class SflxHost(
             preamble = SflxShim.preamble(installed.manifest, settingsFor(installed).toString(), appVersion),
             epilogue = SflxShim.ADAPTER,
             allowedHosts = installed.manifest.permissions.networkHosts,
+            sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
         ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
     }
 
@@ -222,7 +334,7 @@ class SflxHost(
     }
 
     /** The `context` argument the sandbox's exports take, with the row when there is one. */
-    private fun context(settings: JSONObject, preparedJson: String? = null): String {
+    private fun context(settings: JSONObject, preparedJson: String? = null, atmos: Boolean = false): String {
         val root = JSONObject().apply {
             // The wrapper is part of the contract: a module reads a setting as
             // `context.settings.<key>.value`.
@@ -232,6 +344,9 @@ class SflxHost(
             }
             put("settings", boxed)
             put("appVersion", appVersion)
+            // The module protocol's immersive flag, read by the reference
+            // modules and by the extensions that serve a spatial mix.
+            put("dolbyAtmos", atmos)
             // The extension's own object for this track, handed back so the
             // download call does not re-derive what its search already knew.
             if (preparedJson != null) put("track", runCatching { JSONObject(preparedJson) }.getOrDefault(JSONObject()))
@@ -373,27 +488,53 @@ internal object SflxRows {
  */
 internal object SflxQuality {
 
-    private val LOSSLESS_HINTS = listOf("LOSSLESS", "HI_RES", "HIRES", "FLAC", "ALAC", "HI-RES", "MASTER")
+    /**
+     * One of the extension's quality ids, with the kind Mornye infers for it.
+     *
+     * `kind` is optional in a manifest and several extensions in the wild were
+     * published before it existed, so the same id/label inference Mornye uses
+     * is applied when it is missing. Descriptions are deliberately left out:
+     * they routinely mention fallback formats ("FLAC fallback", "AAC 320"), and
+     * inferring from them marks the wrong option as the lossless one.
+     */
+    private data class Quality(val id: String, val kind: String)
 
-    fun forTier(manifest: SflxManifest, tier: String): String {
+    fun forTier(manifest: SflxManifest, tier: String, wantsAtmos: Boolean = false): String {
         val options = optionsOf(manifest)
         if (options.isEmpty()) return tier
 
-        val lossy = options.filterNot { it.isLossless }
-        val lossless = options.filter { it.isLossless }
-
-        return when (tier.uppercase(Locale.ROOT)) {
-            "LOSSLESS" -> (lossless.firstOrNull() ?: options.first()).id
-            // High is the best lossy copy the extension has. If it has none, its
-            // worst lossless tier is the closest honest answer to "not the top
-            // one".
-            "HIGH" -> (lossy.firstOrNull() ?: lossless.lastOrNull() ?: options.last()).id
-            "LOW" -> (lossy.lastOrNull() ?: lossless.lastOrNull() ?: options.last()).id
-            else -> options.firstOrNull { it.id.equals(tier, ignoreCase = true) }?.id ?: tier
+        // The kind being asked for, in the extension's own three-way vocabulary.
+        val target = when {
+            wantsAtmos -> "spatial"
+            tier.uppercase(Locale.ROOT) == "LOSSLESS" -> "lossless"
+            tier.uppercase(Locale.ROOT) == "HIGH" || tier.uppercase(Locale.ROOT) == "LOW" -> "lossy"
+            // Not one of this app's tiers: the caller named an extension id.
+            else -> return options.firstOrNull { it.id.equals(tier, ignoreCase = true) }?.id ?: tier
         }
-    }
 
-    private data class Quality(val id: String, val isLossless: Boolean)
+        // The fallback ladder, as Mornye defines it: a spatial request may take
+        // a lossless copy, a lossy request may take one, a lossless request may
+        // not be answered with lossy audio.
+        val allowed = when (target) {
+            "spatial", "lossy" -> listOf(target, "lossless")
+            else -> listOf("lossless")
+        }
+        for (kind in allowed) {
+            val candidates = options.filter { it.kind == kind }
+            val pick = when {
+                candidates.isEmpty() -> null
+                // Within a tier: best first, except a LOW request (the smallest
+                // copy the extension has), and except the lossless rung used as
+                // a fallback for a lossy request — "HIGH" means "not the top
+                // one", so the honest answer is the smaller lossless copy.
+                kind == "lossy" && tier.uppercase(Locale.ROOT) == "LOW" -> candidates.last()
+                kind == "lossless" && target == "lossy" -> candidates.last()
+                else -> candidates.first()
+            }
+            if (pick != null) return pick.id
+        }
+        return options.first().id
+    }
 
     private fun optionsOf(manifest: SflxManifest): List<Quality> {
         val array = manifest.raw["qualityOptions"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
@@ -401,12 +542,28 @@ internal object SflxQuality {
             val entry = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
             val id = (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
             if (id.isBlank()) return@mapNotNull null
-            val kind = (entry["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
-            Quality(
-                id = id,
-                isLossless = kind.contains("lossless", ignoreCase = true) ||
-                    LOSSLESS_HINTS.any { it in id.uppercase(Locale.ROOT) },
-            )
+            val declared = (entry["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+            val label = (entry["label"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+            Quality(id = id, kind = kindOf(declared, id, label))
+        }
+    }
+
+    /** The manifest's own `kind`, or the same inference Mornye applies when it is absent. */
+    private fun kindOf(declared: String, id: String, label: String): String {
+        val kind = declared.trim().lowercase(Locale.ROOT)
+        if (kind == "lossless" || kind == "lossy" || kind == "spatial") return kind
+        val token = id.trim().lowercase(Locale.ROOT)
+        val text = "$token ${label.lowercase(Locale.ROOT)}"
+        return when {
+            text.contains("atmos") || text.contains("dolby") || text.contains("surround") ||
+                token == "ac4" || token == "ac-4" || token == "eac3" || token == "e-ac-3" || token == "ec-3" ->
+                "spatial"
+            text.contains("lossless") || text.contains("flac") || text.contains("alac") ||
+                text.contains("24-bit") || text.contains("16-bit") || token == "hi_res" ->
+                "lossless"
+            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ->
+                "lossy"
+            else -> ""
         }
     }
 }

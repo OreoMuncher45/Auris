@@ -38,6 +38,7 @@ import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.data.sources.mornye.SflxRegistry
 import com.music.bitchord.data.sources.mornye.SflxRegistryEntry
 import com.music.bitchord.data.sources.mornye.SflxSetting
+import com.music.bitchord.data.sources.mornye.SflxSignedSession
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
@@ -249,6 +250,10 @@ fun SflxSettingsDialog(
             }
         }
     }
+    val statuses by SflxCatalog.statuses.collectAsStateWithLifecycle()
+    val status = statuses[installed.id]
+    val scope = rememberCoroutineScope()
+    var verifying by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -267,6 +272,27 @@ fun SflxSettingsDialog(
                 )
                 if (settings.isEmpty()) {
                     Text("This extension has no settings of its own.", style = MaterialTheme.typography.bodyMedium)
+                }
+                // The signed session, when the extension has one. It sits above
+                // the settings because it is the thing that decides whether any
+                // of them matter: an unverified extension answers nothing.
+                if (status != null) {
+                    SessionStatusBlock(
+                        status = status,
+                        verifying = verifying,
+                        onVerify = {
+                            verifying = true
+                            scope.launch {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    SflxCatalog.beginVerification(installed.id)
+                                }
+                                verifying = false
+                            }
+                        },
+                        onForget = {
+                            SflxCatalog.clearSession(installed.id)
+                        },
+                    )
                 }
                 settings.forEach { setting ->
                     SettingField(setting = setting, value = values[setting.key] ?: "") { values[setting.key] = it }
@@ -290,9 +316,58 @@ fun SflxSettingsDialog(
     )
 }
 
+/**
+ * The extension's signed session, drawn as a state and one button.
+ *
+ * Three things a listener can be in: verified (nothing to do), not verified or
+ * needing verification (a page to visit), and a gateway that could not be
+ * reached (nothing to do but try again). The button says which of them applies
+ * and does the one thing that changes it.
+ */
 @Composable
-private fun SettingField(setting: SflxSetting, value: String, onChange: (String) -> Unit) {
-    // A declared boolean is a switch rather than a text field: the manifest said
+private fun SessionStatusBlock(
+    status: SflxSignedSession.Snapshot,
+    verifying: Boolean,
+    onVerify: () -> Unit,
+    onForget: () -> Unit,
+) {
+    val expiry = SflxSignedSession.parseTime(status.expiresAt)
+        ?.let {
+            java.text.DateFormat
+                .getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                .format(java.util.Date(it))
+        }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Sign-in", style = MaterialTheme.typography.titleSmall)
+        Text(
+            when {
+                status.authenticated && expiry != null -> "Verified, until $expiry."
+                status.authenticated -> "Verified."
+                status.error.isNotBlank() -> "Could not check the session: ${status.error}"
+                else -> "This extension asks you to prove you are a person before it serves anything."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TextButton(enabled = !verifying, onClick = onVerify) {
+                if (verifying) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(16.dp).height(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (status.authenticated) "Verify again" else "Verify")
+            }
+            if (status.authenticated) {
+                TextButton(onClick = onForget) { Text("Forget") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingField(setting: SflxSetting, value: String, onChange: (String) -> Unit) {    // A declared boolean is a switch rather than a text field: the manifest said
     // what it is, and asking somebody to type "true" is how a host turns a
     // setting into a puzzle.
     if (setting.type.equals("bool", ignoreCase = true) || setting.type.equals("boolean", ignoreCase = true)) {

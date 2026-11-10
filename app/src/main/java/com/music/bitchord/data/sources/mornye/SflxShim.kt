@@ -72,6 +72,10 @@ internal object SflxShim {
             // ── Host identity ────────────────────────────────────────────
             // An extension reads this to tell which host it is on, and to know
             // which of its own quality tiers are worth offering here.
+            function __sflx_goString(value) {
+                return value === null || value === undefined ? '' : String(value);
+            }
+
             var __spine_sflx = {
                 id: $id,
                 version: $version,
@@ -498,10 +502,16 @@ internal object SflxShim {
                     encryptBlockCipher: function () { return { success: false, error: 'this host does not implement utils.encryptBlockCipher' }; },
                     decryptBlockCipher: function () { return { success: false, error: 'this host does not implement utils.decryptBlockCipher' }; },
                     decryptCTRSegments: function () { return { success: false, error: 'this host does not implement utils.decryptCTRSegments' }; },
-                    md5: function () { return ''; },
-                    sha256: function () { return ''; },
-                    hmacSHA256: function () { return ''; },
-                    hmacSHA256Base64: function () { return ''; }
+                    md5: function (value) { return arguments.length ? globalThis.__spine.md5(__sflx_goString(value)) : ''; },
+                    sha256: function (value) { return arguments.length ? globalThis.__spine.sha256(__sflx_goString(value)) : ''; },
+                    hmacSHA256: function (message, key) {
+                        if (arguments.length < 2) return '';
+                        return globalThis.__spine.hmacSHA256(__sflx_goString(message), __sflx_goString(key));
+                    },
+                    hmacSHA256Base64: function (message, key) {
+                        if (arguments.length < 2) return '';
+                        return globalThis.__spine.hmacSHA256Base64(__sflx_goString(message), __sflx_goString(key));
+                    }
                 };
             })();
 
@@ -573,18 +583,41 @@ internal object SflxShim {
             };
 
             // ── Signed sessions ──────────────────────────────────────────
-            // Not implemented. The extensions that need these (the ones whose
-            // manifest asks for `signedSession`) sign every request with a key
-            // they exchange for a grant; this host has no such exchange, so a
-            // pretend signature would be worse than none. Each method answers
-            // in its own documented shape with that said plainly, which is what
-            // the extension's error paths already handle.
-            globalThis.session = {
-                status: function () { return { authenticated: false, supported: false, error: 'this host does not implement signed sessions' }; },
-                clear: function () { return { success: false, error: 'this host does not implement signed sessions' }; },
-                completeGrant: function () { return { success: false, error: 'this host does not implement signed sessions' }; },
-                signedFetch: function () { return { ok: false, status: 0, error: 'this host does not implement signed sessions' }; }
-            };
+            // Four thin wrappers over one native call. The host decides whether
+            // it has a session client for this extension; when it does not, the
+            // answer is the same "not implemented" shape the extension's error
+            // paths already handle, rather than a pretend signature.
+            globalThis.session = (function () {
+                var enabled = typeof __spine !== 'undefined' && typeof __spine.sessionCall === 'function';
+                function invoke(method, args) {
+                    if (!enabled) return null;
+                    try { return JSON.parse(__spine.sessionCall(method, JSON.stringify(args))); }
+                    catch (e) { return null; }
+                }
+                return {
+                    status: function () {
+                        return invoke('status', []) ||
+                            { authenticated: false, supported: false, error: 'this host does not implement signed sessions' };
+                    },
+                    clear: function () {
+                        return invoke('clear', []) ||
+                            { success: false, error: 'this host does not implement signed sessions' };
+                    },
+                    completeGrant: function (grant) {
+                        return invoke('completeGrant', arguments.length ? [__sflx_goString(grant)] : []) ||
+                            { success: false, error: 'this host does not implement signed sessions' };
+                    },
+                    signedFetch: function (method, path, body, headers) {
+                        if (arguments.length < 2) return { ok: false, status: 0, error: 'method and path are required' };
+                        return invoke('signedFetch', [
+                            __sflx_goString(method),
+                            __sflx_goString(path),
+                            body === null || body === undefined ? '' : (typeof body === 'string' ? body : JSON.stringify(body)),
+                            headers || {}
+                        ]) || { ok: false, status: 0, error: 'this host does not implement signed sessions' };
+                    }
+                };
+            })();
             globalThis.auth = {
                 openAuthUrl: function () { return { success: false, error: 'this host does not implement interactive auth' }; },
                 getAuthCode: function () { return undefined; },
@@ -658,6 +691,58 @@ internal object SflxShim {
                     if (arguments[i] !== undefined && arguments[i] !== null && arguments[i] !== '') return arguments[i];
                 }
                 return '';
+            }
+
+            // What the extension said, indirectly, about the audio it resolved.
+            //
+            // It never states a codec. What it does state is the file it was
+            // about to write — its extension is the container — and it usually
+            // passes a quality through in the download options. Both are read
+            // here and neither is invented: where nothing is said, the field is
+            // left out and the rest of the app's own format handling decides
+            // from the URL, exactly as it does for a module.
+            var MIME_BY_EXTENSION = {
+                flac: 'audio/flac',
+                m4a: 'audio/mp4',
+                mp4: 'audio/mp4',
+                alac: 'audio/mp4',
+                mp3: 'audio/mpeg',
+                ogg: 'audio/ogg',
+                opus: 'audio/ogg',
+                wav: 'audio/wav',
+                aiff: 'audio/aiff',
+                aif: 'audio/aiff',
+                ec3: 'audio/eac3',
+                eac3: 'audio/eac3',
+                ac4: 'audio/ac4',
+                mka: 'audio/x-matroska'
+            };
+            function extensionOf(path) {
+                var name = text(path).split('?')[0];
+                var dot = name.lastIndexOf('.');
+                if (dot < 0) return '';
+                return name.slice(dot + 1).toLowerCase();
+            }
+            function audioHints(path, options, context) {
+                var opts = options && typeof options === 'object' ? options : {};
+                var hinted = text(firstOf(
+                    opts.mimeType, opts.mime_type, opts.contentType, opts.content_type, opts.codec
+                ));
+                var extension = extensionOf(path);
+                var mime = hinted.indexOf('/') >= 0 ? hinted : (MIME_BY_EXTENSION[extension] || '');
+                var bitDepth = number(firstOf(opts.bitDepth, opts.bit_depth), 0);
+                var sampleRate = number(firstOf(opts.sampleRate, opts.sample_rate), 0);
+                var bitrate = number(firstOf(opts.bitrate, opts.bit_rate, opts.maxBitrate), 0);
+                var modes = [];
+                if (context && context.dolbyAtmos) modes.push('atmos');
+                if (mime === 'audio/eac3' || mime === 'audio/ac4') modes.push('atmos');
+                return {
+                    mimeType: mime,
+                    bitDepth: bitDepth > 0 ? bitDepth : 0,
+                    sampleRate: sampleRate > 0 ? sampleRate : 0,
+                    bitrate: bitrate > 0 ? bitrate : 0,
+                    audioModes: modes
+                };
             }
 
             // A Mornye row, as this app describes one. `duration_ms` is the
@@ -758,11 +843,17 @@ internal object SflxShim {
                     // audio, and the URL it was about to fetch is taken instead.
                     var captured = null;
                     var capturedSegments = null;
+                    var capturedPath = '';
+                    var capturedOptions = null;
                     var marker = { __sflx_capture: true };
                     var realDownload = globalThis.file.download;
                     var realSegments = globalThis.file.downloadSegments;
-                    globalThis.file.download = function (url) {
-                        if (captured === null) captured = text(url);
+                    globalThis.file.download = function (url, path, options) {
+                        if (captured === null) {
+                            captured = text(url);
+                            capturedPath = text(path);
+                            capturedOptions = options || null;
+                        }
                         throw marker;
                     };
                     globalThis.file.downloadSegments = function (segments) {
@@ -800,7 +891,18 @@ internal object SflxShim {
                     if (!captured) {
                         return answered(null, failure || 'the extension did not resolve a stream URL');
                     }
+                    // What the extension was about to write, read off the call
+                    // it made rather than guessed from the URL alone: it named a
+                    // path with an extension and frequently a quality in the
+                    // options, and those are the only two statements about the
+                    // audio this host ever gets.
                     meta.audioQuality = firstOf(meta.audioQuality, '');
+                    var guessed = audioHints(capturedPath, capturedOptions, context);
+                    if (guessed.mimeType) meta.mimeType = guessed.mimeType;
+                    if (guessed.bitDepth) meta.bitDepth = guessed.bitDepth;
+                    if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
+                    if (guessed.bitrate) meta.bitrate = guessed.bitrate;
+                    if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
                     return answered(captured, '');
                 }
             };

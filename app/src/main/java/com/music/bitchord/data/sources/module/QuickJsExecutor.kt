@@ -101,6 +101,8 @@ internal object QuickJsExecutor {
         val epilogue: String,
         /** The only hosts this module may fetch, or null for no restriction. */
         val allowedHosts: List<String>?,
+        /** The host's `sessionCall`, or null when signed sessions are not offered. */
+        val sessionCall: ((String, String) -> String)?,
     ) {
         val free = Channel<QuickJs>(Channel.UNLIMITED)
         val lock = Mutex()
@@ -142,6 +144,15 @@ internal object QuickJsExecutor {
         moduleId: String,
         jsCode: String,
         fetchBase: String = "",
+        /**
+         * The extension host's signed-session bridge, when it has one.
+         *
+         * Called as `__spine.sessionCall(method, argsJson)` from JavaScript and
+         * answered with JSON text. Synchronous by design: the extension's
+         * `session.*` functions are synchronous in Mornye's host too, and an
+         * extension that had to await them was never written.
+         */
+        sessionCall: ((String, String) -> String)? = null,
         /**
          * Whether a module that registers itself instead of filling
          * `module.exports` counts as loaded.
@@ -209,12 +220,12 @@ internal object QuickJsExecutor {
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
-            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts) }
+            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall) }
                 .onSuccess { qjs ->
                     // The pool starts at one and grows only if two callers ever
                     // want this module at the same moment. A module that is
                     // never contended never pays for a second interpreter.
-                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts)
+                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall)
                     pool.started = 1
                     pool.made += qjs
                     pool.free.trySend(qjs)
@@ -234,12 +245,13 @@ internal object QuickJsExecutor {
         preamble: String,
         epilogue: String,
         allowedHosts: List<String>?,
+        sessionCall: ((String, String) -> String)?,
     ): QuickJs {
         val qjs = QuickJs.create(Dispatchers.Default)
         qjs.maxStackSize = 512 * 1024L
         try {
             bindConsole(qjs)
-            bindAsyncFetch(qjs, moduleId, fetchBase, allowedHosts)
+            bindAsyncFetch(qjs, moduleId, fetchBase, allowedHosts, sessionCall)
 
             qjs.evaluate<String>(POLYFILLS)
             val cleanCode = preprocessModuleCode(jsCode)
@@ -318,6 +330,7 @@ internal object QuickJsExecutor {
                 pool.preamble,
                 pool.epilogue,
                 pool.allowedHosts,
+                pool.sessionCall,
             ).also { fresh ->
                 pool.lock.withLock { pool.made += fresh }
             }
@@ -487,6 +500,7 @@ internal object QuickJsExecutor {
         moduleId: String,
         fetchBase: String,
         allowedHosts: List<String>?,
+        sessionCall: ((String, String) -> String)? = null,
     ) {
         qjs.define("__spine") {
             asyncFunction("fetch", object : AsyncFunctionBinding<String> {
@@ -568,6 +582,59 @@ internal object QuickJsExecutor {
             asyncFunction("clearTimeout", object : AsyncFunctionBinding<String> {
                 override suspend fun invoke(args: Array<Any?>): String = "ok"
             })
+            // ── Signed sessions ──────────────────────────────────────────
+            // `sessionCall(method, argsJson)` is the whole bridge: Mornye's
+            // `session.*` are thin wrappers over exactly this, and answering in
+            // JSON keeps the shape of every result in one place (the Kotlin
+            // client) rather than split across two languages.
+            if (sessionCall != null) {
+                function("sessionCall", object : FunctionBinding<String> {
+                    override fun invoke(args: Array<Any?>): String {
+                        val method = args.getOrNull(0)?.toString().orEmpty()
+                        val payload = args.getOrNull(1)?.toString().orEmpty().ifBlank { "[]" }
+                        return runCatching { sessionCall(method, payload) }
+                            .getOrElse {
+                                TrackLog.w(TAG, "  ✗ sessionCall($method) failed: ${it.message}")
+                                JSONObject()
+                                    .put("success", false)
+                                    .put("ok", false)
+                                    .put("error", it.message ?: "session call failed")
+                                    .toString()
+                            }
+                    }
+                })
+            }
+            // ── Digests ──────────────────────────────────────────────────
+            // `utils.sha256` and friends are host functions in Mornye, and three
+            // extensions sign their own requests with them. Doing the digests
+            // here rather than in JavaScript is not a shortcut: a JS SHA-256
+            // costs more tokens than this whole file, and a wrong one is silent.
+            function("md5", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String =
+                    hexDigest("MD5", args.getOrNull(0)?.toString().orEmpty())
+            })
+            function("sha256", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String =
+                    hexDigest("SHA-256", args.getOrNull(0)?.toString().orEmpty())
+            })
+            function("hmacSHA256", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    // Mornye's own order: message first, key second.
+                    val message = args.getOrNull(0)?.toString().orEmpty()
+                    val key = args.getOrNull(1)?.toString() ?: return ""
+                    return hexDigest("HmacSHA256", message, key)
+                }
+            })
+            function("hmacSHA256Base64", object : FunctionBinding<String> {
+                override fun invoke(args: Array<Any?>): String {
+                    val message = args.getOrNull(0)?.toString().orEmpty()
+                    val key = args.getOrNull(1)?.toString() ?: return ""
+                    return runCatching {
+                        java.util.Base64.getEncoder()
+                            .encodeToString(mac("HmacSHA256", key.toByteArray()).doFinal(message.toByteArray()))
+                    }.getOrDefault("")
+                }
+            })
         }
 
         // Expose a web-compatible fetch() surface over the native binding.
@@ -621,6 +688,22 @@ internal object QuickJsExecutor {
             """.trimIndent()
         )
     }
+
+    // ── Digests ──────────────────────────────────────────────────────────
+
+    private fun mac(algorithm: String, key: ByteArray): javax.crypto.Mac =
+        javax.crypto.Mac.getInstance(algorithm).apply {
+            init(javax.crypto.spec.SecretKeySpec(key, algorithm))
+        }
+
+    private fun hexDigest(algorithm: String, text: String, key: String? = null): String = runCatching {
+        val bytes = if (key == null) {
+            java.security.MessageDigest.getInstance(algorithm).digest(text.toByteArray())
+        } else {
+            mac(algorithm, key.toByteArray()).doFinal(text.toByteArray())
+        }
+        bytes.joinToString("") { "%02x".format(it) }
+    }.getOrDefault("")
 
     // ── Permissions ──────────────────────────────────────────────────────
 
