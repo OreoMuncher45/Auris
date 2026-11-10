@@ -4661,14 +4661,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Unlocks at 16 fav tracks+artists total, or 10 artists alone.
      */
     val flowStatus: StateFlow<FlowStatus> =
-        combine(_library, likeStatuses) { library, likes ->
+        combine(_library, likeStatuses, AppSettings.homeProvider) { library, likes, provider ->
             val favTracks = likes.count { it.value == LikeStatus.LIKE }
             val shelves = (library as? UiState.Success)?.data?.shelves.orEmpty()
             val artists = shelves.firstOrNull { it.title.equals("Artists", true) }?.items?.size ?: 0
             val subs = shelves.firstOrNull { it.title.equals("Subscriptions", true) }?.items?.size ?: 0
             val favArtists = maxOf(artists, subs)
+            // Flow is built from the provider that is selected. A listener on
+            // the Spotify catalogue has a whole library over there, and the
+            // YouTube counts this used to read are zero — which is what put
+            // "Like 16 more songs" in front of somebody with thousands.
+            val spotify = provider == HomeProvider.SPOTIFY
             FlowStatus(
-                unlocked = FlowRules.isUnlocked(favTracks, favArtists),
+                unlocked = spotify || FlowRules.isUnlocked(favTracks, favArtists),
                 favTrackCount = favTracks,
                 favArtistCount = favArtists,
             )

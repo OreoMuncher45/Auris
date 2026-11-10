@@ -1154,12 +1154,36 @@ object AudioCache {
                     // and locking the hand-over into the wrong server.
                     StreamChoice.beginPreparing(next)
                     try {
-                        runCatching { SourceResolver.prepareForPlayback(target) }
-                            .onFailure {
-                                TrackLog.d(TAG, "next-track preparation failed for $next: ${it.message}", about = next)
-                            }
-                            .getOrNull()
-                            ?.also { StreamChoice.remember(next, it, substituted = true) }
+                        // Not cancellable, and that is the whole point.
+                        //
+                        // [prefetchQueue] cancels this job whenever the queue
+                        // changes — and the queue changes constantly: a Flow
+                        // top-up, an Automix plan, a reorder. Every one of those
+                        // cancelled the search that was about to prepare the
+                        // next track, which is why the log said
+                        // "next-track preparation failed … StandaloneCoroutine
+                        // was cancelled" and why, with YouTube switched off,
+                        // nothing was left to hand over to: the transition ran
+                        // on schedule into an item nothing had resolved.
+                        //
+                        // A search that is already in flight is worth finishing;
+                        // the byte pass below is the part that should stop when
+                        // the queue moves.
+                        withContext(kotlinx.coroutines.NonCancellable) {
+                            runCatching { SourceResolver.prepareForPlayback(target) }
+                                .onFailure { error ->
+                                    // A cancellation here is this job being
+                                    // stopped, not the preparation failing.
+                                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                                    TrackLog.d(
+                                        TAG,
+                                        "next-track preparation failed for $next: ${error.message}",
+                                        about = next,
+                                    )
+                                }
+                                .getOrNull()
+                                ?.also { StreamChoice.remember(next, it, substituted = true) }
+                        }
                     } finally {
                         StreamChoice.endPreparing(next)
                     }

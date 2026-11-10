@@ -486,6 +486,36 @@ internal object SpotifyHomeSource {
         matched(tracks).map { (_, song) -> song }
 
     /**
+     * A Spotify row as a queue entry of its own.
+     *
+     * This is what a Spotify search shows: Spotify's catalogue, not a list of
+     * the tracks that happened to match somewhere else. The id says so —
+     * `spotify:<id>` — and the player resolves it by asking the enabled sources
+     * for the recording by name (see `PlaybackService`'s resolver). Matching is
+     * no longer a condition for *appearing*: a catalogue with a track none of
+     * your sources hold is still a catalogue, and hiding the row was hiding the
+     * search.
+     */
+    internal fun songFor(track: SpotifyTrack): Song {
+        val key = "$SPOTIFY_KEY_PREFIX${track.id}"
+        spotifyIds[key] = track.id
+        return Song(
+            videoId = key,
+            title = track.title,
+            artist = track.artist,
+            thumbnailUrl = track.imageUrl,
+            durationText = track.durationMs.takeIf { it > 0 }?.let { ms ->
+                val total = ms / 1000
+                "%d:%02d".format(total / 60, total % 60)
+            },
+            albumName = track.album,
+        )
+    }
+
+    /** The prefix that marks a row as Spotify's own, with no playable id behind it. */
+    const val SPOTIFY_KEY_PREFIX = "spotify:"
+
+    /**
      * The next tracks AutoPlay should queue, from Spotify's own algorithm.
      *
      * The seed is the song that is playing, and what comes next is Spotify's

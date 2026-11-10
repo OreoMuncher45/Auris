@@ -321,15 +321,14 @@ internal object SpotifySearch {
 
         if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
             val trackData = (trackItems.mapNotNull(::dataOf) + top.filter { it.isTrack() })
-            val songs = SpotifyHomeSource.matchTracks(parseTracks(trackData))
-            // Said out loud, because this is the one step between a Spotify
-            // answer and an empty page: the catalogue can return twelve rows
-            // and the listener still see nothing, because none of them matched
-            // anything playable.
-            if (trackData.isNotEmpty() && songs.isEmpty()) {
-                Log.w(TAG, "Spotify's search found ${trackData.size} tracks, none of which matched anything playable")
-            }
-            found = trackData.size
+            // Every track Spotify returned is a row. This used to keep only the
+            // ones that matched something playable, which turned "the match
+            // failed" into "the catalogue is empty" — a search for a real song
+            // could come back with nothing at all while Spotify had answered
+            // with ten of them. Playability is the player's problem, not the
+            // search's: see [SpotifyHomeSource.songFor].
+            val songs = parseTracks(trackData).map(SpotifyHomeSource::songFor)
+            found = songs.size
             matched = songs.size
             songs.forEach { rows += SearchResult.Track(it) }
         }

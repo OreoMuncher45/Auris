@@ -1248,6 +1248,8 @@
     <string name="flow_favorites">Favorites</string>
     <string name="flow_favorites_subtitle">Weight of liked tracks in the mix</string>
     <string name="flow_genres">Genres in my Flow</string>
+    <string name="flow_genres_more">Show %1$d more</string>
+    <string name="flow_genres_fewer">Show fewer</string>
     <string name="flow_banned">Banned from Flow</string>
     <string name="flow_empty_banned">Nothing banned — hold a track to ban it from Flow</string>
     <string name="flow_apply">Apply &amp; rebuild</string>

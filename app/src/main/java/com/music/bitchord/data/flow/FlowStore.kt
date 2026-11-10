@@ -106,8 +106,12 @@ object FlowStore {
     fun readSnapshot(): Pair<List<Song>, Long>? {
         if (!this::prefs.isInitialized) return null
         val version = prefs.getInt(KEY_FLOW_SNAPSHOT_VERSION, 0)
-        val app = prefs.getInt(KEY_FLOW_SNAPSHOT_APP, 0)
-        if (version != SNAPSHOT_VERSION || app != BuildConfig.VERSION_CODE) {
+        // The snapshot's *shape* is what decides whether it can be read, and
+        // [SNAPSHOT_VERSION] is that decision. The app's own version used to be
+        // part of it, so every update — every draft, every install — threw the
+        // listener's mix away and made them build a fresh one. An upgrade is
+        // not a new listener.
+        if (version != SNAPSHOT_VERSION) {
             clearSnapshot()
             return null
         }

@@ -1,11 +1,14 @@
 package com.music.bitchord.data.spotify
 
 import android.net.Uri
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -46,6 +49,8 @@ data class SpotifyImportResult(
 )
 
 object SpotifyImporter {
+
+    private const val TAG = "SpotifyImporter"
 
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -168,20 +173,49 @@ object SpotifyImporter {
      */
     suspend fun matchTrack(track: SpotifyTrack): Song? {
         val query = listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" ")
-        val candidates = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
-            ?.filterIsInstance<SearchResult.Track>()
-            ?.map { it.song }
-            .orEmpty()
-        return TrackMatcher.best(
-            candidates,
-            TrackMatcher.Target(
-                title = track.title,
-                artist = track.artist,
-                durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
-                album = track.album,
-            ),
-        ) ?: candidates.firstOrNull()
+        val target = TrackMatcher.Target(
+            title = track.title,
+            artist = track.artist,
+            durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
+            album = track.album,
+        )
+        // YouTube first, and only when it is switched on. Its search is the
+        // widest catalogue and the best matcher input, but a listener who
+        // turned YouTube off did so because they do not want its streams —
+        // and asking it anyway is how a Spotify search came back with ten
+        // tracks and "0 playable".
+        if (SourceRegistry.youtubeEnabled()) {
+            val result = YtMusicRepository.search(query, SearchFilter.SONGS)
+            result.onFailure { error ->
+                Log.w(TAG, "YouTube could not be asked for '${track.title}': ${error.message}")
+            }
+            val candidates = result.getOrNull()
+                ?.filterIsInstance<SearchResult.Track>()
+                ?.map { it.song }
+                .orEmpty()
+            (TrackMatcher.best(candidates, target) ?: candidates.firstOrNull())?.let { return it }
+        }
+        // Then the sources themselves. Their rows already carry their own ids
+        // (see [MusicSource.search]), so a hit here is directly playable and
+        // needs no substitution at play time: the queue entry points at the
+        // source that answered.
+        for (source in SourceRegistry.activeForPlayback()) {
+            if (source.kind == SourceKind.YOUTUBE) continue
+            val rows = runCatching { source.search(query, limit = SOURCE_MATCH_ROWS) }
+                .onFailure { error ->
+                    Log.w(TAG, "'${source.displayName}' could not be asked for '${track.title}': ${error.message}")
+                }
+                .getOrNull()
+                .orEmpty()
+            val best = TrackMatcher.best(rows, target) ?: continue
+            Log.d(TAG, "'${track.title}' matched on ${source.displayName}")
+            return best
+        }
+        return null
     }
+
+    /** Rows one source is asked for when matching a Spotify track. */
+    private const val SOURCE_MATCH_ROWS = 5
 
     /** Tracks the embed page lists before it cuts off. */
     private const val EMBED_TRACK_LIMIT = 100

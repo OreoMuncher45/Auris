@@ -1735,6 +1735,51 @@ class PlaybackService : MediaLibraryService() {
                         .setHttpRequestHeaders(serving.headers)
                         .build()
                 }
+            // A row that exists only in Spotify's catalogue. There is no
+            // YouTube id behind it, so the sources are asked for the recording
+            // by name — which is the arrangement: Spotify supplies the row, a
+            // source supplies the bytes. A track none of them holds is a track
+            // that cannot play, and it says so instead of playing silence.
+            if (videoId.startsWith(SPOTIFY_ROW_PREFIX)) {
+                val target = SourceResolver.targetIn(dataSpec.uri)
+                val resolved = runBlocking(about) {
+                    val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
+                        SourceResolver.substituteForYouTube(target)
+                    }
+                    if (fromSources != null) return@runBlocking fromSources
+                    // Nobody holds this recording, but YouTube is still switched
+                    // on: ask it by name, which is the match the search used to
+                    // make. A Spotify row is worth playing from YouTube when
+                    // YouTube is what the listener left enabled.
+                    if (!SourceRegistry.youtubeEnabled()) return@runBlocking null
+                    val query = listOf(target.title, target.artist)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" ")
+                    val rows: List<SearchResult> = try {
+                        YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull().orEmpty()
+                    } catch (error: Exception) {
+                        emptyList()
+                    }
+                    val songs = rows.mapNotNull { row -> (row as? SearchResult.Track)?.song }
+                    val best = TrackMatcher.best(songs, target) ?: songs.firstOrNull()
+                    best?.let { song ->
+                        runCatching { StreamResolver.resolve(song.videoId) }
+                            .getOrNull()
+                            ?.let { url -> SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)) }
+                    }
+                } ?: throw java.io.IOException(
+                    "no enabled source could serve '${target.title}'",
+                )
+                val serving = pinOrPinned(videoId, resolved, substituted = true)
+                val sourceName = serving.sourceConfigId
+                    ?.let { SourceRegistry.config(it)?.displayName } ?: "Module"
+                NerdStats.onSourceStream(videoId, serving.format, sourceName)
+                NerdStats.recordSource(videoId, sourceName)
+                return@Resolver dataSpec.buildUpon()
+                    .setUri(Uri.parse(serving.url))
+                    .setHttpRequestHeaders(serving.headers)
+                    .build()
+            }
             // A track queued from YouTube may be held by a source the user
             // ranked above it — see [SourceResolver.substituteForYouTube] and
             // [raceYouTubeOrModule]. Only worth the extra lookup when
@@ -6331,6 +6376,9 @@ class PlaybackService : MediaLibraryService() {
      * break in the audio, in exchange for the listener hearing something now
      * rather than waiting in silence for the good copy.
      */
+    /** Prefix of a queue id that exists only in Spotify's catalogue. */
+    private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSource.SPOTIFY_KEY_PREFIX
+
     private suspend fun resolveWithModulePriority(
         videoId: String,
         target: TrackMatcher.Target,
