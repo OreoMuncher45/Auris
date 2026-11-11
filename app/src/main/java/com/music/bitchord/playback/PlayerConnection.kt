@@ -440,10 +440,11 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
             }
             // Synced here too, so seeking while paused or buffering still moves
             // the scrubber (the poll loop only runs on play).
-            position.report(player.currentPosition.coerceAtLeast(0L))
+            val playing = player.isPlaying
+            position.report(player.currentPosition.coerceAtLeast(0L), isPlaying = playing)
             state = state.copy(
                 song = item?.toSong(),
-                isPlaying = player.isPlaying,
+                isPlaying = playing,
                 durationMs = playbackDurationMs(
                     player.duration,
                     item?.claimedDurationMs() ?: 0L,
@@ -512,7 +513,7 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
     LaunchedEffect(controller, foreground) {
         if (controller == null || !foreground) return@LaunchedEffect
         pollWhilePlaying(isPlaying = { state.isPlaying }, intervalMs = 500) {
-            position.report(controller.currentPosition.coerceAtLeast(0L))
+            position.report(controller.currentPosition.coerceAtLeast(0L), isPlaying = controller.isPlaying)
             val duration = playbackDurationMs(
                 controller.duration,
                 controller.currentMediaItem?.claimedDurationMs() ?: 0L,
