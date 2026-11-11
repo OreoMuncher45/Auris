@@ -227,6 +227,7 @@ import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.playback.toggleShuffle
+import com.music.bitchord.playback.UpgradeOutcome
 import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.playback.revertToOriginal
 import com.music.bitchord.playback.swapToVersion
@@ -3748,8 +3749,21 @@ private fun BitChordApp(
                         )
                 ) {
                     {
-                        controller.upgradeQuality()
                         songActions = null
+                        val c = controller
+                        scope.launch {
+                            // The answer is said out loud. A button that
+                            // finds nothing and says nothing is the same as a
+                            // button that is broken, and it was read as one.
+                            val outcome = runCatching { c?.upgradeQuality() }
+                                .getOrNull() ?: UpgradeOutcome.STARTED
+                            val message = when (outcome) {
+                                UpgradeOutcome.STARTED -> context.getString(R.string.upgrade_quality_started)
+                                UpgradeOutcome.OFFLINE -> context.getString(R.string.upgrade_quality_offline)
+                                UpgradeOutcome.COOLDOWN -> context.getString(R.string.upgrade_quality_cooldown)
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } else {
                     null

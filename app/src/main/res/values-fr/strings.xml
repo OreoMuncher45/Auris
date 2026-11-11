@@ -1401,4 +1401,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">Recherche d’une meilleure copie…</string>
+    <string name="upgrade_quality_offline">Le mode hors ligne est activé — les améliorations nécessitent le réseau</string>
+    <string name="upgrade_quality_cooldown">Tentative récente — patientez un instant</string>
+    <string name="upgrade_quality_found">Amélioré en %1$s</string>
+    <string name="upgrade_quality_none_found">Aucune meilleure copie trouvée</string>
+    <string name="auto_upgrade_local_storage">Améliorer automatiquement les titres stockés</string>
+    <string name="auto_upgrade_local_storage_subtitle">Chercher une meilleure copie des titres enregistrés sur cet appareil</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">Le mode hors ligne est activé — les améliorations sont en pause</string>
 </resources>

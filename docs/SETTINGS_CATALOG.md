@@ -52,6 +52,7 @@ at once.
 - [x] `audio.loudness_normalization` — Loudness normalization
 - [x] `audio.loudness_off_on_speaker` — Loudness off on speaker
 - [x] `audio.seamless_quality_upgrades` — Seamless quality upgrades
+- [x] `audio.auto_upgrade_local_storage` — Auto upgrade songs in local storage
 - [x] `audio.equalizer` — Equalizer
 - [x] `audio.jamesdsp` — JamesDSP
 

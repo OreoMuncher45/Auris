@@ -149,7 +149,7 @@ internal object SpotifySearch {
             Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\": $why")
             throw SpotifyGraphQLException("Spotify could not answer that search — $why")
         }
-        return@withContext parse(section, filter, limit, answeredBy, seen)
+        return@withContext parse(section, filter, answeredBy, seen)
     }
 
     /** One way of asking Spotify for [query]. */
@@ -278,73 +278,89 @@ internal object SpotifySearch {
     /** Whether every list in [this] section is empty. */
     private fun JsonObject.hasNothing(): Boolean {
         val lists = listOf("tracksV2", "albumsV2", "artists", "playlists", "topResultsV2")
-        return lists.all { key ->
-            obj(key)?.arr("items").isNullOrEmpty() && obj(key)?.arr("itemsV2").isNullOrEmpty()
-        }
+        return lists.all { key -> itemsOf(key).isEmpty() }
+    }
+
+    /**
+     * The entries of one section, from both of the keys it may arrive under.
+     *
+     * A section's list is `items` in the web player's own readers and
+     * `itemsV2` in its counts — and the two are not the same list, nor is
+     * either of them the same across sections. Reading one key and counting
+     * another is how an answer that carried eight tracks produced zero rows:
+     * the count saw eight, the parser saw none, and the search said Spotify
+     * had nothing.
+     *
+     * So every list is read from both, and the entries are told apart by what
+     * they are rather than by where they sit — see [entityIn].
+     */
+    private fun JsonObject.itemsOf(key: String): List<kotlinx.serialization.json.JsonElement> {
+        val section = obj(key) ?: return emptyList()
+        return section.arr("items")?.toList().orEmpty() + section.arr("itemsV2")?.toList().orEmpty()
     }
 
     /** How many of each kind an answer carried, as one line. */
     private fun counts(section: JsonObject): String {
-        fun size(key: String) = section.obj(key)?.arr("items")?.size
-            ?: section.obj(key)?.arr("itemsV2")?.size ?: 0
+        fun size(key: String) = section.itemsOf(key).size
         return "tracks=" + size("tracksV2") + " albums=" + size("albumsV2") +
             " artists=" + size("artists") + " playlists=" + size("playlists") +
-            " top=" + (section.obj("topResultsV2")?.arr("itemsV2")?.size ?: 0)
+            " top=" + size("topResultsV2")
     }
 
-    /** Reads a search section into this app's rows. */
-    private suspend fun parse(
+    /**
+     * Reads a search section into this app's rows.
+     *
+     * Internal rather than private so that a test can hand it the answers
+     * themselves: the shape of Spotify's answer is not a contract anybody
+     * reads, and the only way to know this reads the shapes is to write them
+     * down and read them.
+     */
+    internal fun parse(
         section: JsonObject,
         filter: SearchFilter,
-        limit: Int,
-        answeredBy: String,
-        seen: String,
+        answeredBy: String = "a test",
+        seen: String = "",
     ): Page {
-        val trackItems = section.obj("tracksV2")?.arr("items").orEmpty()
-        val albumItems = section.obj("albumsV2")?.arr("items").orEmpty()
-        val artistItems = section.obj("artists")?.arr("items").orEmpty()
-        val playlistItems = section.obj("playlists")?.arr("items").orEmpty()
+        val trackItems = section.itemsOf("tracksV2")
+        val albumItems = section.itemsOf("albumsV2")
+        val artistItems = section.itemsOf("artists")
+        val playlistItems = section.itemsOf("playlists")
 
         // The top results, which are where a newer section build puts
         // everything: each entry carries its own kind, so the four lists above
         // can be empty while the answer is not.
-        val top = section.obj("topResultsV2")?.arr("itemsV2").orEmpty()
-            .mapNotNull { item -> item.objOrNull()?.obj("item")?.obj("data") }
-
-        /** A `data` object, whether it arrived in its own list or among the top results. */
-        fun dataOf(element: kotlinx.serialization.json.JsonElement): JsonObject? =
-            element.objOrNull()?.let { it.obj("data") ?: it.obj("item")?.obj("data") }
+        val topItems = section.itemsOf("topResultsV2")
 
         val rows = mutableListOf<SearchResult>()
         var found = 0
         var matched = 0
 
         if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
-            val trackData = (trackItems.mapNotNull(::dataOf) + top.filter { it.isTrack() })
+            val tracks = entitiesOf(trackItems + topItems, EntityKind.TRACK)
             // Every track Spotify returned is a row. This used to keep only the
             // ones that matched something playable, which turned "the match
             // failed" into "the catalogue is empty" — a search for a real song
             // could come back with nothing at all while Spotify had answered
             // with ten of them. Playability is the player's problem, not the
             // search's: see [SpotifyHomeSource.songFor].
-            val songs = parseTracks(trackData).map(SpotifyHomeSource::songFor)
+            val songs = tracks.mapNotNull(::parseTrack).map(SpotifyHomeSource::songFor)
             found = songs.size
             matched = songs.size
             songs.forEach { rows += SearchResult.Track(it) }
         }
         if (filter == SearchFilter.ALBUMS || filter == SearchFilter.ALL) {
-            (albumItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:album:") })
-                .mapNotNull { parseAlbum(cardDataOf(it)) }
+            entitiesOf(albumItems + topItems, EntityKind.ALBUM)
+                .mapNotNull(::parseAlbum)
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.ARTISTS || filter == SearchFilter.ALL) {
-            (artistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:artist:") })
-                .mapNotNull { parseArtist(cardDataOf(it)) }
+            entitiesOf(artistItems + topItems, EntityKind.ARTIST)
+                .mapNotNull(::parseArtist)
                 .forEach { rows += it.row() }
         }
         if (filter == SearchFilter.PLAYLISTS || filter == SearchFilter.ALL) {
-            (playlistItems.mapNotNull(::dataOf) + top.filter { it.isKind("spotify:playlist:") })
-                .mapNotNull { parsePlaylist(cardDataOf(it)) }
+            entitiesOf(playlistItems + topItems, EntityKind.PLAYLIST)
+                .mapNotNull(::parsePlaylist)
                 .forEach { rows += it.row() }
         }
         val diagnostic = buildString {
@@ -352,6 +368,13 @@ internal object SpotifySearch {
             append(" (").append(seen.ifBlank { "no counts" }).append(')')
             if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
                 append("; ").append(found).append(" tracks, ").append(matched).append(" playable")
+                if (found == 0) {
+                    // The shape of what actually arrived, so the next answer
+                    // can be read rather than guessed at. An empty page with
+                    // no shape in it is the one thing that cannot be acted on.
+                    val sample = (trackItems + topItems).firstOrNull()
+                    append("; first entry ").append(sample?.let(::shapeOf) ?: "none")
+                }
             }
             append("; ").append(rows.size).append(" rows")
         }
@@ -367,80 +390,173 @@ internal object SpotifySearch {
 
     // -- parsing ------------------------------------------------------------
 
-    /** The card's own object, from whichever wrapper the list used. */
-    private fun cardDataOf(element: kotlinx.serialization.json.JsonElement): JsonObject? {
-        val item = element.objOrNull() ?: return null
-        item.obj("data")?.let { return it }
-        item.obj("item")?.let { inner -> return inner.obj("data") ?: inner }
-        return item
+    /**
+     * The kinds of entity a search answer carries.
+     *
+     * Each names the `__typename` the web player's own readers dispatch on and
+     * the prefix of the uri it reads the id from. Both are needed: a build
+     * that states one of them and not the other is a build this has to read.
+     */
+    private enum class EntityKind(val typename: String, val uriPrefix: String) {
+        TRACK("Track", "spotify:track:"),
+        ALBUM("Album", "spotify:album:"),
+        ARTIST("Artist", "spotify:artist:"),
+        PLAYLIST("Playlist", "spotify:playlist:"),
     }
 
-    /** Whether this `data` object is the kind [uriPrefix] names. */
-    private fun JsonObject.isKind(uriPrefix: String): Boolean =
-        str("uri").orEmpty().startsWith(uriPrefix)
-
-    private fun JsonObject.isTrack(): Boolean = isKind("spotify:track:")
+    /** How deep the search for an entity inside an entry may go. */
+    private const val MAX_ENTITY_DEPTH = 8
 
     /**
-     * One track's own object, from whichever wrapper the answer used.
+     * The entities of one kind among [items], wherever each one put itself.
      *
-     * The client that works names three shapes — `item.data`, `item.track`, the
-     * item itself — and the search page's own sections add `item.item.data`.
-     * Reading only one of them is what turned a `tracks=8` answer into "0
-     * tracks": every item was there, and none of them was where this looked.
+     * Deduplicated by identity, because the same entity can arrive twice: in
+     * its own section and among the top results.
      */
-    private fun trackDataOf(item: JsonObject): JsonObject? {
-        item.obj("data")?.let { return it }
-        item.obj("track")?.let { return it }
-        item.obj("item")?.let { inner ->
-            inner.obj("data")?.let { return it }
-            inner.obj("track")?.let { return it }
-            return inner
+    private fun entitiesOf(
+        items: List<kotlinx.serialization.json.JsonElement>,
+        kind: EntityKind,
+    ): List<JsonObject> {
+        val found = LinkedHashMap<String, JsonObject>()
+        for (item in items) {
+            val entity = entityIn(item, kind) ?: continue
+            val key = entityKey(entity, kind) ?: continue
+            found.putIfAbsent(key, entity)
         }
-        return item
+        return found.values.toList()
+    }
+
+    /**
+     * The entity of [kind] inside [element], wherever the answer put it.
+     *
+     * Every entity in an answer is wrapped, and the wrapping is not the same
+     * everywhere: a section's entry holds its entity under `data`, a top
+     * result holds it under `item` and then under `data` again, and a build
+     * that moved a field moved the depth with it. So the entity is looked for
+     * rather than addressed — the first object in the entry that *is* a track
+     * (or an album, an artist, a playlist) is the one.
+     *
+     * The walk stops at an entity of another kind: the tracks inside an album
+     * and the albums inside an artist are not what the track tab asked for,
+     * and reading them would put rows in the list that Spotify never offered.
+     */
+    private fun entityIn(
+        element: kotlinx.serialization.json.JsonElement,
+        kind: EntityKind,
+    ): JsonObject? {
+        var answer: JsonObject? = null
+
+        fun walk(node: kotlinx.serialization.json.JsonElement, depth: Int) {
+            if (answer != null || depth > MAX_ENTITY_DEPTH) return
+            val obj = node.objOrNull() ?: return
+            if (obj.isEntity(kind)) {
+                answer = obj
+                return
+            }
+            if (obj.isEntityOfAnotherKind(kind)) return
+            for ((_, value) in obj) {
+                walk(value, depth + 1)
+                if (answer != null) return
+            }
+        }
+
+        walk(element, 0)
+        return answer
+    }
+
+    /** Whether this object is an entity of [kind]. */
+    private fun JsonObject.isEntity(kind: EntityKind): Boolean {
+        val uri = str("uri").orEmpty()
+        if (uri.startsWith(kind.uriPrefix)) return true
+        if (str("__typename").equals(kind.typename, ignoreCase = true)) return true
+        if (kind != EntityKind.TRACK) return false
+        // The catalogue's older shape: no uri and no typename, a bare id and a
+        // name, and the album or the runtime beside them. The album or the
+        // runtime is what tells a track from an album in a list that states
+        // neither.
+        val id = str("id").orEmpty()
+        if (id.isBlank() || id.contains(':')) return false
+        if (str("name").isNullOrBlank()) return false
+        return obj("album") != null || obj("duration") != null ||
+            obj("duration_ms") != null || obj("artists") != null
+    }
+
+    /** Whether this object is an entity of some kind other than [kind]. */
+    private fun JsonObject.isEntityOfAnotherKind(kind: EntityKind): Boolean {
+        val uri = str("uri").orEmpty()
+        val typename = str("__typename").orEmpty()
+        return EntityKind.entries.any { other ->
+            other != kind &&
+                (uri.startsWith(other.uriPrefix) || typename.equals(other.typename, ignoreCase = true))
+        }
+    }
+
+    /** What identifies an entity of [kind] — its id, or its uri. */
+    private fun entityKey(entity: JsonObject, kind: EntityKind): String? = when (kind) {
+        EntityKind.TRACK -> spotifyTrackIdOf(entity)
+        else -> entity.str("uri")?.takeIf { it.startsWith(kind.uriPrefix) }
     }
 
     /**
      * A track's Spotify id, from its `uri` or from the `id` next to it.
      *
-     * Both spellings are real: a `uri` of `spotify:track:<id>` and a bare `id`.
-     * Requiring the uri — and dropping everything without one — is how a row
-     * that had an id all along was discarded.
+     * All three spellings are real: a `uri` of `spotify:track:<id>`, an `id`
+     * that is the same uri, and a bare `id`. Requiring one of them and
+     * dropping everything without is how a row that had an id all along was
+     * discarded.
      */
     private fun spotifyTrackIdOf(data: JsonObject): String? {
         val uri = data.str("uri").orEmpty()
         if (uri.startsWith("spotify:track:")) return uri.substringAfterLast(':')
         val id = data.str("id").orEmpty()
-        return id.takeIf { it.isNotBlank() && !it.contains(':') }
+        if (id.startsWith("spotify:track:")) return id.substringAfterLast(':')
+        return id.takeIf { it.isNotBlank() && !id.contains(':') }
     }
 
-    private fun parseTracks(items: List<JsonObject>): List<SpotifyTrack> =
-        items.mapNotNull { item ->
-            val data = trackDataOf(item) ?: return@mapNotNull null
-            val id = spotifyTrackIdOf(data) ?: return@mapNotNull null
-            val title = data.str("name").orEmpty()
-            if (title.isBlank()) return@mapNotNull null
-            val album = data.obj("albumOfTrack") ?: data.obj("album")
-            SpotifyTrack(
-                id = id,
-                title = title,
-                artist = artistsOf(data),
-                album = album?.str("name"),
-                durationMs = data.obj("duration")?.int("totalMilliseconds")
-                    ?: data.obj("trackDuration")?.int("totalMilliseconds")
-                    ?: data.obj("duration")?.int("milliseconds")
-                    ?: 0,
-                imageUrl = album?.obj("coverArt")?.arr("sources")?.bestSourceUrl()
-                    ?: data.obj("coverArt")?.arr("sources")?.bestSourceUrl()
-                    ?: data.obj("images")?.arr("items")?.firstOrNull()?.objOrNull()
-                        ?.arr("sources")?.bestSourceUrl(),
-            )
+    /**
+     * A title, from wherever this shape states one.
+     *
+     * A plain `name` in the catalogue's own answers; a `text` or a
+     * `transformedLabel` under it in the shapes the home feed uses. A row
+     * with no title is not a row anyone can pick.
+     */
+    private fun titleOf(data: JsonObject): String =
+        data.str("name").orEmpty().ifBlank {
+            data.str("name.text").orEmpty().ifBlank {
+                data.str("title.text").orEmpty().ifBlank {
+                    data.str("title.transformedLabel").orEmpty()
+                }
+            }
         }
 
-    private fun parseAlbum(data: JsonObject?): SpotifyCard? {
-        data ?: return null
+    /** One track, from its own object. */
+    private fun parseTrack(data: JsonObject): SpotifyTrack? {
+        val id = spotifyTrackIdOf(data) ?: return null
+        val title = titleOf(data)
+        if (title.isBlank()) return null
+        val album = data.obj("albumOfTrack") ?: data.obj("album")
+        return SpotifyTrack(
+            id = id,
+            title = title,
+            artist = artistsOf(data),
+            album = album?.str("name"),
+            durationMs = data.obj("duration")?.int("totalMilliseconds")
+                ?: data.obj("trackDuration")?.int("totalMilliseconds")
+                ?: data.obj("duration")?.int("milliseconds")
+                ?: data.int("duration_ms")
+                ?: 0,
+            imageUrl = album?.obj("coverArt")?.arr("sources")?.bestSourceUrl()
+                ?: data.obj("coverArt")?.arr("sources")?.bestSourceUrl()
+                ?: data.arr("visualIdentity.sixteenByNineCoverImage.image.data.sources")
+                    ?.bestSourceUrl()
+                ?: data.obj("images")?.arr("items")?.firstOrNull()?.objOrNull()
+                    ?.arr("sources")?.bestSourceUrl(),
+        )
+    }
+
+    private fun parseAlbum(data: JsonObject): SpotifyCard? {
         val uri = data.str("uri")?.takeIf { it.startsWith("spotify:album:") } ?: return null
-        val title = data.str("name").orEmpty()
+        val title = titleOf(data)
         if (title.isBlank()) return null
         return SpotifyCard(
             uri = uri,
@@ -452,10 +568,9 @@ internal object SpotifySearch {
         )
     }
 
-    private fun parseArtist(data: JsonObject?): SpotifyCard? {
-        data ?: return null
+    private fun parseArtist(data: JsonObject): SpotifyCard? {
         val uri = data.str("uri")?.takeIf { it.startsWith("spotify:artist:") } ?: return null
-        val title = data.obj("profile")?.str("name").orEmpty()
+        val title = data.obj("profile")?.str("name").orEmpty().ifBlank { data.str("name").orEmpty() }
         if (title.isBlank()) return null
         return SpotifyCard(
             uri = uri,
@@ -467,10 +582,9 @@ internal object SpotifySearch {
         )
     }
 
-    private fun parsePlaylist(data: JsonObject?): SpotifyCard? {
-        data ?: return null
+    private fun parsePlaylist(data: JsonObject): SpotifyCard? {
         val uri = data.str("uri")?.takeIf { it.startsWith("spotify:playlist:") } ?: return null
-        val title = data.str("name").orEmpty()
+        val title = titleOf(data)
         if (title.isBlank()) return null
         return SpotifyCard(
             uri = uri,
@@ -483,6 +597,23 @@ internal object SpotifySearch {
         )
     }
 
+    /**
+     * The shape of what arrived, for the log.
+     *
+     * The key names of an entry and of the first object inside it — enough to
+     * say "the entity is under `item.data`" or "there is no `data` at all",
+     * which is the difference between a parser that is looking in the wrong
+     * place and one that is being handed something else.
+     */
+    private fun shapeOf(element: kotlinx.serialization.json.JsonElement): String {
+        val obj = element.objOrNull() ?: return element.toString().take(120)
+        val keys = obj.keys.joinToString(",")
+        val nested = obj.values.firstNotNullOfOrNull { value ->
+            value.objOrNull()?.keys?.joinToString(",")
+        }
+        return if (nested != null) "{$keys} -> {$nested}" else "{$keys}"
+    }
+
     /** The artists of a track, album or playlist, as one line. */
     private fun artistsOf(data: JsonObject): String {
         // A plain byline, for the shapes that state one ("MISFIRE" rather than a
@@ -490,8 +621,17 @@ internal object SpotifySearch {
         // shadow the structured reading below.
         data.str("artists")?.takeIf { it.isNotBlank() }?.let { return it }
         data.str("artist")?.takeIf { it.isNotBlank() }?.let { return it }
+        // A list of artists rather than a list of profiles: the older shape
+        // puts the name on the artist itself.
+        data.arr("artists")?.mapNotNull { artist ->
+            artist.objOrNull()?.str("name")?.takeIf { it.isNotBlank() }
+        }?.takeIf { it.isNotEmpty() }?.let { return it.joinToString(", ") }
         val names = data.obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
-            artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
+            val obj = artist.objOrNull() ?: return@mapNotNull null
+            // The catalogue states an artist as a profile with a name inside
+            // it; the older shape states the name on the artist itself.
+            obj.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
+                ?: obj.str("name")?.takeIf { it.isNotBlank() }
         }
         if (names.isNotEmpty()) return names.joinToString(", ")
         return data.str("firstArtist.items.0.profile.name").orEmpty()

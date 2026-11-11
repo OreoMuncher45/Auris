@@ -423,6 +423,12 @@ object SourceResolver {
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
         servedBy: String? = null,
+        /**
+         * Whether this swap was asked for — asked per candidate rather than
+         * once, so a request that arrives while the search is running is
+         * still honoured. See [worthSwapping].
+         */
+        explicit: () -> Boolean = { false },
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -464,7 +470,7 @@ object SourceResolver {
             strictLength = true,
             requireSharedArtist = true,
         ) { candidate, stream ->
-            worthSwapping(stream.format, playing).also { worth ->
+            worthSwapping(stream.format, playing, explicit()).also { worth ->
                 // Named rather than skipped silently. This is the one refusal
                 // in the upgrade path that discards a stream already found,
                 // matched and length-checked, and a silent skip reads in the log
@@ -734,7 +740,11 @@ object SourceResolver {
      * narrow enough to be codec-sensitive would be a margin that buys a seam
      * in the audio for nothing. 160 to 320 clears it; 128 to 192 does not.
      */
-    internal fun worthSwapping(candidate: StreamFormat, playing: StreamFormat?): Boolean {
+    internal fun worthSwapping(
+        candidate: StreamFormat,
+        playing: StreamFormat?,
+        explicit: Boolean = false,
+    ): Boolean {
         // Never away from an immersive mix. A FLAC is a better *copy* and a
         // worse *mix* once Atmos is what the listener chose, and cutting one in
         // over the other mid-song is a downgrade dressed as an upgrade.
@@ -747,7 +757,15 @@ object SourceResolver {
         // it is the rung below, cut into a track that is already playing, with
         // a seam in the audio to prove it. So the only late swap the rung
         // allows is an Atmos answer itself.
-        if (immersiveRungActive() && playing?.isDolbyAtmos != true &&
+        //
+        // Unless the swap was asked for, or what is playing is known to be
+        // lossy. Both are the same fact seen from two sides: a bit-exact copy
+        // over a lossy stream is a better copy of the same recording, and the
+        // app's own live path serves exactly that when a track has no spatial
+        // mix — "a track with no Atmos master must still play its FLAC". The
+        // refusal made "Upgrade quality" do nothing at all on a device whose
+        // rung was Dolby, which is the complaint it was written to answer.
+        if (!explicit && immersiveRungActive() && playing?.isDolbyAtmos != true &&
             candidate.isDolbyAtmos == false && candidate.isLossless == true
         ) {
             return false

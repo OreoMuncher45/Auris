@@ -1400,4 +1400,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">बेहतर कॉपी खोज रहे हैं…</string>
+    <string name="upgrade_quality_offline">ऑफ़लाइन मोड चालू है — अपग्रेड के लिए नेटवर्क चाहिए</string>
+    <string name="upgrade_quality_cooldown">अभी कोशिश की — थोड़ा रुकें</string>
+    <string name="upgrade_quality_found">%1$s में अपग्रेड किया गया</string>
+    <string name="upgrade_quality_none_found">कोई बेहतर कॉपी नहीं मिली</string>
+    <string name="auto_upgrade_local_storage">स्थानीय स्टोरेज के गाने स्वतः अपग्रेड करें</string>
+    <string name="auto_upgrade_local_storage_subtitle">इस डिवाइस पर सहेजे गए गानों की बेहतर कॉपी खोजें</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">ऑफ़लाइन मोड चालू है — अपग्रेड रुके हैं</string>
 </resources>

@@ -1432,4 +1432,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">Ищется лучшая копия…</string>
+    <string name="upgrade_quality_offline">Включён офлайн-режим — для улучшения нужен интернет</string>
+    <string name="upgrade_quality_cooldown">Только что попробовали — подождите немного</string>
+    <string name="upgrade_quality_found">Улучшено до %1$s</string>
+    <string name="upgrade_quality_none_found">Лучшей копии не найдено</string>
+    <string name="auto_upgrade_local_storage">Автоматически улучшать треки в локальном хранилище</string>
+    <string name="auto_upgrade_local_storage_subtitle">Искать лучшую копию треков, сохранённых на этом устройстве</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">Включён офлайн-режим — улучшения приостановлены</string>
 </resources>

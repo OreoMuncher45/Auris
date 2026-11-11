@@ -1383,4 +1383,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">กำลังมองหาสำเนาที่ดีกว่า…</string>
+    <string name="upgrade_quality_offline">โหมดออฟไลน์เปิดอยู่ — การอัปเกรดต้องใช้เครือข่าย</string>
+    <string name="upgrade_quality_cooldown">เพิ่งลองไป — รอสักครู่</string>
+    <string name="upgrade_quality_found">อัปเกรดเป็น %1$s แล้ว</string>
+    <string name="upgrade_quality_none_found">ไม่พบสำเนาที่ดีกว่า</string>
+    <string name="auto_upgrade_local_storage">อัปเกรดเพลงในที่จัดเก็บในเครื่องอัตโนมัติ</string>
+    <string name="auto_upgrade_local_storage_subtitle">มองหาสำเนาที่ดีกว่าของเพลงที่บันทึกไว้ในเครื่องนี้</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">โหมดออฟไลน์เปิดอยู่ — การอัปเกรดถูกหยุดชั่วคราว</string>
 </resources>

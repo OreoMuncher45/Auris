@@ -60,6 +60,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Upgrade
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -726,6 +727,55 @@ fun SettingsScreen(
                             AppSettings.setSeamlessQualityUpgrade(false)
                         } else {
                             showSeamlessUpgradeConfirmation = true
+                        }
+                    },
+                )
+            }
+            // The songs kept on the device are upgraded to a better copy
+            // while they play, unless the app cannot fetch one.
+            //
+            // The switch shows the effective answer, so it goes off with the
+            // network and comes back with it — an upgrade is a fetch, and an
+            // offline app cannot make one whatever the switch says. The
+            // listener's own answer is kept meanwhile: coming back online
+            // restores the upgrade rather than forgetting the choice.
+            val autoUpgradeLocalTitle = stringResource(R.string.auto_upgrade_local_storage)
+            val autoUpgradeLocal by AppSettings.effectiveAutoUpgradeLocalStorage
+                .collectAsStateWithLifecycle()
+            row(
+                autoUpgradeLocalTitle,
+                "local storage",
+                "downloads",
+                "saved",
+                "upgrade",
+                "quality",
+                "lossless",
+            ) {
+                SettingsRow(
+                    icon = Icons.Rounded.Upgrade,
+                    title = autoUpgradeLocalTitle,
+                    subtitle = stringResource(
+                        if (detectedOffline) {
+                            R.string.auto_upgrade_local_storage_offline_subtitle
+                        } else {
+                            R.string.auto_upgrade_local_storage_subtitle
+                        },
+                    ),
+                    enabled = !detectedOffline,
+                    trailing = {
+                        Switch(
+                            checked = autoUpgradeLocal,
+                            onCheckedChange = AppSettings::setAutoUpgradeLocalStorage,
+                            enabled = !detectedOffline,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = {
+                        if (!detectedOffline) {
+                            AppSettings.setAutoUpgradeLocalStorage(!autoUpgradeLocal)
                         }
                     },
                 )

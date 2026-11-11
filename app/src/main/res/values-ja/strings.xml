@@ -1378,4 +1378,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">より良いコピーを探しています…</string>
+    <string name="upgrade_quality_offline">オフラインモードがオンです — アップグレードにはネットワークが必要です</string>
+    <string name="upgrade_quality_cooldown">たった今試しました — 少し待ってください</string>
+    <string name="upgrade_quality_found">%1$s にアップグレードしました</string>
+    <string name="upgrade_quality_none_found">より良いコピーは見つかりませんでした</string>
+    <string name="auto_upgrade_local_storage">ローカルストレージの曲を自動アップグレード</string>
+    <string name="auto_upgrade_local_storage_subtitle">このデバイスに保存された曲のより良いコピーを探します</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">オフラインモードがオンです — アップグレードは一時停止中です</string>
 </resources>

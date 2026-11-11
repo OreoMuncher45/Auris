@@ -1357,4 +1357,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">Daha iyi bir kopya aranıyor…</string>
+    <string name="upgrade_quality_offline">Çevrimdışı mod açık — yükseltmeler ağ gerektirir</string>
+    <string name="upgrade_quality_cooldown">Az önce denendi — biraz bekleyin</string>
+    <string name="upgrade_quality_found">%1$s sürümüne yükseltildi</string>
+    <string name="upgrade_quality_none_found">Daha iyi bir kopya bulunamadı</string>
+    <string name="auto_upgrade_local_storage">Yerel depolamadaki şarkıları otomatik yükselt</string>
+    <string name="auto_upgrade_local_storage_subtitle">Bu cihazda kayıtlı şarkılar için daha iyi bir kopya ara</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">Çevrimdışı mod açık — yükseltmeler duraklatıldı</string>
 </resources>

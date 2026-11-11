@@ -163,6 +163,34 @@ suspend fun MediaController.beginRadioQueue() {
     ).await()
 }
 
+/** The key the service's answer about a manual upgrade travels in. */
+const val EXTRA_UPGRADE_OUTCOME = "com.music.bitchord.extra.UPGRADE_OUTCOME"
+
+/**
+ * What the service made of a manual quality upgrade.
+ *
+ * The command used to answer "yes" whatever it had done, including nothing
+ * at all, so a listener who tapped "Upgrade quality" and heard no change had
+ * no way of telling a refused request from a refused answer. The outcome is
+ * the difference between those two.
+ */
+enum class UpgradeOutcome(val wire: String) {
+    /** The search is running. */
+    STARTED("started"),
+
+    /** Offline mode is on, and an upgrade is a fetch. */
+    OFFLINE("offline"),
+
+    /** The last manual upgrade was too recent; the addons are still on it. */
+    COOLDOWN("cooldown"),
+    ;
+
+    companion object {
+        fun of(wire: String?): UpgradeOutcome =
+            entries.firstOrNull { it.wire == wire } ?: STARTED
+    }
+}
+
 /**
  * Asks the service to go looking for a better copy of the playing track, now,
  * because the listener asked for it.
@@ -171,12 +199,16 @@ suspend fun MediaController.beginRadioQueue() {
  * be rebuilt, the track's cached rendition has to be dropped and the automatic
  * path's verdicts about it have to be cleared, and all three live on the
  * service's side of the session — see [PlaybackService]'s `upgradeQualityNow`.
+ *
+ * @return what the service made of the request, so the listener is told when
+ *   it could not be carried out and why.
  */
-fun MediaController.upgradeQuality() {
-    sendCustomCommand(
+suspend fun MediaController.upgradeQuality(): UpgradeOutcome {
+    val result = sendCustomCommand(
         SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY),
         Bundle.EMPTY,
-    )
+    ).await()
+    return UpgradeOutcome.of(result.extras?.getString(EXTRA_UPGRADE_OUTCOME))
 }
 
 /**

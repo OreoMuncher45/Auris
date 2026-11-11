@@ -163,6 +163,31 @@ class SourcePriorityTest {
         }
     }
 
+    /**
+     * A lossless copy offered where the spatial mix was asked for is refused —
+     * unless the listener asked for the upgrade themselves.
+     *
+     * "Upgrade quality" is a request for the best copy the sources hold, not
+     * for the copy of one particular tier. Refusing it because the copy was
+     * not the tier that was asked for is what made the row do nothing at all
+     * on a device whose rung was Dolby.
+     *
+     * An immersive mix is still never swapped away from, asked for or not.
+     */
+    @Test
+    fun `an asked-for lossless swap is allowed on the immersive rung`() {
+        on(AudioQuality.DOLBY) {
+            assertTrue(
+                "the listener's own request is answered by the best copy available",
+                SourceResolver.worthSwapping(lossless, playing = lossy, explicit = true),
+            )
+            assertFalse(
+                "an immersive mix is never swapped away from",
+                SourceResolver.worthSwapping(lossless, playing = atmos, explicit = true),
+            )
+        }
+    }
+
     /** An immersive mix is never swapped away from. */
     @Test
     fun `an immersive mix is never swapped away from`() {

@@ -314,6 +314,27 @@ object AppSettings {
      */
     val seamlessQualityUpgrade = MutableStateFlow(false)
 
+    /**
+     * Whether the songs kept on the device are upgraded to a better copy
+     * while they play.
+     *
+     * A download is a copy of whatever the sources held when it was saved —
+     * often a 128kbps transcode — and it is played for as long as the
+     * listener keeps it. The sources can do better now, so the second look
+     * offers the file's own track to them.
+     *
+     * On by default, because the path it governs has always been there: the
+     * question was never whether a saved song *may* be upgraded, but whether
+     * the upgrade could actually land — and it could not, because the tier
+     * below the one that was asked for was refused as an answer. This switch
+     * is the listener's way of saying no to it.
+     *
+     * Read through [effectiveAutoUpgradeLocalStorage] rather than this: an
+     * upgrade needs the network, so offline mode turns this off whatever it
+     * says here.
+     */
+    val autoUpgradeLocalStorage = MutableStateFlow(true)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
@@ -1335,6 +1356,37 @@ object AppSettings {
         combine(offlineModeFlow, streamingAvailableFlow) { manual, streaming -> manual || !streaming }
             .stateIn(networkScope, SharingStarted.Eagerly, false)
 
+    /**
+     * Whether the songs on the device are upgraded right now.
+     *
+     * The listener's own answer and the app's ability to act on it, in that
+     * order: an upgrade is a fetch, so an app that is offline — because the
+     * switch says so or because nothing has been reachable for a while —
+     * cannot make one, and a switch left on says nothing about what is
+     * possible.
+     *
+     * The listener's answer is kept while it is off. Coming back online
+     * restores the upgrade; it does not silently turn a switch the listener
+     * had deliberately turned off back on, and it does not quietly forget one
+     * they had turned on.
+     */
+    val effectiveAutoUpgradeLocalStorage: StateFlow<Boolean> =
+        combine(autoUpgradeLocalStorage, effectiveOffline) { requested, offline ->
+            autoUpgradeLocalStorageAllowed(requested, offline)
+        }.stateIn(networkScope, SharingStarted.Eagerly, true)
+
+    /**
+     * Whether the songs on the device may be upgraded, given the listener's
+     * answer and whether the app is offline.
+     *
+     * Spelled out as its own function so the rule can be read — and tested —
+     * on its own. An upgrade is a fetch, so offline mode turns it off
+     * whatever the listener said, and the listener's answer is kept for when
+     * the network comes back rather than being overwritten by it.
+     */
+    fun autoUpgradeLocalStorageAllowed(requested: Boolean, offline: Boolean): Boolean =
+        requested && !offline
+
     fun setOfflineMode(value: Boolean) {
         if (offlineModeFlow.value == value) return
         offlineModeFlow.value = value
@@ -1448,6 +1500,7 @@ object AppSettings {
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
+        autoUpgradeLocalStorage.value = prefs.getBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1970,6 +2023,18 @@ object AppSettings {
     fun setSeamlessQualityUpgrade(value: Boolean) {
         seamlessQualityUpgrade.value = value
         prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
+    /**
+     * Records the listener's answer about upgrading the songs on the device.
+     *
+     * The answer is stored as it was given, not as it applies: offline mode
+     * turns the upgrade off on its own, and the listener's own switch is
+     * still theirs when the network comes back.
+     */
+    fun setAutoUpgradeLocalStorage(value: Boolean) {
+        autoUpgradeLocalStorage.value = value
+        prefs.edit().putBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, value).apply()
     }
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
@@ -3062,6 +3127,7 @@ object AppSettings {
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
+    private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"

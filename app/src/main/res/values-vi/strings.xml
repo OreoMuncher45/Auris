@@ -1317,4 +1317,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">Đang tìm một bản tốt hơn…</string>
+    <string name="upgrade_quality_offline">Đang bật chế độ ngoại tuyến — nâng cấp cần mạng</string>
+    <string name="upgrade_quality_cooldown">Vừa thử xong — hãy đợi một chút</string>
+    <string name="upgrade_quality_found">Đã nâng cấp lên %1$s</string>
+    <string name="upgrade_quality_none_found">Không tìm thấy bản tốt hơn nào</string>
+    <string name="auto_upgrade_local_storage">Tự động nâng cấp các bài hát trong bộ nhớ cục bộ</string>
+    <string name="auto_upgrade_local_storage_subtitle">Tìm bản tốt hơn cho các bài hát đã lưu trên thiết bị này</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">Đang bật chế độ ngoại tuyến — nâng cấp tạm dừng</string>
 </resources>

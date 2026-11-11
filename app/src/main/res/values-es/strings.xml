@@ -1372,4 +1372,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">Buscando una copia mejor…</string>
+    <string name="upgrade_quality_offline">El modo sin conexión está activo: las mejoras necesitan conexión</string>
+    <string name="upgrade_quality_cooldown">Acabas de intentarlo: espera un momento</string>
+    <string name="upgrade_quality_found">Mejorado a %1$s</string>
+    <string name="upgrade_quality_none_found">No se encontró una copia mejor</string>
+    <string name="auto_upgrade_local_storage">Actualizar automáticamente las canciones guardadas</string>
+    <string name="auto_upgrade_local_storage_subtitle">Buscar una copia mejor de las canciones guardadas en este dispositivo</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">El modo sin conexión está activo: las mejoras están en pausa</string>
 </resources>

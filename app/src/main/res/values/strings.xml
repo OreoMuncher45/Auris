@@ -1432,4 +1432,12 @@
     <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
     <string name="hide_status_bar_in_player">Hide status bar in player</string>
     <string name="hide_status_bar_in_player_subtitle">Hides the clock, battery and notification icons while the main player is open</string>
+    <string name="upgrade_quality_started">Looking for a better copy…</string>
+    <string name="upgrade_quality_offline">Offline mode is on — upgrades need the network</string>
+    <string name="upgrade_quality_cooldown">Just tried — give it a moment</string>
+    <string name="upgrade_quality_found">Upgraded to %1$s</string>
+    <string name="upgrade_quality_none_found">No better copy found</string>
+    <string name="auto_upgrade_local_storage">Auto upgrade songs in local storage</string>
+    <string name="auto_upgrade_local_storage_subtitle">Look for a better copy of the songs saved on this device</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">Offline mode is on — upgrades are paused</string>
 </resources>

@@ -1405,4 +1405,12 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">מחפש עותק טוב יותר…</string>
+    <string name="upgrade_quality_offline">מצב לא מקוון פעיל — שיפורים דורשים חיבור</string>
+    <string name="upgrade_quality_cooldown">נסה לפני רגע — המתן מעט</string>
+    <string name="upgrade_quality_found">שודרג ל־%1$s</string>
+    <string name="upgrade_quality_none_found">לא נמצא עותק טוב יותר</string>
+    <string name="auto_upgrade_local_storage">שדרג אוטומטית שירים באחסון מקומי</string>
+    <string name="auto_upgrade_local_storage_subtitle">חפש עותק טוב יותר לשירים שנשמרו במכשיר</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">מצב לא מקוון פעיל — שיפורים מושהים</string>
 </resources>

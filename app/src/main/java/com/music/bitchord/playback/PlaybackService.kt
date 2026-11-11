@@ -5204,7 +5204,7 @@ class PlaybackService : MediaLibraryService() {
         val uri = item.localConfiguration?.uri
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
-        if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) return
+        if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri, byHand)) return
         if (upgradeJob?.isActive == true) {
             // Already hunting for this track. One left over from a track the
             // queue has moved past is a different matter: it can only come
@@ -5268,13 +5268,20 @@ class PlaybackService : MediaLibraryService() {
             // the cached-track path, was refused by it for being pending, and
             // lost its upgrade until the next progress sample came round.
             if (!QualityUpgrade.isPending(mediaId) &&
-                (uri == null || !adoptUnresolvedTrack(mediaId, uri, playingSeconds))
+                (uri == null || !adoptUnresolvedTrack(mediaId, uri, playingSeconds, byHand))
             ) {
+                if (byHand) announce(getString(R.string.upgrade_quality_none_found))
                 return@launch
             }
             val better = withContext(Dispatchers.IO) {
                 QualityUpgrade.lookAgain(mediaId, playingSeconds)
-            } ?: return@launch
+            } ?: run {
+                // The search finished and nothing in it was worth the seam.
+                // Said out loud, because "Upgrade quality" that finds nothing
+                // and says nothing is the same as a button that is broken.
+                if (byHand) announce(getString(R.string.upgrade_quality_none_found))
+                return@launch
+            }
             try {
                 swapIn(mediaId, better)
             } finally {
@@ -5317,19 +5324,24 @@ class PlaybackService : MediaLibraryService() {
      * served the copy that was found rather than the one being replaced. The
      * listener hears one cut, for the change they asked for.
      */
-    private fun upgradeQualityNow() {
-        val player = player ?: return
-        if (offlineBlocksUpgrades()) return
-        val mediaId = player.currentMediaItem?.mediaId ?: return
-        // Do not charge the manual cooldown for a command that merely arrived
-        // while this track's automatic or manual upgrade was already running.
-        // The UI disables the row too, but the service is the authoritative
-        // boundary for controllers which do not use that UI.
+    private fun upgradeQualityNow(): UpgradeOutcome {
+        val player = player ?: return UpgradeOutcome.STARTED
+        if (offlineBlocksUpgrades()) return UpgradeOutcome.OFFLINE
+        val mediaId = player.currentMediaItem?.mediaId ?: return UpgradeOutcome.STARTED
+        // An upgrade already running for this track is not refused. The
+        // listener's request makes the answer explicit, and the search that is
+        // already running weighs its candidates by that rule when it gets to
+        // them — so the tap joins the search rather than being thrown away.
+        //
+        // The cooldown is not charged for it either: this command did not ask
+        // for a second search, it asked for the one in flight to be judged by
+        // the listener's rules.
         if (mediaId in NerdStats.racingLossless.value ||
             (upgradeJob?.isActive == true && upgradeFor == mediaId)
         ) {
-            TrackLog.d("BitChord", "manual upgrade ignored for $mediaId: upgrade already running", about = mediaId)
-            return
+            QualityUpgrade.askByHand(mediaId)
+            TrackLog.d("BitChord", "manual upgrade joined the running one for $mediaId", about = mediaId)
+            return UpgradeOutcome.STARTED
         }
         val remaining = manualUpgradeThrottle.tryAcquire(SystemClock.elapsedRealtime())
         if (remaining > 0) {
@@ -5338,7 +5350,7 @@ class PlaybackService : MediaLibraryService() {
                 "manual upgrade ignored for $mediaId: ${remaining}ms cooldown remaining",
                 about = mediaId,
             )
-            return
+            return UpgradeOutcome.COOLDOWN
         }
         OriginalVersion.unpin(mediaId)
         // A manual retry is a request for the addon's state *now*. In
@@ -5350,6 +5362,20 @@ class PlaybackService : MediaLibraryService() {
         QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
         lookForBetterCopy(player, byHand = true)
+        return UpgradeOutcome.STARTED
+    }
+
+    /**
+     * Says something about an upgrade the listener asked for.
+     *
+     * A button that does nothing is a button that feels broken, and this one
+     * did nothing for three separate reasons that were all invisible: the
+     * search was refused, it found nothing, or the copy it found was turned
+     * down by a rule the listener had never heard of. The answer is now said
+     * out loud, in the player's own voice.
+     */
+    private fun announce(message: String) {
+        Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -5381,18 +5407,28 @@ class PlaybackService : MediaLibraryService() {
      *   caller — needed here to turn the size of the cache entry into a
      *   bitrate. See [cachedFloor].
      */
-    private suspend fun adoptUnresolvedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+    private suspend fun adoptUnresolvedTrack(
+        mediaId: String,
+        uri: Uri,
+        durationSec: Int?,
+        byHand: Boolean = false,
+    ): Boolean {
         val format = withContext(Dispatchers.Main) {
             player
                 ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
                 ?.audioFormat
         } ?: return false
-        val mime = format.sampleMimeType ?: return false
+        val mime = format.sampleMimeType
+        // The decoder has not said what these bytes are yet. An automatic
+        // upgrade waits for the next progress sample, which will know. A
+        // hand-asked one does not: the listener asked, and an undecided
+        // decoder is not a reason to say nothing happened.
+        if (mime == null && !byHand) return false
         // The file the listener saved, playing as itself. This is the track
         // every other part of the app already believes is on disk — and now
         // the one that actually is.
         if (uri.scheme == "file" || uri.scheme == "content") {
-            return adoptFileBackedTrack(mediaId, uri, format, durationSec)
+            return adoptFileBackedTrack(mediaId, uri, format, durationSec, byHand)
         }
         val videoId = uri.getQueryParameter("v") ?: return false
         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
@@ -5413,6 +5449,7 @@ class PlaybackService : MediaLibraryService() {
             target = target,
             playingMime = mime,
             playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
+            explicit = byHand,
         )
     }
 
@@ -5446,6 +5483,7 @@ class PlaybackService : MediaLibraryService() {
         uri: Uri,
         format: Format,
         durationSec: Int?,
+        byHand: Boolean = false,
     ): Boolean {
         if (Downloads.verifiedSavedUri(mediaId) == null) return false
         // A track that came from an addon is left alone, and not because there
@@ -5471,6 +5509,7 @@ class PlaybackService : MediaLibraryService() {
             target = TrackMatcher.targetOf(song),
             playingMime = format.sampleMimeType,
             playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
+            explicit = byHand,
         )
     }
 
@@ -5782,6 +5821,9 @@ class PlaybackService : MediaLibraryService() {
             NerdStats.recordSource(mediaId, upgradedSourceName)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${upgradedAt}ms ($upgradedSourceName)")
+            if (QualityUpgrade.isHandAsked(mediaId)) {
+                announce(getString(R.string.upgrade_quality_found, stream.format.summary))
+            }
             // The position the swap actually landed at, not the one it started
             // from: a crossfade spends seconds preparing, and a revert (or the
             // next swap point) should not jump back over them.
@@ -9720,7 +9762,15 @@ class PlaybackService : MediaLibraryService() {
                 ACTION_SWAP_TO_VERSION -> swapCurrentToVersion(args)
                 ACTION_BEGIN_RADIO_QUEUE -> beginRadioQueue()
                 ACTION_COMMIT_RADIO_QUEUE -> player?.let(::saveQueueSnapshotImmediately)
-                ACTION_UPGRADE_QUALITY -> upgradeQualityNow()
+                ACTION_UPGRADE_QUALITY -> {
+                    val outcome = upgradeQualityNow()
+                    return Futures.immediateFuture(
+                        SessionResult(
+                            SessionResult.RESULT_SUCCESS,
+                            Bundle().apply { putString(EXTRA_UPGRADE_OUTCOME, outcome.wire) },
+                        ),
+                    )
+                }
                 ACTION_SWAP_VERSION -> {
                     val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
                     if (bundle != null) {

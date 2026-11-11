@@ -77,6 +77,7 @@ object SettingsCatalog {
             "audio.loudness_normalization",
             "audio.loudness_off_on_speaker",
             "audio.seamless_quality_upgrades",
+            "audio.auto_upgrade_local_storage",
             "audio.equalizer",
             "audio.jamesdsp",
         ),
