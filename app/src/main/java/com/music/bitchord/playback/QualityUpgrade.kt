@@ -914,7 +914,14 @@ object QualityUpgrade {
      */
     fun forcedStream(uri: Uri): SourceStream? {
         if (uri.getQueryParameter(MARKER)?.startsWith(UPGRADED) != true) return null
-        return uri.getQueryParameter("v")?.let(forced::get)
+        // The media id, not the `v` parameter.
+        //
+        // A source-backed track's URI carries no `v` at all — its identity is
+        // `src:<config>::<track>`, spelled out in [mediaIdIn] — so asking for
+        // the `v` parameter found nothing, and the upgrade of an
+        // addon-served track was found, parked, auditioned and then never
+        // served. "Upgrade quality" on a catalogue row did nothing.
+        return mediaIdIn(uri)?.let(forced::get)
     }
 
     /** The same URI, marked so Media3 rebuilds it and each upgrade gets its own cache entry. */

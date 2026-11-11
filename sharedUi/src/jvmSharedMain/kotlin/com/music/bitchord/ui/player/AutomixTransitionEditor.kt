@@ -88,11 +88,38 @@ internal fun automixWindow(
     current: TrackAnalysisDigest,
     plan: AutomixPlanDigest,
 ): AutomixWindow {
-    val plannedStart = plan.transitionStart.takeIf { it > 0.0 } ?: 0.0
-    val plannedEnd = plan.transitionEnd.takeIf { it > plannedStart }
-        ?: current.contentEnd.takeIf { it > plannedStart }
-        ?: plannedStart
     val bar = automixBarSeconds(current)
+    val contentEnd = current.contentEnd.takeIf { it > 0.0 } ?: 0.0
+    // Whether the planner has a window of its own.
+    //
+    // It has none in two cases: nothing has been planned yet, and the planner
+    // refused this pair outright — a spoken-word track, one too short to
+    // blend, a pair whose tempi are too far apart to match. The digest says so
+    // with zero at both ends.
+    val hasPlan = plan.transitionStart > 0.0 && plan.transitionEnd > plan.transitionStart
+    // Where the outgoing track is retired: the plan's own exit, and the end of
+    // the content when there is no plan.
+    val exit = if (hasPlan) plan.transitionEnd else contentEnd
+    // Where the overlap opens.
+    //
+    // With a plan, the plan's own start. Without one, the last few bars of
+    // the content — *not* the start of the track.
+    //
+    // This used to fall back to zero, and the box was then drawn from the
+    // start of the song to the end of its content: the whole song, marked as
+    // the automix window, for every pair the planner had not (yet) decided.
+    // A listener who opened the panel on a track with no plan saw their entire
+    // song inside the blend, which is what "putting the entire song in
+    // automix" was.
+    val plannedStart = when {
+        hasPlan -> plan.transitionStart
+        contentEnd <= 0.0 -> 0.0
+        else -> {
+            val length = if (bar > 0.0) bar * MIN_TRANSITION_BARS else DEFAULT_WINDOW_SECONDS
+            (contentEnd - length).coerceAtLeast(0.0)
+        }
+    }
+    val plannedEnd = max(plannedStart, exit)
     val chosenStart = draft.transitionStart.takeIf { it > 0.0 }
     val chosenEnd = draft.transitionEnd.takeIf { it > 0.0 }
     return when {
@@ -105,6 +132,15 @@ internal fun automixWindow(
         else -> AutomixWindow(plannedStart, plannedEnd)
     }
 }
+
+/**
+ * How long the box is when there is no plan to take its size from and the
+ * track has no bar grid to measure one in.
+ *
+ * The plain crossfade's own length — six seconds — which is what the app
+ * falls back to when the planner has nothing to say.
+ */
+private const val DEFAULT_WINDOW_SECONDS = 6.0
 
 // ---------------------------------------------------------------------------
 // Geometry

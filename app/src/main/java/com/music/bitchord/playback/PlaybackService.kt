@@ -1488,6 +1488,78 @@ class PlaybackService : MediaLibraryService() {
             if (dataSpec.uri.authority == "source") {
                 val directYouTube =
                     dataSpec.uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1"
+                // The track this is for, and the identity its stream is pinned
+                // under — see [StreamChoice].
+                val fullMediaId = mediaIdIn(dataSpec.uri)
+                val trackParam = dataSpec.uri.getQueryParameter("t")
+                val configId = dataSpec.uri.getQueryParameter("s")
+                if (!directYouTube) {
+                    // An upgraded item carries a marker and its stream has
+                    // already been found — see [QualityUpgrade]. Answered
+                    // before anything else, and without re-resolving: this
+                    // exact URL is what the player was told it was getting
+                    // when it agreed to the swap.
+                    //
+                    // It used to be unreachable here. [QualityUpgrade] keyed
+                    // its record by the `v` parameter, and a source-backed
+                    // track's URI has none — its identity is
+                    // `src:<config>::<track>` — so the upgrade of an
+                    // addon-served track could be found but never served.
+                    QualityUpgrade.forcedStream(dataSpec.uri)?.let { upgraded ->
+                        val upgradedName = upgraded.sourceConfigId
+                            ?.let { SourceRegistry.config(it)?.displayName } ?: "Upgrade"
+                        TrackLog.d(
+                            "BitChord",
+                            "serving upgraded ${fullMediaId ?: trackParam} " +
+                                "from ${Uri.parse(upgraded.url).host} " +
+                                "at ${dataSpec.position} (${upgraded.format.summary})",
+                            about = fullMediaId ?: trackParam,
+                        )
+                        NerdStats.onSourceStream(fullMediaId ?: trackParam, upgraded.format, upgradedName)
+                        if (fullMediaId != null) NerdStats.recordSource(fullMediaId, upgradedName)
+                        NerdStats.recordSource(trackParam, upgradedName)
+                        return@Resolver dataSpec.buildUpon()
+                            .setUri(Uri.parse(upgraded.url))
+                            .setHttpRequestHeaders(upgraded.headers)
+                            .build()
+                    }
+                    // The pin: one stream per track, however many times the
+                    // player opens it.
+                    //
+                    // Every re-open used to re-run the whole ladder — the
+                    // lossless walk, the search, the stream call — because
+                    // this branch had no memory of what it had already
+                    // answered. On a catalogue row that was three walks of
+                    // the ladder for one track, and the walk is exactly what
+                    // a listener waits for when they tap a radio row.
+                    //
+                    // The pin is held to one server for the same reason the
+                    // YouTube branch holds it: the cache entry is shared by
+                    // every writer, and two servers' bytes at the same
+                    // offsets are two different files.
+                    val pinned = fullMediaId?.let { StreamChoice.of(it) }
+                        ?.takeIf { serving ->
+                            // A source turned off after the pin was made does
+                            // not get to keep serving: "Off" has to mean off
+                            // for a row queued earlier too.
+                            serving.sourceConfigId?.let { id ->
+                                SourceRegistry.activeForPlayback().any { it.configId == id }
+                            } ?: true
+                        }
+                    if (pinned != null) {
+                        val pinnedName = pinned.sourceConfigId
+                            ?.let { SourceRegistry.config(it)?.displayName }
+                            ?: configId?.let { SourceRegistry.config(it)?.displayName }
+                            ?: "Source"
+                        NerdStats.onSourceStream(fullMediaId ?: trackParam, pinned.format, pinnedName)
+                        if (fullMediaId != null) NerdStats.recordSource(fullMediaId, pinnedName)
+                        NerdStats.recordSource(trackParam, pinnedName)
+                        return@Resolver dataSpec.buildUpon()
+                            .setUri(Uri.parse(pinned.url))
+                            .setHttpRequestHeaders(pinned.headers)
+                            .build()
+                    }
+                }
                 val stream = runBlocking(about) {
                     withTimeout(RESOLVE_TIMEOUT_MS) {
                         if (directYouTube) {
@@ -1503,26 +1575,30 @@ class PlaybackService : MediaLibraryService() {
                         "No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}"
                     },
                 )
-                val configId = dataSpec.uri.getQueryParameter("s")
+                // Recorded before it is served, so the pin and the claim about
+                // this track agree about which server answered.
+                val serving = if (directYouTube || fullMediaId == null) {
+                    stream
+                } else {
+                    pinOrPinned(fullMediaId, stream, substituted = true)
+                }
                 val sourceName = if (directYouTube) {
                     "YouTube"
                 } else {
-                    stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                         ?: configId?.let { SourceRegistry.config(it)?.displayName }
                         ?: "Source"
                 }
-                val trackParam = dataSpec.uri.getQueryParameter("t")
-                val fullMediaId = mediaIdIn(dataSpec.uri)
-                NerdStats.onSourceStream(fullMediaId ?: trackParam, stream.format, sourceName)
+                NerdStats.onSourceStream(fullMediaId ?: trackParam, serving.format, sourceName)
                 if (fullMediaId != null) {
                     NerdStats.recordSource(fullMediaId, sourceName)
                 }
                 NerdStats.recordSource(trackParam, sourceName)
                 return@Resolver dataSpec.buildUpon()
-                    .setUri(Uri.parse(stream.url))
+                    .setUri(Uri.parse(serving.url))
                     .setHttpRequestHeaders(
-                        if (directYouTube) StreamResolver.mediaHeadersFor(stream.url)
-                        else stream.headers,
+                        if (directYouTube) StreamResolver.mediaHeadersFor(serving.url)
+                        else serving.headers,
                     )
                     .build()
             }
@@ -4717,7 +4793,12 @@ class PlaybackService : MediaLibraryService() {
         // The same reasoning as [QualityUpgrade.refuseUpgrades] above, for the
         // substitution that happens *before* the first note rather than after.
         // Read before the forget below, which is what clears the evidence.
-        uri?.getQueryParameter("v")
+        //
+        // The media id, not the `v` parameter: a source-backed track's URI
+        // has no `v`, so its pin was never cleared here and a track that died
+        // on a substituted stream kept being served the same dead URL for the
+        // whole of the pin's life.
+        uri?.let { mediaIdIn(it) }
             ?.takeIf { diedOnModuleStream || StreamChoice.isSubstitute(it) }
             ?.let { videoId ->
                 StreamChoice.refuseSubstitutes(videoId)
@@ -4731,7 +4812,7 @@ class PlaybackService : MediaLibraryService() {
                 // just recovered to land on the same refusal.
                 QualityUpgrade.refuseUpgrades(videoId)
             }
-        uri?.getQueryParameter("v")?.let(StreamChoice::forget)
+        uri?.let { mediaIdIn(it) }?.let(StreamChoice::forget)
         scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
             // about to be removed, short enough to read as a stutter.

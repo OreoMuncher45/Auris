@@ -472,7 +472,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             emptyList()
         } else {
             cache.renditionsOf(analysisUri)
-                .filter { it.isAnalysable && it.key !in badRenditions }
+                .filter { it.isAnalysable(durationSeconds) && it.key !in badRenditions }
         }
         val usableComplete = local || complete.isNotEmpty()
 
@@ -1223,16 +1223,34 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * than the decode it gates. [structure] already refuses a decode that stops
      * more than [MIN_DECODED_FRACTION] short of the track — so a rendition
      * missing a couple of per cent was refused twice over: once by the fetch
-     * that could not finish it (the analysis round is capped, see
-     * [AudioCache.MAX_ANALYSIS_TRACK_BYTES]) and again here, for bytes the
+     * that could not finish it (the analysis round is a window, not the file —
+     * see [AudioCache.analysisOpeningBytes]) and again here, for bytes the
      * decoder would have tolerated. Nothing then measured the track whole, and
      * for a copy past the cap that was permanent.
      *
      * The threshold is deliberately a little above [MIN_DECODED_FRACTION] so the
      * decode's own tolerance has margin rather than being hit exactly.
+     *
+     * ## The length has to be believable
+     *
+     * A bounded fetch — which is every fetch the analyser makes — is answered
+     * with a response that describes the *range* that was asked for, and the
+     * cache records that range as the resource's length. The cache then holds
+     * a one-megabyte head of a three-and-a-half-minute song and calls it
+     * complete, and the whole-track pass decodes twelve seconds of the track
+     * and refuses the result: "decoded 12.0s of a 221.0s (container — cached
+     * with holes?)". Nothing is broken; the file is simply not all there yet,
+     * and a copy too short to *be* this track is not one the whole-track pass
+     * can read.
      */
-    private val AudioCache.Rendition.isAnalysable: Boolean
-        get() = contentLength > 0L && cachedPrefix >= contentLength * ANALYSABLE_FRACTION
+    private fun AudioCache.Rendition.isAnalysable(durationSeconds: Double): Boolean {
+        if (contentLength <= 0L) return false
+        if (durationSeconds.isFinite() && durationSeconds > 0.0) {
+            val floor = (durationSeconds * MIN_PLAUSIBLE_BYTES_PER_SECOND).toLong()
+            if (contentLength < floor) return false
+        }
+        return cachedPrefix >= contentLength * ANALYSABLE_FRACTION
+    }
 
     /**
      * Picks which rendition of [uri]'s recording to analyse: the lightest one
@@ -1259,7 +1277,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         durationSeconds: Double,
     ): AudioCache.Rendition? {
         val readable = cache.renditionsOf(uri)
-            .filter { it.isAnalysable && it.key !in badRenditions }
+            .filter { it.isAnalysable(durationSeconds) && it.key !in badRenditions }
         if (readable.isEmpty()) return null
 
         val expected = durationSeconds.takeIf { it.isFinite() && it > 0 }
@@ -1441,6 +1459,23 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // while a confidently wrong one does not degrade at all.
         val decodedSeconds = if (pcm.sampleRate > 0) pcm.samples.size / pcm.sampleRate else 0.0
         if (decodedSeconds < effectiveDuration * MIN_DECODED_FRACTION) {
+            // A copy that is not all here yet is not a broken copy.
+            //
+            // The decode stops where the bytes stop, and a copy that is still
+            // being filled stops short of the track by definition. Treating
+            // that as a broken file spends a strike on it, writes it off as
+            // bad, and — when it is the copy the player is streaming from —
+            // throws the player's own bytes off disk mid-track. The strikes
+            // are for files that are whole and still do not decode.
+            val rendition = copy.rendition
+            if (rendition != null && rendition.cachedPrefix < rendition.contentLength) {
+                Log.d(
+                    TAG,
+                    "Analysis of $trackId waits: ${rendition.key} holds " +
+                        "${rendition.cachedPrefix / 1024}kB of ${rendition.contentLength / 1024}kB",
+                )
+                return Structural(null, decodedShort = false)
+            }
             Log.w(
                 TAG,
                 "Analysis of $trackId refused: ${copy.key} decoded " +
@@ -1908,6 +1943,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * measured.
          */
         const val ANALYSABLE_FRACTION = 0.98
+
+        /**
+         * The slowest a track can be and still be worth reading whole.
+         *
+         * Sixty-four kilobits a second — the floor of what any service serves
+         * as audio. A copy whose recorded length is below this rate for the
+         * track's own runtime is not a recording of that track at all: it is
+         * the length of the *range* that was fetched, filed as the length of
+         * the file.
+         */
+        const val MIN_PLAUSIBLE_BYTES_PER_SECOND = 8_000.0
 
         /**
          * A second shaved off the front of a tail window before it is decoded.

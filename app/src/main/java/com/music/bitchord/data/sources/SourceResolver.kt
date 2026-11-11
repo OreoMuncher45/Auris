@@ -369,6 +369,86 @@ object SourceResolver {
     }
 
     /**
+     * A cheap copy of [target] for the analyser to measure, or null when no
+     * enabled source has one.
+     *
+     * The analyser needs the *recording*, not the quality: a tempo, a key and a
+     * beat grid are the same numbers whether they were read off a 24-bit/96kHz
+     * master or off a 320kbps transcode of it. So the copy asked for here is
+     * deliberately the cheap one — [StreamRequest.Best] — and the point of
+     * asking for it separately is the size:
+     *
+     *  - twelve seconds of a 96kHz ALAC master is 6.7MB, and the analyser
+     *    wants twelve seconds of *something*;
+     *  - twelve seconds of a 320kbps AAC is 480kB, a fifteenth of the traffic,
+     *    and it arrives before the listener has finished waiting for the first
+     *    note of the next track.
+     *
+     * That difference is the whole of the "Automix analysis fails nine times
+     * in ten on a Spotify catalogue" report. A catalogue row is matched to
+     * whichever source holds it, and that source is then asked for the quality
+     * the listener chose — a lossless master — so the bytes the analyser
+     * waited for were the master's. On a connection that serves them at a few
+     * hundred kilobytes a second they take half a minute to arrive, and they
+     * arrive *competing with the track actually playing* for the same link,
+     * which is where the stutter came from too.
+     *
+     * The copy is the same recording, matched the same way — on title, artist
+     * and runtime — so the evidence it produces describes the track being
+     * played. A copy whose runtime disagrees is refused by the analyser
+     * itself; see [com.music.bitchord.playback.smart.TrackAnalyzer].
+     *
+     * When the track's own source and track id are known, that source is asked
+     * first, for the cheap tier of the very track already in hand: one
+     * `/stream` call, no search, and no question of whether the answer is the
+     * same recording. Only when it cannot answer is the name-matched walk
+     * above used.
+     */
+    suspend fun analysisCopy(
+        target: TrackMatcher.Target,
+        configId: String? = null,
+        trackId: String? = null,
+    ): SourceStream? {
+        if (target.title.isBlank() || target.isVideo) return null
+        val active = SourceRegistry.activeForPlayback()
+        if (active.isEmpty()) return null
+
+        // The track's own source, at the cheap tier. No search: the track id is
+        // already in hand, and the tier is the only thing that changes.
+        if (configId != null && trackId != null) {
+            val own = active.firstOrNull { it.configId == configId }
+            if (own != null) {
+                val stream = attempt(own) { own.stream(trackId, StreamRequest.Best) }
+                    ?.copy(sourceConfigId = own.configId)
+                if (stream != null) {
+                    TrackLog.d(
+                        TAG,
+                        "analysis copy: '${target.title}' from ${own.displayName} at ${stream.format.summary}",
+                    )
+                    return stream
+                }
+            }
+        }
+
+        // Otherwise the same question every other cross-source path asks, at
+        // the cheap tier rather than the requested one.
+        val candidates = candidatesForYouTube(active)
+        if (candidates.isEmpty()) return null
+        val (source, stream) = bestAcross(
+            candidates,
+            target,
+            StreamRequest.Best,
+            strictLength = target.durationSec != null,
+            requireSharedArtist = true,
+        ) ?: return null
+        TrackLog.d(
+            TAG,
+            "analysis copy: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+        )
+        return stream
+    }
+
+    /**
      * A stream that genuinely satisfies the current request, for a track that
      * is already playing on one that doesn't — or null if there isn't one.
      *

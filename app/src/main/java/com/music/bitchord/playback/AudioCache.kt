@@ -28,7 +28,10 @@ import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +75,15 @@ import kotlin.coroutines.coroutineContext
 object AudioCache {
 
     private const val TAG = "BitChord"
+
+    /**
+     * The prefix of a row that exists only in Spotify's catalogue.
+     *
+     * Such a row has no playable id of its own: the sources are asked for the
+     * recording by name when it is opened, so anything that prepares it has to
+     * carry the name with it.
+     */
+    private const val SPOTIFY_ROW_PREFIX = SpotifyHomeSource.SPOTIFY_KEY_PREFIX
 
     /**
      * The disk budget, straight from [AppSettings] — 512MB by default, roughly
@@ -118,31 +130,29 @@ object AudioCache {
     private const val HEAD_PROBE_BYTES = 8L * 1024 * 1024
 
     /**
-     * What [requestAnalysisHead] asks for when the track's real size can't be
-     * had.
-     *
-     * Twelve seconds of audio is what the head pass needs and four megabytes
-     * clears that for anything short of lossless. Only reached when
-     * [StreamResolver] cannot say how long the file is, which is rare — it has
-     * just resolved the stream — and a blind request is the one case where
-     * spending more would be the listener's data spent on a guess.
-     */
-    private const val MAX_ANALYSIS_HEAD_BYTES = 4L * 1024 * 1024
-
-    /**
      * The most [requestAnalysisHead] will pull for one track when its size *is*
      * known.
      *
      * A bound rather than "the whole file, always": a substituted lossless
      * rendition runs to thirty or forty megabytes, and the analyzer only ever
-     * reads the head and the tail. Sixteen covers every YouTube Opus stream in
-     * full — a ten-minute track at 160 kbps is twelve — which is the case this
-     * exists for.
+     * reads the head and the tail. Four megabytes is about twelve seconds of a
+     * 320 kbps stream and about two and a half minutes of YouTube Opus — which
+     * is the case this exists for.
      *
-     * Taking the whole file in one request is also what keeps the entry
-     * single-sourced; see [analysisHeadSize].
+     * The size actually asked for comes from the stream's own length and the
+     * track's own duration; see [analysisHeadSize].
      */
-    private const val MAX_ANALYSIS_TRACK_BYTES = 16L * 1024 * 1024
+    private const val MAX_ANALYSIS_HEAD_BYTES = 4L * 1024 * 1024
+
+    /**
+     * The bitrate assumed for a stream whose length nobody has stated.
+     *
+     * Three hundred and twenty kilobits — what every streaming service serves
+     * and what this app asks for when it wants a copy that is cheap to fetch.
+     * The assumption only stands in until the stream's own length is on record;
+     * see [analysisHeadSize].
+     */
+    private const val ASSUMED_STREAM_BYTES_PER_SECOND = 40_000.0
 
     /**
      * The most of a *source-backed* track's opening read-ahead will fetch for
@@ -197,6 +207,23 @@ object AudioCache {
      * the analyser applies to its own gate; see `TrackAnalyzer.HEAD_BYTES_MARGIN`.
      */
     private const val ANALYSIS_OPENING_MARGIN = 1.35
+
+    /**
+     * The most read-ahead will pull of a source-backed track's *own* copy.
+     *
+     * Eight megabytes, which is about twenty seconds of a 3316kbps lossless
+     * master and the whole of a 320kbps track.
+     *
+     * The bound is the point. Read-ahead used to fill the entire file, and on
+     * a catalogue row served from a lossless master that is seventy-eight
+     * megabytes — two and a half minutes of background traffic on the link
+     * the track before it was streaming over, which is where the stutter
+     * came from. What the fill is for is the hand-over, and a hand-over needs
+     * a few seconds of audio, not the album side. The rest streams live as
+     * the track plays, at the rate the player needs it, with nothing else
+     * asking for the same bytes.
+     */
+    private const val MAX_SOURCE_PREFETCH_BYTES = 8L * 1024 * 1024
 
     /**
      * How long [renditionKeysFor]'s answer is reused. Short enough that a
@@ -1123,7 +1150,7 @@ object AudioCache {
                     // rearranging, and it has nothing to add to the megabyte
                     // that the next track's beat grid is measured from — so the
                     // delay now only holds back the rest of the file.
-                    prefetchSourceTrack(next, head.uri!!, head.durationMs / 1000.0, readyAt)
+                    prefetchSourceTrack(next, head.uri!!, head.target, head.durationMs / 1000.0, readyAt)
                     return@launch
                 }
                 // With substitution on, the *bytes* half above used to be
@@ -1180,7 +1207,28 @@ object AudioCache {
                         // the byte pass below is the part that should stop when
                         // the queue moves.
                         withContext(kotlinx.coroutines.NonCancellable) {
-                            runCatching { SourceResolver.prepareForPlayback(target) }
+                            runCatching {
+                                // A Spotify catalogue row is the one case
+                                // where the patient search is the wrong
+                                // shape.
+                                //
+                                // The row has no playable id of its own: the
+                                // sources are asked for the recording by name,
+                                // and the listener is waiting for the *first*
+                                // answer rather than for the best one. The
+                                // patient pass waits for every source — up to
+                                // twenty seconds — while the player's own
+                                // open gives up after one and a half and
+                                // resolves the same question again, pinning
+                                // its own answer and throwing the preparation
+                                // away. Which is what the first tap on a radio
+                                // row paid: the wait, and then the search.
+                                if (next.startsWith(SPOTIFY_ROW_PREFIX)) {
+                                    SourceResolver.substituteForYouTube(target)
+                                } else {
+                                    SourceResolver.prepareForPlayback(target)
+                                }
+                            }
                                 .onFailure { error ->
                                     // A cancellation here is this job being
                                     // stopped, not the preparation failing.
@@ -1215,7 +1263,19 @@ object AudioCache {
                         // starts from, and a megabyte is not what the settle
                         // delay was written for. The rest of the file waits
                         // for the queue to settle.
-                        fetch(next, 0, PRELOAD_BYTES)
+                        //
+                        // A Spotify catalogue row is fetched through the
+                        // item's own URI, not through one built from the id
+                        // alone. The resolver asks the sources for that row's
+                        // recording *by name*, and the name is in the URI — so
+                        // the id-only URI asked for an empty title, matched
+                        // nothing, and cached nothing.
+                        val rowUri = head.uri?.takeIf { next.startsWith(SPOTIFY_ROW_PREFIX) }
+                        if (rowUri != null) {
+                            fetch(cacheKeyOf(rowUri), rowUri, 0, PRELOAD_BYTES, pinKey = true)
+                        } else {
+                            fetch(next, 0, PRELOAD_BYTES)
+                        }
                         val wait = readyAt - SystemClock.elapsedRealtime()
                         if (wait > 0) delay(wait)
                         // Enough to start the track is worth having everywhere.
@@ -1516,6 +1576,172 @@ object AudioCache {
 
     /** Cache keys with a source-opening fetch in the air. */
     private val analysisOpeningsInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    // ── The analysis copy ──────────────────────────────────────────────────
+    //
+    // A source-backed track is played from whatever quality the listener asked
+    // for: a 24-bit/96kHz ALAC master, a hi-res FLAC, a Dolby Atmos stream.
+    // That file is the right one to hear and the wrong one to measure.
+    //
+    // The analyser wanted twelve seconds of it, and twelve seconds of a 96kHz
+    // master is 6.7MB — measured at 29.7s to arrive on the connection this
+    // was seen on, at a rate that took the link's whole bandwidth away from
+    // the track actually playing. Its ending wanted thirty seconds more, which
+    // is 16.8MB and another 36.8s. Both were pulled into the *player's* own
+    // cache entry, so the analyser was downloading the same file the player
+    // was downloading, at the same key, at the same time.
+    //
+    // So the analyser is given its own copy instead: the same recording at the
+    // cheap tier, under a sibling key, fetched on its own. Twelve seconds of
+    // a 320kbps AAC is 480kB. The recording is the same — the analyser checks
+    // the runtime against the track's own before it trusts a copy — and the
+    // traffic is a fifteenth of what it was.
+
+    /** The suffix that keeps an analysis copy off the player's own entry. */
+    private const val ANALYSIS_SUFFIX = "#analysis"
+
+    /**
+     * The cheap copy of each source-backed track the analyser measures.
+     *
+     * Keyed by media id, so a track's copy is found from the URI the player
+     * and the analyser both hold.
+     */
+    private val analysisCopies = ConcurrentHashMap<String, SourceStream>()
+
+    /** Tracks whose analysis copy is being fetched, so the work happens once. */
+    private val analysisCopiesInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * The cache key [uri]'s analysis copy is written under, or null when [uri]
+     * is not a source-backed track.
+     *
+     * A sibling of the player's own entry rather than a replacement for it:
+     * `$source|$track` is the copy being played, `$source|$track#analysis` is
+     * the copy being measured, and the two never share a byte.
+     */
+    private fun analysisKeyOf(uri: Uri): String? {
+        if (uri.authority != "source") return null
+        val source = uri.getQueryParameter("s") ?: return null
+        val track = uri.getQueryParameter("t") ?: return null
+        return "$source|$track$ANALYSIS_SUFFIX"
+    }
+
+    /** The base key of a source-backed track's own entry — see [keyFactory]. */
+    private fun sourceBaseKey(uri: Uri): String? {
+        if (uri.authority != "source") return null
+        val source = uri.getQueryParameter("s") ?: return null
+        val track = uri.getQueryParameter("t") ?: return null
+        return "$source|$track"
+    }
+
+    /** The cheap copy of [uri]'s track, when one has been made. */
+    fun analysisCopyOf(uri: Uri): SourceStream? {
+        val mediaId = mediaIdIn(uri) ?: return null
+        return analysisCopies[mediaId]
+    }
+
+    /**
+     * Makes a cheap copy of [uri]'s track and puts its opening on disk.
+     *
+     * One copy per track, made once: the stream is remembered and the fetch
+     * is guarded, so a queue that churns does not turn this into a stream of
+     * duplicate downloads — which is the very thing it exists to stop.
+     *
+     * The copy is fetched from its own URL rather than through the resolver,
+     * because the resolver answers with the *player's* quality: asking it
+     * again for the same URI is what produced the master's bytes in the first
+     * place.
+     */
+    suspend fun ensureAnalysisCopy(
+        uri: Uri,
+        target: TrackMatcher.Target,
+        durationSeconds: Double,
+    ) {
+        val key = analysisKeyOf(uri) ?: return
+        val mediaId = mediaIdIn(uri) ?: return
+        if (analysisCopies.containsKey(mediaId)) return
+        if (!analysisCopiesInFlight.add(mediaId)) return
+        try {
+            val stream = SourceResolver.analysisCopy(
+                target = target,
+                configId = uri.getQueryParameter("s"),
+                trackId = uri.getQueryParameter("t"),
+            ) ?: return
+            analysisCopies[mediaId] = stream
+            // The length first: it is what the opening is sized from, and it
+            // is the difference between twelve seconds of audio and twelve
+            // seconds of a guessed bitrate.
+            val total = measureUpstream(Uri.parse(stream.url), stream.headers)
+            val opening = analysisCopyOpeningBytes(key, total, durationSeconds, stream.format)
+            if (opening <= 0L) return
+            TrackLog.d(
+                TAG,
+                "analysis copy of $mediaId: ${opening / 1024}kB of ${if (total > 0) "${total / 1024}kB" else "?"} " +
+                    "at ${stream.format.summary}",
+                about = mediaId,
+            )
+            pull(key, Uri.parse(stream.url), 0, opening, pinKey = true, headers = stream.headers)
+            // After the pull: the cache cannot be told a length for an entry it
+            // has never seen, and the pull is what creates the entry. A length
+            // that never lands is the length of the *range* that was fetched —
+            // a megabyte of head filed as a whole recording — and the analyser
+            // reads that as a complete track and refuses it.
+            if (total > 0L) recordContentLength(key, total)
+            tagAnalysisCopy(key, mediaId, uri)
+        } finally {
+            analysisCopiesInFlight.remove(mediaId)
+        }
+    }
+
+    /**
+     * How many bytes of the analysis copy are worth having on disk to measure
+     * a tempo from it.
+     *
+     * The same rule the player's own opening follows — twelve seconds of
+     * audio, with a margin — but sized from the *copy's* length, which is a
+     * fifteenth of the master's for the same twelve seconds.
+     */
+    private fun analysisCopyOpeningBytes(
+        key: String,
+        total: Long,
+        durationSeconds: Double,
+        format: StreamFormat,
+    ): Long {
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 }
+        // Read once: a public property from another module cannot be smart-cast.
+        val kbps = format.kbps
+        val perSecond = when {
+            total > 0L && seconds != null -> total.toDouble() / seconds
+            kbps != null && kbps > 0 -> kbps * 1000.0 / 8.0
+            else -> ASSUMED_LOSSLESS_BYTES_PER_SECOND
+        }
+        val wanted = (ANALYSIS_HEAD_SECONDS * perSecond * ANALYSIS_OPENING_MARGIN).toLong()
+        val ceiling = if (total > 0L) minOf(total, MAX_ANALYSIS_OPENING_BYTES) else MAX_ANALYSIS_OPENING_BYTES
+        return wanted.coerceAtLeast(PRELOAD_BYTES).coerceAtMost(ceiling)
+    }
+
+    /**
+     * Marks an analysis copy as what it is: bytes fetched for measurement
+     * alone, never read by the player.
+     *
+     * The tag is what lets [dropForeignEntries] throw the copy away once the
+     * track is done with it, instead of leaving a few megabytes of a
+     * transcode on the device for good.
+     */
+    private fun tagAnalysisCopy(key: String, mediaId: String, uri: Uri) {
+        if (!::cache.isInitialized) return
+        runCatching {
+            cache.applyContentMetadataMutations(
+                key,
+                ContentMetadataMutations().also { mutations ->
+                    mutations.set(META_ORIGIN, Origin.OTHER.name)
+                    mutations.set(META_MEDIA_ID, mediaId)
+                    mutations.set(META_ANALYSIS, "1")
+                    describe(mutations, notedSongs[mediaId], uri)
+                },
+            )
+        }.onFailure { TrackLog.d(TAG, "could not tag analysis copy $key: ${it.message}", about = mediaId) }
+    }
 
     /**
      * How far each track's analysis fetch has got, 0..1.
@@ -1851,7 +2077,7 @@ object AudioCache {
                         TrackLog.w(TAG, "contentLength failed for $videoId: ${it.message}", videoId)
                     }
                     .getOrNull() ?: 0L
-                val want = analysisHeadSize(total)
+                val want = analysisHeadSize(total, durationSeconds)
                 analysisHeadWant[videoId] = want
                 TrackLog.w(
                     TAG,
@@ -1910,6 +2136,20 @@ object AudioCache {
                     )
                 }
                 if (total > 0) recordContentLength(videoId, total)
+                // The analyser's own copy, marked as such, so the purge can
+                // throw it away once the track is done with it.
+                //
+                // It used to be left on the device for good: nothing had ever
+                // tagged it, because it is fetched outside the player's own
+                // data source, and a whole song per analysed track is how a
+                // phone fills up.
+                //
+                // Only when the analyser owns the key outright. With no
+                // substitution in play the player's own entry is this one, and
+                // marking the player's copy as the analyser's would take it
+                // out of the cached-songs folder and let the purge treat a
+                // playing track's bytes as disposable.
+                if (cacheKeyOf(uri) != videoId) tagAnalysisCopy(videoId, videoId, uri)
                 val held = alignmentPrefixBytes(videoId)
                 if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
                     // The one line that says *this* fetch failed, as opposed to
@@ -1974,9 +2214,16 @@ object AudioCache {
         // `bitchord://` addresses are how an addon-served track is reached,
         // and refusing them left every such track on "Waiting for analysis".
         if (!AutomixAnalysisSource.schemeIsFetchable(uri.scheme)) return
-        val key = cacheKeyOf(uri)
+        // The copy, when there is one. The bytes the analyser wants come from
+        // the cheap transcode under its own key, not from the master the
+        // player is streaming — the master is what made this measurement cost
+        // six and a half megabytes and thirty seconds.
+        val analysis = analysisSourceOf(uri)
+        val key = analysis?.key ?: cacheKeyOf(uri)
+        val source = analysis?.uri ?: uri
+        val headers = analysis?.headers ?: emptyMap()
         val wanted = analysisOpeningBytes(key, durationSeconds)
-        val held = cachedPrefixBytes(uri)
+        val held = cachedPrefixBytesOf(key)
         if (held >= wanted) {
             reportAnalysisProgress(key, held, wanted)
             return
@@ -2001,27 +2248,28 @@ object AudioCache {
         beginAnalysisFetch(key)
         scope.launch {
             try {
-                // A forced round asks for the whole track, as far as the bound
-                // allows, where an ordinary round asks for the opening.
-                //
-                // The panel draws a waveform, and a waveform of the first
-                // twelve seconds is not one: the transition sits at the end of
-                // the outgoing track and at the beginning of the arriving one,
-                // and neither of those is in the middle of an opening. So the
-                // listener's own request pulls the track, and the whole-track
-                // pass gets a complete copy to measure.
-                //
                 // The length is asked of the stream itself, because a bounded
                 // fetch cannot teach the cache the length — see
-                // [recordContentLength] — and without one there is nothing to
-                // iterate to.
-                val total = if (force) measureUpstream(uri) else 0L
-                val target = if (force && total > 0L) {
-                    minOf(total, MAX_ANALYSIS_TRACK_BYTES)
+                // [recordContentLength] — and without one the tail round has
+                // nothing to address.
+                //
+                // The *size* asked for is a window either way. A forced round
+                // used to pull the whole track, up to sixteen megabytes of it,
+                // and that is what "putting the entire song in automix" was:
+                // the phone fetching the song a second time for the sake of a
+                // measurement, on the same link the listener was hearing it
+                // over. What the analyser reads is the opening (here) and the
+                // ending (the tail round); the middle is read only when the
+                // copy is already whole.
+                val total = if (force) measureUpstream(source, headers) else 0L
+                // Sized again now that the length is known, so a stream that
+                // states its size gets a window sized from it rather than from
+                // the lossless assumption.
+                val target = if (total > 0L) {
+                    analysisOpeningBytes(total, durationSeconds)
                 } else {
                     wanted
                 }
-                if (total > 0L) recordContentLength(key, total)
                 val progress = scope.launch {
                     while (true) {
                         reportAnalysisProgress(key, cachedBytesOf(key, target), target)
@@ -2029,16 +2277,50 @@ object AudioCache {
                     }
                 }
                 try {
-                    fetch(key, uri, 0, target, pinKey = true)
+                    fetch(key, source, 0, target, pinKey = true, headers = headers)
                 } finally {
                     progress.cancel()
                 }
+                // After the fetch, not before: the cache can only be told a
+                // length for an entry that exists, and the entry is created by
+                // the fetch. A length that never lands is a length that stays
+                // whatever the bounded response said — a megabyte of head
+                // filed as a whole track — and the analyser then reads a
+                // twelve-second window as a complete recording and refuses it.
+                if (total > 0L) recordContentLength(key, total)
                 reportAnalysisProgress(key, cachedBytesOf(key, target), target)
             } finally {
                 analysisOpeningsInFlight.remove(key)
                 endAnalysisFetch(key)
             }
         }
+    }
+
+    /**
+     * Where the analyser's bytes come from for a source-backed track.
+     *
+     * The copy when there is one, and the player's own stream when there is
+     * not — the second is the old behaviour, kept for the tracks whose source
+     * cannot offer a cheap tier.
+     */
+    private class AnalysisSource(
+        val key: String,
+        val uri: Uri,
+        val headers: Map<String, String>,
+    )
+
+    private fun analysisSourceOf(uri: Uri): AnalysisSource? {
+        val copy = analysisCopyOf(uri) ?: return null
+        val key = analysisKeyOf(uri) ?: return null
+        return AnalysisSource(key, Uri.parse(copy.url), copy.headers)
+    }
+
+    /** How many bytes of [key] are on disk, contiguously from the start. */
+    private fun cachedPrefixBytesOf(key: String): Long {
+        if (!::cache.isInitialized) return 0L
+        val total = ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+        val probe = total.takeIf { it > 0 } ?: HEAD_PROBE_BYTES
+        return cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
     }
 
     /**
@@ -2105,12 +2387,14 @@ object AudioCache {
      * transition it was meant to inform is due.
      *
      * The whole-track pass is the other way to get the same evidence, and it
-     * needs every byte the track will ever have on disk at once. It is capped
-     * ([MAX_ANALYSIS_TRACK_BYTES]) so a substituted lossless copy does not turn
-     * opening the Automix panel into a forty-megabyte download, which means that
-     * for anything past the cap it never completes at all. The tail is addressed
-     * from the end and costs a window ([ANALYSIS_TAIL_SECONDS]), so a lossless
-     * copy costs a fifth of a megabyte a second instead of the whole file.
+     * needs every byte the track will ever have on disk at once — which is why
+     * nothing asks for the whole file any more. A substituted lossless copy is
+     * thirty or forty megabytes, and fetching that for the sake of a
+     * measurement is what turned opening the Automix panel into a
+     * forty-megabyte download on the listener's own data. The tail is
+     * addressed from the end and costs a window ([ANALYSIS_TAIL_SECONDS]), so a
+     * lossless copy costs a fifth of a megabyte a second instead of the whole
+     * file.
      *
      * ## When it is asked for
      *
@@ -2207,7 +2491,13 @@ object AudioCache {
      */
     private fun requestSourceAnalysisTail(uri: Uri, seconds: Double, force: Boolean) {
         if (!AutomixAnalysisSource.schemeIsFetchable(uri.scheme)) return
-        val key = cacheKeyOf(uri)
+        // The copy, when there is one: the ending of a 96kHz master is thirty
+        // seconds of 16.8MB, and pulling that off the same link the player is
+        // streaming on is what the stutter was made of.
+        val analysis = analysisSourceOf(uri)
+        val key = analysis?.key ?: cacheKeyOf(uri)
+        val source = analysis?.uri ?: uri
+        val headers = analysis?.headers ?: emptyMap()
         val total = ContentMetadata.getContentLength(cache.getContentMetadata(key))
         if (total <= 0L) {
             // Addressable only from the end, and the end is a number we do not
@@ -2234,7 +2524,7 @@ object AudioCache {
                 // write must land in the entry the analyser will read, and the
                 // key factory answers partly from a global substitution setting
                 // that can change between the two.
-                fetch(key, uri, position, length, pinKey = true)
+                fetch(key, source, position, length, pinKey = true, headers = headers)
                 val held = renditionsOf(uri).firstOrNull { it.key == key }
                     ?.let { cachedTailBytes(it, want) } ?: 0L
                 // Re-armed on progress, not on any shortfall; see the YouTube
@@ -2247,25 +2537,33 @@ object AudioCache {
     }
 
     /**
-     * How much of a track to pull for the analyzer, decided once from its real
-     * size.
+     * How much of a track's **opening** to pull for the analyzer, decided once
+     * from the stream's real size and the track's own runtime.
      *
-     * This used to start at a megabyte and grow by [HEAD_ESCALATION] on each
-     * later call, which was the wrong shape for a reason this file documents
-     * elsewhere — see [discardRendition]. Each round resolves the stream again,
-     * and YouTube does not promise the same rendition twice. Round one wrote a
-     * megabyte of one encoding; round two skipped what was already cached and
-     * wrote the *remainder of a different one* into the same entry. The result is
-     * a contiguous, correctly sized, complete-looking file that decodes for a few
-     * seconds and then stops at the seam — which is exactly what two tracks were
-     * observed doing, one decoding 14.4s of a 153s container and another 35.5s of
-     * 211.5s, both while the cache called them complete.
+     * It used to be the whole track — the bound was sixteen megabytes, which is
+     * every byte of an ordinary streaming track and rather more of a lossless
+     * one. That is what "putting the entire song in automix" was: the phone
+     * fetched the song a second time, for the sake of a measurement, on the
+     * same link the listener was hearing it over — and then kept the copy,
+     * because nothing marked it as the analyser's.
      *
-     * One resolve, one range, one encoding. [StreamResolver] has the length
-     * already, from resolving the stream, so asking first costs nothing.
+     * What the analyser reads is a window: twelve seconds of the opening for
+     * the head pass, and thirty seconds of the ending for the tail pass (see
+     * [analysisTailBytes]). Both are addressed at the end they belong to, and
+     * neither is the whole file. The whole-track pass still runs — on a copy
+     * that is already whole, which is the case for a file on the device and for
+     * a track the player has streamed to its end.
      */
-    private fun analysisHeadSize(total: Long): Long =
-        if (total > 0) minOf(total, MAX_ANALYSIS_TRACK_BYTES) else MAX_ANALYSIS_HEAD_BYTES
+    private fun analysisHeadSize(total: Long, durationSeconds: Double): Long {
+        val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 }
+        val perSecond = when {
+            total > 0L && seconds != null -> total.toDouble() / seconds
+            else -> ASSUMED_STREAM_BYTES_PER_SECOND
+        }
+        val wanted = (ANALYSIS_HEAD_SECONDS * perSecond * ANALYSIS_OPENING_MARGIN).toLong()
+        val ceiling = if (total > 0L) minOf(total, MAX_ANALYSIS_HEAD_BYTES) else MAX_ANALYSIS_HEAD_BYTES
+        return wanted.coerceAtLeast(PRELOAD_BYTES).coerceAtMost(ceiling)
+    }
 
     /**
      * Makes sure [videoId]'s entry is either empty or already covers [want]
@@ -2314,8 +2612,23 @@ object AudioCache {
      * — see [measureUpstream].
      */
     private fun recordContentLength(cacheKey: String, total: Long) {
-        if (ContentMetadata.getContentLength(cache.getContentMetadata(cacheKey)) > 0) return
         if (total <= 0) return
+        val recorded = ContentMetadata.getContentLength(cache.getContentMetadata(cacheKey))
+        // A length that already is the whole thing is left alone. A length that
+        // is *smaller* than the truth is corrected — and the smaller one is the
+        // norm rather than the exception here, because every fetch the
+        // analyser makes is a bounded one: Media3 records the length of the
+        // *response*, which describes the range that was asked for, so a
+        // one-megabyte head was filed as a complete one-megabyte track.
+        //
+        // The cache then believes a twelve-second head is the whole song. The
+        // analyser believes it too — the copy reads as complete — and the
+        // whole-track pass decodes twelve seconds of a three-and-a-half-minute
+        // recording and refuses the result: "decoded 12.0s of a 221.0s
+        // (container — cached with holes?)". That is the "Automix analysis
+        // refused" report, and it was a length that lied rather than a file
+        // that was broken.
+        if (recorded >= total) return
         runCatching {
             cache.applyContentMetadataMutations(
                 cacheKey,
@@ -2440,8 +2753,32 @@ object AudioCache {
     fun renditionsOf(uri: Uri): List<Rendition> {
         if (!::cache.isInitialized) return emptyList()
         val videoId = uri.getQueryParameter("v")
-            ?: return listOfNotNull(renditionFor(keyFactory.buildCacheKey(DataSpec(uri))))
+            ?: return sourceRenditionsOf(uri)
         return renditionKeysFor(videoId)
+            .mapNotNull(::renditionFor)
+            .sortedBy { it.contentLength }
+    }
+
+    /**
+     * The same list for a source-backed track, which has no video id to gather
+     * siblings under.
+     *
+     * A source-backed track owns more than one entry too: the copy being
+     * played, an upgrade of it (`#<rendition>`), and the copy the analyser
+     * measures (`#analysis`). They hold the same *music*, so an analysis of
+     * any of them describes all of them — and the analyser is explicitly
+     * looking for the lightest one, which is the copy it was given rather
+     * than the master the listener is hearing.
+     *
+     * Before this, a source-backed track offered the analyser exactly one
+     * entry: the master's. Every measurement therefore cost the master's
+     * bytes, at the master's bitrate, from the same link the player was
+     * using.
+     */
+    private fun sourceRenditionsOf(uri: Uri): List<Rendition> {
+        val base = sourceBaseKey(uri)
+            ?: return listOfNotNull(renditionFor(keyFactory.buildCacheKey(DataSpec(uri))))
+        return renditionKeysFor(base)
             .mapNotNull(::renditionFor)
             .sortedBy { it.contentLength }
     }
@@ -2665,6 +3002,7 @@ object AudioCache {
         position: Long,
         length: Long,
         pinKey: Boolean = false,
+        headers: Map<String, String> = emptyMap(),
     ) {
         if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
@@ -2684,7 +3022,7 @@ object AudioCache {
         // the cost, and only a probe that actually lands is worth following
         // with the rest of the range.
         if (length > LOCK_PROBE_BYTES) {
-            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey)
+            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, headers)
             // A shortfall here is either a lost race or a resource shorter
             // than the probe — a DASH index is a few kilobytes and the probe
             // asks for sixty-four of them. Either way there is nothing more
@@ -2692,7 +3030,7 @@ object AudioCache {
             // a file that has already been fetched whole.
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
-        pull(cacheKey, uri, position, length, pinKey)
+        pull(cacheKey, uri, position, length, pinKey, headers)
     }
 
     /**
@@ -2723,8 +3061,17 @@ object AudioCache {
      * [requestSourceAnalysisHead], which is allowed to run again for exactly
      * that reason.
      */
-    private fun analysisOpeningBytes(key: String, durationSeconds: Double): Long {
-        val total = ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+    private fun analysisOpeningBytes(key: String, durationSeconds: Double): Long =
+        analysisOpeningBytes(
+            ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L),
+            durationSeconds,
+        )
+
+    /**
+     * The same window, sized from a length that is already in hand rather than
+     * from the cache's record of it.
+     */
+    private fun analysisOpeningBytes(total: Long, durationSeconds: Double): Long {
         val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 }
         val wanted = if (total > 0L && seconds != null) {
             (ANALYSIS_HEAD_SECONDS * (total / seconds) * ANALYSIS_OPENING_MARGIN).toLong()
@@ -2764,6 +3111,7 @@ object AudioCache {
     private suspend fun prefetchSourceTrack(
         mediaId: String,
         uri: Uri,
+        target: TrackMatcher.Target,
         durationSeconds: Double,
         settleAt: Long = 0L,
     ) {
@@ -2783,16 +3131,23 @@ object AudioCache {
         // was unknown for exactly the seconds it was trying to read it.
         val total = contentLengthOf(uri).takeIf { it > 0L } ?: measureUpstream(uri)
         if (total > 0L) recordContentLength(key, total)
-        val opening = analysisOpeningBytes(key, durationSeconds)
-        if (opening > PRELOAD_BYTES && cache.getCachedBytes(key, 0, opening) < opening) {
-            TrackLog.d(
-                TAG,
-                "read-ahead fetching the analyser's opening of $mediaId " +
-                    "(${opening / 1024}kB${if (total > 0) " of ${total / 1024}kB" else ""})",
-                about = mediaId,
-            )
-            fetch(key, uri, 0, opening, pinKey = true)
-        }
+
+        // The analyser's own copy: the same recording at the cheap tier, under
+        // its own key.
+        //
+        // It used to be the opening of the *master's* entry — twelve seconds
+        // of it, which is 6.7MB of a 96kHz ALAC and took half a minute to
+        // arrive on the very link the player was streaming that track over.
+        // The copy is a fifteenth of that, and it is a different file, so the
+        // two no longer compete for one cache entry.
+        runCatching { ensureAnalysisCopy(uri, target, durationSeconds) }
+            .onFailure { error ->
+                // A cancellation here is the queue moving on, not the copy
+                // failing.
+                if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                TrackLog.d(TAG, "analysis copy for $mediaId failed: ${error.message}", about = mediaId)
+            }
+
         if (pendingQueue.firstOrNull() != mediaId) return
         // The rest of the file waits for the queue to settle: it is a guess
         // about where the listener will seek, and the opening above is all
@@ -2816,10 +3171,24 @@ object AudioCache {
             )
             return
         }
+        // Bounded.
+        //
+        // This loop used to run to the end of the file, and on a lossless
+        // master that is seventy-eight megabytes — two and a half minutes of
+        // background traffic on the link the track before it is streaming
+        // over. That is where the stutter came from: the listener's own song
+        // was competing with a download of the next song's entire master.
+        //
+        // What the fill is actually for is the hand-over: enough of the next
+        // track on disk that it starts without waiting on the network. Eight
+        // megabytes of a 3316kbps master is twenty seconds of audio, which is
+        // more than any gap between two tracks, and the rest streams live as
+        // the track plays — at the rate the player needs it, with nothing else
+        // asking for the same bytes.
         var position = 0L
-        while (position < total) {
+        while (position < minOf(total, MAX_SOURCE_PREFETCH_BYTES)) {
             if (pendingQueue.firstOrNull() != mediaId) return
-            val length = minOf(CHUNK_BYTES, total - position)
+            val length = minOf(CHUNK_BYTES, minOf(total, MAX_SOURCE_PREFETCH_BYTES) - position)
             if (cache.getCachedBytes(key, position, length) < length) {
                 fetch(key, uri, position, length, pinKey = true)
                 // Written nowhere means another writer owns the entry — the
@@ -2832,7 +3201,11 @@ object AudioCache {
             }
             position += length
         }
-        TrackLog.d(TAG, "read-ahead has all $total bytes of $mediaId", about = mediaId)
+        TrackLog.d(
+            TAG,
+            "read-ahead has ${position / 1024}kB of ${total / 1024}kB for $mediaId",
+            about = mediaId,
+        )
     }
 
     /**
@@ -2852,13 +3225,19 @@ object AudioCache {
      * Zero when the source states no length — a chunked response genuinely has
      * none — and read-ahead then keeps just the opening.
      */
-    private suspend fun measureUpstream(uri: Uri): Long {
+    private suspend fun measureUpstream(uri: Uri, headers: Map<String, String> = emptyMap()): Long {
         val upstream = upstreamFactory ?: return 0L
         return withContext(Dispatchers.IO) {
             runCatching {
                 val source = upstream.createDataSource()
                 try {
-                    source.open(DataSpec.Builder().setUri(uri).setPosition(0).build())
+                    source.open(
+                        DataSpec.Builder()
+                            .setUri(uri)
+                            .setPosition(0)
+                            .apply { if (headers.isNotEmpty()) setHttpRequestHeaders(headers) }
+                            .build(),
+                    )
                 } finally {
                     runCatching { source.close() }
                 }
@@ -2869,7 +3248,14 @@ object AudioCache {
     }
 
     /** The actual network pull behind [fetch], unconditional and unchecked. */
-    private suspend fun pull(cacheKey: String, uri: Uri, position: Long, length: Long, pinKey: Boolean) {
+    private suspend fun pull(
+        cacheKey: String,
+        uri: Uri,
+        position: Long,
+        length: Long,
+        pinKey: Boolean,
+        headers: Map<String, String> = emptyMap(),
+    ) {
         val upstream = upstreamFactory ?: return
 
         // Whose track this is, taken off the URI rather than off [cacheKey]:
@@ -2892,6 +3278,12 @@ object AudioCache {
             .setUri(uri)
             .setPosition(position)
             .setLength(length)
+            // The headers travel with the request because some sources bind
+            // the stream URL to the request that asks for it — and the
+            // analysis copy is fetched straight from its own URL rather than
+            // through the resolver, so it is the one request that has to
+            // carry them itself.
+            .apply { if (headers.isNotEmpty()) setHttpRequestHeaders(headers) }
             .build()
         val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
 
