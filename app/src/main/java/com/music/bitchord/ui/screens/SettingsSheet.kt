@@ -241,6 +241,7 @@ fun SettingsScreen(
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
+    val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
     val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
@@ -1713,6 +1714,19 @@ fun SettingsScreen(
                         valueRange = AppSettings.MIN_LIQUID_GLASS_INTENSITY..
                             AppSettings.MAX_LIQUID_GLASS_INTENSITY,
                         steps = 8,
+                    )
+                }
+                // Frosted instead of refracting: the same glass with its lens
+                // pass skipped, for phones the shader is too much for. A
+                // sub-row rather than a row of its own because it qualifies
+                // the Liquid Glass switch above it.
+                val glassPerformanceTitle = stringResource(R.string.glass_performance)
+                row(glassPerformanceTitle, "glass", "performance", "refraction", "frosted", "lag") {
+                    SettingsSubRow(
+                        title = glassPerformanceTitle,
+                        checked = glassPerformance,
+                        onCheckedChange = AppSettings::setGlassPerformance,
+                        subtitle = stringResource(R.string.glass_performance_subtitle),
                     )
                 }
             }

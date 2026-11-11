@@ -135,6 +135,14 @@ enum class GlassStyle {
     /** Blur and saturation without lens refraction or an edge rim. */
     BLUR,
 
+    /**
+     * Blur and saturation with the rim, but no lens refraction — BitChord's
+     * "Better Performance for Glass". The frost of [LIQUID] at a deeper blur,
+     * for phones the refraction shader is too much for. The one difference
+     * from [LIQUID] is the missing lens pass.
+     */
+    FROSTED,
+
     /** Translucent tint without backdrop capture or blur. */
     TRANSPARENT,
 }
@@ -318,6 +326,7 @@ fun Modifier.liquidGlass(
     // radius (the full player's heavier blur) still runs its own chain.
     // Dispersion needs the single-shape shader, so a surface asking for it keeps its own chain.
     val usePool = pool != null &&
+        config.style == GlassStyle.LIQUID &&
         blurRadiusDp == pool.blurRadiusDp &&
         config.vibrancy == pool.vibrancy &&
         !config.chromaticAberration
@@ -382,15 +391,17 @@ fun Modifier.liquidGlass(
     val shapeBlock: () -> Shape = remember(shape) { { shape } }
 
     // BLUR keeps the frosted capture but drops the refraction and the rim, which
-    // are the parts that read as "liquid". Cheaper too: the lens is the most
-    // expensive link in the effect chain.
+    // are the parts that read as "liquid". FROSTED keeps the rim and drops only
+    // the lens, which is the most expensive link in the effect chain — that is
+    // what makes it the performance mode rather than a different material.
     val plainBlur = config.style == GlassStyle.BLUR
+    val skipLens = plainBlur || config.style == GlassStyle.FROSTED
 
     val effectsBlock: BackdropEffectScope.() -> Unit = remember(
         saturation,
         blurPx,
         applyEdgeEffects,
-        plainBlur,
+        skipLens,
         lensHeightPx,
         lensAmountPx,
         config.depthEffect,
@@ -404,7 +415,7 @@ fun Modifier.liquidGlass(
             if (!usePool && blurPx > 0f) {
                 blur(blurPx)
             }
-            if (!plainBlur &&
+            if (!skipLens &&
                 applyEdgeEffects &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 (lensHeightPx > 0f || lensAmountPx > 0f)

@@ -278,6 +278,7 @@ import com.music.bitchord.ui.components.LocalAppBackdrop
 import com.music.bitchord.ui.components.LocalAppBackdropFrozen
 import com.music.bitchord.ui.components.LocalLiquidGlassEnabled
 import com.music.bitchord.ui.components.GlassEffectConfig
+import com.music.bitchord.ui.components.GlassStyle
 import com.music.bitchord.ui.components.LocalGlassEffectConfig
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
@@ -387,6 +388,13 @@ private const val TOP_FADE_RAMP = 0.3f
 private const val INITIAL_RADIO_TRACKS = 24
 
 /**
+ * Blur radius for the frosted glass mode — BitChord's own value. Deeper than
+ * the liquid material's 3dp because frosted glass has no lens to carry the
+ * refraction, and the heavier blur is what gives it its soft, matte look.
+ */
+private const val FROST_GLASS_BLUR_DP = 16f
+
+/**
  * The activity a context belongs to, however many times it is wrapped.
  *
  * A composable's context is usually the activity itself, but it can be a
@@ -421,6 +429,7 @@ class MainActivity : AppCompatActivity() {
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
             val liquidGlassEnabled by AppSettings.liquidGlass.collectAsStateWithLifecycle()
             val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
+            val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
@@ -465,8 +474,18 @@ class MainActivity : AppCompatActivity() {
                     // config, and each step down is the same material cheaper
                     // to render — the low-end lever against the sheet-swipe
                     // glass jank. Dispersion stays off at any intensity.
+                    // Frosted mode (BitChord's "Better Performance for Glass")
+                    // swaps the material rather than scaling it: the same tint,
+                    // rim, shadow and motion, but a deeper blur and no lens
+                    // pass. The liquid blur itself is untouched, so switching
+                    // the option back restores exactly what was there before.
                     LocalGlassEffectConfig provides GlassEffectConfig(
-                        blurRadius = 3f * liquidGlassIntensity,
+                        style = if (glassPerformance) GlassStyle.FROSTED else GlassStyle.LIQUID,
+                        blurRadius = if (glassPerformance) {
+                            FROST_GLASS_BLUR_DP
+                        } else {
+                            3f * liquidGlassIntensity
+                        },
                         lensHeight = 0.60f * liquidGlassIntensity,
                         lensAmount = 0.69f * liquidGlassIntensity,
                         chromaticAberration = false,

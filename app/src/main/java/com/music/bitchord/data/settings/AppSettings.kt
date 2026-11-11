@@ -741,6 +741,15 @@ object AppSettings {
      */
     val liquidGlassIntensity = MutableStateFlow(1f)
 
+    /**
+     * Frosts the glass instead of refracting it, BitChord's "Better Performance
+     * for Glass": the blur is deeper and the lens shader is skipped, for phones
+     * the refraction is too much for. The bar's rim, shadow, tint and motion
+     * all stay; only the lens goes. A Liquid Glass option, honoured only while
+     * [liquidGlass] is on.
+     */
+    val glassPerformance = MutableStateFlow(false)
+
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
 
@@ -1614,6 +1623,7 @@ object AppSettings {
         podcastsEnabled.value = prefs.getBoolean(KEY_PODCASTS_ENABLED, true)
         liquidGlassIntensity.value = prefs.getFloat(KEY_LIQUID_GLASS_INTENSITY, 1f)
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
+        glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
@@ -2320,6 +2330,11 @@ object AppSettings {
         val clamped = normalizeLiquidGlassIntensity(value)
         liquidGlassIntensity.value = clamped
         prefs.edit().putFloat(KEY_LIQUID_GLASS_INTENSITY, clamped).apply()
+    }
+
+    fun setGlassPerformance(value: Boolean) {
+        glassPerformance.value = value
+        prefs.edit().putBoolean(KEY_GLASS_PERFORMANCE, value).apply()
     }
 
     fun setHighPerformanceMode(value: Boolean) {
@@ -3213,6 +3228,7 @@ object AppSettings {
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
+    private const val KEY_GLASS_PERFORMANCE = "glass_performance"
     private const val KEY_FOLDING_NAV_BAR = "folding_nav_bar"
     private const val KEY_PODCASTS_ENABLED = "podcasts_enabled"
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"

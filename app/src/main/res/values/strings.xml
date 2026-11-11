@@ -388,6 +388,8 @@
     <string name="liquid_glass">Liquid Glass</string>
     <string name="liquid_glass_subtitle">Real refracting glass on the floating nav bar. Android 12+ only; uses more GPU.</string>
     <string name="liquid_glass_unavailable">Requires Android 12 or newer</string>
+    <string name="glass_performance">Better Performance for Glass</string>
+    <string name="glass_performance_subtitle">Frosts the glass instead of refracting it; the blur, tint and rim stay, the lens shader is skipped. Turn off to switch back to Liquid Glass.</string>
     <string name="liquid_glass_intensity">Liquid Glass intensity</string>
     <string name="liquid_glass_intensity_subtitle">Scales the blur and refraction; lower is cheaper to render, which fixes glass stutter on low-end devices</string>
     <string name="folding_nav_bar">Folding nav bar</string>
