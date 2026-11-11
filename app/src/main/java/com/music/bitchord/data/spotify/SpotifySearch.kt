@@ -90,58 +90,71 @@ internal object SpotifySearch {
         offset: Int = 0,
     ): Page = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext Page(emptyList(), null, "the query was blank")
-        val limit = limitOf(filter)
 
-        var section: JsonObject? = null
-        var answeredBy = ""
-        var seen = ""
         val failures = mutableListOf<String>()
-        for (attempt in attempts(query, limit, offset)) {
-            val root = runCatching {
-                if (attempt.hash != null) {
-                    SpotifyGraphQL.queryWithHash(attempt.operation, attempt.variables, attempt.hash)
-                } else {
-                    SpotifyGraphQL.query(attempt.operation, attempt.variables)
-                }
-            }
-                .onFailure { error ->
-                    Log.w(TAG, "Spotify's search via ${attempt.operation} failed: ${error.message}")
-                    failures += "${attempt.operation}: ${error.message}"
-                }
-                .getOrNull()
-            val answered = root?.obj("searchV2")
-            if (answered == null) {
-                if (root != null) {
-                    Log.w(TAG, "Spotify's ${attempt.operation} answered without a search section")
-                    failures += "${attempt.operation}: no search section"
-                }
+        val pages = mutableListOf<Page>()
+        val answeredBy = mutableListOf<String>()
+
+        // The operations the web player itself sends for the search tabs, with
+        // the variables it sends them and the paths it reads them from.
+        //
+        // The assisted-curation operation used to be asked first, and it
+        // answers: it carries a search section, and the counts read eight
+        // tracks out of it. But it is not the operation the results page uses,
+        // and its rows are not the rows the results page draws — so the search
+        // said "eight tracks" and drew none. The tab operations are the ones
+        // whose answers are known: `searchTracks` answers
+        // `searchV2.tracksV2.items[].item.data`, and the others answer their
+        // own section's `items[].data`.
+        for ((operation, tab) in tabOperations(filter)) {
+            val answer = ask(operation, tabVariables(query, tab, offset)) { failures += it }
+            val section = answer?.obj("searchV2") ?: answer ?: continue
+            if (section.hasNothing()) {
+                Log.d(TAG, "Spotify's $operation answered an empty search")
                 continue
             }
-            if (answered.hasNothing()) {
-                Log.d(TAG, "Spotify's ${attempt.operation} answered an empty search")
-                continue
-            }
-            Log.d(TAG, "Spotify's search answered by ${attempt.operation}")
-            answeredBy = attempt.operation
-            seen = counts(answered)
-            section = answered
-            break
+            Log.d(TAG, "Spotify's search answered by $operation")
+            answeredBy += operation
+            pages += parse(section, tab, operation, counts(section))
         }
 
-        // The per-tab family, when nothing above produced a section. Each of
-        // those operations serves exactly one kind, so the ones the filter
-        // wants are asked in turn.
-        if (section == null) {
-            val perTab = perTabSections(query, filter, limit, offset, failures)
-            if (perTab != null && !perTab.hasNothing()) {
-                Log.d(TAG, "Spotify's search answered by the per-tab operations")
-                answeredBy = "the per-tab operations"
-                seen = counts(perTab)
-                section = perTab
+        // The older families, when the tab operations had nothing to say.
+        // They are still asked: the backend ships both, and which one is
+        // alive changes between builds.
+        if (pages.none { it.rows.isNotEmpty() }) {
+            for (attempt in attempts(query, limitOf(filter), offset)) {
+                val root = runCatching {
+                    if (attempt.hash != null) {
+                        SpotifyGraphQL.queryWithHash(attempt.operation, attempt.variables, attempt.hash)
+                    } else {
+                        SpotifyGraphQL.query(attempt.operation, attempt.variables)
+                    }
+                }
+                    .onFailure { error ->
+                        Log.w(TAG, "Spotify's search via ${attempt.operation} failed: ${error.message}")
+                        failures += "${attempt.operation}: ${error.message}"
+                    }
+                    .getOrNull()
+                val answered = root?.obj("searchV2")
+                if (answered == null) {
+                    if (root != null) {
+                        Log.w(TAG, "Spotify's ${attempt.operation} answered without a search section")
+                        failures += "${attempt.operation}: no search section"
+                    }
+                    continue
+                }
+                if (answered.hasNothing()) {
+                    Log.d(TAG, "Spotify's ${attempt.operation} answered an empty search")
+                    continue
+                }
+                Log.d(TAG, "Spotify's search answered by ${attempt.operation}")
+                answeredBy += attempt.operation
+                pages += parse(answered, filter, attempt.operation, counts(answered))
+                if (pages.any { it.rows.isNotEmpty() }) break
             }
         }
 
-        if (section == null) {
+        if (pages.isEmpty()) {
             // Not an empty catalogue: an unanswered question. Saying so is the
             // difference between a listener retyping the query and a listener
             // who knows Spotify refused every operation this build offers.
@@ -149,7 +162,93 @@ internal object SpotifySearch {
             Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\": $why")
             throw SpotifyGraphQLException("Spotify could not answer that search — $why")
         }
-        return@withContext parse(section, filter, answeredBy, seen)
+        return@withContext merge(pages, answeredBy)
+    }
+
+    /**
+     * The pages of several operations as one page.
+     *
+     * The "All" tab is four questions, and the answer to each is a page of
+     * its own. They are put together here rather than in the caller, so the
+     * diagnostic still names every operation that answered and every row
+     * that came out of it.
+     */
+    private fun merge(pages: List<Page>, answeredBy: List<String>): Page {
+        if (pages.size == 1) return pages.first()
+        val rows = pages.flatMap { it.rows }
+        val seen = pages.joinToString("; ") { it.diagnostic }
+        val diagnostic = buildString {
+            append("answered by ").append(answeredBy.joinToString(", ").ifBlank { "nothing" })
+            if (seen.isNotBlank()) append(" — ").append(seen)
+            append("; ").append(rows.size).append(" rows")
+        }
+        Log.d(TAG, "Spotify's search: " + diagnostic)
+        return Page(rows, pages.first().nextOffset, diagnostic)
+    }
+
+    /**
+     * One operation, asked once, and the answer's `data` or null.
+     *
+     * The failure is handed back rather than thrown: one operation refusing
+     * is not the search refusing, and the caller needs to know which of them
+     * it was.
+     */
+    private suspend fun ask(
+        operation: String,
+        variables: JsonObject,
+        onFailure: (String) -> Unit,
+    ): JsonObject? = runCatching { SpotifyGraphQL.query(operation, variables) }
+        .onFailure { error ->
+            Log.w(TAG, "Spotify's search via $operation failed: ${error.message}")
+            onFailure("$operation: ${error.message}")
+        }
+        .getOrNull()
+
+    /**
+     * The operation and the tab each kind of result is asked for.
+     *
+     * The web player asks one operation per tab, and the answer of each is
+     * that tab's section and nothing else. The "All" tab is all four of them
+     * asked together, which is what this returns for it.
+     */
+    private fun tabOperations(filter: SearchFilter): List<Pair<String, SearchFilter>> = when (filter) {
+        SearchFilter.SONGS -> listOf("searchTracks" to SearchFilter.SONGS)
+        SearchFilter.ALBUMS -> listOf("searchAlbums" to SearchFilter.ALBUMS)
+        SearchFilter.ARTISTS -> listOf("searchArtists" to SearchFilter.ARTISTS)
+        SearchFilter.PLAYLISTS -> listOf("searchPlaylists" to SearchFilter.PLAYLISTS)
+        SearchFilter.ALL -> listOf(
+            "searchTracks" to SearchFilter.SONGS,
+            "searchAlbums" to SearchFilter.ALBUMS,
+            "searchArtists" to SearchFilter.ARTISTS,
+            "searchPlaylists" to SearchFilter.PLAYLISTS,
+        )
+        // Podcasts and videos have no rows of their own in this app's search.
+        else -> emptyList()
+    }
+
+    /**
+     * The variables a tab operation is sent, exactly as the web player sends
+     * them.
+     *
+     * The same set the reference client sends: the term is `searchTerm` (not
+     * `term`, which is the assisted-curation spelling), and the flags are the
+     * ones the results page sends with them. A missing variable fails the
+     * request outright, and an extra one is a variable the operation never
+     * declared — so the set is copied rather than assembled.
+     */
+    private fun tabVariables(query: String, tab: SearchFilter, offset: Int): JsonObject {
+        val limit = limitOf(tab)
+        return buildJsonObject {
+            put("searchTerm", query)
+            put("offset", offset)
+            put("limit", limit)
+            put("numberOfTopResults", limit)
+            put("includeAudiobooks", true)
+            put("includeAuthors", true)
+            put("includePreReleases", false)
+            put("includeAlbumPreReleases", false)
+            put("includeEpisodeContentRatingsV2", true)
+        }
     }
 
     /** One way of asking Spotify for [query]. */
@@ -219,61 +318,6 @@ internal object SpotifySearch {
             hash = "fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c",
         ),
     )
-
-    /** The tab-per-operation family, for a build where the two above are gone. */
-    private suspend fun perTabSections(
-        query: String,
-        filter: SearchFilter,
-        limit: Int,
-        offset: Int,
-        failures: MutableList<String>? = null,
-    ): JsonObject? {
-        val wanted = when (filter) {
-            SearchFilter.SONGS -> listOf("searchTracks" to "tracksV2")
-            SearchFilter.ALBUMS -> listOf("searchAlbums" to "albumsV2")
-            SearchFilter.ARTISTS -> listOf("searchArtists" to "artists")
-            SearchFilter.PLAYLISTS -> listOf("searchPlaylists" to "playlists")
-            SearchFilter.ALL -> listOf(
-                "searchTracks" to "tracksV2",
-                "searchAlbums" to "albumsV2",
-                "searchArtists" to "artists",
-                "searchPlaylists" to "playlists",
-            )
-            // Podcasts and videos have no rows of their own in this app's
-            // search; the operations above are the only ones worth asking.
-            else -> emptyList()
-        }
-        val sections = HashMap<String, kotlinx.serialization.json.JsonElement>()
-        var answeredAny = false
-        for ((operation, key) in wanted) {
-            val variables = buildJsonObject {
-                put("searchTerm", query)
-                put("term", query)
-                put("offset", offset)
-                put("limit", limit)
-                put("numberOfTopResults", limit)
-                put("includeAudiobooks", false)
-                put("includePreReleases", false)
-                put("includeAlbumPreReleases", false)
-                put("includeAuthors", false)
-                put("includeEpisodeContentRatingsV2", false)
-            }
-            val root = runCatching { SpotifyGraphQL.query(operation, variables) }
-                .onFailure { error ->
-                    Log.w(TAG, "Spotify's $operation failed: ${error.message}")
-                    failures?.add("$operation: ${error.message}")
-                }
-                .getOrNull()
-            val section = root?.obj("searchV2")
-            if (section == null) {
-                if (root != null) failures?.add("$operation: no search section")
-                continue
-            }
-            answeredAny = true
-            section[key]?.let { sections[key] = it }
-        }
-        return if (answeredAny) JsonObject(sections) else null
-    }
 
     /** Whether every list in [this] section is empty. */
     private fun JsonObject.hasNothing(): Boolean {
@@ -374,18 +418,45 @@ internal object SpotifySearch {
                     // no shape in it is the one thing that cannot be acted on.
                     val sample = (trackItems + topItems).firstOrNull()
                     append("; first entry ").append(sample?.let(::shapeOf) ?: "none")
+                    append("; section ").append(sectionKeys(section))
                 }
             }
             append("; ").append(rows.size).append(" rows")
         }
         Log.d(TAG, "Spotify's search: " + diagnostic)
-        return Page(rows, null, diagnostic)
+        return Page(rows, nextOffsetOf(section), diagnostic)
     }
 
-    /** How many rows one tab is asked for. */
+    /**
+     * Where the next page starts, when the answer said.
+     *
+     * The tab sections carry `pagingInfo.nextOffset` beside their items, and
+     * it is the only thing in the answer that says whether there is more
+     * catalogue to come. A search that cannot page is a search that can only
+     * ever show the first eight rows of a catalogue with eight thousand.
+     */
+    private fun nextOffsetOf(section: JsonObject): Int? {
+        for (key in listOf("tracksV2", "albumsV2", "artists", "playlists", "topResultsV2")) {
+            val offset = section.obj(key)?.obj("pagingInfo")?.int("nextOffset") ?: continue
+            if (offset > 0) return offset
+        }
+        return null
+    }
+
+    /** The keys the answer's search section carries, for the log. */
+    private fun sectionKeys(section: JsonObject): String =
+        section.keys.joinToString(",").ifBlank { "none" }
+
+    /**
+     * How many rows one tab is asked for.
+     *
+     * The numbers the web player asks with: twenty for the songs tab and
+     * thirty for the others. A request that asks for fewer than the reference
+     * does is a request whose answer nobody has read.
+     */
     private fun limitOf(filter: SearchFilter): Int = when (filter) {
-        SearchFilter.SONGS -> 12
-        else -> 8
+        SearchFilter.SONGS -> 20
+        else -> 30
     }
 
     // -- parsing ------------------------------------------------------------
@@ -448,7 +519,21 @@ internal object SpotifySearch {
 
         fun walk(node: kotlinx.serialization.json.JsonElement, depth: Int) {
             if (answer != null || depth > MAX_ENTITY_DEPTH) return
-            val obj = node.objOrNull() ?: return
+            val obj = node.objOrNull()
+            if (obj == null) {
+                // A list is a list of things to look inside, not a wall: the
+                // answer's own shelves put their rows in one
+                // (`SearchSectionEntity.items`), and a walk that stopped at
+                // the list found the shelf and nothing under it. The rows of
+                // a shelf are entities of their own kind, so the walk goes
+                // through.
+                val list = node.arrOrNull() ?: return
+                for (element in list) {
+                    walk(element, depth + 1)
+                    if (answer != null) return
+                }
+                return
+            }
             if (obj.isEntity(kind)) {
                 answer = obj
                 return

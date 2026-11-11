@@ -56,7 +56,7 @@ internal fun TransportShapeGlyph(
         ),
     ) {
         // Everything below is authored on the 24-unit grid the rest of the
-        // player icons use, then scaled once so a 38dp play button and a 42dp
+        // player icons use, then scaled once so a 38dp play button and a 53dp
         // skip button share the same proportions.
         val unit = size.minDimension / 24f
         val corner = (0.15f + (maxCorner(shape) - 0.15f) * softness) * unit

@@ -1012,6 +1012,15 @@ object AudioCache {
     private var pendingQueue: List<String> = emptyList()
 
     /**
+     * The preparation of the next track when that track is a download.
+     *
+     * Separate from [job] because it is the opposite instruction: [job] gathers
+     * bytes for a stream, and this one gathers nothing — the file is already on
+     * disk — and only asks the sources whether they hold a better copy.
+     */
+    private var localJob: Job? = null
+
+    /**
      * Gets the queue ahead of the one playing warmed up, in play order.
      *
      * The first id gets the full treatment: its opening onto disk first, so
@@ -1043,6 +1052,7 @@ object AudioCache {
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
         pendingQueue = mediaIds
         job?.cancel()
+        prepareDownloadedHead(upcoming)
         // YouTube's half of read-ahead speaks [StreamResolver]'s language and
         // nothing else, so its id list is separate. The track chosen for the
         // byte pass below is not: an addon track is worth warming just as much,
@@ -1293,6 +1303,51 @@ object AudioCache {
         pendingQueue = emptyList()
         job?.cancel()
         job = null
+        localJob?.cancel()
+        localJob = null
+    }
+
+    /**
+     * Looks for a better copy of the next track while it is still next, when
+     * that track is a download.
+     *
+     * Read-ahead skips a download on purpose — the file plays as itself, so
+     * there are no bytes worth warming — and the skip took the *search* with
+     * it. So nothing looked for a better copy of a saved song until the song
+     * was already playing, which is the one moment the listener waits for it:
+     * the automatic local upgrade and "Upgrade quality" both search live, and
+     * a slow source is a slow start. A queue of saved songs therefore got no
+     * preparation at all, which is exactly what the listener saw.
+     *
+     * Nothing is warmed and nothing is pinned here. The file is what plays, and
+     * the copy that replaces it is chosen by the live path, which measures the
+     * file's own quality from the decoder. What this buys is the answer being
+     * in hand: the sources are asked once, ahead of time, and the call they
+     * answer is the one that search would otherwise make.
+     *
+     * Gated by the same two rules the live search is, so this can never look
+     * for something the live path would refuse: the listener's own switch for
+     * upgrading the songs on this device — which is off in offline mode — and a
+     * source that can hand over a bit-exact copy.
+     */
+    private fun prepareDownloadedHead(upcoming: List<Upcoming>) {
+        localJob?.cancel()
+        localJob = null
+        if (!AppSettings.effectiveAutoUpgradeLocalStorage.value) return
+        if (!SourceResolver.canServeLossless()) return
+        val head = upcoming.firstOrNull { it.mediaId in Downloads.saved.value } ?: return
+        if (head.target.title.isBlank() || head.target.isVideo) return
+        localJob = scope.launch {
+            runCatching { SourceResolver.prepareForPlayback(head.target) }
+                .onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                    TrackLog.d(
+                        TAG,
+                        "local next-track preparation failed for ${head.mediaId}: ${error.message}",
+                        about = head.mediaId,
+                    )
+                }
+        }
     }
 
     /**

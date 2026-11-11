@@ -661,12 +661,17 @@ internal fun TransportRow(
     /** Rounds the transport polygons; see [DEFAULT_TRANSPORT_SMOOTHNESS]. */
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
-    // BitChord's own transport proportions, kept exactly: a 74dp play glyph
-    // with a 92dp touch box, and 53dp skips drawn 0.85 as tall as they are
-    // wide, so the pair reads lower and longer beside the play button. The
-    // polygons are still ours — only the size and the spacing are theirs.
+    // The play glyph is back at the size it had before the transport was
+    // copied out at 74dp: 38dp, with the 92dp touch box it always had. The
+    // triangle is then 30.5 x 34.2dp — the reference player draws one 92px
+    // across on the same screen, so this is the same picture at the size the
+    // button is meant to be. A hit target is not a picture of one, and the
+    // reach stays where it was.
+    //
+    // Everything else about the row is untouched: the skips at 53dp, the
+    // SpaceAround spacing and the touch boxes.
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
-    val playSize = if (compact) 58.dp else 74.dp
+    val playSize = if (compact) 30.dp else 38.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
     Row(
@@ -1093,9 +1098,8 @@ private fun TransportGlyph(
 }
 
 /**
- * BitChord's transport metrics, copied exactly so the polygons below sit at
- * their size: the skip glyphs' width and touch box beside the larger play
- * button, and the vertical squash that keeps the pair low and long.
+ * The skip glyphs' width and touch box, beside the larger play button, and
+ * the vertical squash that keeps the pair low and long.
  */
 private val PLAYER_SKIP_ICON_SIZE = 53.dp
 private val PLAYER_SKIP_TOUCH_SIZE = 53.dp
@@ -1115,9 +1119,6 @@ private val BOTTOM_ICON_SIZE = 26.dp
 private val BOTTOM_ACTIVE_TILE_SIZE = 35.dp
 private val BOTTOM_ACTIVE_TILE_CORNER = 7.dp
 private const val BOTTOM_ACTIVE_TILE_ALPHA = 0.62f
-
-/** How strong an unlit bottom glyph is drawn. BitChord's own value. */
-private const val BOTTOM_GLYPH_REST_ALPHA = 0.75f
 
 /**
  * Segment width for the Shuffle/Repeat/Autoplay capsule, which is always
@@ -1407,6 +1408,12 @@ private fun BottomGlyph(
 ) {
     val haptics = rememberHaptics()
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    // The main player's own opacity scale, so the bottom row is part of the
+    // same picture as the rest of the player rather than a second one with
+    // its own idea of how strong a glyph is. The reference player's bottom
+    // icons measure 0.67 of the ink, and the role that draws the lyrics, the
+    // queue and the AirPlay icon is 0.65 — the same strength, named once.
+    val alphas = LocalPlayerAlphas.current
     // Read only from the click handler, never during composition, so writing it
     // costs no recomposition. Starts a full window in the past so the first tap
     // is never the one that gets swallowed.
@@ -1456,7 +1463,7 @@ private fun BottomGlyph(
     ) {
         // Not while lit: the tile's cut-out needs the glyph drawn plainly in the
         // layer above, which is blended as a whole.
-        val tint = if (highlighted) Color.White else ink.copy(alpha = BOTTOM_GLYPH_REST_ALPHA)
+        val tint = if (highlighted) Color.White else ink.copy(alpha = alphas.tertiary)
         if (icon != null) {
             Icon(
                 painter = icon.painter(),

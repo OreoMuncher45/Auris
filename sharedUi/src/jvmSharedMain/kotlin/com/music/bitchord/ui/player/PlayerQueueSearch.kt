@@ -550,7 +550,6 @@ private fun QueueSearchRow(
                 song = song,
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                 color = Color.White.copy(alpha = 0.92f),
-                qualityBadge = true,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

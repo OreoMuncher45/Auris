@@ -462,7 +462,7 @@ internal object SpotifyHomeSource {
                     .getOrNull()
                 matched?.let {
                     matches[track.id] = it
-                    spotifyIds[it.videoId] = track.id
+                    rememberSpotifyId(it.videoId, track.id)
                     track to it
                 }
             }
@@ -498,7 +498,7 @@ internal object SpotifyHomeSource {
      */
     internal fun songFor(track: SpotifyTrack): Song {
         val key = "$SPOTIFY_KEY_PREFIX${track.id}"
-        spotifyIds[key] = track.id
+        rememberSpotifyId(key, track.id)
         return Song(
             videoId = key,
             title = track.title,
@@ -520,13 +520,10 @@ internal object SpotifyHomeSource {
      *
      * The seed is the song that is playing, and what comes next is Spotify's
      * answer to it: the station Spotify would start for that song, or the
-     * artists Spotify puts beside that song's artist. Not the listener's
-     * liked list — that is what this used to serve, and a queue that repeats
-     * the songs you already loved is not AutoPlay, it is a shuffle of your
-     * library.
-     *
-     * The seed pool is the last resort, and only for what Spotify's own
-     * algorithm could not answer.
+     * artists Spotify puts beside that song's artist. Then the catalogue's own
+     * lists. Not the listener's liked list — that is what this used to serve,
+     * and a queue that repeats the songs you already loved is not AutoPlay, it
+     * is a shuffle of your library.
      */
     suspend fun autoplayTracks(
         exclude: Set<String>,
@@ -539,22 +536,48 @@ internal object SpotifyHomeSource {
         if (seed != null) {
             // An explicit station is Spotify's own mix of the track and
             // nothing else; a queue top-up takes the same answer, because
-            // Spotify's station is the best thing this provider can say.
-            val algorithmic = if (station) {
-                SpotifyAlgorithm.station(seed, limit)
-            } else {
-                SpotifyAlgorithm.more(seed, limit)
-            }
-            val matched = algorithmic
+            // Spotify's station is the best thing this provider can say. The
+            // artist graph behind it is still Spotify's algorithm, so an
+            // unknown seed falls through to it rather than to the library.
+            val algorithmic = SpotifyAlgorithm.more(seed, limit)
                 .distinctBy { it.videoId }
                 .filterNot { it.videoId in exclude }
                 .filterNot(AppSettings::isSongBlocked)
                 .take(limit)
-            if (matched.isNotEmpty()) return@withContext matched
+            if (algorithmic.isNotEmpty()) return@withContext algorithmic
         }
 
-        val seeds = flowSeeds()
-        (seeds.top + seeds.recent)
+        // Nothing from the algorithm. An explicit station says so, rather than
+        // becoming a shuffle of the liked list: that substitution is the fault
+        // this path exists to end — a "radio" that was really the songs the
+        // listener had already saved, wearing another provider's name.
+        if (station) {
+            Log.w(TAG, "Spotify's own station answered nothing; leaving the radio empty rather than filling it from the library")
+            return@withContext emptyList()
+        }
+
+        // A top-up keeps going from the catalogue instead of stopping. See
+        // [catalogueSeeds] for why it is not [flowSeeds].
+        catalogueSeeds(exclude, limit)
+    }
+
+    /**
+     * The catalogue's own seeds for a queue Spotify's algorithm could not
+     * answer: the listener's most-played, then what they played lately, then
+     * the public lists.
+     *
+     * Deliberately not [flowSeeds]. That pool starts with Liked Songs on
+     * purpose — they are the most unambiguous evidence of taste a library
+     * holds, and a *mix* built from them is the listener's own. A queue
+     * top-up is not a mix: falling back onto the liked list is how "next
+     * up" became a replay of what was already saved.
+     */
+    private suspend fun catalogueSeeds(exclude: Set<String>, limit: Int): List<Song> {
+        val tracks = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
+            .ifEmpty { runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty() }
+            .ifEmpty { publicSeeds() }
+        if (tracks.isEmpty()) return emptyList()
+        return songs(tracks)
             .distinctBy { it.videoId }
             .filterNot { it.videoId in exclude }
             .filterNot(AppSettings::isSongBlocked)
@@ -562,13 +585,32 @@ internal object SpotifyHomeSource {
     }
 
     /**
+     * Remembers which Spotify track [videoId] came from, so a station can later
+     * be asked for by the Spotify id behind the row that is playing.
+     *
+     * Filled from every path that turns a Spotify track into a row or a match —
+     * including the playlist and collection pages, which match through
+     * [SpotifyImporter] directly and used to leave this map empty. An empty map
+     * is what made "start radio" fall back to the listener's liked list: the
+     * station was never asked, because the id behind the seed was unknown.
+     */
+    internal fun rememberSpotifyId(videoId: String, trackId: String) {
+        if (videoId.isBlank() || trackId.isBlank()) return
+        spotifyIds[videoId] = trackId
+    }
+
+    /**
      * The Spotify track id behind [song], or null.
      *
-     * Known only for a track that was matched from Spotify in this process:
-     * the queue holds this app's own ids, and the Spotify id behind one is
-     * remembered when the match is made.
+     * Known for a track that was matched from Spotify in this process, and
+     * recovered from the id itself for a row that carries one — `spotify:<id>`
+     * says where it came from, and a queue restored from disk has no map left
+     * to say it a second time. See [SPOTIFY_KEY_PREFIX].
      */
-    internal fun spotifyIdOf(song: Song): String? = spotifyIds[song.videoId]
+    internal fun spotifyIdOf(song: Song): String? =
+        spotifyIds[song.videoId]
+            ?: song.videoId.removePrefix(SPOTIFY_KEY_PREFIX)
+                .takeIf { song.videoId.startsWith(SPOTIFY_KEY_PREFIX) && it.isNotBlank() && it != song.videoId }
 
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =

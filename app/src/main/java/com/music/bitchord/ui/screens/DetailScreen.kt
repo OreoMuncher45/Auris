@@ -1911,7 +1911,6 @@ private fun CompactSongRow(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) palette.accent else palette.onBackground,
-                qualityBadge = true,
             )
             Text(
                 text = song.artist,
@@ -1971,7 +1970,6 @@ private fun SuggestedSongRow(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) palette.accent else palette.onBackground,
-                qualityBadge = true,
             )
             Spacer(Modifier.height(2.dp))
             Text(

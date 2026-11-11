@@ -16,7 +16,6 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.presence.AndroidPresence
 import com.music.bitchord.data.YtMusicRepository
-import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.spotify.SPOTIFY_ALBUM_PREFIX
@@ -3967,10 +3966,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // pushed onto a page that is no longer there.
                         if (_detailStack.value.none { it.browseId == browseId }) return@withPermit
                         val match = runCatching { SpotifyImporter.matchTrack(track) }.getOrNull()
+                        // A track no source could be matched to is still a row
+                        // of Spotify's catalogue, and it is still playable: the
+                        // player asks the enabled sources for the recording by
+                        // name when the row is reached (see the `spotify:`
+                        // resolver in [com.music.bitchord.playback.PlaybackService]).
+                        //
+                        // It used to be written as a missing row instead, and
+                        // that was the greyed-out, unclickable row the
+                        // listener saw: a playlist whose tracks the matcher
+                        // had not found was a playlist that could not be
+                        // played, when the only thing that had failed was a
+                        // lookup done before the row was ever pressed.
                         val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
-                            ?: track.asPendingSong().let {
-                                it.copy(videoId = SPOTIFY_MISSING_PREFIX + track.id)
-                            }
+                            ?: SpotifyHomeSource.songFor(track)
+                        // The Spotify id behind the row, remembered wherever the
+                        // row came from. The station a listener starts from this
+                        // track is asked for by that id, and a row matched on the
+                        // page never went through the code that used to record
+                        // it — so "start radio" had no seed to ask Spotify about
+                        // and answered from the listener's library instead.
+                        SpotifyHomeSource.rememberSpotifyId(found.videoId, track.id)
                         _detailStack.value = _detailStack.value.map { page ->
                             val list = (page.songs as? UiState.Success<List<Song>>)?.data
                             if (page.browseId == browseId && list != null && index < list.size) {

@@ -124,6 +124,73 @@ class SpotifySearchTest {
     }
 
     /**
+     * A shelf inside the top results: the rows are one level further down, in
+     * a list, under a section entity that names nothing but a title.
+     *
+     * The answer's own shelves put their tracks in `data.items[]`, and a walk
+     * that stopped at the list found the shelf and nothing under it — which
+     * is how an answer carrying eight tracks drew none.
+     */
+    @Test
+    fun `a track inside a shelf of the top results is read`() {
+        val rows = trackRows(
+            """
+            {"topResultsV2": {"itemsV2": [
+              {"item": {"__typename": "SearchSectionEntity", "data": {
+                 "title": {"transformedLabel": "Songs"},
+                 "sectionType": "GENERIC",
+                 "items": [{"item": {"__typename": "TrackResponseWrapper", "data": $liveTrack}}]
+               }},
+               "matchedFields": ["Name"]}
+            ]}}
+            """,
+        )
+        assertEquals(1, rows.size)
+        assertEquals("Shape of You", rows.first().song.title)
+    }
+
+    /** The tab operation's own answer: a wrapper, then the entity under data. */
+    @Test
+    fun `the web player's track tab answer is read`() {
+        val rows = trackRows(
+            """
+            {"tracksV2": {
+               "items": [{"matchedFields": [], "item": {
+                 "__typename": "TrackResponseWrapper",
+                 "data": {
+                   "__typename": "Track",
+                   "uri": "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+                   "id": "4uLU6hMCjMI75M1A2tKUQC",
+                   "name": "Shape of You",
+                   "duration": {"totalMilliseconds": 233712},
+                   "contentRating": {"label": "EXPLICIT"},
+                   "playability": {"playable": true, "reason": "PLAYABLE"},
+                   "trackMediaType": "AUDIO",
+                   "artists": {"items": [
+                     {"uri": "spotify:artist:6UKW6lh6tcx8oQcumzXhn", "profile": {"name": "Ed Sheeran"}}
+                   ]},
+                   "albumOfTrack": {
+                     "uri": "spotify:album:6kL09DaURb7rAo6DYk7F3",
+                     "name": "Divide",
+                     "coverArt": {"sources": [
+                       {"url": "https://i.scdn.co/small", "width": 64},
+                       {"url": "https://i.scdn.co/large", "width": 640}
+                     ]}
+                   }
+                 }
+               }}],
+               "pagingInfo": {"limit": 20, "nextOffset": 20},
+               "totalCount": 429
+             }}
+            """,
+        )
+        assertEquals(1, rows.size)
+        assertEquals("Shape of You", rows.first().song.title)
+        assertEquals("Ed Sheeran", rows.first().song.artist)
+        assertEquals("Divide", rows.first().song.albumName)
+    }
+
+    /**
      * A page that found nothing says what arrived.
      *
      * The shape of the first entry is the one thing that can be acted on: it

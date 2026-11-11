@@ -30,11 +30,12 @@ fun Modifier.thumbnailBorder(shape: Shape): Modifier = composed {
 }
 
 /**
- * A song title with the catalogue-standard outlined E for explicit audio,
- * and — opt-in, since tight rows like the mini player have no room for it —
- * an outlined LOSSLESS chip wherever a source row promises a bit-exact copy.
- * Apple draws the same chip on its album pages; here it rides the title so
- * every list that shows a lossless row names it as one.
+ * A song title with the catalogue-standard outlined E for explicit audio.
+ *
+ * It used to draw an outlined LOSSLESS chip beside the title on the lists that
+ * asked for one. The chip is gone: it read as a claim on every row of a queue
+ * rather than as the property of the copy that was playing, and the player's
+ * own quality badge already says what is really being served.
  */
 @Composable
 fun ExplicitSongTitle(
@@ -42,7 +43,6 @@ fun ExplicitSongTitle(
     style: TextStyle,
     color: Color,
     modifier: Modifier = Modifier,
-    qualityBadge: Boolean = false,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (song.isExplicit == true) {
@@ -65,17 +65,5 @@ fun ExplicitSongTitle(
             textAlign = if (isRtlText(song.title)) TextAlign.End else TextAlign.Start,
             modifier = Modifier.weight(1f),
         )
-        if (qualityBadge && song.sourceQuality == "LOSSLESS") {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "LOSSLESS",
-                style = MaterialTheme.typography.labelSmall,
-                color = color.copy(alpha = 0.85f),
-                maxLines = 1,
-                modifier = Modifier
-                    .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
-            )
-        }
     }
 }

@@ -49,7 +49,13 @@ internal object SpotifyAlgorithm {
      */
     suspend fun station(seed: Song, limit: Int): List<Song> = withContext(Dispatchers.IO) {
         if (limit <= 0) return@withContext emptyList()
-        val id = SpotifyHomeSource.spotifyIdOf(seed) ?: return@withContext emptyList()
+        val id = SpotifyHomeSource.spotifyIdOf(seed) ?: run {
+            // Said out loud: this is the one reason a station is not asked for
+            // at all, and from the log it is indistinguishable from Spotify
+            // answering with nothing unless it is named.
+            Log.w(TAG, "'${seed.title}' has no Spotify id behind it; no station to ask for")
+            return@withContext emptyList()
+        }
         val tracks = SpotifyRadio.radioTracks("spotify:track:$id", limit = limit)
         if (tracks.isEmpty()) {
             Log.w(TAG, "Spotify made no station for '$id'")

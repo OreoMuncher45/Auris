@@ -172,13 +172,24 @@ object SpotifyImporter {
      * search's first hit.
      */
     suspend fun matchTrack(track: SpotifyTrack): Song? {
-        val query = listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" ")
         val target = TrackMatcher.Target(
             title = track.title,
             artist = track.artist,
             durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
             album = track.album,
         )
+        // The queries, in the order the matcher wants them: the title with the
+        // artist, then the title alone.
+        //
+        // The second one is not a nicety. A Spotify title carries the
+        // packaging — the bracketed feature, the question mark — and handing
+        // that to a catalogue verbatim asks it to match on words it has never
+        // stored. "I KNOW ? Travis Scott" finds nothing; "I KNOW ?" finds the
+        // recording. A row that found no counterpart was greyed out and
+        // unplayable, and the reason was a query one word too long.
+        val queries = TrackMatcher.queries(target)
+        val query = queries.firstOrNull()
+            ?: listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" ")
         // YouTube first, and only when it is switched on. Its search is the
         // widest catalogue and the best matcher input, but a listener who
         // turned YouTube off did so because they do not want its streams —
@@ -201,15 +212,17 @@ object SpotifyImporter {
         // source that answered.
         for (source in SourceRegistry.activeForPlayback()) {
             if (source.kind == SourceKind.YOUTUBE) continue
-            val rows = runCatching { source.search(query, limit = SOURCE_MATCH_ROWS) }
-                .onFailure { error ->
-                    Log.w(TAG, "'${source.displayName}' could not be asked for '${track.title}': ${error.message}")
-                }
-                .getOrNull()
-                .orEmpty()
-            val best = TrackMatcher.best(rows, target) ?: continue
-            Log.d(TAG, "'${track.title}' matched on ${source.displayName}")
-            return best
+            for (ask in queries) {
+                val rows = runCatching { source.search(ask, limit = SOURCE_MATCH_ROWS) }
+                    .onFailure { error ->
+                        Log.w(TAG, "'${source.displayName}' could not be asked for '${track.title}': ${error.message}")
+                    }
+                    .getOrNull()
+                    .orEmpty()
+                val best = TrackMatcher.best(rows, target) ?: continue
+                Log.d(TAG, "'${track.title}' matched on ${source.displayName}")
+                return best
+            }
         }
         return null
     }
