@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.spotify.parseLikedPage
 import com.music.bitchord.data.spotify.parsePlaylistPage
 import com.music.bitchord.data.spotify.parseTrackPage
 import kotlinx.serialization.json.Json
@@ -82,5 +83,44 @@ class SpotifyLibraryTest {
         assertEquals("Album", track.album)
         assertEquals(180000, track.durationMs)
         assertEquals("https://img", track.imageUrl)
+    }
+
+    @Test
+    fun anEpisodeInAPlaylistIsNotARow() {
+        // A playlist can hold an episode or a book, and neither of those can
+        // be queued here. They are not rows.
+        val root = json.parseToJsonElement(
+            """
+            {"data":{"playlistV2":{"content":{"totalCount":3,"items":[
+              {"itemV2":{"data":{"name":"Song","uri":"spotify:track:t1"}}},
+              {"itemV2":{"data":{"name":"The Episode","uri":"spotify:episode:e1"}}},
+              {"itemV2":{"data":{"name":"The Book","uri":"spotify:audiobook:b1"}}}
+            ]}}}}
+            """.trimIndent(),
+        ).jsonObject
+
+        val page = parseTrackPage(root)
+
+        assertEquals(1, page.items.size)
+        assertEquals("Song", page.items.single().title)
+        // The count is Spotify's own and still says what the page held.
+        assertEquals(3, page.raw)
+    }
+
+    @Test
+    fun anEpisodeInLikedSongsIsNotARow() {
+        val root = json.parseToJsonElement(
+            """
+            {"data":{"me":{"library":{"tracks":{"items":[
+              {"track":{"_uri":"spotify:track:t1","data":{"name":"Song"}}},
+              {"track":{"_uri":"spotify:episode:e1","data":{"name":"The Episode"}}}
+            ]}}}}}
+            """.trimIndent(),
+        ).jsonObject
+
+        val page = parseLikedPage(root)
+
+        assertEquals(1, page.items.size)
+        assertEquals("Song", page.items.single().title)
     }
 }

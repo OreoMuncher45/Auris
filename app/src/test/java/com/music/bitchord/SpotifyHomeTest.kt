@@ -90,12 +90,53 @@ class SpotifyHomeTest {
         val feed = SpotifyHomeFeedParser.parse(root(homeAnswer))
 
         assertEquals("Good evening", feed.greeting)
-        assertEquals(listOf("music-chip", "podcasts-chip"), feed.chips.map { it.id })
+        // The podcasts chip is not drawn: it opens a shelf of shows, and
+        // there is nothing here that can play one.
+        assertEquals(listOf("music-chip"), feed.chips.map { it.id })
         assertEquals("Music", feed.chips.first().label)
         // The chips that open beside a chip are read with it: Spotify opens
         // *Following* beside *Music*, and the page has to know it can.
         assertEquals(listOf("music-chip-following"), feed.chips.first().subChips.map { it.id })
         assertEquals("Following", feed.chips.first().subChips.first().label)
+    }
+
+    @Test
+    fun theLongFormChipsAreNotDrawn() {
+        val answer = """
+            {"home": {"homeChips": [
+              {"id": "music-chip", "label": {"text": "Music"}},
+              {"id": "podcasts-chip", "label": {"text": "Podcasts"},
+               "subChips": [{"id": "podcasts-chip-following", "label": {"text": "Following"}}]},
+              {"id": "audiobooks-chip", "label": {"text": "Audiobooks"}},
+              {"id": "books-chip", "label": {"text": "Books"}}
+            ]}}
+        """.trimIndent()
+
+        val feed = SpotifyHomeFeedParser.parse(root(answer))
+
+        assertEquals(listOf("music-chip"), feed.chips.map { it.id })
+    }
+
+    @Test
+    fun aShowIsNotACard() {
+        // A card that opens a shelf of shows leads nowhere: there is no
+        // episode player here, and a shelf that cannot be played is worse
+        // than no shelf.
+        val answer = """
+            {"home": {"sectionContainer": {"sections": {"items": [
+              {"data": {"title": {"text": "Shows"}}, "sectionItems": {"items": [
+                {"content": {"data": {
+                  "uri": "spotify:show:abc",
+                  "name": "The Show",
+                  "publisher": {"name": "A Publisher"}
+                }}}
+              ]}}
+            ]}}}}
+        """.trimIndent()
+
+        val feed = SpotifyHomeFeedParser.parse(root(answer))
+
+        assertTrue(feed.sections.isEmpty())
     }
 
     @Test

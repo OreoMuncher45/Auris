@@ -243,11 +243,16 @@ internal object SpotifySearch {
             put("offset", offset)
             put("limit", limit)
             put("numberOfTopResults", limit)
-            put("includeAudiobooks", true)
-            put("includeAuthors", true)
+            // Audiobooks, authors and episode ratings are not asked for:
+            // there is nothing here that can play a book or an episode. See
+            // [SpotifyLongForm]. The variables are still *sent* — the
+            // persisted query declares them, and a missing variable fails the
+            // request outright — but their values say no.
+            put("includeAudiobooks", false)
+            put("includeAuthors", false)
             put("includePreReleases", false)
             put("includeAlbumPreReleases", false)
-            put("includeEpisodeContentRatingsV2", true)
+            put("includeEpisodeContentRatingsV2", false)
         }
     }
 
@@ -280,7 +285,7 @@ internal object SpotifySearch {
                 put("offset", offset)
                 put("limit", limit)
                 put("numberOfTopResults", limit)
-                put("includeEpisodeContentRatingsV2", true)
+                put("includeEpisodeContentRatingsV2", false)
             },
         ),
         Attempt(
@@ -310,7 +315,7 @@ internal object SpotifySearch {
                 put("offset", offset)
                 put("limit", limit)
                 put("numberOfTopResults", 5)
-                put("includeAudiobooks", true)
+                put("includeAudiobooks", false)
                 put("includeArtistHasConcertsField", false)
                 put("includePreReleases", true)
                 put("includeAuthors", false)
@@ -570,6 +575,16 @@ internal object SpotifySearch {
     private fun JsonObject.isEntityOfAnotherKind(kind: EntityKind): Boolean {
         val uri = str("uri").orEmpty()
         val typename = str("__typename").orEmpty()
+        // A show, an episode or a book is an entity of a kind this app does
+        // not play, and the walk must stop at it rather than descend into it:
+        // an episode object carries a track-shaped block of its own, and that
+        // block is not a row the songs tab ever offered. See
+        // [SpotifyLongForm].
+        if (SpotifyLongForm.isLongFormUri(uri)) return true
+        if (typename.equals("Show", ignoreCase = true) ||
+            typename.equals("Episode", ignoreCase = true) ||
+            typename.equals("Audiobook", ignoreCase = true)
+        ) return true
         return EntityKind.entries.any { other ->
             other != kind &&
                 (uri.startsWith(other.uriPrefix) || typename.equals(other.typename, ignoreCase = true))

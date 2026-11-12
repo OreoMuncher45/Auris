@@ -235,7 +235,7 @@ internal object SpotifyHomeSource {
             put("facet", facet)
             put("sectionItemsLimit", 10)
             put("homeEndUserIntegration", "INTEGRATION_WEB_PLAYER")
-            put("includeEpisodeContentRatingsV2", true)
+            put("includeEpisodeContentRatingsV2", false)
             put("includeHomeChapterVideoCards", false)
         }
         return SpotifyHomeFeedParser.parse(SpotifyGraphQL.query("home", variables))

@@ -106,7 +106,7 @@ internal object SpotifyPages {
                 put("limit", 20)
             }
             put("browseEndUserIntegration", "INTEGRATION_WEB_PLAYER")
-            put("includeEpisodeContentRatingsV2", true)
+            put("includeEpisodeContentRatingsV2", false)
         }
         return parseCategoryPage(SpotifyGraphQL.query("browsePage", variables))
     }
@@ -206,6 +206,9 @@ internal object SpotifyPages {
      */
     private fun parseTrack(data: JsonObject): SpotifyTrack? {
         val uri = data.str("uri") ?: return null
+        // Only a *track* is a row. An album page can list an episode or a
+        // book, and neither of those can be queued — see [SpotifyLongForm].
+        if (!SpotifyLongForm.isMusicTrackUri(uri)) return null
         val title = data.str("name")?.takeIf { it.isNotBlank() } ?: return null
         val album = data.obj("albumOfTrack")
         return SpotifyTrack(

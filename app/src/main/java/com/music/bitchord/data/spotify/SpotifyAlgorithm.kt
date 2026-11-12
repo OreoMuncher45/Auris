@@ -140,7 +140,7 @@ internal object SpotifyAlgorithm {
                 put("offset", 0)
                 put("limit", ARTIST_SEARCH_LIMIT)
                 put("numberOfTopResults", ARTIST_SEARCH_LIMIT)
-                put("includeEpisodeContentRatingsV2", true)
+                put("includeEpisodeContentRatingsV2", false)
             },
             "searchArtists" to buildJsonObject {
                 put("searchTerm", name)

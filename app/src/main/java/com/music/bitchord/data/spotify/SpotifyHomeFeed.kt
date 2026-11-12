@@ -114,7 +114,11 @@ internal object SpotifyHomeFeedParser {
 
         return SpotifyHomeFeed(
             greeting = home.str("greeting.transformedLabel") ?: home.str("greeting.text") ?: "",
-            chips = home.arr("homeChips").orEmpty().mapNotNull { chip -> parseChip(chip) },
+            // The long-form chips are not drawn: each one opens a shelf of
+            // shows or books, and there is nothing here that can play either.
+            // See [SpotifyLongForm].
+            chips = home.arr("homeChips").orEmpty().mapNotNull { chip -> parseChip(chip) }
+                .filterNot { SpotifyLongForm.isLongFormChip(it.id) },
             sections = sections,
         )
     }
@@ -135,6 +139,9 @@ internal object SpotifyHomeFeedParser {
     private fun parseChip(element: JsonElement): SpotifyChip? {
         val chip = element.objOrNull() ?: return null
         val id = chip.str("id")?.takeIf { it.isNotBlank() } ?: return null
+        // A long-form chip is dropped whole, subchips and all: the subchips
+        // are the shelves that open beside it, and they are long-form too.
+        if (SpotifyLongForm.isLongFormChip(id)) return null
         val label = chip.str("label.transformedLabel") ?: chip.str("label.text") ?: id
         return SpotifyChip(
             id = id,
@@ -162,6 +169,10 @@ internal object SpotifyHomeFeedParser {
         val uri = data.str("uri") ?: content.str("uri") ?: item.str("uri") ?: return null
         val kind = SpotifyCard.Kind.of(uri)
         if (kind == SpotifyCard.Kind.OTHER) return null
+        // A show, an episode or a book is not a card: there is nothing here
+        // that can play one, and a card that opens an empty shelf is worse
+        // than no card. See [SpotifyLongForm].
+        if (kind == SpotifyCard.Kind.SHOW || SpotifyLongForm.isLongFormUri(uri)) return null
 
         val title = data.str("name")
             ?: data.str("profile.name")

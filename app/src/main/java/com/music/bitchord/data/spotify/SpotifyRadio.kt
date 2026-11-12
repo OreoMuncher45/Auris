@@ -115,7 +115,7 @@ internal object SpotifyRadio {
             put("uri", playlist)
             put("offset", 0)
             put("limit", limit)
-            put("includeEpisodeContentRatingsV2", true)
+            put("includeEpisodeContentRatingsV2", false)
         }
         val root = runCatching { SpotifyGraphQL.query("fetchPlaylistContents", variables) }.getOrElse { error ->
             Log.w(TAG, "the station for $seedUri could not be read: ${error.message}")

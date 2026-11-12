@@ -150,7 +150,9 @@ object SpotifyLibrary {
             put("textFilter", "")
             putJsonArray("features") {
                 add("LIKED_SONGS")
-                add("YOUR_EPISODES_V2")
+                // Not asked for: this app has no episode player, and the
+                // library's "Your Episodes" shelf is a list of things that
+                // cannot be queued. See [SpotifyLongForm].
                 add("PRERELEASES")
                 add("EVENTS")
             }
@@ -178,7 +180,9 @@ object SpotifyLibrary {
             put("uri", "spotify:playlist:$playlistId")
             put("offset", offset)
             put("limit", limit)
-            put("includeEpisodeContentRatingsV2", true)
+            // Episodes are not asked for, and not rated: there is nothing here
+            // that can play one. See [SpotifyLongForm].
+            put("includeEpisodeContentRatingsV2", false)
         }
         return parseTrackPage(gql("fetchPlaylistContents", variables))
     }
@@ -278,6 +282,9 @@ internal fun parseTrackPage(root: JsonObject): TrackPage {
         val title = data.str("name").orEmpty()
         if (title.isBlank()) return@mapNotNull null
         val uri = data.str("uri") ?: data.str("_uri") ?: return@mapNotNull null
+        // Only a *track* is a row. A playlist can hold an episode or a book,
+        // and neither of those can be queued — see [SpotifyLongForm].
+        if (!SpotifyLongForm.isMusicTrackUri(uri)) return@mapNotNull null
         val artist = data.obj("artists")?.arr("items").orEmpty().mapNotNull { artist ->
             artist.objOrNull()?.obj("profile")?.str("name")?.takeIf { it.isNotBlank() }
         }.joinToString(", ")
@@ -308,6 +315,8 @@ internal fun parseLikedPage(root: JsonObject): TrackPage {
         val title = data.str("name").orEmpty()
         if (title.isBlank()) return@mapNotNull null
         val uri = wrapper.str("_uri") ?: data.str("uri") ?: return@mapNotNull null
+        // Only a *track* is a row; see [SpotifyLongForm].
+        if (!SpotifyLongForm.isMusicTrackUri(uri)) return@mapNotNull null
         val album = data.obj("albumOfTrack")
         SpotifyTrack(
             id = uri.substringAfterLast(":"),
