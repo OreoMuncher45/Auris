@@ -38,6 +38,7 @@ import com.music.bitchord.playback.AudioCache
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import java.util.Locale
 
@@ -808,7 +809,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // The window is addressed backwards from the stream's own length, so
         // without a duration there is no end to count back from.
         val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return null
-        for (candidate in cache.renditionsOf(uri)) {
+        for (candidate in readableRenditions(uri)) {
             if (candidate.key in badRenditions) continue
             val total = candidate.contentLength
             if (total <= 0L) continue
@@ -900,10 +901,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (rendition.key != cache.cacheKeyOf(uri)) {
             val length = copy.open()?.use(AudioDecoder::containerDurationSeconds)
             if (length == null || length <= 0) {
-                Log.d(TAG, "Tail rendition ${rendition.key} for $trackId has no readable duration yet")
-                return null
-            }
-            if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
+                // The analyser's own copy is exempt, as in the head pass: it is
+                // this recording by construction, and a window of a container
+                // need not carry a duration. Only a length that disagrees is
+                // evidence against it.
+                if (!isOwnCopy(uri, rendition)) {
+                    Log.d(TAG, "Tail rendition ${rendition.key} for $trackId has no readable duration yet")
+                    return null
+                }
+            } else if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
                 Log.d(
                     TAG,
                     "Tail rendition ${rendition.key} rejected for $trackId: " +
@@ -970,6 +976,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // field's own note and [analyzeHead]'s.
             tailEnergyCurve = features?.energyCurve.orEmpty()
                 .map { EnergySample(it.time + offset, it.energy) },
+            // The ending's peaks, in the track's own seconds — which is where
+            // the outgoing lane is drawn.
+            tailPeakCurve = tail.peaks,
         )
     }
 
@@ -981,6 +990,49 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * and a listener who thinks the app has stopped.
      */
     fun analysisProgress(uri: Uri): Float = cache.analysisProgressOf(uri)
+
+    /**
+     * The renditions of [uri]'s recording that the analyser may read.
+     *
+     * Two kinds, and the distinction between them is the whole of the fix for
+     * a panel that sat on "Waiting for analysis" for every track the player
+     * happened to be holding the file of:
+     *
+     *  - the analyser's **own** copy, under the `#analysis` key, which the
+     *    analysis rounds write and which nothing else writes;
+     *  - a copy that is **complete**, which nobody is writing any more.
+     *
+     * What is left out is the player's own live entry: the file the player is
+     * streaming into, held by the player's reader, and — because the analysis
+     * round used to write its own Opus copy into the same file — liable to
+     * hold two encodings where the two met. Such a file does not parse, the
+     * head pass refuses it, and the track is never measured however many bytes
+     * it has.
+     *
+     * A local file is not in this list at all: it is read in place, off the
+     * device, and there is nothing to race with.
+     */
+    private fun readableRenditions(uri: Uri): List<AudioCache.Rendition> {
+        val own = cache.analysisRenditionOf(uri)
+        val others = cache.renditionsOf(uri)
+            .filter { it.isComplete && it.key != own?.key && it.key !in badRenditions }
+        return listOfNotNull(own) + others
+    }
+
+    /**
+     * Whether [rendition] is the analyser's own copy of [uri]'s recording.
+     *
+     * The copy the analysis rounds write and nothing else writes, so it is
+     * this recording by construction: there is nothing to cross-check it
+     * against, and a container that will not report its duration says nothing
+     * about it either — the rounds fetch a *window* of the file, and a window
+     * of a container often carries no duration at all.
+     *
+     * A length that disagrees is still evidence against it, and is still
+     * refused.
+     */
+    private fun isOwnCopy(uri: Uri, rendition: AudioCache.Rendition): Boolean =
+        rendition.key == cache.analysisKeyFor(uri)
 
     /**
      * Whether enough of [uri]'s head is on disk to be worth a decode, claiming
@@ -1009,13 +1061,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         uri: Uri,
         durationSeconds: Double,
     ): AudioCache.Rendition? {
-        // Across every rendition of the recording, not just the one the player
-        // happens to be on. The same track can be part-downloaded under a
-        // sibling cache key, and the live URI's own copy is frequently the one
-        // holding nothing — a track that reported six megabytes cached twenty
-        // minutes earlier reported zero here, because the question was being
-        // asked of the wrong copy of it.
-        val candidate = cache.renditionsOf(uri)
+        // Across every rendition of the recording the analyser may read, not
+        // just the one the player happens to be on. The same track can be
+        // part-downloaded under a sibling cache key, and the live URI's own
+        // copy is frequently the one holding nothing — a track that reported
+        // six megabytes cached twenty minutes earlier reported zero here,
+        // because the question was being asked of the wrong copy of it.
+        //
+        // And never the player's live entry, which is being written while the
+        // question is asked; see [readableRenditions].
+        val candidate = readableRenditions(uri)
             .filter { it.cachedPrefix > 0L && it.key !in badRenditions }
             // The growth guard, applied as a filter rather than to the winner.
             // Applied afterwards it did not skip a copy, it ended the search: the
@@ -1134,14 +1189,20 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (expected != null && rendition.key != cache.cacheKeyOf(uri)) {
             val length = openSource()?.use(AudioDecoder::containerDurationSeconds)
             if (length == null || length <= 0) {
-                // Logged rather than returned quietly. This is the likeliest way
-                // for a head pass to do nothing — a partial container the
-                // extractor will not read a duration out of — and while it was
-                // silent the whole path looked like it had never run.
-                Log.d(TAG, "Head rendition ${rendition.key} for $trackId has no readable duration yet")
-                return null
-            }
-            if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
+                // The analyser's own copy is exempt: it was fetched from this
+                // recording, so there is nothing to cross-check it against, and
+                // it is a *window* — a window of a container need not carry a
+                // duration at all. Refusing it for that is what left the panel
+                // waiting on an analysis that had already been fetched.
+                if (!isOwnCopy(uri, rendition)) {
+                    // Logged rather than returned quietly. This is the likeliest way
+                    // for a head pass to do nothing — a partial container the
+                    // extractor will not read a duration out of — and while it was
+                    // silent the whole path looked like it had never run.
+                    Log.d(TAG, "Head rendition ${rendition.key} for $trackId has no readable duration yet")
+                    return null
+                }
+            } else if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
                 Log.d(
                     TAG,
                     "Head rendition ${rendition.key} rejected for $trackId: " +
@@ -1212,6 +1273,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // panel draws it where it belongs and leaves the rest of the
             // lane blank, which is honest and better than an empty lane.
             headEnergyCurve = entry?.energyCurve.orEmpty(),
+            // The opening's peaks, at the resolution the panel draws: the
+            // loudest instant in each twenty milliseconds, measured from the
+            // samples rather than averaged out of them.
+            headPeakCurve = head.peaks,
         )
     }
 
@@ -1428,6 +1493,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private class Structural(
         val features: TrackFeatures.Features?,
         val decodedShort: Boolean = false,
+        /** The whole track's waveform peaks; see [peakCurveOf]. */
+        val peaks: List<EnergySample> = emptyList(),
     )
 
     /**
@@ -1534,7 +1601,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             pcm.samples
         }
 
-        return Structural(TrackFeatures.analyze(samples, effectiveDuration))
+        return Structural(
+            TrackFeatures.analyze(samples, effectiveDuration),
+            peaks = peakCurveOf(samples, structRate, 0.0),
+        )
     }
 
     /**
@@ -1683,6 +1753,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 mixInCandidates = features?.mixInCandidates.orEmpty(),
                 mixOutCandidates = features?.mixOutCandidates.orEmpty(),
                 energyCurve = features?.energyCurve.orEmpty(),
+                // The whole track's waveform, at the resolution the panel
+                // draws it: the energy curve above is an average over a
+                // quarter of a second and reads as a bar chart.
+                peakCurve = structural.peaks,
                 lowEnergyCurve = features?.lowEnergyCurve.orEmpty(),
                 // The model's mask where it ran, the DSP heuristic's where it didn't. Falling back to
                 // the heuristic rather than to nothing matters because the policy reads an
@@ -1717,6 +1791,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val startSeconds: Double = 0.0,
         /** Only populated when the caller asked for it; see [region]'s `deriveFeatures`. */
         val features: TrackFeatures.Features? = null,
+        /**
+         * The window's peaks, in the track's own seconds.
+         *
+         * The panel's waveform, and the only part of the picture that has the
+         * shape of the sound in it: the energy curve is an average over a
+         * quarter of a second and reads as a bar chart.
+         */
+        val peaks: List<EnergySample> = emptyList(),
     )
 
     /**
@@ -1765,7 +1847,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // one. As a local it would nonetheless stay reachable through `tracker.track` and
         // `vocalMask` below, which is where the analysis allocates most heavily and where the
         // process was dying. Same reasoning [derived] already had, one level further out.
-        val inputs = regionInputs(stereo, seconds, deriveFeatures)
+        val inputs = regionInputs(stereo, seconds, deriveFeatures, actualStart)
 
         return Region(
             grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
@@ -1773,11 +1855,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             seconds = seconds,
             startSeconds = actualStart,
             features = inputs.derived,
+            peaks = inputs.peaks,
         )
     }
 
-    /** A region's model input, and its DSP features when the caller asked for them. */
-    private class RegionInputs(val forModel: FloatArray?, val derived: TrackFeatures.Features?)
+    /** A region's model input, its DSP features, and its waveform peaks. */
+    private class RegionInputs(
+        val forModel: FloatArray?,
+        val derived: TrackFeatures.Features?,
+        val peaks: List<EnergySample>,
+    )
 
     /**
      * Reduces a decoded region to the buffers the models and the DSP actually read.
@@ -1785,11 +1872,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * Both come off one full-rate mono downmix, which is why they are made together rather than on
      * demand: that downmix is the largest single allocation in the analysis, and returning is the
      * only way to be rid of it before the models run.
+     *
+     * The peaks come off the same signal: the panel's waveform is drawn from
+     * them, and they are the only part of the picture that has the shape of
+     * the sound in it rather than the shape of the analyser's own grid.
      */
     private fun regionInputs(
         stereo: AudioDecoder.StereoPcm,
         seconds: Double,
         deriveFeatures: Boolean,
+        startSeconds: Double,
     ): RegionInputs {
         val mono = FloatArray(stereo.left.size) { index -> (stereo.left[index] + stereo.right[index]) * 0.5f }
         val forModel = if (abs(stereo.sampleRate - MelSpectrogram.sampleRate) > 1.0) {
@@ -1813,7 +1905,63 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             null
         }
 
-        return RegionInputs(forModel, derived)
+        // The peaks, off the full-rate signal: at the analysis rate a fifth of
+        // a second is two hundred samples, which is coarse enough to lose the
+        // transient the drawing exists to show.
+        val peaks = peakCurveOf(mono, stereo.sampleRate, startSeconds)
+
+        return RegionInputs(forModel, derived, peaks)
+    }
+
+    /**
+     * The envelope of a decoded signal, as peaks.
+     *
+     * The loudest instant in each short window of the audio, which is what the
+     * eye reads as the shape of a sound.
+     *
+     * ## Why this is measured rather than derived
+     *
+     * The analyser's own energy curve is an RMS level per quarter-second,
+     * downsampled to at most a couple of hundred points over the whole
+     * recording. That is the right shape for "how loud is this part of the
+     * song" and the wrong shape for a waveform: drawn as it stands it reads
+     * as a bar chart — flat-topped blocks, quantised to the curve's own grid,
+     * with the transients nowhere in it. The panel's complaint was exactly
+     * that, and no amount of redrawing fixes a drawing whose data is an RMS
+     * average.
+     *
+     * The peaks are therefore taken from the samples themselves, twenty
+     * milliseconds at a time, which is finer than a screen pixel over the
+     * panel's viewport and fine enough to show a snare.
+     *
+     * The count is capped so a long recording cannot turn into a hundred
+     * thousand numbers: past the cap the window grows instead, and the
+     * drawing loses the last of its detail on a track nobody is going to
+     * look at closely.
+     */
+    private fun peakCurveOf(
+        samples: FloatArray,
+        sampleRate: Double,
+        startSeconds: Double,
+    ): List<EnergySample> {
+        if (samples.isEmpty() || sampleRate <= 0.0) return emptyList()
+        val window = max(1, (sampleRate * PEAK_HOP_SECONDS).toInt())
+        val buckets = (samples.size + window - 1) / window
+        val stride = max(1, ceil(buckets.toDouble() / MAX_PEAK_POINTS).toInt())
+        val points = ArrayList<EnergySample>(buckets / stride + 1)
+        var index = 0
+        while (index < buckets) {
+            val from = index * window
+            val to = minOf(samples.size, from + window * stride)
+            var peak = 0f
+            for (sample in from until to) {
+                val value = abs(samples[sample])
+                if (value > peak) peak = value
+            }
+            points.add(EnergySample(startSeconds + from / sampleRate, peak.toDouble()))
+            index += stride
+        }
+        return points
     }
 
     /**
@@ -1994,6 +2142,25 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * borrowed beat grid would be useless — is rejected.
          */
         const val RENDITION_DURATION_TOLERANCE = 1.0
+
+        /**
+         * How much audio each measured peak covers.
+         *
+         * Twenty milliseconds: finer than a screen pixel across the panel's
+         * viewport, and fine enough to show a snare rather than a swell.
+         */
+        const val PEAK_HOP_SECONDS = 0.02
+
+        /**
+         * How many peaks a measured curve may hold.
+         *
+         * A bound on the numbers rather than on the detail: past it the window
+         * grows instead, so a long recording cannot turn into a hundred
+         * thousand points — and a hundred thousand points is a hundred
+         * thousand objects on a phone's heap for a picture nobody looks at
+         * closely.
+         */
+        const val MAX_PEAK_POINTS = 4000
 
         /**
          * Stand-in bitrate for a rendition whose real length isn't recorded yet,

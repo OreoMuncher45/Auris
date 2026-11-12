@@ -205,45 +205,62 @@ internal fun automixSnapToBar(time: Double, digest: TrackAnalysisDigest): Double
 /**
  * Where the arriving track's own zero sits on the outgoing track's clock.
  *
- * Worked out **once**, from the planner's handoff, and never again: the lane
- * the listener is looking at is theirs from then on.
+ * The arriving track is cued so that the point of it the listener hears first
+ * — its cue — lands exactly where the transition begins: the window's start.
+ * So the lane's origin is the window's start less the cue, and the lane is
+ * drawn from the arriving track's own beginning to its own end.
  *
- * ## Why it is not re-derived
+ * ## Why the cue and not the handoff
  *
- * The arriving track is cued so that the point of its arrangement where the
- * blend ends — its handoff — lands at the blend's end. That is the planner's
- * geometry, and reading it every frame ties the arriving *picture* to the
- * outgoing *window*: every drag of a marker moved the lower waveform with it.
- * Which is the report — "the lower waveform is still stuck to one of the
- * markers" — and it is the same fault the previous anchor had, one level
- * further out. Anchoring to the window's end fixed the lane sliding when the
- * window's *length* changed, and left it sliding whenever the window itself
- * moved.
+ * The handoff is the same fact seen from the other end — the point of the
+ * arriving track where the blend ends — and anchoring to it meant the lane's
+ * place depended on the window's *length*: move one edge and the lane's
+ * position moved with it, which is what "the lower waveform is still stuck to
+ * one of the markers" was. The cue says the same thing without the
+ * dependency: it is where the arriving track enters, and the window's start
+ * is where the transition begins, so the two meet at one point and the lane
+ * is free to slide along it.
  *
- * So the anchor is taken once, when the planner first says where the handoff
- * is, and from then on the arriving lane is a *picture at a fixed place* that
- * the window slides over. The listener lines it up by hand if they want to
- * ([AutomixTransitionEditor]'s own shift), and nothing else moves it.
- *
- * @param anchorOutgoingSeconds the outgoing moment the handoff lands at, at
- *   the instant the anchor is taken — the end of the window as the planner
- *   placed it.
- * @param handoff the arriving track's own handoff time, or null before the
- *   planner has said.
+ * @param windowStart the outgoing moment the transition begins at.
+ * @param cue the arriving track's cue, in its own seconds.
  */
-internal fun automixIncomingOrigin(anchorOutgoingSeconds: Double, handoff: Double?): Double? =
-    handoff?.takeIf { it > 0.0 }?.let { anchorOutgoingSeconds - it }
+internal fun automixIncomingOrigin(windowStart: Double, cue: Double): Double =
+    windowStart - max(0.0, cue)
 
 /**
  * A moment of the arriving track, on the outgoing track's clock.
  *
- * [origin] is where its zero sits (see [automixIncomingOrigin]), [shift] is the
- * listener's own nudge, and [time] is the moment on the arriving track's own
- * clock. Two lanes, one axis, and the only thing that moves this one is the
- * listener's finger.
+ * [origin] is where its zero sits (see [automixIncomingOrigin]) and [time] is
+ * the moment on the arriving track's own clock. Two lanes, one axis.
  */
-internal fun automixIncomingAxis(time: Double, origin: Double, shift: Double = 0.0): Double =
-    origin + shift + time
+internal fun automixIncomingAxis(time: Double, origin: Double): Double = origin + time
+
+/**
+ * The cue the arriving track is left with after the listener has dragged its
+ * lane by [moved] seconds.
+ *
+ * Dragging the lane right moves the arriving track later on the outgoing
+ * clock, which means the material heard at the transition is *earlier* in the
+ * arriving track's own timeline: the cue comes down by exactly what the lane
+ * went up. It cannot go below zero — a track cannot start before its own
+ * beginning — so a drag that would take it there stops at the beginning.
+ *
+ * @param startedAtCue the cue in force when the gesture began.
+ * @param moved how far the lane went, in outgoing seconds; positive is right.
+ */
+internal fun automixIncomingCue(startedAtCue: Double, moved: Double): Double =
+    (startedAtCue - moved).coerceAtLeast(0.0)
+
+/**
+ * The shift the planner wants after the listener has dragged the arriving lane
+ * by [moved] seconds on top of the [committed] shift already in force.
+ *
+ * The planner's shift is a *delta*, not an absolute cue: it moves the arriving
+ * side — its cue and its handoff together — and leaves the rest of the plan
+ * alone. So what is handed up is the total, and a second drag counts the
+ * first one once rather than twice.
+ */
+internal fun automixIncomingShift(committed: Double, moved: Double): Double = committed + moved
 
 // ---------------------------------------------------------------------------
 // The editor
@@ -311,8 +328,8 @@ internal fun AutomixTransitionEditor(
     resetKey: String,
     onWindow: (AutomixWindow) -> Unit,
     /**
-     * The arriving track's cue as the listener moved it, in its own seconds; 0
-     * to leave it to the planner.
+     * The arriving track's shift as the listener moved it, in outgoing seconds;
+     * 0 to leave it to the planner.
      *
      * Handed up on release, like the window, and for the same reason: what the
      * listener moved has to reach the engine or the picture is a lie. It is the
@@ -320,6 +337,12 @@ internal fun AutomixTransitionEditor(
      * that track plays — the cue and the handoff together — and never the
      * window, which is why this is a callback of its own rather than a field on
      * the window.
+     *
+     * It is the **total** shift, not this drag's own: the planner's field is a
+     * delta on its own plan (see [AutomixOverride.incomingCueShift]), so a
+     * second drag has to carry the first one with it. Handing up an absolute
+     * cue instead is what made the lane snap back to the beginning every time
+     * it was moved.
      */
     onCue: (Double) -> Unit = {},
     onSnap: () -> Unit,
@@ -336,25 +359,17 @@ internal fun AutomixTransitionEditor(
     // The beat the last placement landed on, so the drawing can light it up.
     var snapped by remember(resetKey) { mutableStateOf<Double?>(null) }
     /**
-     * Where the arriving track's own zero sits on the outgoing clock, and the
-     * listener's own nudge on top of it.
+     * Where the arriving track is cued in its own timeline, once the listener
+     * has moved it.
      *
-     * Taken once from the planner's handoff and held for the life of the pair
-     * — see [automixIncomingOrigin] for why re-reading it is what glued the
-     * lower waveform to the window's edge. Null until the planner has said
-     * where the handoff is, in which case the drawing falls back to the cue.
+     * Null until they do. Until then the lane is the planner's own picture
+     * and follows its cue (see [automixIncomingOrigin]); once they have moved
+     * it, this is the number the drawing shows *and* the number the engine is
+     * given, and it is not re-derived from the plan: the planner re-plans
+     * while the analyser refines, and a lane that followed those ticks would
+     * undo the move the moment one landed.
      */
-    var incomingOrigin by remember(resetKey) { mutableStateOf<Double?>(null) }
-
-    /**
-     * How far the listener has moved the arriving waveform by hand, in outgoing
-     * seconds. Zero is where the planner put it.
-     *
-     * A shift rather than a re-anchor, so that the planner's own placement is
-     * never lost: whatever the handoff turns out to be when the analysis
-     * refines, the lane is that plus this.
-     */
-    var incomingShift by remember(resetKey) { mutableStateOf(0.0) }
+    var incomingCue by remember(resetKey) { mutableStateOf<Double?>(null) }
     /**
      * Whether a finger is on the drawing.
      *
@@ -410,16 +425,17 @@ internal fun AutomixTransitionEditor(
         pending = null
     }
 
-    // The arriving lane's anchor, taken from the planner the first time it
-    // says where the handoff is — and taken *once*, never again. The window
-    // slides over this lane; nothing but the listener's own drag moves it.
-    LaunchedEffect(resetKey, plan.handoffSeconds, dragging) {
-        if (dragging) return@LaunchedEffect
-        if (incomingOrigin != null) return@LaunchedEffect
-        automixIncomingOrigin(
-            anchorOutgoingSeconds = window.end,
-            handoff = plan.handoffSeconds,
-        )?.let { incomingOrigin = it }
+    // The listener's own move of the arriving lane, put back when they take it
+    // back.
+    //
+    // The override's shift is the record that the lane is theirs: while it is
+    // zero the lane is the planner's picture and follows the plan's cue, and
+    // when the listener resets their changes the shift goes to zero and the
+    // lane goes back to being the plan's again. Without this the drawing kept
+    // the listener's cue after a reset and showed a track entering somewhere
+    // the engine was not going to enter it.
+    LaunchedEffect(resetKey, draft.incomingCueShift) {
+        if (draft.incomingCueShift == 0.0) incomingCue = null
     }
 
     // The view opens on the window, zooms out when the window grows, and comes
@@ -465,7 +481,7 @@ internal fun AutomixTransitionEditor(
     val graphModifier = if (!enabled || barSeconds <= 0.0) {
         modifier
     } else {
-        modifier.pointerInput(Unit) {
+        modifier.pointerInput(resetKey) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val width = size.width.toFloat().coerceAtLeast(1f)
@@ -483,6 +499,13 @@ internal fun AutomixTransitionEditor(
 
                 fun xOf(time: Double): Float = ((time - frozenFrom) / frozenSpan * width).toFloat()
                 fun timeOf(x: Float): Double = frozenFrom + (x / width).coerceIn(0f, 1f) * frozenSpan
+
+                /**
+                 * How far the finger has gone from where it went down, in the
+                 * timeline's own seconds. Positive is to the right, which is
+                 * to the right on the outgoing clock as well.
+                 */
+                fun movedTo(x: Float): Double = (x - down.position.x) / width * frozenSpan
 
                 val startX = xOf(opened.start)
                 val endX = xOf(opened.end)
@@ -544,11 +567,12 @@ internal fun AutomixTransitionEditor(
                 var decided = false
                 var horizontal = false
                 var lastSnap: Double? = null
-                val startedAtShift = incomingShift
-                // The cue in force when this gesture began. The commit is a
-                // *delta* from it rather than the total shift, so a second drag
-                // of the same lane does not count the first one twice.
-                val startedAtCue = latestPlan.cueSeconds
+                // The shift the planner already holds, and the cue in force when
+                // this gesture began. The commit is the *total* shift — the one
+                // already in force plus this drag's own — so a second drag of
+                // the same lane does not count the first one twice.
+                val startedAtShift = latestDraft.incomingCueShift
+                val startedAtCue = incomingCue ?: max(0.0, latestPlan.cueSeconds)
                 // Where the finger was last seen horizontally. Tracked by hand
                 // rather than read from [PointerInputChange.positionChanged],
                 // which answers false for an event another consumer has already
@@ -657,7 +681,13 @@ internal fun AutomixTransitionEditor(
                             // the one gesture whose whole point is to put the
                             // track where the listener wants it rather than
                             // where a grid says.
-                            incomingShift = startedAtShift + (x - down.position.x) / width * frozenSpan
+                            //
+                            // The cue comes down by what the lane went up: the
+                            // track enters later, so it starts earlier in its
+                            // own timeline. That is the same arithmetic the
+                            // planner does with the shift it is given, so the
+                            // picture and the engine agree.
+                            incomingCue = automixIncomingCue(startedAtCue, movedTo(x))
                         }
                         Grab.VIEW -> Unit
                     }
@@ -726,10 +756,17 @@ internal fun AutomixTransitionEditor(
                         // where it was put. Without this the drag was drawing
                         // and nothing else: the waveform sat where the listener
                         // left it and the preview played the planner's own cue.
+                        //
+                        // What is handed up is the *total* shift — the one the
+                        // planner already holds plus this drag's own — because
+                        // that is what the planner's field means: a delta on
+                        // its own plan, not an absolute cue. Handing it the cue
+                        // instead is what made the lane snap back to the
+                        // beginning every single time it was moved.
                         if (grabbed == Grab.ARRIVING) {
-                            val moved = incomingShift - startedAtShift
+                            val moved = movedTo(lastX)
                             if (abs(moved) > 0.02) {
-                                latestOnCue((startedAtCue - moved).coerceAtLeast(0.0))
+                                latestOnCue(automixIncomingShift(startedAtShift, moved))
                             }
                         }
                     }
@@ -764,15 +801,20 @@ internal fun AutomixTransitionEditor(
         val left = xOf(box.start)
         val right = xOf(box.end)
 
-        // The arriving track's own clock, laid on the outgoing one's. The
-        // origin is taken once — see [automixIncomingOrigin] — and the
-        // listener's own nudge is added on top. Neither term has anything to
-        // do with where the window is, which is what keeps the lower waveform
-        // still while a marker is dragged over it.
-        val origin = incomingOrigin ?: (box.start - max(0.0, plan.cueSeconds))
-        val shift = incomingShift
+        // The arriving track's own clock, laid on the outgoing one's. Its cue
+        // decides where it sits: the point of the arriving track the listener
+        // hears first lands on the moment the transition begins, so the lane's
+        // origin is the window's start less the cue — see
+        // [automixIncomingOrigin].
+        //
+        // The cue is the planner's until the listener moves the lane, and then
+        // it is theirs: the plan moves on its own while the analyser refines,
+        // and a lane that followed it would undo the move the moment a plan
+        // tick landed.
+        val cue = incomingCue ?: max(0.0, plan.cueSeconds)
+        val origin = automixIncomingOrigin(box.start, cue)
         val incomingMap: (Double) -> Double = { t ->
-            automixIncomingAxis(time = t, origin = origin, shift = shift)
+            automixIncomingAxis(time = t, origin = origin)
         }
 
         drawWaveform(
@@ -914,18 +956,32 @@ private fun DrawScope.drawLaneGround(top: Float, height: Float) {
 }
 
 /**
- * One track's envelope, as a mirrored pair of strokes per column.
+ * One track's envelope, as a filled shape with a bright core.
  *
- * Two tones because a single flat colour reads as a bar chart: the outer
- * stroke carries the peaks and the inner one the body, which is what makes a
- * waveform look like sound rather than like a histogram.
+ * ## What it is drawn from
  *
- * Folded into one column per pixel before it is drawn. The analyser's own
- * resolution is thousands of samples over a track, and drawing every one of
- * them on every frame is a great deal of work for a picture no wider than the
- * screen — on a cheap phone that is the difference between a panel that opens
- * and one that stutters. The peak of each column is kept, so the transients
- * survive the fold.
+ * The measured *peaks* of the decoded audio: the loudest instant in each
+ * short window of the sound. The analyser's energy curve — an RMS average
+ * over a quarter of a second — is what the policy reads, and it is the wrong
+ * shape for a picture: drawn as it stands it reads as a bar chart, flat-topped
+ * blocks on the analyser's own grid, with the transients nowhere in it. That
+ * was the "ugly bits".
+ *
+ * ## Why it is a shape and not a row of strokes
+ *
+ * One column of strokes per pixel reads as a bar chart however fine the
+ * data is, because the gaps between the strokes are the drawing's own. A
+ * filled envelope has no gaps in it, and the bright core — the column's
+ * average rather than its extreme — is what makes it read as sound rather
+ * than as a block.
+ *
+ * ## Why a gap in the measurement is a gap in the drawing
+ *
+ * A streamed track is measured in pieces, and the middle of it may be
+ * unmeasured for a long time. Drawing the unmeasured stretch as a line down
+ * to nothing invents a silence that is not there; so each run of measured
+ * columns is drawn as its own shape, and the space between them is left
+ * alone.
  */
 private fun DrawScope.drawWaveform(
     digest: TrackAnalysisDigest,
@@ -939,42 +995,81 @@ private fun DrawScope.drawWaveform(
     val times = digest.waveformTimes
     if (peaks.isEmpty() || times.isEmpty()) return
     val mid = laneTop + laneHeight / 2f
-    val amplitude = laneHeight * 0.44f
+    val amplitude = laneHeight * 0.46f
     val columns = size.width.toInt().coerceAtLeast(1)
     val tops = FloatArray(columns)
-    var seen = false
+    val bodies = FloatArray(columns)
+    val sums = DoubleArray(columns)
+    val counts = IntArray(columns)
     for (index in peaks.indices) {
         val time = times.getOrNull(index) ?: continue
         val axis = mapToAxis(time)
         if (axis < from || axis > from + span) continue
         val column = (((axis - from) / span) * columns).toInt().coerceIn(0, columns - 1)
         val value = peaks[index].coerceIn(0f, 1f)
-        if (value > tops[column]) {
-            tops[column] = value
-            seen = true
+        if (value > tops[column]) tops[column] = value
+        sums[column] += value
+        counts[column] += 1
+    }
+    val step = size.width / columns
+    var runStart = -1
+    for (column in 0..columns) {
+        val measured = column < columns && counts[column] > 0
+        if (measured && runStart < 0) runStart = column
+        if (!measured && runStart >= 0) {
+            for (inside in runStart until column) {
+                bodies[inside] = (sums[inside] / counts[inside]).toFloat()
+            }
+            drawWaveformRun(runStart, column - 1, tops, bodies, mid, amplitude, step)
+            runStart = -1
         }
     }
-    if (!seen) return
-    val step = size.width / columns
-    for (column in 0 until columns) {
-        val value = tops[column]
-        if (value <= 0.004f) continue
-        val x = column * step + step / 2f
-        val half = value * amplitude
-        drawLine(
-            color = AutomixBlue,
-            start = Offset(x, mid - half),
-            end = Offset(x, mid + half),
-            strokeWidth = 1.6f,
-        )
-        val inner = half * 0.42f
-        drawLine(
-            color = AutomixCream,
-            start = Offset(x, mid - inner),
-            end = Offset(x, mid + inner),
-            strokeWidth = 1.6f,
-        )
+}
+
+/**
+ * One run of measured columns, as an envelope with a bright core.
+ *
+ * The outer shape is the column's peak; the inner one is its average. The
+ * two together are what makes a waveform look like sound rather than like a
+ * bar chart: the outer line is the transient, the inner one is the weight.
+ */
+private fun DrawScope.drawWaveformRun(
+    from: Int,
+    to: Int,
+    tops: FloatArray,
+    bodies: FloatArray,
+    mid: Float,
+    amplitude: Float,
+    step: Float,
+) {
+    if (to < from) return
+    fun xOf(column: Int): Float = column * step + step / 2f
+
+    val envelope = Path()
+    for (column in from..to) {
+        val x = xOf(column)
+        val half = tops[column] * amplitude
+        if (column == from) envelope.moveTo(x, mid - half) else envelope.lineTo(x, mid - half)
     }
+    for (column in to downTo from) {
+        val x = xOf(column)
+        envelope.lineTo(x, mid + tops[column] * amplitude)
+    }
+    envelope.close()
+    drawPath(envelope, color = AutomixBlue.copy(alpha = 0.55f))
+
+    val core = Path()
+    for (column in from..to) {
+        val x = xOf(column)
+        val half = bodies[column] * amplitude
+        if (column == from) core.moveTo(x, mid - half) else core.lineTo(x, mid - half)
+    }
+    for (column in to downTo from) {
+        val x = xOf(column)
+        core.lineTo(x, mid + bodies[column] * amplitude)
+    }
+    core.close()
+    drawPath(core, color = AutomixCream.copy(alpha = 0.92f))
 }
 
 /**

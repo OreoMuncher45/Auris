@@ -124,6 +124,41 @@ data class TrackAnalysis(
      * without.
      */
     val tailEnergyCurve: List<EnergySample> = emptyList(),
+    /**
+     * The **peaks** of the track's whole envelope, measured from the decoded
+     * samples.
+     *
+     * The curve above is an RMS level per quarter-second: the right shape for
+     * "how loud is this part of the song", and the wrong shape for a picture
+     * of the sound. Drawn as it stands it reads as a bar chart — flat-topped
+     * blocks on the curve's own grid, with the transients nowhere in it.
+     *
+     * This is the waveform's own data: the loudest instant in each short
+     * window of the decoded audio, which is what the eye reads as the shape
+     * of a sound. It is measured, not derived, so it has the transients.
+     *
+     * Not persisted: it is a great deal of numbers for a picture, and the
+     * analysis that produced them is cheap to repeat.
+     */
+    val peakCurve: List<EnergySample> = emptyList(),
+    /**
+     * The peaks of the track's **opening**, measured by a head-only pass.
+     *
+     * The peak-curve counterpart of [headEnergyCurve], and kept apart from
+     * [peakCurve] for the same reason: it describes the first window and
+     * nothing else.
+     */
+    val headPeakCurve: List<EnergySample> = emptyList(),
+    /**
+     * The peaks of the track's **ending**, measured by a tail-only pass.
+     *
+     * The peak-curve counterpart of [tailEnergyCurve]. This is the half the
+     * outgoing lane is drawn from, and it is the half that was missing: the
+     * outgoing track is drawn over the *end* of its own timeline, so a curve
+     * that covers only the opening lands entirely off-screen and the lane
+     * reads as empty however much of the opening was measured.
+     */
+    val tailPeakCurve: List<EnergySample> = emptyList(),
     /** Low-band energy, present only when the analyzer ran a band split. Drives the bass swap. */
     val lowEnergyCurve: List<EnergySample> = emptyList(),
     /**
@@ -185,6 +220,27 @@ val TrackAnalysis.panelEnergyCurve: List<EnergySample>
     }
 
 /**
+ * The envelope the Automix panel draws for a track, as peaks.
+ *
+ * The whole track's peaks where one has been measured, and otherwise the two
+ * *windows* that have — the opening from a head pass and the ending from a
+ * tail pass — in the track's own seconds.
+ *
+ * The same shape as [panelEnergyCurve] and for the same reasons: a streamed
+ * track is measured in pieces, and the piece that lands in the panel's view
+ * is not always the one that arrived first.
+ *
+ * Empty when nothing has been measured at the peak resolution, in which case
+ * the caller falls back to [panelEnergyCurve] — a coarse drawing beats none.
+ */
+val TrackAnalysis.panelPeakCurve: List<EnergySample>
+    get() = when {
+        peakCurve.isNotEmpty() -> peakCurve
+        headPeakCurve.isEmpty() && tailPeakCurve.isEmpty() -> emptyList()
+        else -> (headPeakCurve + tailPeakCurve).sortedBy { it.time }
+    }
+
+/**
  * A partial pass's answer merged into another's.
  *
  * The head pass measures a track's entry and the tail pass its exit, and both
@@ -227,6 +283,9 @@ fun TrackAnalysis.mergedWith(arriving: TrackAnalysis): TrackAnalysis = copy(
     mixOutCandidates = mixOutCandidates.ifEmpty { arriving.mixOutCandidates },
     headEnergyCurve = headEnergyCurve.ifEmpty { arriving.headEnergyCurve },
     tailEnergyCurve = tailEnergyCurve.ifEmpty { arriving.tailEnergyCurve },
+    peakCurve = peakCurve.ifEmpty { arriving.peakCurve },
+    headPeakCurve = headPeakCurve.ifEmpty { arriving.headPeakCurve },
+    tailPeakCurve = tailPeakCurve.ifEmpty { arriving.tailPeakCurve },
 )
 
 /**

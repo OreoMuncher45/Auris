@@ -34,6 +34,7 @@ import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.keysCompatible
 import com.music.bitchord.playback.smart.panelEnergyCurve
+import com.music.bitchord.playback.smart.panelPeakCurve
 import com.music.bitchord.playback.smart.planTransition
 import com.music.bitchord.playback.smart.tempoRatio
 import kotlinx.coroutines.CoroutineScope
@@ -1465,10 +1466,20 @@ class CrossfadeController(
         val curve = analysis.panelEnergyCurve
         val energy = curve.map { it.energy }
         val peak = energy.filter { it.isFinite() }.maxOrNull() ?: 0.0
-        // The waveform's own envelope: the analyser's own resolution, with the
-        // peak of each window rather than its mean. The panel draws this, and
-        // a drawing wants the transients in it.
-        val scale = if (peak > 1.0) peak else 1.0
+        // The waveform's own curve: the measured peaks where there are any,
+        // and the energy curve where there are not.
+        //
+        // The peaks are the panel's own data — the loudest instant in each
+        // twenty milliseconds of the decoded audio — and the energy curve is
+        // an RMS average over a quarter of a second. Drawn, the second reads
+        // as a bar chart: flat-topped blocks on the analyser grid, with the
+        // transients nowhere in it. That was the "ugly bits".
+        //
+        // A restored analysis carries no peaks, because they are not worth
+        // persisting; the energy curve stands in for it, which is coarse but
+        // honest.
+        val waveformCurve = analysis.panelPeakCurve.ifEmpty { curve }
+        val waveformScale = peakScaleOf(waveformCurve.map { it.energy })
         return TrackAnalysisDigest(
             bpm = analysis.bpm,
             key = analysis.key.trim(),
@@ -1496,13 +1507,30 @@ class CrossfadeController(
             duration = analysis.duration,
             vocals = bucketize(analysis.vocalActivityMask, PANEL_BUCKETS, 1.0),
             energy = bucketize(energy, PANEL_BUCKETS, peak),
-            waveform = curve.map { sample ->
+            waveform = waveformCurve.map { sample ->
                 val value = if (sample.energy.isFinite()) sample.energy else 0.0
-                (value.coerceAtLeast(0.0) / scale).toFloat().coerceIn(0f, 1f)
+                (value.coerceAtLeast(0.0) / waveformScale).toFloat().coerceIn(0f, 1f)
             },
-            waveformTimes = curve.map { it.time },
+            waveformTimes = waveformCurve.map { it.time },
             provisional = provisional,
         )
+    }
+
+    /**
+     * The scale a curve of peaks is drawn against.
+     *
+     * The loudest peak, unless one peak stands far above the rest — a click, a
+     * splice, a decode artefact — in which case almost everything else would be
+     * drawn flat against the floor and the lane would read as a line with a
+     * spike in it. The ninety-eighth percentile is the loudest moment of the
+     * *music* rather than of the file.
+     */
+    private fun peakScaleOf(values: List<Double>): Double {
+        val finite = values.filter { it.isFinite() && it > 0.0 }.sorted()
+        if (finite.isEmpty()) return 1.0
+        val percentile = finite[minOf(finite.size - 1, (finite.size * 0.98).toInt())]
+        val loudest = finite.last()
+        return if (loudest > percentile * 2.5 && percentile > 0.0) percentile else loudest
     }
 
     /**

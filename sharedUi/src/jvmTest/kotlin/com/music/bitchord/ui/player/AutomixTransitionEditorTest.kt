@@ -132,57 +132,61 @@ class AutomixTransitionEditorTest {
     // -----------------------------------------------------------------------
 
     @Test
-    fun theArrivingLanesOriginIsTakenFromTheHandoffAtTheWindowsEnd() {
-        // The planner's own geometry: the arriving track is cued so that the
-        // point of its arrangement where the blend ends arrives exactly as the
-        // blend ends. That is where the lane is anchored — once.
-        assertEquals(116.0 - 140.0, automixIncomingOrigin(116.0, 140.0)!!, 1e-9)
+    fun theArrivingLanesOriginIsTheWindowStartLessTheCue() {
+        // The arriving track is cued so that the point of it the listener hears
+        // first lands where the transition begins. The lane is drawn from the
+        // arriving track's own beginning, so its zero sits that far back.
+        assertEquals(100.0 - 40.0, automixIncomingOrigin(100.0, 40.0), 1e-9)
     }
 
     @Test
-    fun aPlannerWithNoHandoffYetAnchorsNothing() {
-        assertNull(automixIncomingOrigin(116.0, 0.0))
-        assertNull(automixIncomingOrigin(116.0, null))
+    fun theCueLandsExactlyWhereTheTransitionBegins() {
+        // The one geometry the lane and the engine have to agree about: the
+        // arriving track's cue is the moment it is heard, and that moment is
+        // the window's start.
+        val start = 100.0
+        val cue = 40.0
+        val origin = automixIncomingOrigin(start, cue)
+        assertEquals(start, automixIncomingAxis(time = cue, origin = origin), 1e-9)
     }
 
     @Test
-    fun theOriginIsAFactAboutThePairAndIsTakenOnce() {
-        // The report, twice over: first "resizing the window moves the bottom
-        // waveform", then "the lower waveform is still stuck to one of the
-        // markers". The anchor moment is what decides where the lane sits, so
-        // a lane re-derived from the window's current edge would follow it —
-        // which is exactly the fault. Taken once, the lane is a picture at a
-        // fixed place for the rest of the pair.
-        val takenAtThePlansEnd = automixIncomingOrigin(anchorOutgoingSeconds = 116.0, handoff = 140.0)!!
-        val takenLater = automixIncomingOrigin(anchorOutgoingSeconds = 126.0, handoff = 140.0)!!
-        assertEquals(
-            automixIncomingAxis(time = 130.0, origin = takenAtThePlansEnd) + 10.0,
-            automixIncomingAxis(time = 130.0, origin = takenLater),
-            1e-9,
-        )
+    fun theLaneSlidesWithTheTransitionRatherThanWithItsLength() {
+        // Moving the *start* of the window moves the transition, so the
+        // arriving track enters later and the whole lane slides with it.
+        // Moving the *end* of it only makes the blend longer: the track still
+        // enters where it entered.
+        val cue = 40.0
+        val movedStart = automixIncomingAxis(time = cue, origin = automixIncomingOrigin(110.0, cue))
+        val sameStart = automixIncomingAxis(time = cue, origin = automixIncomingOrigin(100.0, cue))
+        assertEquals(sameStart + 10.0, movedStart, 1e-9)
     }
 
     @Test
-    fun theListenersOwnDragIsWhatMovesTheLane() {
-        val origin = automixIncomingOrigin(116.0, 140.0)!!
-        val before = automixIncomingAxis(time = 130.0, origin = origin)
-        val after = automixIncomingAxis(time = 130.0, origin = origin, shift = 1.5)
-        assertEquals(before + 1.5, after, 1e-9)
+    fun theListenersOwnDragComesDownByWhatTheLaneWentUp() {
+        // Dragging the lane right moves the arriving track later on the
+        // outgoing clock, so the material heard at the transition is earlier
+        // in the arriving track's own timeline: the cue comes down by exactly
+        // what the lane went up.
+        assertEquals(40.0 - 1.5, automixIncomingCue(startedAtCue = 40.0, moved = 1.5), 1e-9)
+        assertEquals(40.0 + 1.5, automixIncomingCue(startedAtCue = 40.0, moved = -1.5), 1e-9)
     }
 
     @Test
-    fun withoutAHandoffTheCueIsWhereThePlannerWouldHavePutIt() {
-        // Before the planner has said, the drawing falls back to the cue — and
-        // the two agree whenever the window is the plan's own, which is the
-        // only case both numbers describe the same picture.
-        val handoff = 140.0
-        val blend = 16.0
-        val cue = handoff - blend
-        val byHandoff = automixIncomingAxis(
-            time = cue + 4.0,
-            origin = automixIncomingOrigin(anchorOutgoingSeconds = 116.0, handoff = handoff)!!,
-        )
-        val byCue = automixIncomingAxis(time = cue + 4.0, origin = 100.0 - cue)
-        assertEquals(byCue, byHandoff, 1e-9)
+    fun aTrackCannotBeCuedBeforeItsOwnBeginning() {
+        // The one limit on the gesture: the arriving track has no audio before
+        // its own start, so a drag that would take it there stops there.
+        assertEquals(0.0, automixIncomingCue(startedAtCue = 0.0, moved = 5.0), 1e-9)
+        assertEquals(0.0, automixIncomingCue(startedAtCue = 2.0, moved = 5.0), 1e-9)
+    }
+
+    @Test
+    fun whatTheEngineIsToldIsTheTotalShift() {
+        // The planner's field is a delta on its own plan, so the second drag
+        // has to carry the first one with it: the value handed up is the
+        // committed shift plus this drag's own.
+        assertEquals(1.5, automixIncomingShift(committed = 0.0, moved = 1.5), 1e-9)
+        assertEquals(3.0, automixIncomingShift(committed = 1.5, moved = 1.5), 1e-9)
+        assertEquals(-1.0, automixIncomingShift(committed = 1.5, moved = -2.5), 1e-9)
     }
 }
