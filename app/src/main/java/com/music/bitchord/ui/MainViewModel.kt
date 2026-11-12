@@ -588,7 +588,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * up for the moment the narrower one takes rather than blanking the page
      * to a spinner.
      */
-    /** The job that is filling a Spotify page, so Play can wait for it. */
+    /**
+     * The job that is filling a Spotify page.
+     *
+     * Kept so that opening the same page again does not start a second
+     * matching pass over the same rows, and so the job can be cancelled with
+     * the page. Nothing waits on it: the rows it produces upgrade the page in
+     * place, and a row that has not been matched yet is queued as its own
+     * Spotify catalogue entry and resolved when it plays — see
+     * [com.music.bitchord.data.model.asSpotifyQueueRow].
+     */
     private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     private data class SearchCacheEntry(
@@ -3844,13 +3853,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * The songs of a Spotify page that this app can actually play.
      *
-     * Waits for the page's own job first, so the answer is the whole page
-     * rather than whatever had matched by the time it was asked for. The
-     * rows that never found a counterpart are left out: they cannot be
-     * queued, and a queue that holds them is a queue that stops early.
+     * The rows that have been matched keep the id they were matched to. The
+     * rows that have not are left out: they carry no playable id of their
+     * own, and a queue that holds them is a queue that stops early.
+     *
+     * The page's own matching job is *not* waited for. It used to be, and a
+     * Play pressed in the middle of it sat silent for as long as the matcher
+     * took — half a minute on a slow connection — before the first song
+     * started. A row that has not been matched yet is queued as its own
+     * Spotify catalogue entry instead, and the player resolves it by name
+     * when it plays.
      */
-    suspend fun resolvedSpotifySongs(browseId: String): List<Song> {
-        spotifyPageJobs[browseId]?.join()
+    fun resolvedSpotifySongs(browseId: String): List<Song> {
         val list = (_detailStack.value.firstOrNull { it.browseId == browseId }?.songs as? UiState.Success<List<Song>>)
             ?.data.orEmpty()
         return list.filterNot { it.isUnresolvedSpotify }

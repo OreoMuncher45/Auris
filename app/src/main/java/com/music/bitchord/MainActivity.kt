@@ -159,6 +159,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.asSpotifyQueueRows
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
@@ -1831,60 +1832,54 @@ private fun BitChordApp(
         }
     }
     /**
-     * Plays a page's songs, waiting for a Spotify page's matches first.
+     * Plays a page's songs.
+     *
+     * ## Why this does not wait
      *
      * A Spotify page lists its tracks before it knows which of them this app
-     * can play, and a row that found no counterpart cannot be queued. Play
-     * pressed in the middle of that used to queue only what had matched by
-     * then — eight songs of a daily mix, and nothing after them. So the page
-     * is waited for, and the whole of it is queued.
+     * can play, and the matcher — YouTube Music, then every enabled source,
+     * for every row — takes its time. Play used to wait for that to finish,
+     * because a row that had found no counterpart could not be queued and the
+     * queue stopped after the eight songs that had matched by then.
+     *
+     * It does not have to be that way. A Spotify row carries the id of the
+     * recording it is, and the player resolves that id by asking the sources
+     * for the recording *by name* when the row is reached — the path a
+     * Spotify search result has always taken. So an unmatched row is queued
+     * as `spotify:<id>` and resolved when it plays, and the listener hears
+     * the song immediately instead of waiting half a minute for a lookup
+     * nobody asked for.
+     *
+     * The matching still runs, and the page still upgrades in place as the
+     * answers arrive; this only stops the *queue* from being held hostage to
+     * it.
      *
      * [index] is the row that was tapped, and it is the row that leads the
-     * queue; a page that was still matching has no such row yet, and then
-     * the first playable song leads.
+     * queue.
      */
     val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit = browse@{ page, songs, index ->
         val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
-        if (songs.none { it.isUnresolvedSpotify }) {
-            val at = index?.coerceIn(0, (songs.size - 1).coerceAtLeast(0)) ?: 0
-            playFrom(songs, at, source)
-            return@browse
-        }
-        scope.launch {
-            val ready = viewModel.resolvedSpotifySongs(page.browseId)
-            if (ready.isEmpty()) return@launch
-            val at = index
-                ?.let { wanted -> songs.getOrNull(wanted) }
-                ?.let { tapped -> ready.indexOfFirst { it.videoId == tapped.videoId } }
-                ?.takeIf { it >= 0 }
-                ?: 0
-            playFrom(ready, at, source)
-        }
+        val ready = songs.asSpotifyQueueRows()
+        if (ready.isEmpty()) return@browse
+        val at = index?.coerceIn(0, (ready.size - 1).coerceAtLeast(0)) ?: 0
+        playFrom(ready, at, source)
     }
 
     /**
-     * Shuffles a page's songs, waiting for a Spotify page's matches first.
+     * Shuffles a page's songs.
      *
-     * The same wait as [playBrowsePage], and the same rule about what can be
-     * queued: a shuffle of a page that is still matching would shuffle the
-     * eight rows that had happened to match.
+     * The same rule as [playBrowsePage]: an unmatched Spotify row is queued
+     * as its own catalogue entry and resolved when it plays, so a shuffle is
+     * not held up by the matcher either.
      */
     val playBrowsePageShuffled: (DetailPage, List<Song>) -> Unit = browse@{ page, songs ->
         val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
-        if (songs.none { it.isUnresolvedSpotify }) {
-            if (songs.isEmpty()) return@browse
-            // Shuffle goes on first so the queue is built shuffled as it is
-            // set — the random pick here only decides which track leads it.
-            QueueShuffle.enableForNextQueue()
-            playFrom(songs, songs.indices.random(), source)
-            return@browse
-        }
-        scope.launch {
-            val ready = viewModel.resolvedSpotifySongs(page.browseId)
-            if (ready.isEmpty()) return@launch
-            QueueShuffle.enableForNextQueue()
-            playFrom(ready, ready.indices.random(), source)
-        }
+        val ready = songs.asSpotifyQueueRows()
+        if (ready.isEmpty()) return@browse
+        // Shuffle goes on first so the queue is built shuffled as it is
+        // set — the random pick here only decides which track leads it.
+        QueueShuffle.enableForNextQueue()
+        playFrom(ready, ready.indices.random(), source)
     }
 
     // Kept for entry points whose rows already carry their origin (notably a
