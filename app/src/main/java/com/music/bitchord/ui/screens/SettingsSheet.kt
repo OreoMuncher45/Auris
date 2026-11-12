@@ -155,6 +155,7 @@ import com.music.bitchord.ui.components.SupportDonations
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.onboarding.OnboardingState
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
@@ -2070,6 +2071,26 @@ fun SettingsScreen(
         }
         if (openCategory == SettingsCategory.ADVANCED || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.ADVANCED) {
+            // The way back into the first-run flow, for anybody who wants to
+            // see it again — a tester, or a listener showing somebody what the
+            // app does on the first launch. It forgets the flow has been seen
+            // and then asks the activity to raise it: settings cannot show a
+            // full-screen flow itself, and the activity is the thing that owns
+            // the composition it would sit on.
+            val replayContext = LocalContext.current
+            val replayOnboardingTitle = "Replay onboarding"
+            row(replayOnboardingTitle, "debug", "onboarding", "setup", "first run") {
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = replayOnboardingTitle,
+                    subtitle = "Show the first-run flow again",
+                    onClick = {
+                        OnboardingState.reset(replayContext)
+                        OnboardingState.requestReplay()
+                    },
+                )
+            }
+            RowDivider()
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
             row(showNerdStatsTitle, "debug", "bitrate", "codec") {
                 SettingsRow(

@@ -170,6 +170,7 @@ object SettingsCatalog {
         ),
         SettingsCategory.ADVANCED to listOf(
             "advanced.nerd_stats",
+            "advanced.replay_onboarding",
         ),
         SettingsCategory.SUPPORT to listOf(
             "support.donate",

@@ -145,7 +145,7 @@ class SettingsCatalogTest {
             "storage.clear_image_cache", "storage.local_music_folder", "storage.use_all_audio_folders",
             "storage.filter_non_music_audio",
             "data.replay", "data.work_out_genres", "data.export", "data.import",
-            "language.app_language", "advanced.nerd_stats", "support.donate",
+            "language.app_language", "advanced.nerd_stats", "advanced.replay_onboarding", "support.donate",
         )
         val missing = required.filterNot { SettingsCatalog.contains(it) }
         assertEquals("these settings are not in the catalogue: $missing", emptyList<String>(), missing)

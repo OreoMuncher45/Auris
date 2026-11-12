@@ -20,6 +20,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.compose.animation.AnimatedContent
@@ -162,6 +164,8 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.ui.onboarding.OnboardingState
+import com.music.bitchord.ui.onboarding.SetupWizard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
@@ -432,6 +436,25 @@ class MainActivity : AppCompatActivity() {
             val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
+            // The first-run flow, and how far in its sheet has come — the app
+            // behind shrinks off the same number. Asked of the store rather
+            // than remembered, so the developer row's "show me that again"
+            // works without a restart.
+            var showOnboarding by remember { mutableStateOf(OnboardingState.shouldShow(this@MainActivity)) }
+            var onboardingReveal by remember { mutableFloatStateOf(0f) }
+            val replayOnboarding by OnboardingState.replay.collectAsStateWithLifecycle()
+            LaunchedEffect(replayOnboarding) {
+                if (replayOnboarding) {
+                    onboardingReveal = 0f
+                    showOnboarding = true
+                    OnboardingState.replayHandled()
+                }
+            }
+            // Leaving the flow leaves the app the size it was, however it was
+            // left: a finished flow, a skipped one, or a back press.
+            LaunchedEffect(showOnboarding) {
+                if (!showOnboarding) onboardingReveal = 0f
+            }
             val composeView = LocalView.current
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
                 applyPerformanceMode(highPerformance, performanceRefreshRate, composeView)
@@ -512,12 +535,46 @@ class MainActivity : AppCompatActivity() {
                 // A measured constraint cannot be stale — it is the very width
                 // the split is about to be laid out in.
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    BitChordApp(
-                        darkTheme = darkTheme,
-                        windowWidth = maxWidth,
-                        windowHeight = maxHeight,
-                        appBackdrop = appBackdrop,
-                    )
+                    // Read here, where the constraint scope is the receiver: the
+                    // shapes below are drawn inside BoxScope, which cannot see
+                    // them.
+                    val windowWidth = maxWidth
+                    val windowHeight = maxHeight
+                    // The first-run flow, over the app rather than instead of
+                    // it: the library is already loading behind the sheet, so
+                    // the listener who finishes it lands on a home that is
+                    // ready rather than on a spinner they have just earned.
+                    //
+                    // The app behind is scaled and rounded as the sheet rises —
+                    // the same gesture the player makes over the library — and
+                    // the two read the one progress value, so they cannot move
+                    // apart.
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val p = onboardingReveal
+                                val scale = 1f - 0.06f * p
+                                scaleX = scale
+                                scaleY = scale
+                                translationY = -size.height * 0.02f * p
+                                clip = true
+                                shape = RoundedCornerShape((30f * p).dp)
+                            },
+                    ) {
+                        BitChordApp(
+                            darkTheme = darkTheme,
+                            windowWidth = windowWidth,
+                            windowHeight = windowHeight,
+                            appBackdrop = appBackdrop,
+                        )
+                    }
+                    if (showOnboarding) {
+                        SetupWizard(
+                            onFinished = { showOnboarding = false },
+                            onReveal = { onboardingReveal = it },
+                        )
+                    }
                 }
                 }
             }
