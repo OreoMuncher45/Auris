@@ -5,8 +5,6 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.module.ModuleSearchResponse
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.ModuleStreamResponse
-import com.music.bitchord.data.sources.module.ModuleStreamSegment
-import com.music.bitchord.data.sources.module.ModuleStreamTrack
 import com.music.bitchord.data.sources.module.QuickJsExecutor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -370,14 +368,23 @@ class SflxHost(
                     functionName = "getTrackStreamUrl",
                     args = listOf(quote(trackId), quote(tier), context(settingsFor(installed), prepared, wantsAtmos && tier == requested)),
                 )
-                if (answer.isSuccess && JSONObject(answer.getOrThrow()).optString("streamUrl", "").isNotBlank()) {
+                // An answer counts as resolved when it carries a URL *or* the
+                // parts of one. Tidal answers a segmented start with
+                // `streamUrl: null` and the segments beside it, and a reader
+                // that only looked for the URL called that a failure — so the
+                // ladder kept walking down past a perfectly good Atmos mix,
+                // and the parts that were in the same object were never read.
+                if (answer.isSuccess && SflxAnswer.carriesStream(answer.getOrThrow())) {
                     attempt = answer
                     chosenTier = tier
                     break
                 }
                 attempt = answer
-                val why = answer.mapCatching { JSONObject(it).optString("error", "") }
-                    .getOrElse { it.message.orEmpty() }
+                val why = answer.mapCatching { SflxAnswer.error(it) }
+                    .getOrNull()
+                    .orEmpty()
+                    .ifBlank { answer.exceptionOrNull()?.message.orEmpty() }
+                    .ifBlank { "the extension returned no stream URL" }
                 Log.w(TAG, "sflx[$extensionId] $tier did not resolve '$trackId': $why")
             }
             // The extension could not answer at all. If the reason is that its
@@ -387,19 +394,11 @@ class SflxHost(
             // fixes it. The advice replaces it, and every surface that shows
             // the failure shows the advice.
             val answered = attempt.mapCatching { raw ->
-                val answer = JSONObject(raw)
-                val url = answer.optString("streamUrl", "").takeIf { it.isNotBlank() }
-                val headers = answer.optJSONObject("headers").toHeaderMap()
-                val segments = answer.optJSONArray("segments")?.let { array ->
-                    (0 until array.length()).mapNotNull { index ->
-                        val entry = array.optJSONObject(index) ?: return@mapNotNull null
-                        val part = entry.optString("url", "").takeIf { it.isNotBlank() }
-                            ?: return@mapNotNull null
-                        ModuleStreamSegment(url = part, headers = entry.optJSONObject("headers").toHeaderMap())
-                    }
-                }.orEmpty()
+                val url = SflxAnswer.streamUrl(raw)
+                val headers = SflxAnswer.headers(raw)
+                val segments = SflxAnswer.segments(raw)
                 if (url == null && segments.isEmpty()) {
-                    val why = answer.optString("error", "").ifBlank { "the extension returned no stream URL" }
+                    val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
                     throw SflxException(why)
                 }
                 if (chosenTier != requested) {
@@ -409,7 +408,6 @@ class SflxHost(
                 // claim, not a measurement — the fields come from the file the
                 // extension was about to write, which this host never sees — and
                 // it is treated as one everywhere downstream.
-                val meta = answer.optJSONObject("track")
                 val playable = if (url != null) {
                     url
                 } else {
@@ -429,17 +427,7 @@ class SflxHost(
                     streamUrl = playable,
                     headers = headers.ifEmpty { null },
                     segments = segments.ifEmpty { null },
-                    track = ModuleStreamTrack(
-                        id = trackId,
-                        audioQuality = meta?.optString("audioQuality").orEmpty(),
-                        mimeType = meta?.optString("mimeType")?.takeIf { it.isNotBlank() },
-                        bitDepth = meta?.optInt("bitDepth", 0)?.takeIf { it > 0 },
-                        sampleRate = meta?.optDouble("sampleRate", 0.0)?.takeIf { it > 0 },
-                        bitrate = meta?.optInt("bitrate", 0)?.takeIf { it > 0 },
-                        audioModes = meta?.optJSONArray("audioModes")?.let { modes ->
-                            (0 until modes.length()).mapNotNull { modes.optString(it).takeIf { s -> s.isNotBlank() } }
-                        }?.takeIf { it.isNotEmpty() },
-                    ),
+                    track = SflxAnswer.track(raw, trackId),
                 )
             }
             // The advice, when the failure was a session that is not in order.
@@ -502,8 +490,13 @@ class SflxHost(
             answer.mapCatching { raw ->
                 val text = raw.trim()
                 if (text.isEmpty() || text == "null") throw SflxException("no lyrics")
-                if (JSONObject(text).has("error")) {
-                    throw SflxException(JSONObject(text).optString("error"))
+                // An extension that cannot answer says so with an `error` of
+                // its own. Read the way every other string here is read: a JSON
+                // null in that field is not the word "null", it is the absence
+                // of a reason, and treating it as the word threw a failure
+                // whose message was four letters long.
+                SflxAnswer.error(text)?.let { why ->
+                    throw SflxException(why)
                 }
                 text
             }
@@ -1061,21 +1054,3 @@ object SflxDownloads {
     private const val MAX_PACKAGE_BYTES = 8 * 1024 * 1024
 }
 
-/**
- * A JSON object of header names to values, or an empty map.
- *
- * The extension builds these itself — they are the headers it was going to send
- * with the audio request — so they are passed through exactly as written rather
- * than filtered against a list this host would have to keep current. Blank
- * names and values are dropped because OkHttp refuses them, and refusing the
- * whole request over one empty header would lose the track.
- */
-private fun JSONObject?.toHeaderMap(): Map<String, String> {
-    if (this == null) return emptyMap()
-    val result = LinkedHashMap<String, String>(length())
-    keys().forEach { key ->
-        val value = optString(key, "")
-        if (key.isNotBlank() && value.isNotBlank()) result[key] = value
-    }
-    return result
-}

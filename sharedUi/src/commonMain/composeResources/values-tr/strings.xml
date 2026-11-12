@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Sözler bulundu · Kullanmak için dokun</string>
     <string name="lyrics_provider_not_fetched">Getirmek için dokun</string>
     <string name="lyrics_provider_not_found">Sözler bulunamadı</string>
+    <string name="lyrics_provider_needs_setting">%1$s gerekiyor</string>
     <string name="lyrics_romanization_unavailable">Bu sözler için Latin harflerine çevirme kullanılamıyor</string>
     <string name="lyrics_romanized">Latin harfleriyle okunuş</string>
     <string name="lyrics_saved_with_download">Sözler bu indirmeyle kaydedildi</string>

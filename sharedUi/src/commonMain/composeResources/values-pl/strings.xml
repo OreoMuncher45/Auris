@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Tekst znaleziony · Dotknij, aby użyć</string>
     <string name="lyrics_provider_not_fetched">Dotknij, aby pobrać</string>
     <string name="lyrics_provider_not_found">Nie znaleziono tekstu</string>
+    <string name="lyrics_provider_needs_setting">Wymaga %1$s</string>
     <string name="lyrics_romanization_unavailable">Latynizacja jest niedostępna dla tego tekstu</string>
     <string name="lyrics_romanized">Wymowa w alfabecie łacińskim</string>
     <string name="lyrics_saved_with_download">Teksty zapisane wraz z tym pobieraniem</string>

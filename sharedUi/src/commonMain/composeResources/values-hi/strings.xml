@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">लिरिक्स मिल गए · इस्तेमाल करने के लिए टैप करें</string>
     <string name="lyrics_provider_not_fetched">लाने के लिए टैप करें</string>
     <string name="lyrics_provider_not_found">लिरिक्स नहीं मिले</string>
+    <string name="lyrics_provider_needs_setting">%1$s की आवश्यकता है</string>
     <string name="lyrics_romanization_unavailable">इन लिरिक्स के लिए रोमन रूप उपलब्ध नहीं है</string>
     <string name="lyrics_romanized">रोमन उच्चारण</string>
     <string name="lyrics_saved_with_download">इस डाउनलोड के साथ लिरिक्स सेव किए गए</string>

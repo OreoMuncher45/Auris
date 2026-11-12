@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">พบเนื้อเพลง · แตะเพื่อใช้</string>
     <string name="lyrics_provider_not_fetched">แตะเพื่อดึงข้อมูล</string>
     <string name="lyrics_provider_not_found">ไม่พบเนื้อเพลง</string>
+    <string name="lyrics_provider_needs_setting">ต้องใช้ %1$s</string>
     <string name="lyrics_romanization_unavailable">ไม่สามารถแปลงเนื้อเพลงนี้เป็นอักษรโรมันได้</string>
     <string name="lyrics_romanized">คำอ่านแบบอักษรโรมัน</string>
     <string name="lyrics_saved_with_download">บันทึกเนื้อเพลงไว้พร้อมกับไฟล์ที่ดาวน์โหลดนี้</string>

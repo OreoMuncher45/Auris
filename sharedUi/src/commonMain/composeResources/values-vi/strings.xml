@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Đã tìm thấy lời bài hát · Chạm để dùng</string>
     <string name="lyrics_provider_not_fetched">Chạm để tải</string>
     <string name="lyrics_provider_not_found">Không tìm thấy lời bài hát</string>
+    <string name="lyrics_provider_needs_setting">Cần %1$s</string>
     <string name="lyrics_romanization_unavailable">Không thể chuyển lời bài hát này sang chữ Latinh</string>
     <string name="lyrics_romanized">Phiên âm Latinh</string>
     <string name="lyrics_saved_with_download">Lời bài hát được lưu kèm bản tải này</string>

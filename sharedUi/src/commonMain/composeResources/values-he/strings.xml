@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">נמצאו מילים · הקישו לשימוש</string>
     <string name="lyrics_provider_not_fetched">הקישו כדי להביא</string>
     <string name="lyrics_provider_not_found">לא נמצאו מילים</string>
+    <string name="lyrics_provider_needs_setting">דורש %1$s</string>
     <string name="lyrics_romanization_unavailable">תעתיק לטיני לא זמין למילים האלה</string>
     <string name="lyrics_romanized">הגייה בתעתיק לטיני</string>
     <string name="lyrics_saved_with_download">מילים נשמרו יחד עם ההורדה הזו</string>

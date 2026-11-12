@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Songtext gefunden · Zum Verwenden tippen</string>
     <string name="lyrics_provider_not_fetched">Zum Laden tippen</string>
     <string name="lyrics_provider_not_found">Kein Songtext gefunden</string>
+    <string name="lyrics_provider_needs_setting">Benötigt %1$s</string>
     <string name="lyrics_romanization_unavailable">Für diesen Songtext ist keine Romanisierung verfügbar</string>
     <string name="lyrics_romanized">Romanisierte Aussprache</string>
     <string name="lyrics_saved_with_download">Songtexte mit diesem Download gespeichert</string>

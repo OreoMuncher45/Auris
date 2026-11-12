@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">已找到歌词 · 点按以使用</string>
     <string name="lyrics_provider_not_fetched">点按以获取</string>
     <string name="lyrics_provider_not_found">未找到歌词</string>
+    <string name="lyrics_provider_needs_setting">需要 %1$s</string>
     <string name="lyrics_romanization_unavailable">这些歌词无法转换为罗马音</string>
     <string name="lyrics_romanized">罗马音发音</string>
     <string name="lyrics_saved_with_download">歌词已随此次下载保存</string>

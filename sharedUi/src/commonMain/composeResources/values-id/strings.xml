@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Lirik ditemukan · Ketuk untuk memakai</string>
     <string name="lyrics_provider_not_fetched">Ketuk untuk mengambil</string>
     <string name="lyrics_provider_not_found">Lirik tidak ditemukan</string>
+    <string name="lyrics_provider_needs_setting">Memerlukan %1$s</string>
     <string name="lyrics_romanization_unavailable">Romanisasi tidak tersedia untuk lirik ini</string>
     <string name="lyrics_romanized">Pelafalan romanisasi</string>
     <string name="lyrics_saved_with_download">Lirik disimpan bersama unduhan ini</string>

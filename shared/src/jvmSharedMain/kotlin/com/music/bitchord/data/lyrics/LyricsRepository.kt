@@ -250,6 +250,46 @@ object LyricsRepository {
     var extensionProvider: ExtensionProvider? = null
 
     /**
+     * The name of the installed extension that answers lyrics, when there is
+     * one.
+     *
+     * "Mornye extension" was a name for a *kind* of thing, shown in the
+     * sources list and beside the lyric line, while the package actually
+     * answering was Apple's — and the listener was told "Mornye extension"
+     * and had no way to tell which package was meant. The host publishes the
+     * package's own name here, and [LyricsSource] shows that.
+     *
+     * Null when nothing is installed, and the source keeps its generic name.
+     */
+    @Volatile
+    var extensionLabel: String? = null
+
+    /**
+     * What the installed extension is waiting for, when it cannot answer yet.
+     *
+     * Apple's package asks the listener for their MusicKit token and answers
+     * every track with nothing until it has one. Nothing here fails: the
+     * lookup treats it as a miss and carries on with the sources behind it,
+     * which is right — but it means the player says "no lyrics found" for a
+     * song Apple has the words to, and nobody is told why. This says it
+     * instead: the setting that is missing, and the extension that wants it.
+     */
+    @Volatile
+    var extensionSetup: ExtensionSetup? = null
+
+    /**
+     * An installed lyrics extension that is not ready to answer.
+     *
+     * @property extensionName the package's own name, e.g. "Apple Music".
+     * @property settingLabel the setting it is waiting for, as its manifest
+     *   labels it, e.g. "Media User Token".
+     */
+    data class ExtensionSetup(
+        val extensionName: String,
+        val settingLabel: String,
+    )
+
+    /**
      * Whichever source won, its lines get the same last pass: the answering
      * vocal split off the lead so it can be drawn under it. Done here rather
      * than in each parser because most of them write it as a bracket and only

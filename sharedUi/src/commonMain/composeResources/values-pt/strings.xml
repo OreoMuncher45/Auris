@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Letra encontrada · Toque para usar</string>
     <string name="lyrics_provider_not_fetched">Toque para buscar</string>
     <string name="lyrics_provider_not_found">Letra não encontrada</string>
+    <string name="lyrics_provider_needs_setting">Precisa de %1$s</string>
     <string name="lyrics_romanization_unavailable">A romanização não está disponível para esta letra</string>
     <string name="lyrics_romanized">Pronúncia romanizada</string>
     <string name="lyrics_saved_with_download">Letras salvas com este download</string>

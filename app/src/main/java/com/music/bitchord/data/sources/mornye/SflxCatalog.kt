@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources.mornye
 
 import android.content.Context
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 
 /**
@@ -139,7 +142,49 @@ object SflxCatalog {
         val packages = runCatching { store.list() }.getOrDefault(emptyList())
         _installed.value = packages
         syncSources(packages)
+        syncLyricsExtension(packages)
         refreshStatuses()
+    }
+
+    /**
+     * Tells the lyrics repository which package is answering, and whether it
+     * is ready to.
+     *
+     * The sources list called this source "Mornye extension" whatever was
+     * installed — so a listener with Apple's package in it was told "Mornye
+     * extension" and had no way to tell which package was meant. And when
+     * that package was waiting for a token, the player said "no lyrics
+     * found" for every song, because a package that cannot answer is a miss
+     * and a miss says nothing. Both are said here instead: the package's own
+     * name, and the setting it is missing.
+     */
+    private fun syncLyricsExtension(packages: List<InstalledSflx>) {
+        val lyrics = packages.filter { it.manifest.isLyricsProvider }
+        LyricsRepository.extensionLabel = lyrics.firstOrNull()?.manifest?.displayName
+        LyricsRepository.extensionSetup = lyrics.firstNotNullOfOrNull { missingLyricsSetup(it) }
+    }
+
+    /**
+     * The setting an installed lyrics extension is waiting for, when it is
+     * waiting for one this host can see.
+     *
+     * Apple's package asks the listener for their own MusicKit token, under
+     * the key `mediaUserToken`, and answers nothing at all until it has one.
+     * The key is the one Mornye's store and host use for it, so it is read by
+     * name rather than guessed at — and a package that does not declare it is
+     * never reported as unconfigured.
+     */
+    private fun missingLyricsSetup(installed: InstalledSflx): LyricsRepository.ExtensionSetup? {
+        val setting = installed.manifest.settings.firstOrNull {
+            it.key.equals(MEDIA_USER_TOKEN_KEY, ignoreCase = true)
+        } ?: return null
+        val stored = runCatching { settingsOf(installed.id)[setting.key] }.getOrNull()
+        val value = (stored as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
+        if (value.isNotEmpty()) return null
+        return LyricsRepository.ExtensionSetup(
+            extensionName = installed.manifest.displayName,
+            settingLabel = setting.label.ifBlank { setting.key },
+        )
     }
 
     // ── Install ──────────────────────────────────────────────────────────
@@ -379,6 +424,15 @@ object SflxCatalog {
     }
 
     private const val DIRECTORY = "extensions"
+
+    /**
+     * The setting an Apple Music lyrics package needs from the listener.
+     *
+     * The key Mornye's own store and host use for the subscriber's MusicKit
+     * token; read by name so a package that does not declare it is not
+     * reported as unconfigured.
+     */
+    private const val MEDIA_USER_TOKEN_KEY = "mediaUserToken"
 
     /**
      * Where signed-session records live, one JSON per gateway scope.

@@ -105,9 +105,16 @@ private fun LyricsProviderRow(
     // A running automatic request can still be selected: it is marked as the
     // requested source and applied when that same in-flight call completes.
     val enabled = !current && state != LyricsProviderState.NOT_FOUND
+    // A source that is installed and waiting for something is not a source
+    // that has nothing: Apple's package answers nothing at all until the
+    // listener gives it their MusicKit token, and saying "lyrics not found"
+    // for that is a statement about the track rather than about the setup.
+    val setup = source.setupRequirement
     val status = when {
         current -> stringResource(Res.string.lyrics_provider_current)
         state == LyricsProviderState.FOUND -> stringResource(Res.string.lyrics_provider_found)
+        state == LyricsProviderState.NOT_FOUND && setup != null ->
+            stringResource(Res.string.lyrics_provider_needs_setting, setup.settingLabel)
         state == LyricsProviderState.NOT_FOUND -> stringResource(Res.string.lyrics_provider_not_found)
         state == LyricsProviderState.FETCHING -> stringResource(Res.string.lyrics_provider_fetching)
         else -> stringResource(Res.string.lyrics_provider_not_fetched)

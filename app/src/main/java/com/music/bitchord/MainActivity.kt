@@ -6669,6 +6669,12 @@ private fun BitChordApp(
             LyricsSourcesDialog(
                 hazeState = hazeState,
                 onDismiss = { showLyricsSources = false },
+                // The extension that answers lyrics has its own settings, and
+                // one of them is what makes it answer at all. The dialog's
+                // door opens the same sheet the sources screen opens.
+                onOpenExtensionSettings = { id ->
+                    editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                },
             )
         }
 

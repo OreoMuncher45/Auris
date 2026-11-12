@@ -84,12 +84,24 @@ internal object SflxShim {
             // ── Host identity ────────────────────────────────────────────
             // An extension reads this to tell which host it is on, and to know
             // which of its own quality tiers are worth offering here.
-            // How long an extension may spend resolving one stream. Long
-            // enough for the retry ladder its authors wrote (five attempts with
-            // exponential backoff and jitter), short enough that a wedged
-            // request does not hold a QuickJS engine for the listener's whole
-            // song.
-            var __SFLX_BUDGET_MS = 60000;
+            // How long an extension may spend resolving one stream.
+            //
+            // Mornye's own host gives a call two minutes: `mornye/extensions/
+            // runtime.py` calls with `timeout=120.0` and hands the budget to
+            // the sandbox, and an extension measures its retries against it
+            // through `utils.getResolutionRemainingMs()`. A shorter budget
+            // here is not a stricter host — it is a different arithmetic. The
+            // extension asks itself whether it has time for another attempt,
+            // and a budget smaller than the one its author tested against
+            // makes it give up on a request the reference host would still
+            // have made: Tidal, on a rate-limited gateway, gave up with
+            // "stream resolution timeout" having asked for a wait its own
+            // host would have had room for.
+            //
+            // Two minutes it is, then. What it buys is the extension's own
+            // retry ladder, not a wedged request: the engine is per module
+            // and the caller gives up on its own schedule.
+            var __SFLX_BUDGET_MS = 120000;
 
             function __sflx_goString(value) {
                 return value === null || value === undefined ? '' : String(value);
@@ -522,14 +534,17 @@ internal object SflxShim {
                         // requests and does not await the answer, so there is
                         // nothing to suspend on.
                         //
-                        // Capped well below the original host's ceiling, though,
-                        // and this is the reason: the wait is spent spinning on
-                        // one of the app's shared worker threads, because the
-                        // interpreter is not a goroutine that can park. A second
-                        // is a backoff; thirty was a worker thread taken away
-                        // from playback for as long as somebody's retry policy
-                        // felt like.
-                        var until = Date.now() + Math.min(Math.trunc(ms), 1000);
+                        // Capped, because the wait is spent spinning on one of
+                        // the app's shared worker threads — the interpreter is
+                        // not a goroutine that can park. The cap is the
+                        // longest backoff an extension in the wild asks for
+                        // between two attempts (Tidal's own `retryMaxDelayMs`
+                        // is 4000, plus its jitter), so the wait an extension
+                        // means to take is the wait it takes. It used to be a
+                        // second, which meant every backoff was three times
+                        // shorter than asked and a rate-limited gateway was
+                        // asked again before it had said it was ready.
+                        var until = Date.now() + Math.min(Math.trunc(ms), 5000);
                         while (Date.now() < until) { /* spin, as the original does */ }
                         return true;
                     },
@@ -1308,7 +1323,14 @@ internal object SflxShim {
                     var context = contextOf(rawContext);
                     var meta = { id: text(trackId), audioQuality: text(quality) };
                     var answered = function (url, error, extra) {
-                        var payload = { streamUrl: url, track: meta, error: error || '' };
+                        // The URL is written only when there is one. A
+                        // segmented start has none, and writing `null` for it
+                        // put the word "null" where a reader would look for an
+                        // address — which is how a Tidal Atmos answer with
+                        // forty good segments in it was logged as a malformed
+                        // URL and skipped.
+                        var payload = { track: meta, error: error || '' };
+                        if (url) payload.streamUrl = url;
                         if (extra) {
                             if (extra.headers) payload.headers = extra.headers;
                             if (extra.segments) payload.segments = extra.segments;

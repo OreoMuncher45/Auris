@@ -140,6 +140,7 @@
     <string name="lyrics_provider_found">Текст найден · Нажмите, чтобы использовать</string>
     <string name="lyrics_provider_not_fetched">Нажмите, чтобы загрузить</string>
     <string name="lyrics_provider_not_found">Текст не найден</string>
+    <string name="lyrics_provider_needs_setting">Требуется %1$s</string>
     <string name="lyrics_romanization_unavailable">Транслитерация недоступна для этого текста</string>
     <string name="lyrics_romanized">Произношение латиницей</string>
     <string name="lyrics_saved_with_download">Текст сохранён вместе с этой загрузкой</string>
