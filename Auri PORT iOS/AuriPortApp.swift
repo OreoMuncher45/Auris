@@ -22,6 +22,14 @@ final class AppState: ObservableObject {
     @Published var searchText = ""
     let library = MusicLibrary()
     let player = AudioPlayerService()
+    private var subscriptions = Set<AnyCancellable>()
+
+    init() {
+        library.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+        player.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+    }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -271,7 +279,7 @@ struct AuriRootView: View {
                 .padding(.horizontal, 24).padding(.bottom, 8)
             }
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav, .aiff, .flac], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { app.library.importFiles(urls) }
         }
         .alert("Playback error", isPresented: Binding(get: { app.player.error != nil }, set: { if !$0 { app.player.dismissError() } })) {
@@ -330,7 +338,7 @@ struct LibraryScreen: View {
             }
             .scrollContentBackground(.hidden).background(.black)
             .navigationTitle("Library")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(action: importMusic) { Image(systemName: "plus") } } }
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button(action: importMusic) { Image(systemName: "plus") } } }
         }
     }
 }
@@ -350,7 +358,7 @@ struct SearchScreen: View {
             VStack {
                 TextField("Songs, artists, albums", text: $app.searchText).textFieldStyle(.roundedBorder).padding()
                 if app.searchText.isEmpty {
-                    ContentUnavailableView("Search your music", systemImage: "magnifyingglass")
+                    Text("Search your imported music").foregroundStyle(.white.opacity(0.55)).padding(.top, 70)
                 } else {
                     List(matches) { track in
                         TrackCell(track: track) { app.player.play(track, in: matches) }
@@ -423,5 +431,22 @@ struct MiniPlayer: View {
         }.foregroundStyle(.white).padding(12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.1), lineWidth: 1))
+    }
+}
+
+struct EmptyLibraryState: View {
+    let importMusic: () -> Void
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "waveform").font(.system(size: 42)).foregroundStyle(.white.opacity(0.55))
+            Text("Your music starts here").font(.system(size: 20, weight: .bold, design: .rounded))
+            Text("Import audio files from your iPhone to build your Auris library.")
+                .font(.system(size: 14)).foregroundStyle(.white.opacity(0.55)).multilineTextAlignment(.center)
+            Button(action: importMusic) {
+                Label("Import music", systemImage: "plus").font(.system(size: 14, weight: .semibold))
+                    .padding(.horizontal, 18).padding(.vertical, 11)
+                    .background(.white, in: Capsule()).foregroundStyle(.black)
+            }
+        }.frame(maxWidth: .infinity).padding(24)
     }
 }
