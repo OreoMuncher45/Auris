@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -639,6 +640,60 @@ class SourcesTest {
         val nextLaunch = SourceRegistry.sourcesForInit(switchedOff, forceJioSaavnOff = false)
 
         assertFalse(nextLaunch.single { it.kind == SourceKind.YOUTUBE }.enabled)
+    }
+
+    /**
+     * An extension switched off by the listener stays off across launches.
+     *
+     * An extension's row is a `MODULE` row — the same protocol, the same
+     * source implementation — and the retired built-in module used to take
+     * every `MODULE` row with it at launch. The row was then rebuilt from the
+     * installed package, and a rebuilt row arrives *on*: every extension
+     * turned itself back on after every restart.
+     */
+    @Test
+    fun `an extension switched off by the user stays off across launches`() {
+        val extension = SourceConfig(
+            id = "sflx:apple-music",
+            kind = SourceKind.MODULE,
+            label = "Apple Music",
+            baseUrl = "sflx://apple-music",
+            enabled = false,
+        )
+
+        val nextLaunch = SourceRegistry.sourcesForInit(
+            listOf(extension),
+            forceJioSaavnOff = true,
+        )
+
+        val kept = nextLaunch.singleOrNull { it.id == extension.id }
+        assertNotNull("the extension's row was dropped at launch", kept)
+        assertFalse("the extension turned itself back on", kept!!.enabled)
+        assertEquals("Apple Music", kept.label)
+    }
+
+    /**
+     * The retired built-in module index is still retired.
+     *
+     * The exception above is for extensions, which point at `sflx://`. A row
+     * pointing at an ordinary URL is the built-in index this build no longer
+     * carries, and it goes.
+     */
+    @Test
+    fun `the retired built-in module index is still dropped`() {
+        val retired = SourceConfig(
+            id = "module-built-in",
+            kind = SourceKind.MODULE,
+            baseUrl = "https://example.test/modules.json",
+            enabled = true,
+        )
+
+        val nextLaunch = SourceRegistry.sourcesForInit(
+            listOf(retired),
+            forceJioSaavnOff = true,
+        )
+
+        assertNull(nextLaunch.firstOrNull { it.id == retired.id })
     }
 
     /**

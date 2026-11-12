@@ -207,8 +207,25 @@ object SourceRegistry {
 
         // The retired built-in module is removed, while a custom module entered
         // by the user is preserved.
+        //
+        // And an *installed extension* is preserved too, which is the whole
+        // point of the exception: an extension's row is a `MODULE` row as
+        // well — it speaks the same protocol and is built by the same
+        // [ModuleSource] — and dropping every `MODULE` row here dropped the
+        // extensions with it. The row was then rebuilt from the installed
+        // package by [com.music.bitchord.data.sources.mornye.SflxCatalog], and
+        // a rebuilt row arrives with the default state, which is *on*.
+        //
+        // So every extension turned itself back on after every restart, and a
+        // listener who had switched one off to stop it being asked found it
+        // asking again the next morning.
+        //
+        // What is retired is the built-in module *index* this build no longer
+        // carries — a row pointing at a URL nothing serves any more. An
+        // extension points at `sflx://`, which is the app's own address for
+        // "the package that is installed", and that is a live source.
         val migrated = seeded
-            .filterNot { it.kind == SourceKind.MODULE }
+            .filterNot { it.kind == SourceKind.MODULE && !isExtension(it) }
             .map { config ->
                 if (config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff) {
                     config.copy(enabled = false)
