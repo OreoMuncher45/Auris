@@ -64,7 +64,19 @@ internal object SflxShim {
      *   settings block, already merged over the manifest defaults, as a JSON
      *   object. Handed to the extension's `initialize()`.
      */
-    fun preamble(manifest: SflxManifest, settingsJson: String, appVersion: String): String {
+    fun preamble(
+        manifest: SflxManifest,
+        settingsJson: String,
+        appVersion: String,
+        /**
+         * A directory this extension may name when it is asked for an output
+         * path. Nothing is written to it by the extension — the download call
+         * is intercepted (see [ADAPTER]) — but a downloader that validates its
+         * output path, or reads the container off it, is doing the ordinary
+         * thing and needs a real one to do it with.
+         */
+        cacheDir: String = "",
+    ): String {
         val id = jsString(manifest.id)
         val version = jsString(manifest.version)
         val qualities = qualitiesOf(manifest)
@@ -88,7 +100,8 @@ internal object SflxShim {
                 version: $version,
                 appVersion: ${jsString(appVersion)},
                 qualities: $qualities,
-                settings: $settingsJson
+                settings: $settingsJson,
+                cacheDir: ${jsString(cacheDir)}
             };
 
             // ── Registration ─────────────────────────────────────────────
@@ -145,12 +158,22 @@ internal object SflxShim {
                 }
                 return {
                     get: function (key, fallback) {
-                        if (!arguments.length) return undefined;
+                        if (!arguments.length) return null;
                         var value = read(key);
-                        return value === undefined ? fallback : value;
+                        // `null` for a miss, not `undefined`: extensions written
+                        // against the reference compare against null, and an
+                        // `undefined` there reads as "stored the value undefined".
+                        if (value === undefined) return arguments.length >= 2 ? fallback : null;
+                        return value;
                     },
                     set: function (key, value) {
                         return arguments.length >= 2 && write(key, value);
+                    },
+                    // Both names: `delete` is the reference's, `remove` is what
+                    // this host called it before. An extension calling the one
+                    // that is missing dies inside its own cleanup path.
+                    delete: function (key) {
+                        return arguments.length > 0 && __spine.storageRemove(String(key)) === 'ok';
                     },
                     remove: function (key) {
                         return arguments.length > 0 && __spine.storageRemove(String(key)) === 'ok';
@@ -560,10 +583,23 @@ internal object SflxShim {
                 }
                 var raw;
                 try {
+                    var requestHeaders = headers && typeof headers === 'object' ? headers : {};
+                    // Some extensions written for the mobile host pass
+                    // `http.get(url, {headers: {...}})` rather than the flat
+                    // form. The flat reading sent that as a single header
+                    // literally named "headers", leaving the request with no
+                    // User-Agent at all — which some catalogues answer with a
+                    // 500. A lone `headers` object is unwrapped rather than
+                    // sent, exactly as the reference bridge does.
+                    var headerKeys = Object.keys(requestHeaders);
+                    if (headerKeys.length === 1 && headerKeys[0] === 'headers'
+                        && requestHeaders.headers && typeof requestHeaders.headers === 'object') {
+                        requestHeaders = requestHeaders.headers;
+                    }
                     raw = JSON.parse(__spine.httpSync(
                         __sflx_goString(url),
                         __sflx_goString(method || 'GET'),
-                        JSON.stringify(headers && typeof headers === 'object' ? headers : {}),
+                        JSON.stringify(requestHeaders),
                         body === null || body === undefined ? null
                             : (typeof body === 'string' ? body : JSON.stringify(body))
                     ));
@@ -579,6 +615,7 @@ internal object SflxShim {
                     status: raw && typeof raw.status === 'number' ? raw.status : 0,
                     statusCode: raw && typeof raw.status === 'number' ? raw.status : 0,
                     statusText: raw && raw.ok ? 'OK' : 'Error',
+                    url: text(url),
                     body: text,
                     headers: (raw && raw.headers) || {},
                     text: function () { return text; },
@@ -599,7 +636,26 @@ internal object SflxShim {
                 put: function (url, body, headers) { return __sflx_http(url, 'PUT', headers, body); },
                 patch: function (url, body, headers) { return __sflx_http(url, 'PATCH', headers, body); },
                 delete: function (url, headers) { return __sflx_http(url, 'DELETE', headers, null); },
-                request: function (url, body, method, headers) { return __sflx_http(url, method || 'GET', headers, body); },
+                // `request(url, {method, body, headers})` is the reference's
+                // shape, and the one the extensions that probe with HEAD/OPTIONS
+                // are written against. The positional form this host used to
+                // take is still accepted, because a body as the second argument
+                // is unambiguous: it is never an options object.
+                request: function (url, second, third, fourth) {
+                    var looksLikeOptions = second !== null && typeof second === 'object'
+                        && !(Object.prototype.toString.call(second) === '[object Array]')
+                        && (second.method !== undefined || second.body !== undefined
+                            || second.headers !== undefined || Object.keys(second).length === 0);
+                    if (second !== undefined && second !== null && typeof second === 'object' && looksLikeOptions) {
+                        return __sflx_http(
+                            url,
+                            text(second.method || 'GET').toUpperCase(),
+                            second.headers && typeof second.headers === 'object' ? second.headers : {},
+                            second.body === undefined ? null : second.body
+                        );
+                    }
+                    return __sflx_http(url, third || 'GET', fourth, second);
+                },
                 clearCookies: function () { return true; }
             };
 
@@ -614,12 +670,36 @@ internal object SflxShim {
                 throw error;
             };
             globalThis.file = {
+                // Thrown rather than answered, because these two mean "the
+                // bytes are now on disk" to the caller: an extension that gets
+                // a failure object here carries on and then reports a file that
+                // does not exist. During a stream probe both are replaced — see
+                // the ADAPTER — so this is only ever the download path.
                 download: function () { return globalThis.__sflx_no_files('file.download'); },
                 downloadSegments: function () { return globalThis.__sflx_no_files('file.downloadSegments'); },
+                // The read/write surface, in the reference's names and return
+                // shapes. Nothing here can reach this device's files, and the
+                // answer says so in the shape the extension's own error path
+                // already handles — instead of a TypeError on a missing
+                // function, three frames deep in its download().
+                getSize: function () {
+                    return { success: false, error: 'this host does not expose files to extensions' };
+                },
+                readBytes: function () {
+                    return { success: false, error: 'this host does not expose files to extensions' };
+                },
+                writeBytes: function () {
+                    return { success: false, error: 'this host does not expose files to extensions' };
+                },
+                transformPatternedBlocks: function () {
+                    return { success: false, error: 'this host does not transform files' };
+                },
+                delete: function () { return false; },
+                // Names no reference extension uses, kept because packages
+                // written against an older host do.
                 read: function () { return globalThis.__sflx_no_files('file.read'); },
                 write: function () { return globalThis.__sflx_no_files('file.write'); },
-                exists: function () { return false; },
-                delete: function () { return false; }
+                exists: function () { return false; }
             };
             globalThis.ffmpeg = {
                 getInfo: function () { return { success: false, error: 'this host does not transcode' }; },
@@ -943,16 +1023,85 @@ internal object SflxShim {
                     globalThis.__sflx_deadline = Date.now() + __SFLX_BUDGET_MS;
                     var context = contextOf(rawContext);
                     var meta = { id: text(trackId), audioQuality: text(quality) };
-                    var answered = function (url, error) {
-                        return JSON.stringify({ streamUrl: url, track: meta, error: error || '' });
+                    var answered = function (url, error, extra) {
+                        var payload = { streamUrl: url, track: meta, error: error || '' };
+                        if (extra) {
+                            if (extra.headers) payload.headers = extra.headers;
+                            if (extra.segments) payload.segments = extra.segments;
+                        }
+                        return JSON.stringify(payload);
                     };
                     if (typeof extension.download !== 'function') {
                         return answered(null, 'this extension can describe tracks but has no downloader');
                     }
 
+                    // The path the extension is asked to write to. It never
+                    // writes — the call that would is replaced below — but a
+                    // downloader that validates its output path, or reads the
+                    // container off its extension, is doing the ordinary thing
+                    // and was being handed an empty string before.
+                    var cacheDir = (globalThis.__spine_sflx && globalThis.__spine_sflx.cacheDir) || '';
+                    var safeId = text(trackId).replace(/[^A-Za-z0-9._-]+/g, '_') || 'track';
+                    var outputPath = (cacheDir ? cacheDir + '/' : '') + safeId + '.m4a';
+
+                    // The context the reference host hands a downloader: the
+                    // row's own fields at the top level (an extension reads
+                    // `options.isrc`, `options.spotify_id`, `options.tidal_id`),
+                    // the row again under `track`, and whatever the extension
+                    // itself returned from a previous call under
+                    // `preparedContext`. Sending only the last of those is why
+                    // extensions that look for an ISRC found none.
+                    var row = context.track && typeof context.track === 'object' ? context.track : null;
+                    var options = {};
+                    if (row) {
+                        for (var field in row) options[field] = row[field];
+                        options.track = row;
+                    }
+                    if (context.preparedContext && typeof context.preparedContext === 'object') {
+                        if (context.preparedContext.track) options.track = context.preparedContext.track;
+                        for (var prepared in context.preparedContext) {
+                            options[prepared] = context.preparedContext[prepared];
+                        }
+                    }
+                    options.preparedContext = { track: options.track || row };
+
+                    // The reference asks every downloader this before the
+                    // download, and uses the id it answers with: a search row's
+                    // id names a *search hit*, while this names the recording
+                    // the catalogue will actually serve. An extension that
+                    // cannot answer is not required to.
+                    var playableId = text(trackId);
+                    if (typeof extension.checkAvailability === 'function') {
+                        try {
+                            var availability = await extension.checkAvailability(
+                                text(options.isrc || ''),
+                                text(firstOf(options.title, options.name,
+                                    options.track && (options.track.title || options.track.name), '')),
+                                text(firstOf(options.artist, options.artists,
+                                    options.track && (options.track.artist || options.track.artists), '')),
+                                options
+                            );
+                            if (availability && availability.available === false) {
+                                return answered(null, text(firstOf(
+                                    availability.error, availability.error_message, availability.reason
+                                )) || 'this catalogue does not have that recording');
+                            }
+                            if (availability && availability.prepared_context) {
+                                options.preparedContext = availability.prepared_context;
+                            }
+                            var verified = availability
+                                ? text(firstOf(availability.track_id, availability.trackId))
+                                : '';
+                            if (verified) playableId = verified;
+                        } catch (error) {
+                            // Fall through with the id the search gave.
+                        }
+                    }
+
                     // The substitution, and the only reason this works: the
                     // extension's own resolution runs to the point of fetching
-                    // audio, and the URL it was about to fetch is taken instead.
+                    // audio, and the URL — with the headers it tuned for it — is
+                    // taken instead.
                     var captured = null;
                     var capturedSegments = null;
                     var capturedPath = '';
@@ -960,24 +1109,35 @@ internal object SflxShim {
                     var marker = { __sflx_capture: true };
                     var realDownload = globalThis.file.download;
                     var realSegments = globalThis.file.downloadSegments;
-                    globalThis.file.download = function (url, path, options) {
+                    globalThis.file.download = function (url, path, opts) {
                         if (captured === null) {
                             captured = text(url);
-                            capturedPath = text(path);
-                            capturedOptions = options || null;
+                            capturedPath = text(path) || outputPath;
+                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
                         }
                         throw marker;
                     };
-                    globalThis.file.downloadSegments = function (segments) {
-                        if (capturedSegments === null && segments) capturedSegments = segments;
+                    globalThis.file.downloadSegments = function (segments, path, opts) {
+                        if (capturedSegments === null && segments) {
+                            capturedSegments = segments;
+                            capturedPath = text(path) || outputPath;
+                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
+                        }
                         throw marker;
                     };
                     var failure = '';
                     try {
-                        var options = {
-                            preparedContext: { track: context.track || null }
-                        };
-                        var outcome = await extension.download(text(trackId), text(quality), '', null, options);
+                        // `onProgress` is a function, always: the reference
+                        // always passes one, and a downloader that calls it
+                        // unguarded — several do — threw before it ever reached
+                        // the URL when this was null.
+                        var outcome = await extension.download(
+                            playableId,
+                            text(quality),
+                            outputPath,
+                            function () {},
+                            options
+                        );
                         if (outcome && outcome.success === false) {
                             failure = text(firstOf(outcome.error_message, outcome.error, outcome.reason));
                         }
@@ -992,13 +1152,42 @@ internal object SflxShim {
                         globalThis.file.downloadSegments = realSegments;
                     }
 
-                    if (!captured && capturedSegments) {
-                        // A segmented stream: the extension handed over playlist
-                        // entries rather than one file. Playing those means
-                        // fetching each with the extension's own headers, which
-                        // this host does not do yet — so it is refused out loud
-                        // rather than played as whatever the first segment is.
-                        return answered(null, 'this extension serves a segmented stream, which this host cannot play yet');
+                    var guessed = audioHints(capturedPath, capturedOptions, context);
+                    var headersOf = function () {
+                        return capturedOptions && capturedOptions.headers
+                            && typeof capturedOptions.headers === 'object'
+                            ? capturedOptions.headers : null;
+                    };
+
+                    if (!captured && capturedSegments && capturedSegments.length) {
+                        // A segmented stream — a DASH or HLS track the extension
+                        // parsed itself. It hands over an ordered list, init
+                        // segment first; this host fetches and concatenates them
+                        // into one file, which is what the reference does with
+                        // the same list. Refusing these is why Tidal and Apple
+                        // Music played nothing at all.
+                        var list = [];
+                        for (var index = 0; index < capturedSegments.length; index++) {
+                            var segment = capturedSegments[index];
+                            if (!segment) continue;
+                            var segmentUrl = text(typeof segment === 'string' ? segment : segment.url);
+                            if (!segmentUrl) continue;
+                            var entry = { url: segmentUrl };
+                            if (typeof segment === 'object' && segment.headers
+                                && typeof segment.headers === 'object') {
+                                entry.headers = segment.headers;
+                            }
+                            list.push(entry);
+                        }
+                        if (!list.length) {
+                            return answered(null, 'this extension served a segmented stream with no usable segments');
+                        }
+                        if (guessed.mimeType) meta.mimeType = guessed.mimeType;
+                        if (guessed.bitDepth) meta.bitDepth = guessed.bitDepth;
+                        if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
+                        if (guessed.bitrate) meta.bitrate = guessed.bitrate;
+                        if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
+                        return answered(null, '', { segments: list, headers: headersOf() });
                     }
                     if (!captured) {
                         return answered(null, failure || 'the extension did not resolve a stream URL');
@@ -1009,13 +1198,47 @@ internal object SflxShim {
                     // options, and those are the only two statements about the
                     // audio this host ever gets.
                     meta.audioQuality = firstOf(meta.audioQuality, '');
-                    var guessed = audioHints(capturedPath, capturedOptions, context);
                     if (guessed.mimeType) meta.mimeType = guessed.mimeType;
                     if (guessed.bitDepth) meta.bitDepth = guessed.bitDepth;
                     if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
                     if (guessed.bitrate) meta.bitrate = guessed.bitrate;
                     if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
-                    return answered(captured, '');
+                    return answered(captured, '', { headers: headersOf() });
+                },
+
+                // The lyrics, from an extension that declares itself a
+                // lyrics provider.
+                //
+                // The contract is one function — `fetchLyrics(track, artist,
+                // album, durationSeconds)` — answering with the shape the
+                // other Mornye host established: `{lines, syncType,
+                // instrumental, plainLyrics, provider}`. It is handed back
+                // whole, unparsed: what it holds is the extension's own
+                // business, and the parser that reads it lives with the rest
+                // of the lyrics code rather than here.
+                fetchLyrics: async function (trackName, artistName, albumName, durationSec) {
+                    // The resolution budget starts here, as it does for a
+                    // search: an extension measures its own retries against
+                    // it, and a lookup that has already been abandoned should
+                    // not be kept alive by one.
+                    globalThis.__sflx_deadline = Date.now() + __SFLX_BUDGET_MS;
+                    if (typeof extension.fetchLyrics !== 'function') return null;
+                    try {
+                        var result = await extension.fetchLyrics(
+                            text(trackName),
+                            text(artistName),
+                            text(albumName),
+                            number(durationSec, 0)
+                        );
+                        // Only an object is an answer. A string, a number or
+                        // nothing at all is the extension saying it has no
+                        // lyrics, and saying so is not a failure.
+                        if (!result || typeof result !== 'object') return null;
+                        return result;
+                    } catch (error) {
+                        console.log('[sflx] fetchLyrics() failed: ' + (error && error.message ? error.message : error));
+                        return null;
+                    }
                 }
             };
         })();

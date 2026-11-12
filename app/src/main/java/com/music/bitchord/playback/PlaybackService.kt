@@ -5511,15 +5511,25 @@ class PlaybackService : MediaLibraryService() {
         if (uri.scheme == "file" || uri.scheme == "content") {
             return adoptFileBackedTrack(mediaId, uri, format, durationSec, byHand)
         }
-        val videoId = uri.getQueryParameter("v") ?: return false
-        val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
+        // A source-backed track carries no `v`: its identity is
+        // `src:<config>::<track>`, spelled out in [mediaIdIn], and the URI it
+        // plays from is the one the source handed over. Refusing it here is
+        // what made "Upgrade quality" do nothing on every track an extension
+        // was serving — the second look never ran for it, because the only
+        // path that starts one for a track that was never resolved asked for
+        // a video id first.
+        val videoId = uri.getQueryParameter("v")
+        val sourceBacked = uri.authority == "source"
+        if (videoId == null && !sourceBacked) return false
+        val downloaded = videoId != null &&
+            com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
         if (downloaded) return false
         val target = SourceResolver.targetIn(uri)
         val expectedSec = target.durationSec
         if (TrackMatcher.isSevereMismatch(expectedSec, durationSec)) {
             TrackLog.w(
                 "BitChord",
-                "cached rendition duration mismatch: playing ${durationSec}s vs catalogue ${expectedSec}s for $videoId; discarding cache rendition",
+                "cached rendition duration mismatch: playing ${durationSec}s vs catalogue ${expectedSec}s for ${videoId ?: mediaId}; discarding cache rendition",
                 about = mediaId,
             )
             withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }

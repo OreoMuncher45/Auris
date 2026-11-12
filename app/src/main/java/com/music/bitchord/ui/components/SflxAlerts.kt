@@ -87,8 +87,9 @@ fun SflxInstallDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "Paste a link to an extension package, or to a store's registry. " +
-                        "Extensions are separate downloads — nothing is bundled with Auris.",
+                    "Paste a link to an extension package, or to a store's registry — or browse " +
+                        "the Mornye store below. Extensions are separate downloads; nothing is " +
+                        "bundled with Auris.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(
@@ -102,6 +103,23 @@ fun SflxInstallDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                // The store Auris knows by name, one tap away.
+                //
+                // A button rather than a pre-filled field, because the point
+                // of naming it is that the listener is shown where extensions
+                // come from instead of being told to go and find out. Nothing
+                // is fetched until the tap and nothing is installed until the
+                // package is picked by name — the same two steps every other
+                // store gets.
+                TextButton(
+                    enabled = !fetching && offer == null,
+                    onClick = {
+                        scope.launch {
+                            SflxCatalog.inspect(SflxRegistry.MORNYE_STORE).onSuccess { offer = it }
+                        }
+                    },
+                ) { Text("Browse the Mornye store") }
 
                 when (val current = offer) {
                     null -> Unit

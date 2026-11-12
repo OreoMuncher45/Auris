@@ -18,13 +18,14 @@ import kotlinx.serialization.json.jsonPrimitive
  * adopted the format. Auris reads the same format so those packages work here
  * unchanged, rather than inventing a source format of its own.
  *
- * ## Only two types are sources
+ * ## Three types, two of which are sources
  *
- * An extension declares `type: ["metadata_provider", "download_provider"]`.
- * A `download_provider` can serve bytes — that is what a source is — and a
- * `metadata_provider` can only describe them. Both are listed in the Sources
- * tab, and only the downloaders appear in the ranking that decides who serves a
- * stream.
+ * An extension declares `type: ["metadata_provider", "download_provider"]`, and
+ * sometimes a third: `lyrics_provider`. A `download_provider` can serve bytes —
+ * that is what a source is — and a `metadata_provider` can only describe them.
+ * Both are listed in the Sources tab, and only the downloaders appear in the
+ * ranking that decides who serves a stream. A `lyrics_provider` is neither: it
+ * serves words, and it is asked for lyrics and for nothing else.
  *
  * ## Why the parser is hand-written and case-insensitive
  *
@@ -45,7 +46,7 @@ data class SflxManifest(
     val version: String,
     val description: String,
     val homepage: String,
-    /** `metadata_provider`, `download_provider`, or both. */
+    /** `metadata_provider`, `download_provider`, `lyrics_provider`, or several. */
     val types: List<String>,
     /**
      * The oldest host version that can run this extension, as the extension
@@ -69,6 +70,15 @@ data class SflxManifest(
 
     /** Whether this can answer metadata (search, tracks, albums). */
     val isMetadataProvider: Boolean get() = types.contains(SflxTypes.METADATA_PROVIDER)
+
+    /**
+     * Whether this can answer lyrics.
+     *
+     * A third kind of thing, and the only one that is not a source: it serves
+     * words, not audio, so it never takes a row in the ranking that decides
+     * who serves a stream. It is asked for lyrics and for nothing else.
+     */
+    val isLyricsProvider: Boolean get() = types.contains(SflxTypes.LYRICS_PROVIDER)
 
     /**
      * Whether the extension claims it supersedes the host's built-in providers
@@ -150,6 +160,7 @@ data class SflxSetting(
 object SflxTypes {
     const val METADATA_PROVIDER = "metadata_provider"
     const val DOWNLOAD_PROVIDER = "download_provider"
+    const val LYRICS_PROVIDER = "lyrics_provider"
 }
 
 /** Capability flags this host reads by name. */

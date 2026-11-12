@@ -45,6 +45,17 @@ enum class LyricsSource(
         detail = "Apple timings by recording, syllable by syllable",
         wordSynced = true,
     ),
+    // An installed `.sflx` extension that can answer lyrics — Apple's own
+    // timings, through the listener's own subscription. Ahead of the hosts
+    // that ask Apple for the same timings without being asked, because it is
+    // the one that can also answer for a track the others have never heard of.
+    // It costs nothing when no such extension is installed: the host says so
+    // without reaching the network.
+    EXTENSION(
+        label = "Mornye extension",
+        detail = "Apple timings from an installed .sflx extension",
+        wordSynced = true,
+    ),
     BINI_LYRICS(
         label = "BiniLyrics",
         detail = "The same Apple timings, matched on the recording itself",

@@ -2219,9 +2219,14 @@ object AudioCache {
         // player is streaming — the master is what made this measurement cost
         // six and a half megabytes and thirty seconds.
         val analysis = analysisSourceOf(uri)
-        val key = analysis?.key ?: cacheKeyOf(uri)
-        val source = analysis?.uri ?: uri
-        val headers = analysis?.headers ?: emptyMap()
+        // The key the copy *will* live under, known before it exists: a
+        // source-backed track's analysis copy is always `$source|$track#analysis`,
+        // and knowing it up front is what lets the round below wait for the
+        // copy rather than fall back on the master's bytes.
+        val copyKey = analysisKeyOf(uri)
+        val key = analysis?.key ?: copyKey ?: cacheKeyOf(uri)
+        var source = analysis?.uri ?: uri
+        var headers = analysis?.headers ?: emptyMap()
         val wanted = analysisOpeningBytes(key, durationSeconds)
         val held = cachedPrefixBytesOf(key)
         if (held >= wanted) {
@@ -2248,6 +2253,30 @@ object AudioCache {
         beginAnalysisFetch(key)
         scope.launch {
             try {
+                // The cheap copy, made here rather than only by read-ahead.
+                //
+                // Read-ahead makes it for the track being *prepared* — the one
+                // after this one — and the analyser's own round for the track
+                // that is playing had nothing but the master's bytes to read:
+                // the same cache entry the player is filling, which the
+                // analyser then loses the race for and never measures. That is
+                // "Waiting for analysis" on every track an extension served.
+                //
+                // The copy is a second resolution of the same track at the
+                // cheap tier: one more round trip to the catalogue, and bytes
+                // that are the analyser's own rather than the player's.
+                if (analysis == null && copyKey != null) {
+                    runCatching {
+                        ensureAnalysisCopy(uri, SourceResolver.targetIn(uri), durationSeconds)
+                    }.onFailure { error ->
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        TrackLog.d(TAG, "analysis copy failed for $uri: ${error.message}", about = mediaIdIn(uri))
+                    }
+                    analysisSourceOf(uri)?.let { copy ->
+                        source = copy.uri
+                        headers = copy.headers
+                    }
+                }
                 // The length is asked of the stream itself, because a bounded
                 // fetch cannot teach the cache the length — see
                 // [recordContentLength] — and without one the tail round has

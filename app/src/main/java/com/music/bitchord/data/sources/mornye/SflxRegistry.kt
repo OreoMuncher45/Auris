@@ -61,9 +61,14 @@ object SflxRegistry {
      * alternative was a listener being told to paste a URL they had to be told
      * the shape of first, which is how the first version of this ended up
      * telling people to paste a *directory*.
+     *
+     * Named, not installed: the install sheet offers this store as one button
+     * to tap, and every package in it still has to be chosen by name and
+     * installed on its own. Nothing is fetched until the listener asks, and
+     * nothing runs until they say so.
      */
-    // A store's address, if one is to exist, is the listener's to supply. No
-    // constant here names a default: see the install dialog.
+    const val MORNYE_STORE =
+        "https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry.json"
 
     /**
      * The addresses [link] might really be, best first.

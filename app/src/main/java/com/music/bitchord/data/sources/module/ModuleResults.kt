@@ -43,6 +43,30 @@ data class ModuleStreamResponse(
     // source-resolution budget before the JioSaavn/YouTube fallback runs.
     @SerialName("streamUrl") val streamUrl: String? = null,
     @SerialName("track") val track: ModuleStreamTrack? = null,
+    /**
+     * Headers the catalogue expects on the audio request itself.
+     *
+     * A signed URL is often not signed for *nobody*: Tidal, Amazon and Apple
+     * hand over a link that is only valid with the `Origin`, `Referer` or
+     * bearer header the extension would have sent, so a player that asks for it
+     * bare gets a 403 and the source looks broken. Null when the catalogue
+     * stated none, which is the common case for the unsigned ones.
+     */
+    @SerialName("headers") val headers: Map<String, String>? = null,
+    /**
+     * A segmented start: an ordered list of parts, init segment first, for a
+     * DASH/HLS track. The extension parsed its own manifest and handed over a
+     * finished list, so the host only has to fetch and concatenate.
+     */
+    @SerialName("segments") val segments: List<ModuleStreamSegment>? = null,
+)
+
+/** One part of a segmented start, with whatever it alone requires. */
+@Serializable
+data class ModuleStreamSegment(
+    @SerialName("url") val url: String = "",
+    /** Per-segment headers, merged over the response's own. */
+    @SerialName("headers") val headers: Map<String, String>? = null,
 )
 
 /** Format metadata the module reports alongside the stream URL. */

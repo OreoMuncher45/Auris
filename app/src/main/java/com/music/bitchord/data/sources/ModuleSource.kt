@@ -343,7 +343,12 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
                 return@withContext null
             }
-            if (malformed(url)) {
+            // A segmented start is assembled by this host into a file of its
+            // own, so the file:// URL in that case is the host's, not the
+            // module's — the check below exists to stop a module handing the
+            // player a path into this app's storage.
+            val hostAssembled = extensionId != null && url.startsWith("file://")
+            if (!hostAssembled && malformed(url)) {
                 TrackLog.w(
                     TAG,
                     "${config.displayName}: $moduleId returned a malformed URL for " +
@@ -375,7 +380,7 @@ class ModuleSource(
                 )
                 return@withContext null
             }
-            SourceStream(url = url, format = format)
+            SourceStream(url = url, format = format, headers = streamResponse.headers.orEmpty())
         }
 
     /**

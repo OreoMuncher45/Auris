@@ -5,6 +5,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.module.ModuleSearchResponse
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.ModuleStreamResponse
+import com.music.bitchord.data.sources.module.ModuleStreamSegment
 import com.music.bitchord.data.sources.module.ModuleStreamTrack
 import com.music.bitchord.data.sources.module.QuickJsExecutor
 import kotlinx.coroutines.Dispatchers
@@ -293,7 +294,16 @@ class SflxHost(
             attempt.mapCatching { raw ->
                 val answer = JSONObject(raw)
                 val url = answer.optString("streamUrl", "").takeIf { it.isNotBlank() }
-                if (url == null) {
+                val headers = answer.optJSONObject("headers").toHeaderMap()
+                val segments = answer.optJSONArray("segments")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        val entry = array.optJSONObject(index) ?: return@mapNotNull null
+                        val part = entry.optString("url", "").takeIf { it.isNotBlank() }
+                            ?: return@mapNotNull null
+                        ModuleStreamSegment(url = part, headers = entry.optJSONObject("headers").toHeaderMap())
+                    }
+                }.orEmpty()
+                if (url == null && segments.isEmpty()) {
                     val why = answer.optString("error", "").ifBlank { "the extension returned no stream URL" }
                     throw SflxException(why)
                 }
@@ -305,8 +315,25 @@ class SflxHost(
                 // extension was about to write, which this host never sees — and
                 // it is treated as one everywhere downstream.
                 val meta = answer.optJSONObject("track")
+                val playable = if (url != null) {
+                    url
+                } else {
+                    // A segmented start: parts, init first. Assembled here into
+                    // one file, because the player is handed a URL and a list of
+                    // forty CDN links is not one.
+                    val assembled = SflxSegments.assemble(
+                        directory = cacheDirectory(installed),
+                        extensionId = extensionId,
+                        key = trackId,
+                        segments = segments,
+                        headers = headers,
+                    ) ?: throw SflxException("the segments could not be fetched")
+                    "file://${assembled.absolutePath}"
+                }
                 ModuleStreamResponse(
-                    streamUrl = url,
+                    streamUrl = playable,
+                    headers = headers.ifEmpty { null },
+                    segments = segments.ifEmpty { null },
                     track = ModuleStreamTrack(
                         id = trackId,
                         audioQuality = meta?.optString("audioQuality").orEmpty(),
@@ -319,6 +346,61 @@ class SflxHost(
                         }?.takeIf { it.isNotEmpty() },
                     ),
                 )
+            }
+        }
+
+    /**
+     * The lyrics one extension answers with, as the JSON it returned.
+     *
+     * The extension is asked in the shape the contract established —
+     * `fetchLyrics(track, artist, album, durationSeconds)` — and whatever it
+     * answers is handed back whole. Parsing it is not this host's business:
+     * the words, the timings and the answering vocal are the extension's, and
+     * the parser that reads them lives with the rest of the lyrics code.
+     *
+     * An extension that cannot answer says so with nothing at all, which is
+     * a miss rather than a failure: the lyrics lookup carries on with the
+     * sources behind this one.
+     */
+    suspend fun fetchLyrics(
+        extensionId: String,
+        title: String,
+        artist: String,
+        album: String,
+        durationSeconds: Double,
+    ): Result<String> =
+        withContext(Dispatchers.IO) {
+            val installed = store.find(extensionId)
+                ?: return@withContext Result.failure(SflxException("'$extensionId' is not installed"))
+            if (!installed.manifest.isLyricsProvider) {
+                return@withContext Result.failure(
+                    SflxException("'${installed.manifest.displayName}' cannot answer lyrics"),
+                )
+            }
+            if (!enabled(installed)) {
+                return@withContext Result.failure(SflxException("'${installed.manifest.displayName}' is turned off"))
+            }
+            load(installed).getOrElse { return@withContext Result.failure(it) }
+
+            val answer = QuickJsExecutor.callExport(
+                moduleId = moduleIdOf(extensionId),
+                functionName = "fetchLyrics",
+                args = listOf(
+                    quote(title),
+                    quote(artist),
+                    quote(album),
+                    durationSeconds.toString(),
+                ),
+            )
+            // The sandbox hands back whatever the export returned, JSON-encoded.
+            // "null" is the extension saying it has nothing for this track.
+            answer.mapCatching { raw ->
+                val text = raw.trim()
+                if (text.isEmpty() || text == "null") throw SflxException("no lyrics")
+                if (JSONObject(text).has("error")) {
+                    throw SflxException(JSONObject(text).optString("error"))
+                }
+                text
             }
         }
 
@@ -347,9 +429,22 @@ class SflxHost(
             jsCode = script,
             fetchBase = "",
             acceptRegistered = true,
-            preamble = SflxShim.preamble(installed.manifest, settingsFor(installed).toString(), appVersion),
+            preamble = SflxShim.preamble(
+                installed.manifest,
+                settingsFor(installed).toString(),
+                appVersion,
+                cacheDirectory(installed).absolutePath,
+            ),
             epilogue = SflxShim.ADAPTER,
-            allowedHosts = installed.manifest.permissions.networkHosts,
+            // The manifest's declared hosts, when it declared any. An empty
+            // list means "this package said nothing", not "this package may
+            // reach nothing": the reference host enforces no per-extension list
+            // at all, and reading an absent block as deny-all made every
+            // extension that omitted it fail its first API call with "not
+            // permitted by this extension's manifest" — which looks exactly
+            // like a catalogue refusing, and is why some of them searched but
+            // never streamed.
+            allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
             sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
         ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
     }
@@ -365,6 +460,19 @@ class SflxHost(
     fun unload(extensionId: String) {
         QuickJsExecutor.unload(moduleIdOf(extensionId))
     }
+
+    /**
+     * Where this extension may be told to write, and where a segmented start is
+     * assembled.
+     *
+     * Inside the extension's own directory, so removing the package removes
+     * everything it caused to exist — a preview, a half-fetched song, the file
+     * a segmented track was assembled into. It is never read by the extension:
+     * the download call is intercepted, and the path is only there because a
+     * downloader asks for one.
+     */
+    private fun cacheDirectory(installed: InstalledSflx): File =
+        File(installed.directory, "cache").apply { if (!isDirectory) mkdirs() }
 
     /** Reinstalls from a package held in memory, digest-checked when one is given. */
     fun install(bytes: ByteArray, expectedSha256: String?, sourceUrl: String): Result<InstalledSflx> =
@@ -723,4 +831,23 @@ object SflxDownloads {
 
     /** 8 MB: an extension is a manifest and a script, and nothing legitimate is close to this. */
     private const val MAX_PACKAGE_BYTES = 8 * 1024 * 1024
+}
+
+/**
+ * A JSON object of header names to values, or an empty map.
+ *
+ * The extension builds these itself — they are the headers it was going to send
+ * with the audio request — so they are passed through exactly as written rather
+ * than filtered against a list this host would have to keep current. Blank
+ * names and values are dropped because OkHttp refuses them, and refusing the
+ * whole request over one empty header would lose the track.
+ */
+private fun JSONObject?.toHeaderMap(): Map<String, String> {
+    if (this == null) return emptyMap()
+    val result = LinkedHashMap<String, String>(length())
+    keys().forEach { key ->
+        val value = optString(key, "")
+        if (key.isNotBlank() && value.isNotBlank()) result[key] = value
+    }
+    return result
 }

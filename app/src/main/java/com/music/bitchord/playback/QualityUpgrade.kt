@@ -160,6 +160,36 @@ object QualityUpgrade {
     }
 
     /**
+     * Whether the source already serving the track is worth asking again.
+     *
+     * The second look leaves the serving source out, because the same source
+     * asked the same question usually answers the same way — and the answer
+     * is already playing. That is true of a catalogue, where the copy does not
+     * change under the search.
+     *
+     * It is not true of a source that holds several tiers of the same
+     * recording: an extension asked for a lossless copy and answered with a
+     * lossy one because its own fallback ladder was walked, because its
+     * catalogue was slow that second, or because the tier it wanted was not
+     * warm yet. Asked again, it can answer with the tier it wanted the first
+     * time — and it is the only source that can, because nothing else in the
+     * list holds that recording in that tier.
+     *
+     * So it is asked again exactly when the answer would be worth having: the
+     * request wants a bit-exact copy and what is playing is known to be a
+     * lossy one. A bit-exact copy already playing, an unknown one (nothing
+     * lossy could be told apart from it) and the immersive rung all leave it
+     * out — asking again there would reproduce the stream already playing and
+     * cost a seam in the audio for nothing.
+     */
+    private fun servedByMayHoldBetter(playing: StreamFormat?): Boolean {
+        val format = playing ?: return false
+        if (format.isLossless == true || format.isDolbyAtmos) return false
+        if (!SourceResolver.requestForNow().wantsLossless) return false
+        return !SourceResolver.immersiveRungActive()
+    }
+
+    /**
      * Tracks whose upgraded stream is being *proved* rather than played — see
      * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s
      * audition.
@@ -387,6 +417,13 @@ object QualityUpgrade {
                 SourceResolver.canServeLossless()
             }
         }
+        // A source-backed track is already being served by a source, so the
+        // question is not "can anything stand in for YouTube" but "is there
+        // anything that could hold a better copy of this recording" — and the
+        // source playing it counts, because a source that holds several tiers
+        // of one recording can answer with a better one than it did a minute
+        // ago. Asking the question is cheap; the sources decide.
+        if (uri.authority == "source") return true
         // Same widening as [settledForLess]: a track playing off the cache is
         // worth a second look whenever anything outranks YouTube, not only
         // when lossless was asked for.
@@ -481,6 +518,12 @@ object QualityUpgrade {
             target = target,
             inFlight = null,
             playing = playing,
+            // The source serving the track, when the track is a source-backed
+            // one. It is the source that may hold the better tier — an
+            // extension holds several copies of a recording and answers with
+            // whichever its own ladder reached — and the second look leaves
+            // the serving source out unless it is named here.
+            servedBy = uri.getQueryParameter("s")?.takeIf { it.isNotBlank() },
             // The decoder said what the bytes are. A copy that is not
             // bit-exact and not the spatial mix is a lossy one, and a lossless
             // candidate over it is an upgrade rather than an intrusion — see
@@ -595,7 +638,9 @@ object QualityUpgrade {
             // It finished with nothing better, so the question gets asked
             // again from scratch — this time waiting on every module, which is
             // what the live path could not afford to do. The source already
-            // serving the track is left out — see [SourceResolver.upgradeFor].
+            // serving the track is left out — unless it is the only one that
+            // can hold the better copy, which is the case for an extension:
+            // see [servedByMayHoldBetter].
             SourceResolver.upgradeFor(
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
@@ -603,6 +648,12 @@ object QualityUpgrade {
                 // the one that answered first, and asking it the same
                 // question again reproduces the stream already playing.
                 servedBy = waiting.servedBy,
+                // …unless what is playing is known to be lossy and a bit-exact
+                // copy was asked for. Then the source that answered first is
+                // the one that may hold the better tier, and leaving it out
+                // made "Upgrade quality" do nothing at all on every track an
+                // extension was serving.
+                reaskServedBy = servedByMayHoldBetter(waiting.playing),
                 // Asked per candidate rather than once: a listener who taps
                 // "Upgrade quality" while the search is already running has
                 // asked for the answer to be judged by their rules, and the

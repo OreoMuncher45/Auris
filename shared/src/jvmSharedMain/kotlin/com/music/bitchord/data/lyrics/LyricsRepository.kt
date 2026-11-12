@@ -19,6 +19,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  *  - [LrcRed] — Apple Music TTML filed by ISRC, and the catalogue
  *    [BiniLyrics] itself answers from.
+ *  - [Extension][LyricsSource.EXTENSION] — an installed `.sflx` extension
+ *    that can answer lyrics, asked through the host.
  *  - [BetterLyrics], [PaxSenix] and [BiniLyrics] — Apple Music TTML,
  *    per-syllable, from three independent hosts so one having a bad day
  *    doesn't cost the timing.
@@ -213,9 +215,39 @@ object LyricsRepository {
             LyricsSource.KUGOU -> KuGou.lyrics(title, artist, durationMs, album)
             LyricsSource.MEGALOBIZ -> Megalobiz.lyrics(title, artist)
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
+            LyricsSource.EXTENSION -> extensionProvider?.lyrics(title, artist, album, durationMs)
         }
         return found
     }
+
+    /**
+     * The fetcher that answers for an installed `.sflx` extension.
+     *
+     * Only the host can run an extension, so the host installs a fetcher here
+     * and the repository asks it like any other source. The lines it returns
+     * are the extension's own — Apple's timings, word by word — parsed by
+     * [ExtensionLyrics].
+     */
+    fun interface ExtensionProvider {
+        /** The lines for this track, or null when there are none. */
+        suspend fun lyrics(
+            title: String,
+            artist: String,
+            album: String?,
+            durationMs: Long,
+        ): List<LyricLine>?
+    }
+
+    /**
+     * The fetcher the host installed, if any.
+     *
+     * Null when nothing can answer — no extension installed, or none that
+     * declares itself a lyrics provider — and the source is then a miss
+     * rather than an error, so the lookup carries on with the sources behind
+     * it.
+     */
+    @Volatile
+    var extensionProvider: ExtensionProvider? = null
 
     /**
      * Whichever source won, its lines get the same last pass: the answering

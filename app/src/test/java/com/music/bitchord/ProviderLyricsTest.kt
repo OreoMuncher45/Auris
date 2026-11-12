@@ -21,13 +21,14 @@ class ProviderLyricsTest {
 
     @Test
     fun `the imported providers are exposed`() {
-        assertEquals(17, LyricsSource.entries.size)
+        assertEquals(18, LyricsSource.entries.size)
         assertTrue(LyricsSource.offered.containsAll(listOf(
             LyricsSource.BETTER_LYRICS_PORTATO,
             LyricsSource.PAXSENIX_SPOTIFY,
             LyricsSource.PAXSENIX_MUSIXMATCH,
             LyricsSource.YOUTUBE_TRANSCRIPT,
             LyricsSource.YOUTUBE_MUSIC,
+            LyricsSource.EXTENSION,
         )))
     }
 
@@ -41,12 +42,15 @@ class ProviderLyricsTest {
     @Test
     fun `a saved order drops hidden sources and puts a new first source on top`() {
         // What a previous build saved: every source it had, LRCLIB dragged to
-        // the top, and the two now-hidden ones still in it.
+        // the top, and the two now-hidden ones still in it. The extension
+        // source is not in it — that source did not exist then, and a source
+        // added by an upgrade lands beside the one it was declared behind
+        // rather than wherever the old list happened to be.
         val saved = listOf(LyricsSource.LRCLIB) +
-            (LyricsSource.entries - LyricsSource.LRC_RED - LyricsSource.LRCLIB)
+            (LyricsSource.entries - LyricsSource.LRC_RED - LyricsSource.LRCLIB - LyricsSource.EXTENSION)
         val ordered = LyricsSource.ordered(saved)
         assertEquals(
-            listOf(LyricsSource.LRC_RED, LyricsSource.LRCLIB, LyricsSource.BINI_LYRICS),
+            listOf(LyricsSource.LRC_RED, LyricsSource.EXTENSION, LyricsSource.LRCLIB),
             ordered.take(3),
         )
         assertEquals(LyricsSource.offered.toSet(), ordered.toSet())

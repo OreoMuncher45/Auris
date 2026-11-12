@@ -162,6 +162,16 @@ fun SourcesScreen(
     // Named out here because they are drawn in their own group below and must
     // not be drawn in the one above as well.
     val extensions = configs.filter { SflxHost.extensionIdOf(it.baseUrl) != null }
+    // The extensions that are *not* sources: they can describe tracks or
+    // answer lyrics, but they serve no audio, so they take no place in the
+    // ranking above and have no row there. They are still installed packages,
+    // and their own settings — a subscriber token, a region — have to be
+    // reachable somewhere, or an extension that answers nothing is an
+    // extension nobody can fix.
+    val installedExtensions by SflxCatalog.installed.collectAsStateWithLifecycle()
+    val otherExtensions = installedExtensions.filter { installed ->
+        extensions.none { it.id == SflxCatalog.configIdOf(installed.id) }
+    }
     val extensionStatuses by SflxCatalog.statuses.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
@@ -362,7 +372,7 @@ fun SourcesScreen(
         // The group also owns the way in — a link — which is the only door this
         // app has to an extension, since none is bundled with it.
         SettingsGroup(header = "Extensions") {
-            if (extensions.isEmpty()) {
+            if (extensions.isEmpty() && otherExtensions.isEmpty()) {
                 SettingsRow(
                     title = "No extensions installed",
                     subtitle = "Extensions are separate downloads. Paste a link to add one.",
@@ -398,6 +408,19 @@ fun SourcesScreen(
                     onReorder = { SourceRegistry.reorderExtensions(it.map(SourceConfig::id)) },
                     row = extensionRow,
                 )
+                // The ones that serve no audio. A plain row rather than a
+                // ranked one: there is nothing to rank them against, and a
+                // switch that turned them off would only turn off the one
+                // thing they can do.
+                otherExtensions.forEach { installed ->
+                    SettingsRow(
+                        title = installed.manifest.displayName,
+                        subtitle = installed.manifest.description.ifBlank {
+                            "v${installed.manifest.version}"
+                        },
+                        onClick = { onEditExtension(installed.id) },
+                    )
+                }
             }
             RowDivider()
             AddSourceRow(

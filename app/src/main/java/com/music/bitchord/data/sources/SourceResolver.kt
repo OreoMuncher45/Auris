@@ -498,11 +498,20 @@ object SourceResolver {
      *   stream already playing — which [worthSwapping] would reject anyway,
      *   but not before spending a search and a stream call on it. See the
      *   'isn't worth swapping ... off' log line this was written to stop.
+     * @param reaskServedBy whether that source is asked anyway. True when
+     *   what is playing is known to be lossy and a bit-exact copy was asked
+     *   for: a source that holds several tiers is not deterministic across
+     *   calls — its first answer can be a tier it has since warmed up, its
+     *   own fallback ladder can have been walked further this time than last
+     *   — and an extension is the only source that can hold the better tier
+     *   at all. Leaving it out is what made "Upgrade quality" do nothing on
+     *   every track an extension was serving.
      */
     suspend fun upgradeFor(
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
         servedBy: String? = null,
+        reaskServedBy: Boolean = false,
         /**
          * Whether this swap was asked for — asked per candidate rather than
          * once, so a request that arrives while the search is running is
@@ -512,8 +521,14 @@ object SourceResolver {
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
-        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
-        if (candidates.isEmpty()) return null
+        val active = SourceRegistry.activeForPlayback()
+        val pool = upgradeCandidates(
+            candidates = candidatesForYouTube(active),
+            active = active,
+            servedBy = servedBy,
+            reaskServedBy = reaskServedBy,
+        )
+        if (pool.isEmpty()) return null
         // Every source gets asked, whether or not it can serve lossless, and
         // they are asked at once.
         //
@@ -543,7 +558,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            candidates.filterNot { it.configId == servedBy },
+            pool,
             target,
             request,
             waitForAll = true,
@@ -919,6 +934,41 @@ object SourceResolver {
      */
     fun canServeLossless(): Boolean =
         candidatesForYouTube(SourceRegistry.activeForPlayback()).any { it.kind.canServeLossless }
+
+    /**
+     * The sources the second look asks.
+     *
+     * Normally that is the sources ranked above YouTube, without the one
+     * already serving the track: the same source asked the same question
+     * usually answers the same way, and the answer is already playing — so
+     * asking it again spends a search and a stream call to reproduce it.
+     *
+     * That is true of a catalogue, where the copy does not change under the
+     * search. It is not true of a source that holds several tiers of one
+     * recording: an extension asked for a bit-exact copy and answered with a
+     * lossy one because its own fallback ladder was walked, and asked again it
+     * can answer with the tier it wanted the first time — and it is the only
+     * source that can, because nothing else in the list holds that recording
+     * in that tier.
+     *
+     * So when the source is asked again ([reaskServedBy]) it is put back into
+     * the pool, *even if the listener ranked it below YouTube*: it is the
+     * source that is playing the track, and everything above it does not hold
+     * the copy in question. Leaving it out is what made "Upgrade quality" do
+     * nothing at all on every track an extension was serving.
+     */
+    internal fun upgradeCandidates(
+        candidates: List<MusicSource>,
+        active: List<MusicSource>,
+        servedBy: String?,
+        reaskServedBy: Boolean,
+    ): List<MusicSource> {
+        if (!reaskServedBy) {
+            return candidates.filterNot { it.configId == servedBy }
+        }
+        val serving = servedBy?.let { id -> active.firstOrNull { it.configId == id } }
+        return if (serving != null && serving !in candidates) candidates + serving else candidates
+    }
 
     /**
      * The sources a YouTube track may be served from, in rank order.

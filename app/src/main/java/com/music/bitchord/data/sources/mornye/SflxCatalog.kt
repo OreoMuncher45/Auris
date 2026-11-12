@@ -120,6 +120,11 @@ object SflxCatalog {
         SflxVerify.init(context)
         val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
         this.hostRef = SflxHost(store, appVersion, sessions)
+        // The lyrics bridge. A `.sflx` package that declares itself a lyrics
+        // provider is asked through this host and nowhere else, so the
+        // repository is given a fetcher here rather than reaching for one
+        // itself — it has no idea what an extension is.
+        com.music.bitchord.data.lyrics.LyricsRepository.extensionProvider = SflxLyrics
         Log.d(TAG, "sflx store at $directory")
         refresh()
     }
