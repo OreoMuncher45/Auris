@@ -2988,7 +2988,20 @@ internal fun rememberLyricsTranslation(
         romanizationState is LyricsTranslationUiState.SameLanguage ->
             stringResource(Res.string.lyrics_already_romanized)
         lyricsSource != null -> stringResource(Res.string.lyrics_by, lyricsSource.label)
-        lyricsUnavailable -> stringResource(Res.string.no_lyrics_found)
+        // "No lyrics found" is a statement about the track, and it is true
+        // here — but when the installed extension is waiting for a setting,
+        // it is also a statement about the setup, and that is the part the
+        // listener can do something about. Apple's package answers nothing
+        // at all until it has a MusicKit token, so every song said "no lyrics
+        // found" and nobody was told why.
+        lyricsUnavailable -> {
+            val setup = LyricsSource.EXTENSION.setupRequirement
+            if (setup != null) {
+                stringResource(Res.string.lyrics_provider_needs_setting, setup.settingLabel)
+            } else {
+                stringResource(Res.string.no_lyrics_found)
+            }
+        }
         lyrics.isNullOrEmpty() -> loadingText
         else -> stringResource(Res.string.lyrics_saved_with_download)
     }
