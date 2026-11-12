@@ -391,6 +391,20 @@ fun SourcesScreen(
                             onMetered = metered == true,
                             ceiling = ceiling,
                             statusBadge = extensionStatuses[extensionId]?.badge(),
+                            // An extension that serves no audio has to say so
+                            // on its row. It is a source — its rows are the
+                            // catalogue's own — but pressing play on one of
+                            // them serves the track from somewhere else, and
+                            // the listener is entitled to know that before
+                            // they press it rather than after.
+                            subtitleOverride = manifest?.takeIf { !it.manifest.isDownloadProvider }
+                                ?.let { installed ->
+                                    if (installed.manifest.isLyricsProvider) {
+                                        "Metadata and lyrics — no audio"
+                                    } else {
+                                        "Metadata — no audio"
+                                    }
+                                },
                             // Tap is the way through the door: an extension
                             // that cannot serve anything until the listener
                             // has proved themselves opens that page. Hold
@@ -408,15 +422,18 @@ fun SourcesScreen(
                     onReorder = { SourceRegistry.reorderExtensions(it.map(SourceConfig::id)) },
                     row = extensionRow,
                 )
-                // The ones that serve no audio. A plain row rather than a
-                // ranked one: there is nothing to rank them against, and a
-                // switch that turned them off would only turn off the one
-                // thing they can do.
+                // The packages that are not sources at all: a lyrics-only
+                // extension, which answers words and serves no rows of its
+                // own. It keeps a plain row because its settings — a
+                // subscriber token — are the only way to fix it, and a
+                // package nobody can reach is a package nobody can fix.
                 otherExtensions.forEach { installed ->
                     SettingsRow(
                         title = installed.manifest.displayName,
-                        subtitle = installed.manifest.description.ifBlank {
-                            "v${installed.manifest.version}"
+                        subtitle = if (installed.manifest.isLyricsProvider) {
+                            "Lyrics only — no audio"
+                        } else {
+                            installed.manifest.description.ifBlank { "v${installed.manifest.version}" }
                         },
                         onClick = { onEditExtension(installed.id) },
                     )
@@ -898,6 +915,16 @@ private fun SourceRow(
     onLongClick: (() -> Unit)? = null,
     /** The extension's signed-session state, when it has one. See [SourceStatusBadge]. */
     statusBadge: SourceStatusBadge? = null,
+    /**
+     * What the line under the name says, when the row has something of its
+     * own to say.
+     *
+     * A source that serves no audio says exactly that, in place of the
+     * health line: the listener is looking at a source and pressing play on
+     * one of its rows, and the one fact that matters is that this row cannot
+     * be the thing that plays.
+     */
+    subtitleOverride: String? = null,
     /** On, but skipped by the ceiling the current connection is set to. */
     skippedByQuality: Boolean = false,
     /** On, but its addon needs a lossless output and this is what is connected instead. Null when not waiting. */
@@ -974,6 +1001,12 @@ private fun SourceRow(
                 // going to be asked at all is not usefully described by
                 // whether its server answered a probe.
                 text = when {
+                    // The row's own statement comes first: what a source *is*
+                    // outranks both the ceiling and the health line. A
+                    // catalogue that serves no audio says so whatever the
+                    // connection is set to, and it is not a fault — so it is
+                    // not dressed as one either.
+                    subtitleOverride != null -> subtitleOverride
                     // Outranks the ceiling: this one is not reached on *any*
                     // connection until the output changes.
                     awaitingOutput != null -> when {
@@ -1001,6 +1034,7 @@ private fun SourceRow(
                     // painting that red trains people to ignore the colour by
                     // the time it means something.
                     skippedByQuality -> MaterialTheme.colorScheme.onSurfaceVariant
+                    subtitleOverride != null -> MaterialTheme.colorScheme.onSurfaceVariant
                     health is SourceHealth.Rejected -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },

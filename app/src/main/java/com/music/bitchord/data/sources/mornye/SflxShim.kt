@@ -607,7 +607,15 @@ internal object SflxShim {
                     return failure(__sflx_goString(e && e.message ? e.message : e));
                 }
                 if (raw && raw.error) return failure(__sflx_goString(raw.error));
-                var text = raw && raw.body !== undefined && raw.body !== null ? String(raw.body) : '';
+                // Named `bodyText`, not `text`: a local called `text` shadows
+                // the helper of that name for the whole function, and the
+                // `url: text(url)` line below then called the *string* — which
+                // is a TypeError ("text is not a function") thrown by every
+                // single `http.get`/`http.post` an extension made. It read as
+                // the extension's own failure ("customSearch failed: not a
+                // function"), and it is why Tidal searched nothing at all
+                // while its script looked perfectly healthy.
+                var bodyText = raw && raw.body !== undefined && raw.body !== null ? String(raw.body) : '';
                 var parsed;
                 var hasParsed = false;
                 return {
@@ -615,14 +623,14 @@ internal object SflxShim {
                     status: raw && typeof raw.status === 'number' ? raw.status : 0,
                     statusCode: raw && typeof raw.status === 'number' ? raw.status : 0,
                     statusText: raw && raw.ok ? 'OK' : 'Error',
-                    url: text(url),
-                    body: text,
+                    url: __sflx_goString(url),
+                    body: bodyText,
                     headers: (raw && raw.headers) || {},
-                    text: function () { return text; },
+                    text: function () { return bodyText; },
                     json: function () {
                         if (!hasParsed) {
                             hasParsed = true;
-                            try { parsed = JSON.parse(text); } catch (e) { parsed = undefined; }
+                            try { parsed = JSON.parse(bodyText); } catch (e) { parsed = undefined; }
                         }
                         return parsed;
                     },
@@ -649,7 +657,7 @@ internal object SflxShim {
                     if (second !== undefined && second !== null && typeof second === 'object' && looksLikeOptions) {
                         return __sflx_http(
                             url,
-                            text(second.method || 'GET').toUpperCase(),
+                            __sflx_goString(second.method || 'GET').toUpperCase(),
                             second.headers && typeof second.headers === 'object' ? second.headers : {},
                             second.body === undefined ? null : second.body
                         );
@@ -847,6 +855,261 @@ internal object SflxShim {
                 return '';
             }
 
+            // ── Identity ───────────────────────────────────────────────────
+            //
+            // Whether the recording that came back is the one that was asked
+            // for.
+            //
+            // Mornye's own host asks this after a download has finished — see
+            // `track_identity_mismatch` in `mornye/core/text_match.py`, and the
+            // comment there: "a provider that resolves the wrong recording …
+            // otherwise produces a file of one track carrying another track's
+            // tags, permanently and silently."
+            //
+            // Here it runs *before* the bytes move, which is strictly earlier
+            // and therefore better: this host never sees the file at all — it
+            // takes the URL the extension was about to write to — so the only
+            // place the identity can still be checked is the extension's own
+            // answer about the track it resolved. That answer is
+            // `checkAvailability`'s, and every extension in the store returns
+            // one: the track it will download, with the ISRC and the
+            // millisecond runtime it found for it.
+            //
+            // The rules are the reference's, in the reference's order, because
+            // they are the rules that were written against real catalogues:
+            // a matching ISRC settles it, a conflicting one is the wrong
+            // recording outright, a title that gained or lost a version
+            // marker is a different take, a different artist is a different
+            // song, and a different title is a different song. The album is
+            // last and forgivingly, because one recording legitimately appears
+            // on a single, an album and three compilations.
+            //
+            // Every comparison is skipped when either side is empty: an
+            // extension that says nothing about what it fetched cannot be
+            // contradicted, and refusing on missing information would break
+            // every provider that stays quiet. Only positive disagreement
+            // refuses.
+
+            // Case, accents and punctuation, folded away.
+            function foldText(value) {
+                var folded = text(value).toLowerCase();
+                if (folded.normalize) {
+                    folded = folded.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                }
+                return folded.replace(/[^0-9a-z\u00c0-\uffff]+/g, ' ').trim();
+            }
+
+            // The decorations two catalogues disagree about: "(Remastered)",
+            // " - Live at …". Removed before two titles are compared for
+            // equality.
+            var TITLE_NOISE = /\s*[\(\[][^\)\]]*[\)\]]\s*${'$'}/;
+            var TITLE_TAIL = /\s+-\s+(?:[^-]*\b(?:remaster|remastered|live|mix|edit|version|mono|stereo|deluxe|bonus)\b.*)${'$'}/i;
+            function stripNoise(value) {
+                var stripped = text(value).trim();
+                stripped = stripped.replace(TITLE_NOISE, '').trim();
+                return stripped.replace(TITLE_TAIL, '').trim();
+            }
+
+            // A credit trailing a title without brackets — "Song feat. X".
+            var TRAILING_CREDIT = /\s+(?:feat|ft|featuring)\.?\s+\S.*$/i;
+            function decorationsStripped(value) {
+                var stripped = text(value).trim();
+                for (var pass = 0; pass < 4; pass++) {
+                    var next = stripped.replace(TRAILING_CREDIT, '').replace(TITLE_NOISE, '').trim();
+                    next = next.replace(TITLE_TAIL, '').trim();
+                    if (!next || next === stripped) break;
+                    stripped = next;
+                }
+                return stripped;
+            }
+
+            // Markers that mean a *different recording* of the same song. A
+            // remaster is the same performance; a live take, a remix or an
+            // instrumental is not.
+            var DIFFERENT_RECORDING = /\b(live|remix|mix|edit|instrumental|acoustic|demo|karaoke|a cappella|acapella|reprise|radio edit|extended|backing track|sing[- ]?along|tribute|made famous by|originally performed by|in the style of|clean version|clean edit|censored)\b/i;
+            function variantConflict(wanted, found) {
+                return DIFFERENT_RECORDING.test(text(wanted)) !== DIFFERENT_RECORDING.test(text(found));
+            }
+
+            // How alike two strings are, in 0…1, ignoring case, accents and
+            // the decorations above.
+            function similarity(left, right) {
+                var a = foldText(left);
+                var b = foldText(right);
+                if (!a || !b) return 0;
+                if (a === b) return 1;
+                var previous = [];
+                var current = [];
+                for (var j = 0; j <= b.length; j++) previous[j] = j;
+                for (var i = 1; i <= a.length; i++) {
+                    current[0] = i;
+                    for (var k = 1; k <= b.length; k++) {
+                        var cost = a.charAt(i - 1) === b.charAt(k - 1) ? 0 : 1;
+                        current[k] = Math.min(current[k - 1] + 1, previous[k] + 1, previous[k - 1] + cost);
+                    }
+                    var swap = previous;
+                    previous = current;
+                    current = swap;
+                }
+                return 1 - previous[b.length] / Math.max(a.length, b.length);
+            }
+            function ratio(left, right) {
+                return Math.max(
+                    similarity(left, right),
+                    similarity(stripNoise(left), stripNoise(right))
+                );
+            }
+
+            // Whether two titles name the same song. Generous about the
+            // decorations, strict about everything else: plain containment is
+            // *not* the test — "Love" is contained in "Love Story", "Alone" in
+            // "Not Alone", and every one of those is a different song.
+            function titlesMatch(wanted, found) {
+                var wantedFolded = foldText(wanted);
+                var foundFolded = foldText(found);
+                if (!wantedFolded || !foundFolded) return false;
+                if (wantedFolded === foundFolded) return true;
+                var wantedCore = foldText(decorationsStripped(wanted));
+                var foundCore = foldText(decorationsStripped(found));
+                if (wantedCore && foundCore && wantedCore === foundCore) return true;
+                return ratio(wanted, found) >= 0.9;
+            }
+
+            // Separators a credit list can use. "x" and "and" are surrounded by
+            // spaces on purpose: they are ordinary letters inside a name.
+            var ARTIST_SPLIT = /\s+(?:feat\.?|ft\.?|featuring|with|vs\.?|and|x)\s+|[,;&/]|\s+\+\s+/i;
+            function splitArtists(value) {
+                var parts = text(value).split(ARTIST_SPLIT);
+                var out = [];
+                for (var i = 0; i < parts.length; i++) {
+                    var folded = foldText(parts[i]);
+                    if (folded) out.push(folded);
+                }
+                return out;
+            }
+            function sameWords(left, right) {
+                var a = left.split(' ').filter(function (word) { return word.length > 0; }).sort();
+                var b = right.split(' ').filter(function (word) { return word.length > 0; }).sort();
+                if (!a.length || a.length !== b.length) return false;
+                for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+                return true;
+            }
+            // A name in a non-Latin script and the same name in Latin share no
+            // characters at all, so comparing them as text says nothing.
+            var NON_LATIN = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0590-\u05ff\u0e00-\u0e7f]/;
+            function isLatinScript(value) {
+                return !NON_LATIN.test(text(value));
+            }
+            function artistsMatch(wanted, found) {
+                var wantedFolded = foldText(wanted);
+                var foundFolded = foldText(found);
+                if (!wantedFolded || !foundFolded) return false;
+                if (wantedFolded === foundFolded) return true;
+                if (wantedFolded.indexOf(foundFolded) >= 0 || foundFolded.indexOf(wantedFolded) >= 0) return true;
+                if (sameWords(wantedFolded, foundFolded)) return true;
+                var wantedParts = splitArtists(wanted);
+                var foundParts = splitArtists(found);
+                for (var i = 0; i < wantedParts.length; i++) {
+                    for (var j = 0; j < foundParts.length; j++) {
+                        var one = wantedParts[i];
+                        var other = foundParts[j];
+                        if (one === other || one.indexOf(other) >= 0 || other.indexOf(one) >= 0) return true;
+                        if (sameWords(one, other)) return true;
+                    }
+                }
+                // Declining to reject on evidence that does not exist.
+                return isLatinScript(wanted) !== isLatinScript(found);
+            }
+
+            // An ISRC, when it is one.
+            function normalizeIsrc(value) {
+                var cleaned = text(value).toUpperCase().replace('ISRC:', '').trim().replace(/[^A-Z0-9]/g, '');
+                return /^[A-Z]{2}[A-Z0-9]{3}\d{7}${'$'}/.test(cleaned) ? cleaned : '';
+            }
+
+            // Why the track that came back is not the one asked for, or ''.
+            function identityMismatch(wanted, found) {
+                var wantedIsrc = normalizeIsrc(wanted.isrc);
+                var foundIsrc = normalizeIsrc(found.isrc);
+                if (wantedIsrc && foundIsrc) {
+                    if (wantedIsrc === foundIsrc) return '';
+                    return 'different recording: asked for ISRC ' + wantedIsrc + ', got ' + foundIsrc;
+                }
+                if (wanted.title && found.title && variantConflict(wanted.title, found.title)) {
+                    return 'different version: asked for ' + JSON.stringify(wanted.title) +
+                        ', got ' + JSON.stringify(found.title);
+                }
+                if (wanted.artist && found.artist && !artistsMatch(wanted.artist, found.artist)) {
+                    return 'different artist: asked for ' + JSON.stringify(wanted.artist) +
+                        ', got ' + JSON.stringify(found.artist);
+                }
+                if (wanted.title && found.title && !titlesMatch(wanted.title, found.title)) {
+                    return 'different title: asked for ' + JSON.stringify(wanted.title) +
+                        ', got ' + JSON.stringify(found.title);
+                }
+                if (wanted.album && found.album && !titlesMatch(wanted.album, found.album)) {
+                    var strongIdentity = !!(wanted.title && found.title &&
+                        foldText(wanted.title) === foldText(found.title) &&
+                        wanted.artist && found.artist &&
+                        artistsMatch(wanted.artist, found.artist));
+                    if (!strongIdentity) {
+                        return 'different album: asked for ' + JSON.stringify(wanted.album) +
+                            ', got ' + JSON.stringify(found.album);
+                    }
+                }
+                return '';
+            }
+
+            // A runtime, in milliseconds, out of whatever the row calls it.
+            //
+            // Two spellings, two units: `duration_ms` is already
+            // milliseconds, and `duration` is seconds in every catalogue this
+            // app has met (Tidal, Deezer, Qobuz all answer in seconds).
+            //
+            // The unit is decided by the size rather than by the field name,
+            // because a field called `duration` is sometimes milliseconds and
+            // reading 245000 as seconds would make a four-minute song look
+            // like a two-hundred-thousand-minute one — and every comparison
+            // against it would be nonsense. A runtime under a day is seconds;
+            // anything longer is already milliseconds.
+            function durationMsOf(source) {
+                var explicit = number(firstOf(source.duration_ms, source.durationMs), 0);
+                if (explicit > 0) return explicit;
+                var plain = number(source.duration, 0);
+                if (plain <= 0) return 0;
+                return plain < 86400 ? Math.round(plain * 1000) : Math.round(plain);
+            }
+
+            // What was asked for, in the terms the identity check reads.
+            function identityOf(row) {
+                var source = row && typeof row === 'object' ? row : {};
+                return {
+                    title: text(firstOf(source.title, source.name, source.track_name)),
+                    artist: text(firstOf(source.artist, source.artists, source.artist_name)),
+                    album: text(firstOf(source.album, source.album_name, source.album_title)),
+                    isrc: text(firstOf(source.isrc, source.ISRC, source.is_rc)),
+                    durationMs: durationMsOf(source)
+                };
+            }
+
+            // What the extension says it resolved, in the same terms.
+            function resolvedIdentity(availability) {
+                if (!availability || typeof availability !== 'object') return null;
+                var prepared = availability.prepared_context && typeof availability.prepared_context === 'object'
+                    ? availability.prepared_context : null;
+                var candidate = null;
+                if (prepared) {
+                    candidate = firstOf(prepared.formatted_track, prepared.track, prepared.raw_track);
+                }
+                if (!candidate) {
+                    candidate = firstOf(availability.track, availability.row, availability.formatted_track);
+                }
+                if (!candidate || typeof candidate !== 'object') return null;
+                var identity = identityOf(candidate);
+                if (!identity.title && !identity.artist && !identity.isrc && !identity.durationMs) return null;
+                return identity;
+            }
+
             // What the extension said, indirectly, about the audio it resolved.
             //
             // It never states a codec. What it does state is the file it was
@@ -912,13 +1175,26 @@ internal object SflxShim {
                 if (!track || typeof track !== 'object') return null;
                 var id = text(firstOf(track.id, track.track_id, track.trackId, track.song_id));
                 if (!id) return null;
+                // The runtime, in this app's unit.
+                //
+                // `duration_ms` is the extensions' unit and `duration` is
+                // seconds. Reading the second as milliseconds made every such
+                // row's runtime zero — and a row with no runtime is a row the
+                // app cannot check anything against: the length comparison,
+                // the upgrade's own bar and the identity check all have
+                // nothing to hold on to, and a wrong recording walks straight
+                // past every one of them.
+                var durationMs = number(track.duration_ms, 0);
+                var durationSec = durationMs > 0
+                    ? Math.round(durationMs / 1000)
+                    : Math.round(number(track.duration, 0));
                 return {
                     id: id,
                     title: text(firstOf(track.name, track.title, track.track_name)),
                     artist: text(firstOf(track.artists, track.artist, track.artist_name, track.performer)),
                     album: text(firstOf(track.album_name, track.album, track.album_title)),
                     albumCover: text(firstOf(track.cover_url, track.images, track.image, track.album_cover)),
-                    duration: Math.round(number(firstOf(track.duration_ms, track.duration), 0) / 1000),
+                    duration: durationSec,
                     audioQuality: text(firstOf(track.quality, track.audio_quality, track.quality_id)),
                     format: text(firstOf(track.format, track.codec)),
                     raw: track
@@ -973,18 +1249,26 @@ internal object SflxShim {
                 return raw;
             }
 
-            // Mornye's search takes a second argument of options, and its
-            // extensions are split between `customSearch` (which honours the
-            // filters and the limit) and a bare `searchTracks`. Prefer the
-            // richer one: a search that ignores its filters comes back with
-            // albums where songs were asked for.
+            // Which of the two search exports to call.
+            //
+            // `searchTracks(query, limit)` is the one every extension in the
+            // Mornye store implements, and the one a *playback* search wants:
+            // it answers with tracks and nothing else. `customSearch(query,
+            // options)` answers with tracks, artists, albums and playlists in
+            // one list — which is what a catalogue browser wants and a
+            // playback walk does not. Calling it here cost Tidal four HTTP
+            // requests per search (one per kind) where one would do, and the
+            // mixed list then had to be filtered back down to tracks.
+            //
+            // So: `searchTracks` first, `customSearch` only for an extension
+            // that has nothing else.
             function search(query, limit) {
                 var size = limit > 0 ? limit : 20;
-                if (typeof extension.customSearch === 'function') {
-                    return extension.customSearch(query, { limit: size });
-                }
                 if (typeof extension.searchTracks === 'function') {
                     return extension.searchTracks(query, size);
+                }
+                if (typeof extension.customSearch === 'function') {
+                    return extension.customSearch(query, { limit: size });
                 }
                 return { success: false, error: 'this extension cannot search' };
             }
@@ -1093,6 +1377,41 @@ internal object SflxShim {
                                 ? text(firstOf(availability.track_id, availability.trackId))
                                 : '';
                             if (verified) playableId = verified;
+
+                            // The recording the extension says it resolved,
+                            // against the recording that was asked for.
+                            //
+                            // Mornye's host makes this check after the
+                            // download has finished, and deletes the file when
+                            // it fails — see `track_identity_mismatch` in
+                            // `mornye/core/text_match.py`. This host never sees
+                            // the file: it takes the URL the extension was
+                            // about to write to, so the check happens here
+                            // instead — before a byte moves, and before a
+                            // wrong recording can be pinned to the track that
+                            // was asked for.
+                            //
+                            // The runtime is checked alongside the names,
+                            // because it is the one statement about a
+                            // recording that cannot be argued with: a
+                            // four-minute track and a six-minute one are
+                            // different songs even when both are called the
+                            // same thing.
+                            var wantedIdentity = identityOf(row);
+                            var foundIdentity = resolvedIdentity(availability);
+                            var mismatch = foundIdentity
+                                ? identityMismatch(wantedIdentity, foundIdentity)
+                                : '';
+                            if (!mismatch && foundIdentity &&
+                                wantedIdentity.durationMs > 0 && foundIdentity.durationMs > 0 &&
+                                Math.abs(wantedIdentity.durationMs - foundIdentity.durationMs) > 10000) {
+                                mismatch = 'different length: asked for ' +
+                                    Math.round(wantedIdentity.durationMs / 1000) + 's, got ' +
+                                    Math.round(foundIdentity.durationMs / 1000) + 's';
+                            }
+                            if (mismatch) {
+                                return answered(null, 'the extension resolved a different recording: ' + mismatch);
+                            }
                         } catch (error) {
                             // Fall through with the id the search gave.
                         }

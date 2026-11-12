@@ -670,7 +670,16 @@ class SflxSignedSession(
         headers: Map<String, String>,
     ): HttpAnswer? = runCatching {
         val builder = Request.Builder().url(url)
-            .header("User-Agent", "Auris/${config.appVersion}")
+            // The reference host identifies itself as `SpotiFLAC-Mobile/<app
+            // version>`, and the gateway fingerprints it: the browser
+            // fingerprint headers and this one were captured from a request
+            // that was accepted. An app calling itself something else is a
+            // request the gateway has no reason to trust, and "no reason to
+            // trust" here is a 403 on the one call that has to work.
+            .header("User-Agent", "SpotiFLAC-Mobile/${config.appVersion}")
+            // The same two headers the reference sends, and for the same
+            // reason: the gateway answers differently without them.
+            .header("Accept", "application/json")
         headers.forEach { (key, value) ->
             if (!key.equals("user-agent", ignoreCase = true)) builder.header(key, value)
         }

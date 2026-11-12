@@ -7,12 +7,14 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -195,6 +197,15 @@ class SflxVerifyActivity : AppCompatActivity() {
                     // fires for the URL that matters. Asking where the WebView
                     // ended up catches those.
                     if (url != null) handle(Uri.parse(url))
+                    watchForGrant(view)
+                }
+
+                override fun onPageCommitVisible(view: WebView?, url: String?) {
+                    super.onPageCommitVisible(view, url)
+                    // Earlier than `onPageFinished`: a page that solves and
+                    // verifies itself within its own load would otherwise
+                    // finish before the hook below was in place.
+                    watchForGrant(view)
                 }
 
                 override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
@@ -209,6 +220,7 @@ class SflxVerifyActivity : AppCompatActivity() {
         root.addView(bar)
         root.addView(progress)
         root.addView(view)
+        root.addView(pasteRow())
         setContentView(root)
 
         // A floating dialog measures itself WRAP_CONTENT, and a weighted WebView
@@ -223,6 +235,47 @@ class SflxVerifyActivity : AppCompatActivity() {
             return
         }
         view.loadUrl(url)
+    }
+
+    /**
+     * The manual way out, for when the page cannot hand the grant over.
+     *
+     * The verification page keeps a copy-link fallback of its own: when it
+     * cannot tell that the app took the grant, it shows the callback URL —
+     * grant and state included — and offers to copy it. Pasting that here
+     * redeems it exactly as the bridge would have.
+     *
+     * It is here because the automatic path has one dependency this app does
+     * not control: the page has to reach its own bridge. A WebView that
+     * refuses the script, a captcha that solves in a frame the page cannot
+     * read, a browser update that changes the bridge's name — each of those
+     * leaves a listener staring at a page that says "verified" and an app
+     * that knows nothing. This row is the way out of that, and it costs one
+     * text field.
+     */
+    private fun pasteRow(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 8, 24, 16)
+        }
+        val field = EditText(this).apply {
+            hint = "Paste the grant or the verification link"
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val redeem = Button(this).apply {
+            text = "Redeem"
+            setOnClickListener {
+                val value = field.text?.toString()?.trim().orEmpty()
+                if (value.isNotEmpty()) deliver(value)
+            }
+        }
+        row.addView(field)
+        row.addView(redeem)
+        return row
     }
 
     /**
@@ -241,21 +294,53 @@ class SflxVerifyActivity : AppCompatActivity() {
     }
 
     /**
-     * A grant from either delivery path.
+     * Watches the page's own traffic for the grant.
+     *
+     * The page posts the grant to the bridge itself — it was written for
+     * exactly this host — but that is one delivery path out of three it knows
+     * about, and the other two are not available inside a WebView: a
+     * script-initiated navigation to `mornye://` is dropped by Chromium when
+     * there is no user gesture, and `window.opener` is empty in a tab that
+     * opened a page rather than being opened by one.
+     *
+     * What is left — and what actually happens — is that the page calls
+     * `/challenge/verify` itself, with the cookies the captcha left behind,
+     * and reads the grant out of the answer. So the grant is watched at the
+     * source: this hook wraps `fetch` and `XMLHttpRequest` in the page, and
+     * anything that comes back carrying a `grant` is handed to the app. It
+     * runs in the page's own origin, which is the only place the answer is
+     * readable.
+     */
+    private fun watchForGrant(view: WebView?) {
+        val target = view ?: return
+        runCatching { target.evaluateJavascript(GRANT_WATCH, null) }
+    }
+
+    /**
+     * A grant from any of the delivery paths.
      *
      * The page posts `target || grant`, where `target` is the deep link and
-     * `grant` is the bare token — so both arrive here, and both are accepted.
+     * `grant` is the bare token; the page's own copy-link fallback shows
+     * `grant=…` as text; and a listener may paste any of the three. All of
+     * them are read here, because a refusal at this point is a refusal the
+     * listener cannot do anything about.
      */
     private fun deliver(payload: String) {
-        val looksLikeUrl = payload.contains("://")
+        val value = payload.trim()
+        if (value.isEmpty()) return
+        val looksLikeUrl = value.contains("://")
         val grant: String
         val state: String?
         if (looksLikeUrl) {
-            val uri = Uri.parse(payload)
+            val uri = Uri.parse(value)
             grant = uri.getQueryParameter("grant").orEmpty()
             state = uri.getQueryParameter("state")
+        } else if (value.startsWith("grant=", ignoreCase = true)) {
+            // The page's copy-link text: `grant=<token>` on its own.
+            grant = value.substringAfter('=').trim()
+            state = null
         } else {
-            grant = payload
+            grant = value
             state = null
         }
         if (grant.isBlank()) return
@@ -337,5 +422,72 @@ class SflxVerifyActivity : AppCompatActivity() {
         const val EXTRA_ID = "sflx.extension.id"
         const val EXTRA_NAME = "sflx.extension.name"
         const val EXTRA_URL = "sflx.verify.url"
+
+        /**
+         * The page-side hook that watches for the grant.
+         *
+         * Installed in the page's own origin, where the answer to the
+         * verification request is readable. It patches the two ways a page
+         * asks for something over the network and looks for a `grant` in what
+         * comes back; anything it finds is posted to the same bridge the page
+         * itself uses.
+         *
+         * The patch is idempotent — the flag lives on the window, and a new
+         * document starts over — because the hook is installed on every page
+         * the WebView reaches.
+         */
+        private val GRANT_WATCH = """
+            (function () {
+                if (window.__aurisGrantWatch) return;
+                window.__aurisGrantWatch = true;
+                function report(body) {
+                    try {
+                        if (!body || typeof body !== 'string') return;
+                        var grant = '';
+                        try {
+                            var parsed = JSON.parse(body);
+                            if (parsed && typeof parsed === 'object' && parsed.grant) {
+                                grant = String(parsed.grant);
+                            }
+                        } catch (e) { }
+                        if (!grant && body.indexOf('"grant"') >= 0) {
+                            var match = body.match(/"grant"\s*:\s*"([^"]+)"/);
+                            if (match) grant = match[1];
+                        }
+                        if (!grant) return;
+                        var bridge = window.MornyeGrant || window.SpotiflacGrant;
+                        if (bridge && typeof bridge.postMessage === 'function') {
+                            bridge.postMessage(grant);
+                        }
+                    } catch (e) { }
+                }
+                var originalFetch = window.fetch;
+                if (typeof originalFetch === 'function') {
+                    window.fetch = function () {
+                        var args = arguments;
+                        return originalFetch.apply(this, args).then(function (response) {
+                            try {
+                                if (response && typeof response.clone === 'function') {
+                                    response.clone().text().then(report, function () { });
+                                }
+                            } catch (e) { }
+                            return response;
+                        });
+                    };
+                }
+                var open = XMLHttpRequest.prototype.open;
+                var send = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.open = function (method, url) {
+                    this.__aurisUrl = url;
+                    return open.apply(this, arguments);
+                };
+                XMLHttpRequest.prototype.send = function () {
+                    this.addEventListener('load', function () {
+                        try { report(this.responseText); } catch (e) { }
+                    });
+                    return send.apply(this, arguments);
+                };
+            })();
+        """.trimIndent()
     }
 }

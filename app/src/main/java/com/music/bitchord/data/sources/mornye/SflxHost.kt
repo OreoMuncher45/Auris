@@ -8,7 +8,14 @@ import com.music.bitchord.data.sources.module.ModuleStreamResponse
 import com.music.bitchord.data.sources.module.ModuleStreamSegment
 import com.music.bitchord.data.sources.module.ModuleStreamTrack
 import com.music.bitchord.data.sources.module.QuickJsExecutor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
@@ -96,6 +103,28 @@ class SflxHost(
     fun sessionStatus(id: String): SflxSignedSession.Snapshot? {
         val installed = store.find(id) ?: return null
         return sessionFor(installed)?.snapshot()
+    }
+
+    /**
+     * What to tell the listener when an extension could not answer because its
+     * signed session is not in order, or null when there is nothing to say.
+     *
+     * The wording is the whole point. "the extension returned no stream URL" is
+     * a fact about a process the listener cannot see; "Tidal needs
+     * verification — Sources → Tidal → Verify" is a fact about a thing on their
+     * screen, and it says where to go. Everything that has to explain a
+     * failure to a listener carries this one instead of the raw error.
+     *
+     * Null when the extension has no session at all, and null when its session
+     * is in order — the message is only worth saying when it names the thing
+     * the listener can actually do about it.
+     */
+    fun verificationAdvice(extensionId: String): String? {
+        val installed = store.find(extensionId) ?: return null
+        val snapshot = sessionFor(installed)?.snapshot() ?: return null
+        if (snapshot.authenticated && !snapshot.verificationRequired) return null
+        val name = installed.manifest.displayName.ifBlank { extensionId }
+        return verificationMessage(name)
     }
 
     /**
@@ -206,32 +235,92 @@ class SflxHost(
      *   the real number rather than over-asked and trimmed here, because the
      *   limit is what makes it choose between its own result pages.
      */
-    suspend fun search(extensionId: String, query: String, limit: Int): Result<ModuleSearchResponse> =
-        withContext(Dispatchers.IO) {
-            if (query.isBlank()) return@withContext Result.success(ModuleSearchResponse())
-            val installed = store.find(extensionId)
-                ?: return@withContext Result.failure(SflxException("'$extensionId' is not installed"))
-            if (!enabled(installed)) {
-                return@withContext Result.failure(SflxException("'${installed.manifest.displayName}' is turned off"))
-            }
-            load(installed).getOrElse { return@withContext Result.failure(it) }
-
-            val settings = settingsFor(installed)
-            QuickJsExecutor.callExport(
-                moduleId = moduleIdOf(extensionId),
-                functionName = "searchTracks",
-                args = listOf(quote(query), limit.toString(), context(settings)),
-            ).mapCatching { raw ->
-                val parsed = SflxRows.parse(raw)
-                // Remembered per track, because the stream call needs what the
-                // search already learned: the extension's own id for the
-                // recording, its ISRC, its duration. Asking the extension to
-                // search for it again would be a second request for something
-                // the first one already answered.
-                parsed.rows.forEach { row -> remember(extensionId, row) }
-                parsed.response
-            }
+    suspend fun search(extensionId: String, query: String, limit: Int): Result<ModuleSearchResponse> {
+        if (query.isBlank()) return Result.success(ModuleSearchResponse())
+        val installed = store.find(extensionId)
+            ?: return Result.failure(SflxException("'$extensionId' is not installed"))
+        if (!enabled(installed)) {
+            return Result.failure(SflxException("'${installed.manifest.displayName}' is turned off"))
         }
+        val settings = settingsFor(installed)
+        val key = searchKey(extensionId, query, limit, settings)
+
+        // The same question, asked twice.
+        //
+        // A search is not free: the extension runs its own catalogue walk in
+        // JavaScript and answers with kilobytes of JSON, and the app asks the
+        // same question from several places — the search screen, the row
+        // warming, the playback resolve, the upgrade, the next-track
+        // preparation. Measured on a device log, one track's worth of looking
+        // up ran the extension's search eight times in twelve seconds, and
+        // every one of them was the same question with the same answer.
+        //
+        // So the answer is kept for a moment, and a question asked while
+        // another is still running waits for that one rather than starting a
+        // second.
+        val outcome = searches.once(key) { ask(installed, query, limit, settings) }
+        // The rows are remembered on every answer, cached or fresh: the stream
+        // call needs the extension's own object for the track, and the bounded
+        // map that holds them may have dropped it since the search.
+        outcome.onSuccess { it.rows.forEach { row -> remember(extensionId, row) } }
+        // A failure caused by a session that is not in order carries the
+        // advice instead of the raw error — see [verificationAdvice].
+        outcome.exceptionOrNull()?.let { error ->
+            val advice = verificationAdvice(installed.id) ?: return@let
+            Log.w(TAG, "sflx[$extensionId] $advice (${error.message})")
+            return Result.failure(SflxVerificationNeeded(advice))
+        }
+        return outcome.map { it.response }
+    }
+
+    /**
+     * One answered search, and the rows it produced.
+     */
+    private class SearchOutcome(
+        val response: ModuleSearchResponse,
+        val rows: List<SflxRows.Row>,
+    )
+
+    /** The answers this host has already given, and the questions in flight. */
+    private val searches = SflxSearchMemo<SearchOutcome>(ttlMs = SEARCH_CACHE_TTL_MS)
+
+    /**
+     * The scope the host's own background work runs in.
+     *
+     * Its own, and not the caller's: a warm-up started for one caller must
+     * not be cancelled when that caller goes away, and neither the engine it
+     * loads nor the answer it waits for belongs to any one caller.
+     */
+    private val hostScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** The extension's own answer, asked for once. */
+    private suspend fun ask(
+        installed: InstalledSflx,
+        query: String,
+        limit: Int,
+        settings: JSONObject,
+    ): Result<SearchOutcome> {
+        load(installed).getOrElse { return Result.failure(it) }
+        return QuickJsExecutor.callExport(
+            moduleId = moduleIdOf(installed.id),
+            functionName = "searchTracks",
+            args = listOf(quote(query), limit.toString(), context(settings)),
+        ).mapCatching { raw ->
+            val parsed = SflxRows.parse(raw)
+            SearchOutcome(response = parsed.response, rows = parsed.rows)
+        }
+    }
+
+    /** What makes two searches the same question. */
+    private fun searchKey(extensionId: String, query: String, limit: Int, settings: JSONObject): String {
+        // The settings are part of the question: an extension asked for a
+        // different quality, or with a different account, answers differently.
+        // The keys are sorted because the settings object has no order of its
+        // own, and an unordered key would make every search a new one.
+        val fingerprint = settings.keys().asSequence().sorted()
+            .joinToString(",") { key -> "$key=${settings.opt(key)}" }
+        return "$extensionId|${query.trim().lowercase(Locale.ROOT)}|$limit|$fingerprint"
+    }
 
     /**
      * A playable URL for one track, as the extension itself resolves it.
@@ -291,7 +380,13 @@ class SflxHost(
                     .getOrElse { it.message.orEmpty() }
                 Log.w(TAG, "sflx[$extensionId] $tier did not resolve '$trackId': $why")
             }
-            attempt.mapCatching { raw ->
+            // The extension could not answer at all. If the reason is that its
+            // signed session is not in order, then the raw error is the wrong
+            // thing to hand back: it describes a status code the listener
+            // cannot act on, when there is a button on their screen that
+            // fixes it. The advice replaces it, and every surface that shows
+            // the failure shows the advice.
+            val answered = attempt.mapCatching { raw ->
                 val answer = JSONObject(raw)
                 val url = answer.optString("streamUrl", "").takeIf { it.isNotBlank() }
                 val headers = answer.optJSONObject("headers").toHeaderMap()
@@ -347,6 +442,16 @@ class SflxHost(
                     ),
                 )
             }
+            // The advice, when the failure was a session that is not in order.
+            // Asked of the *answer* rather than of the attempt, because the
+            // extension reports its own refusal as a successful call carrying
+            // an error — the host never sees an exception for it.
+            answered.exceptionOrNull()?.let { error ->
+                val advice = verificationAdvice(installed.id) ?: return@let
+                Log.w(TAG, "sflx[$extensionId] $advice (${error.message})")
+                return@withContext Result.failure(SflxVerificationNeeded(advice))
+            }
+            answered
         }
 
     /**
@@ -418,36 +523,61 @@ class SflxHost(
      * settings change is applied by unloading the extension — see [reload].
      */
     private suspend fun load(installed: InstalledSflx): Result<Unit> {
-        if (QuickJsExecutor.isLoaded(moduleIdOf(installed.id))) return Result.success(Unit)
-        val script = runCatching { installed.scriptFile.readText() }.getOrElse { error ->
-            return Result.failure(SflxException("could not read ${installed.scriptFile.name}: ${error.message}"))
+        val moduleId = moduleIdOf(installed.id)
+        if (QuickJsExecutor.isLoaded(moduleId)) return Result.success(Unit)
+        // One load per extension, however many callers want one.
+        //
+        // A load is a token fetch and the extension's own `initialize()`, and
+        // both are expensive: two of them at once is two token fetches, two
+        // handshakes and two engines, and the second engine replaces the first
+        // in the pool — so the first caller is left holding a script that is no
+        // longer the one running.
+        //
+        // It happened because the warm-up and a search could both arrive
+        // before either had finished: the warm-up loads every installed
+        // extension at start-up, and the first search arrives whenever the
+        // listener gets there. The lock is per extension, so one extension's
+        // slow load never holds up another's.
+        val lock = loadLocks.getOrPut(moduleId) { Mutex() }
+        return lock.withLock {
+            // Asked again inside the lock: the caller that was waiting has just
+            // been handed the load the first one did.
+            if (QuickJsExecutor.isLoaded(moduleId)) return@withLock Result.success(Unit)
+            val script = runCatching { installed.scriptFile.readText() }.getOrElse { error ->
+                return@withLock Result.failure(
+                    SflxException("could not read ${installed.scriptFile.name}: ${error.message}"),
+                )
+            }
+            Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
+            val session = sessionFor(installed)
+            QuickJsExecutor.loadModule(
+                moduleId = moduleId,
+                jsCode = script,
+                fetchBase = "",
+                acceptRegistered = true,
+                preamble = SflxShim.preamble(
+                    installed.manifest,
+                    settingsFor(installed).toString(),
+                    appVersion,
+                    cacheDirectory(installed).absolutePath,
+                ),
+                epilogue = SflxShim.ADAPTER,
+                // The manifest's declared hosts, when it declared any. An empty
+                // list means "this package said nothing", not "this package may
+                // reach nothing": the reference host enforces no per-extension list
+                // at all, and reading an absent block as deny-all made every
+                // extension that omitted it fail its first API call with "not
+                // permitted by this extension's manifest" — which looks exactly
+                // like a catalogue refusing, and is why some of them searched but
+                // never streamed.
+                allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
+                sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+            ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
-        Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
-        val session = sessionFor(installed)
-        return QuickJsExecutor.loadModule(
-            moduleId = moduleIdOf(installed.id),
-            jsCode = script,
-            fetchBase = "",
-            acceptRegistered = true,
-            preamble = SflxShim.preamble(
-                installed.manifest,
-                settingsFor(installed).toString(),
-                appVersion,
-                cacheDirectory(installed).absolutePath,
-            ),
-            epilogue = SflxShim.ADAPTER,
-            // The manifest's declared hosts, when it declared any. An empty
-            // list means "this package said nothing", not "this package may
-            // reach nothing": the reference host enforces no per-extension list
-            // at all, and reading an absent block as deny-all made every
-            // extension that omitted it fail its first API call with "not
-            // permitted by this extension's manifest" — which looks exactly
-            // like a catalogue refusing, and is why some of them searched but
-            // never streamed.
-            allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
-            sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
-        ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
     }
+
+    /** One lock per extension, so two callers cannot load the same package twice. */
+    private val loadLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
 
     /**
      * Forgets the loaded engines of [extensionId].
@@ -456,9 +586,46 @@ class SflxHost(
      * mean the script in memory no longer matches what is on disk: a new
      * quality or a new account is read by `initialize()`, and that only runs
      * at load.
+     *
+     * The searches it answered go with it. They were the old script's
+     * answers, and a reinstall or a changed setting can change what the
+     * extension returns for the same question.
      */
     fun unload(extensionId: String) {
         QuickJsExecutor.unload(moduleIdOf(extensionId))
+        forgetSearches(extensionId)
+    }
+
+    /** Drops every answer this extension gave. */
+    private fun forgetSearches(extensionId: String) {
+        searches.forgetMatching("$extensionId|")
+    }
+
+    /**
+     * Loads every installed extension's engine, in the background.
+     *
+     * A load is a token fetch and a client handshake — the extension's own
+     * `initialize()` — and paying for it on the first search is what makes the
+     * first track of a session slow. Doing it here takes that cost off the
+     * critical path: by the time a track is played, the engine is already
+     * there and the search is the only thing left to wait for.
+     *
+     * Only the extensions that serve audio. A metadata-only package has no
+     * stream to warm, and loading it costs a developer-token scrape for
+     * nothing.
+     *
+     * Never throws: a package that cannot load is reported by the search that
+     * needs it, and a start-up that failed on one extension's handshake would
+     * take every other source down with it.
+     */
+    fun warmUp() {
+        hostScope.launch {
+            store.list().forEach { installed ->
+                if (!enabled(installed)) return@forEach
+                if (!installed.manifest.isDownloadProvider) return@forEach
+                load(installed)
+            }
+        }
     }
 
     /**
@@ -588,6 +755,20 @@ class SflxHost(
         private const val TAG = "BitChord"
 
         /**
+         * The sentence a listener is given when an extension needs verifying.
+         *
+         * It names the extension and says where the button is, because that is
+         * the two things a message about a broken source has to do: say *which*
+         * one is broken, and say what to do about it. "Sources → Tidal →
+         * Verify" is the path, because the Sources screen is where extension
+         * rows live and where the verification opens.
+         *
+         * Its own function so the wording can be read, and tested, on its own.
+         */
+        internal fun verificationMessage(name: String): String =
+            "$name needs verification — Sources → $name → Verify"
+
+        /**
          * The sandbox key an extension's engines live under.
          *
          * Prefixed so that it cannot collide with a module index's own ids —
@@ -598,6 +779,17 @@ class SflxHost(
 
         /** How many searched rows are kept to hand back on the stream call. */
         private const val MAX_REMEMBERED_ROWS = 400
+
+        /**
+         * How long an answered search is kept.
+         *
+         * Long enough to cover one track's whole life — the search, the
+         * warming, the playback resolve, the upgrade and the next-track
+         * preparation all happen inside a couple of minutes of each other —
+         * and short enough that a catalogue which changed while the app was
+         * open is not answered from the past for the rest of the session.
+         */
+        private const val SEARCH_CACHE_TTL_MS = 120_000L
 
         /** The prefix an extension's source config carries, so it is routed here. */
         const val CONFIG_SCHEME = "sflx://"
@@ -693,7 +885,7 @@ internal object SflxQuality {
      * they routinely mention fallback formats ("FLAC fallback", "AAC 320"), and
      * inferring from them marks the wrong option as the lossless one.
      */
-    private data class Quality(val id: String, val kind: String)
+    private data class Quality(val id: String, val kind: String, val label: String)
 
     fun forTier(manifest: SflxManifest, tier: String, wantsAtmos: Boolean = false): String {
         val options = optionsOf(manifest)
@@ -719,6 +911,23 @@ internal object SflxQuality {
             val candidates = options.filter { it.kind == kind }
             val pick = when {
                 candidates.isEmpty() -> null
+                // A spatial request is answered with the extension's *Atmos*
+                // option, and not with the first spatial one it happens to
+                // list. The two are different files and only one of them is
+                // the immersive mix: Amazon publishes `eac3` ("Dolby Digital
+                // Plus") before `ac4` ("Dolby Atmos (AC-4)"), so taking the
+                // first spatial option answered an Atmos request with a
+                // surround stream the device may not even decode, and the
+                // AC-4 master was never asked for at all.
+                //
+                // The rule is Mornye's own — see `is_atmos_option` in
+                // `mornye/extensions/quality_options.py`: the canonical id
+                // `DOLBY_ATMOS`, or a spatial option whose label says
+                // "atmos". A spatial option that says neither is surround,
+                // not Atmos, and an extension with no Atmos option at all
+                // falls through to the lossless rung below — which is what
+                // Mornye does with the same manifest.
+                kind == "spatial" -> candidates.firstOrNull { isAtmos(it) }
                 // Within a tier: best first, except a LOW request (the smallest
                 // copy the extension has), and except the lossless rung used as
                 // a fallback for a lossy request — "HIGH" means "not the top
@@ -731,6 +940,25 @@ internal object SflxQuality {
         }
         return options.first().id
     }
+
+    /**
+     * Whether an option is a Dolby Atmos mix, and not merely surround.
+     *
+     * Mornye's rule, verbatim: the canonical id `DOLBY_ATMOS`, or a spatial
+     * option whose label names Atmos. An extension that publishes surround
+     * under a spatial kind — `eac3`, "Dolby Digital Plus" — is not offering
+     * the immersive mix, and asking it for one is asking for a file that is
+     * not the thing the listener chose.
+     *
+     * The id is also read for the word itself, because extensions name their
+     * own tiers: Tidal publishes `DOLBY_ATMOS` and others publish `ATMOS`,
+     * and a manifest that omits the label entirely would otherwise be read as
+     * having no Atmos option at all.
+     */
+    private fun isAtmos(option: Quality): Boolean =
+        option.id.equals("DOLBY_ATMOS", ignoreCase = true) ||
+            option.id.contains("atmos", ignoreCase = true) ||
+            (option.kind == "spatial" && option.label.contains("atmos", ignoreCase = true))
 
     /**
      * [requested] first, then the tiers below it, so a refused Atmos or Hi-Res
@@ -770,7 +998,7 @@ internal object SflxQuality {
             if (id.isBlank()) return@mapNotNull null
             val declared = (entry["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
             val label = (entry["label"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
-            Quality(id = id, kind = kindOf(declared, id, label))
+            Quality(id = id, kind = kindOf(declared, id, label), label = label)
         }
     }
 

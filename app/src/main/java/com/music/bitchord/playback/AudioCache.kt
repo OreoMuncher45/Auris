@@ -1394,11 +1394,24 @@ object AudioCache {
         localJob?.cancel()
         localJob = null
         if (!AppSettings.effectiveAutoUpgradeLocalStorage.value) return
-        if (!SourceResolver.canServeLossless()) return
         val head = upcoming.firstOrNull { it.mediaId in Downloads.saved.value } ?: return
         if (head.target.title.isBlank() || head.target.isVideo) return
+        // The source the file was downloaded from, when it was downloaded from
+        // one.
+        //
+        // It is asked even when the listener ranked it below YouTube, because
+        // it is the source that holds this recording and the only one that can
+        // hold a better tier of it — and for a file on the device it is the
+        // only place a better copy can come from at all. Without it, a track
+        // an extension had downloaded was prepared against a list that did not
+        // contain the extension.
+        val serving = SourceRegistry.parseTrackKey(head.mediaId)?.first
+        // A bit-exact copy has to be somewhere for the search to be worth
+        // starting, and the source the file came from counts towards that
+        // whatever rank the listener gave it.
+        if (!SourceResolver.canServeLossless(serving)) return
         localJob = scope.launch {
-            runCatching { SourceResolver.prepareForPlayback(head.target) }
+            runCatching { SourceResolver.prepareForPlayback(head.target, servedBy = serving) }
                 .onFailure { error ->
                     if (error is kotlinx.coroutines.CancellationException) return@onFailure
                     TrackLog.d(

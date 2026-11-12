@@ -156,6 +156,8 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.sources.mornye.SflxCatalog
+import com.music.bitchord.data.sources.mornye.SflxHost
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.widget.MediaWidget
@@ -4594,6 +4596,23 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * What to tell the listener when the source serving [uri] could not answer
+     * because its signed session is not in order, or null when there is
+     * nothing to say.
+     *
+     * The extension is found through the source the track was queued from: the
+     * URI names the config, the config names the package, and the package
+     * knows whether its session is in order. An addon or a built-in source has
+     * no package behind it, and says nothing.
+     */
+    private fun verificationAdviceFor(uri: Uri?): String? {
+        val configId = uri?.getQueryParameter("s") ?: return null
+        val config = SourceRegistry.config(configId) ?: return null
+        val extensionId = SflxHost.extensionIdOf(config.baseUrl) ?: return null
+        return SflxCatalog.host?.verificationAdvice(extensionId)
+    }
+
+    /**
      * Puts a track that died mid-read back on its feet.
      *
      * Two things get thrown away before trying again, because both have been
@@ -4632,6 +4651,21 @@ class PlaybackService : MediaLibraryService() {
                 "$mediaId failed while decoding the Dolby stream (${error.errorCodeName}); recovering",
                 about = mediaId,
             )
+        }
+        // The source that was serving this track could not answer because its
+        // signed session is not in order, and the listener is the only one who
+        // can put that right.
+        //
+        // Said once per track: the advice is a fact about the extension rather
+        // than about this attempt, so repeating it on every retry would be
+        // noise, and the recovery below may well succeed on a different source
+        // — in which case the listener has been told something that is still
+        // true and still worth knowing.
+        if (attempts == 1) {
+            verificationAdviceFor(uri)?.let { advice ->
+                TrackLog.w("BitChord", advice, about = mediaId)
+                announce(advice)
+            }
         }
         // A local file that is not there is the one failure retrying cannot
         // touch, and the only one where the fix is to stop asking for the file.
@@ -5577,20 +5611,30 @@ class PlaybackService : MediaLibraryService() {
         byHand: Boolean = false,
     ): Boolean {
         if (Downloads.verifiedSavedUri(mediaId) == null) return false
-        // A track that came from an addon is left alone, and not because there
-        // is nothing to look for: its file *is* the copy that source served —
-        // the download resolved through the same ladder, so the local file and
-        // the best copy available were the same thing when it was saved.
+        // A track that came from a source is offered the sources like any
+        // other, and the source it came from is named below.
         //
-        // What it could not do is come back out again. A swap hands the player
-        // a marked rendition of an item it can re-resolve, and for an addon
-        // track that item is `bitchord://source…`, which the resolver answers
-        // by asking the source afresh rather than by handing over the parked
-        // stream ([QualityUpgrade.forcedStream] is keyed on the `v=` that a
-        // YouTube id carries). An "upgrade" there would overwrite a file the
-        // listener has with a fresh stream from the same source at the same
-        // quality, and pay a seam in the audio for it.
-        if (SourceRegistry.parseTrackKey(mediaId) != null) return false
+        // It used to be left alone outright, and the reason it gave was
+        // technical rather than musical: "a swap hands the player a marked
+        // rendition of an item it can re-resolve, and for an addon track that
+        // item is `bitchord://source…`, which the resolver answers by asking
+        // the source afresh rather than by handing over the parked stream
+        // (`QualityUpgrade.forcedStream` is keyed on the `v=` that a YouTube
+        // id carries)".
+        //
+        // That keying was the bug, and it has been fixed: the parked stream is
+        // now looked up by the media id, which a source-backed track spells
+        // out as `src:<config>::<track>` — see [QualityUpgrade.forcedStream].
+        // So the objection no longer holds, and leaving the guard in place
+        // meant that a track downloaded through an extension was never
+        // upgraded at all: the file was on the device, the extension held the
+        // lossless copy, and "upgrade local music" did nothing — which is
+        // exactly the inconsistency it was written to end.
+        //
+        // What the file *is* still counts: the floor the replacement has to
+        // clear is the file's own quality, so the same source answering with
+        // the same tier is refused, and the search costs a seam only when the
+        // answer is genuinely better.
         val song = withContext(Dispatchers.Main) {
             player?.currentMediaItem?.takeIf { it.mediaId == mediaId }?.toSong()
         } ?: return false
@@ -5601,6 +5645,10 @@ class PlaybackService : MediaLibraryService() {
             playingMime = format.sampleMimeType,
             playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
             explicit = byHand,
+            // The source the file was downloaded from. It is the one that may
+            // hold a better tier of this recording, and it is asked again even
+            // when the listener ranked it below YouTube.
+            servedBy = SourceRegistry.parseTrackKey(mediaId)?.first,
         )
     }
 

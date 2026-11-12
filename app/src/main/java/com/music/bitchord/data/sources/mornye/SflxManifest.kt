@@ -283,4 +283,19 @@ object Versions {
 }
 
 /** Raised for a package or manifest the host will not run. */
-class SflxException(message: String) : Exception(message)
+open class SflxException(message: String) : Exception(message)
+
+/**
+ * A failure that says what to do about it.
+ *
+ * The extension could not answer because its signed session is not in order,
+ * and the listener is the only one who can put it right — the gateway wants a
+ * browser, a challenge and a human. So the message names the extension and
+ * says where the button is, rather than reporting a status code at the
+ * listener.
+ *
+ * Its own type because the wording is the whole point: a caller that shows
+ * the message as it stands must not also prefix it with the source's name,
+ * and a caller that logs it must not turn it back into a bare error.
+ */
+class SflxVerificationNeeded(message: String) : SflxException(message)

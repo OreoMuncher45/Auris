@@ -40,6 +40,27 @@ class ModuleSource(
     override val displayName: String get() = config.displayName
 
     /**
+     * Whether this source can serve audio.
+     *
+     * False for an installed extension that declares itself a metadata
+     * provider: Apple's package in the Mornye store describes the catalogue
+     * and answers lyrics, and there is no downloader behind it. It is still a
+     * source — its rows are the catalogue's own, with its artwork and album —
+     * but it is not one that can hand over a stream.
+     *
+     * A module index is always assumed to serve audio: it is a list of
+     * plugins that stream, and the ones that do not answer the stream call
+     * with nothing.
+     */
+    override val servesAudio: Boolean
+        get() {
+            val id = extensionId ?: return true
+            val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                ?: return true
+            return installed.manifest.isDownloadProvider
+        }
+
+    /**
      * One manager per source instance. The manager's in-memory module cache
      * survives across successive search calls on the same instance, which is
      * what keeps the QuickJS engines alive between a search and the stream
@@ -235,7 +256,7 @@ class ModuleSource(
             return emptyList()
         }
         val response = host.search(extensionId, query, limit).getOrElse { error ->
-            TrackLog.w(TAG, "${config.displayName}: search failed — ${error.message}")
+            TrackLog.w(TAG, whyFor(config.displayName, error))
             return emptyList()
         }
         return response.tracks.map { track ->
@@ -309,7 +330,7 @@ class ModuleSource(
                     return@withContext null
                 }
                 host.streamUrl(extensionId, upstreamId, request.tier, request.wantsAtmos).getOrElse { e ->
-                    TrackLog.w(TAG, "${config.displayName}: ${e.message}")
+                    TrackLog.w(TAG, whyFor(config.displayName, e))
                     return@withContext null
                 }
             } else {
@@ -484,6 +505,23 @@ class ModuleSource(
 
     internal companion object {
         const val TAG = "BitChord"
+
+        /**
+         * The line a failure is reported on.
+         *
+         * Ordinary failures are reported against the source that had them:
+         * "Tidal: the extension returned no stream URL". One kind is not — a
+         * failure that says what to *do* about it, which is what a signed
+         * session that is not in order is: "Tidal needs verification — Sources
+         * → Tidal → Verify". Prefixing that with the source's name would say
+         * "Tidal: Tidal needs verification…", so it is reported on its own.
+         */
+        internal fun whyFor(displayName: String, error: Throwable): String =
+            if (error is com.music.bitchord.data.sources.mornye.SflxVerificationNeeded) {
+                error.message.orEmpty()
+            } else {
+                "$displayName: ${error.message}"
+            }
 
         /**
          * Whether a module's stream URL is one no server could answer, decided

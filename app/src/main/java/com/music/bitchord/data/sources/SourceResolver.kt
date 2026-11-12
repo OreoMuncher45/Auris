@@ -171,7 +171,17 @@ object SourceResolver {
         if (request.wantsLossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
-                val upgraded = matchAndStream(source, target, request) ?: continue
+                // The length bar, as everywhere a recording is swapped for
+                // another one: a replacement has to be the same recording, and
+                // a runtime is the one statement about a recording that cannot
+                // be argued with. A row that states no runtime cannot be
+                // checked, and is not a replacement.
+                val upgraded = matchAndStream(
+                    source = source,
+                    target = target,
+                    request = request,
+                    strictLength = target.durationSec != null,
+                ) ?: continue
                 // Only a genuinely lossless answer is an upgrade — and the
                 // immersive mix counts, because the Dolby rung asks for the
                 // lossless walk with an Atmos answer preferred ahead of it.
@@ -199,8 +209,21 @@ object SourceResolver {
         // user asked for, and another source having it is not unlikely — this
         // is the difference between a dead server skipping the queue forward
         // and a dead server being invisible.
+        //
+        // Sources that serve no audio are left out of the walk: a metadata
+        // catalogue cannot answer a stream, and asking one spends a search
+        // and a call to be told what was already known — that it cannot.
         val (fallbackSource, stream) =
-            bestAcross(active.filterNot { it.configId == configId }, target, request) ?: return null
+            bestAcross(
+                active.filterNot { it.configId == configId }.filter { it.servesAudio },
+                target,
+                request,
+                // A fallback is a substitution: this track's own source failed,
+                // and what plays instead has to be the same recording. The
+                // runtime is what says so, and a row that states none cannot
+                // be checked.
+                strictLength = target.durationSec != null,
+            ) ?: return null
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
     }
@@ -240,8 +263,15 @@ object SourceResolver {
         val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
         if (candidates.isEmpty()) return null
         val request = requestForNow()
-        val (source, stream) = bestAcross(candidates, target, request)
-            ?: return null
+        // A substitution, and so held to the length: what plays in place of
+        // the requested track has to be the same recording, and the runtime is
+        // the one statement about a recording that cannot be argued with.
+        val (source, stream) = bestAcross(
+            candidates,
+            target,
+            request,
+            strictLength = target.durationSec != null,
+        ) ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
         // streams the caller went on to refuse — which made a log of a
@@ -309,7 +339,13 @@ object SourceResolver {
         val quick = candidatesForYouTube(SourceRegistry.activeForPlayback())
             .filter { it.kind.worthPrefetching }
         if (quick.isEmpty()) return null
-        val (source, stream) = bestAcross(quick, target, requestForNow()) ?: return null
+        // A substitution, and so held to the length: see [substituteForYouTube].
+        val (source, stream) = bestAcross(
+            quick,
+            target,
+            requestForNow(),
+            strictLength = target.durationSec != null,
+        ) ?: return null
         TrackLog.d(
             TAG,
             "warmed: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
@@ -343,13 +379,29 @@ object SourceResolver {
      * The caller must pin the result with [StreamChoice] before caching a byte
      * of it: see [prefetchSubstitute], which has the same requirement and the
      * corruption that follows from skipping it.
+     *
+     * @param servedBy the source the track came from, when it came from one.
+     *   It is asked even when the listener ranked it below YouTube, because it
+     *   is the source that holds this recording and the only one that can hold
+     *   a better tier of it — and for a file on the device it is the source
+     *   that made the file, which is the one place a better copy can come
+     *   from at all.
      */
-    suspend fun prepareForPlayback(target: TrackMatcher.Target): SourceStream? {
+    suspend fun prepareForPlayback(
+        target: TrackMatcher.Target,
+        servedBy: String? = null,
+    ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
-        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
-        if (candidates.isEmpty()) return null
+        val active = SourceRegistry.activeForPlayback()
+        val pool = upgradeCandidates(
+            candidates = candidatesForYouTube(active),
+            active = active,
+            servedBy = servedBy,
+            reaskServedBy = servedBy != null,
+        )
+        if (pool.isEmpty()) return null
         val (source, stream) = bestAcross(
-            candidates,
+            pool,
             target,
             requestForNow(),
             waitForAll = true,
@@ -931,9 +983,61 @@ object SourceResolver {
      * question it gates is whether a search is worth starting at all: see
      * [QualityUpgrade.couldStillUpgrade], which is asked on every progress
      * sample for the track that is playing.
+     *
+     * @param alsoConfigId a source that counts whatever rank the listener gave
+     *   it. The source a file was downloaded *from* is one of these: it holds
+     *   that recording, and it is the only one that can hold a better tier of
+     *   it. Leaving it out made "upgrade local music" do nothing at all on
+     *   every track an extension had downloaded — the file was already there,
+     *   the extension held the FLAC, and the question was never asked.
      */
-    fun canServeLossless(): Boolean =
-        candidatesForYouTube(SourceRegistry.activeForPlayback()).any { it.kind.canServeLossless }
+    fun canServeLossless(alsoConfigId: String? = null): Boolean {
+        val active = SourceRegistry.activeForPlayback()
+        return losslessAvailable(candidatesForYouTube(active), active, alsoConfigId)
+    }
+
+    /**
+     * The same question, asked of lists rather than of the registry — so it can
+     * be read, and tested, on its own.
+     *
+     * @param candidates the sources ranked above YouTube.
+     * @param active every enabled source, in rank order.
+     * @param alsoConfigId a source counted whatever its rank.
+     */
+    internal fun losslessAvailable(
+        candidates: List<MusicSource>,
+        active: List<MusicSource>,
+        alsoConfigId: String?,
+    ): Boolean {
+        if (candidates.any { it.kind.canServeLossless }) return true
+        val extra = alsoConfigId?.let { id -> active.firstOrNull { it.configId == id } }
+            ?: return false
+        // A source that serves no audio cannot serve lossless either, whatever
+        // its kind claims: a metadata-only extension is a catalogue.
+        return extra.servesAudio && extra.kind.canServeLossless
+    }
+
+    /**
+     * Whether the named source is enabled and can serve audio.
+     *
+     * The question a source-backed track asks about the source behind it: a
+     * source that has been switched off, or that serves no audio at all, is
+     * not somewhere a better copy can come from.
+     */
+    fun canServe(configId: String?): Boolean =
+        servingAvailable(SourceRegistry.activeForPlayback(), configId)
+
+    /**
+     * The same question, asked of a list rather than of the registry — so it
+     * can be read, and tested, on its own.
+     *
+     * @param active every enabled source, in rank order.
+     * @param configId the source behind the track, or null when there is none.
+     */
+    internal fun servingAvailable(active: List<MusicSource>, configId: String?): Boolean {
+        if (configId == null) return false
+        return active.any { it.configId == configId && it.servesAudio }
+    }
 
     /**
      * The sources the second look asks.
@@ -966,7 +1070,11 @@ object SourceResolver {
         if (!reaskServedBy) {
             return candidates.filterNot { it.configId == servedBy }
         }
-        val serving = servedBy?.let { id -> active.firstOrNull { it.configId == id } }
+        // The serving source is put back only if it can serve audio at all: a
+        // metadata-only extension answers a search with a catalogue and cannot
+        // hand over a stream, so asking it again would spend a search to be
+        // told what was already known.
+        val serving = servedBy?.let { id -> active.firstOrNull { it.configId == id && it.servesAudio } }
         return if (serving != null && serving !in candidates) candidates + serving else candidates
     }
 
@@ -979,10 +1087,16 @@ object SourceResolver {
      * every enabled source instead: there is no YouTube rung left to protect,
      * and the ordinary ranking already says the addons come first. The two
      * readings agree on the empty list, which is a walk with nothing to ask.
+     *
+     * Sources that serve no audio are left out: a metadata-only extension
+     * cannot answer a stream, and every list this feeds is a question about
+     * audio. Its own value — the catalogue's rows, with their artwork and
+     * album — is collected where those are wanted, in the search.
      */
     internal fun candidatesForYouTube(active: List<MusicSource>): List<MusicSource> {
         val at = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
-        return if (at < 0) active else active.take(at)
+        val ranked = if (at < 0) active else active.take(at)
+        return ranked.filter { it.servesAudio }
     }
 
     /**

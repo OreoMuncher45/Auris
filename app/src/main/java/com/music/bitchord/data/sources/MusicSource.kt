@@ -167,6 +167,24 @@ interface MusicSource {
     /** What the user named it, falling back to the server's own hostname. */
     val displayName: String
 
+    /**
+     * Whether this source can hand over audio at all.
+     *
+     * True for everything that serves streams, and false for a source that only
+     * *describes* them: a Mornye extension that declares itself a metadata
+     * provider answers a search with Apple's own catalogue — artwork, album,
+     * release — and cannot play a byte of it.
+     *
+     * It is a separate question from "is this source switched on", and it is
+     * asked in two places. The playback searches ask it, because a source that
+     * cannot stream is a wasted call and — worse — a false promise: a list
+     * that says something can serve lossless when the only thing that can is a
+     * catalogue starts hunts that cannot succeed. And the sources list asks
+     * it, because a row that cannot play has to say so rather than let the
+     * listener find out by pressing play.
+     */
+    val servesAudio: Boolean get() = true
+
     /** Reachability and credentials, for the sources screen and for skipping dead sources. */
     suspend fun health(): SourceHealth
 

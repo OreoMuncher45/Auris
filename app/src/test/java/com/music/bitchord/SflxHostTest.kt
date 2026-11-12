@@ -185,6 +185,78 @@ class SflxHostTest {
         assertEquals("HI_RES", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))
     }
 
+    // ── Atmos, not merely surround ───────────────────────────────────────
+
+    /**
+     * Amazon's own manifest, as published.
+     *
+     * It lists two spatial tiers, and the first one is not the immersive mix:
+     * `eac3` is Dolby Digital Plus — surround — and `ac4` is Dolby Atmos.
+     * They are different files, and only one of them is what "Dolby Atmos"
+     * means.
+     */
+    private fun amazonLike(): SflxManifest = SflxManifestParser.parse(
+        """
+        {
+          "name": "amazon", "type": ["download_provider"],
+          "qualityOptions": [
+            {"id":"best","label":"FLAC Best Available","kind":"lossless"},
+            {"id":"opus","label":"Opus 320kbps","kind":"lossy"},
+            {"id":"eac3","label":"Dolby Digital Plus","kind":"spatial"},
+            {"id":"ac4","label":"Dolby Atmos (AC-4)","kind":"spatial"}
+          ]
+        }
+        """.trimIndent(),
+    )
+
+    @Test
+    fun `an immersive request asks for the Atmos option and not the surround one`() {
+        // Taking the first spatial option — which is what this used to do —
+        // answered "Dolby Atmos" with an E-AC-3 stream the device may not even
+        // decode, and never asked for the AC-4 master at all.
+        assertEquals("ac4", SflxQuality.forTier(amazonLike(), "LOSSLESS", wantsAtmos = true))
+    }
+
+    @Test
+    fun `the canonical Atmos id is taken as it is`() {
+        val tidal = SflxManifestParser.parse(
+            """
+            {"name":"tidal-web","type":["download_provider"],
+             "qualityOptions":[
+               {"id":"DOLBY_ATMOS","label":"Dolby Atmos","kind":"spatial"},
+               {"id":"HI_RES_LOSSLESS","label":"HiRes FLAC","kind":"lossless"},
+               {"id":"LOSSLESS","label":"Lossless","kind":"lossless"},
+               {"id":"HIGH","label":"High","kind":"lossy"},
+               {"id":"LOW","label":"Low","kind":"lossy"}]}
+            """.trimIndent(),
+        )
+        assertEquals("DOLBY_ATMOS", SflxQuality.forTier(tidal, "LOSSLESS", wantsAtmos = true))
+    }
+
+    @Test
+    fun `an extension with surround but no Atmos answers with lossless`() {
+        // Surround is not Atmos: the two are different mixes and a device
+        // without the right decoder cannot play either. What is offered
+        // instead is the bit-exact master, which is what the listener asked
+        // for before the immersive rung was tried.
+        val surroundOnly = SflxManifestParser.parse(
+            """
+            {"name":"surround","type":["download_provider"],
+             "qualityOptions":[
+               {"id":"eac3","label":"Dolby Digital Plus","kind":"spatial"},
+               {"id":"best","label":"FLAC Best Available","kind":"lossless"}]}
+            """.trimIndent(),
+        )
+        assertEquals("best", SflxQuality.forTier(surroundOnly, "LOSSLESS", wantsAtmos = true))
+    }
+
+    @Test
+    fun `a lossless request never takes an immersive tier`() {
+        // The immersive rung is its own request, not a bonus on top of a
+        // bit-exact one.
+        assertEquals("best", SflxQuality.forTier(amazonLike(), "LOSSLESS"))
+    }
+
     // ── Routing ──────────────────────────────────────────────────────────
 
     @Test

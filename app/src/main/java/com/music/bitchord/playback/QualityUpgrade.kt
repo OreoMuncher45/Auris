@@ -5,6 +5,7 @@ import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -396,6 +397,16 @@ object QualityUpgrade {
             // effective value, so offline mode turns it off without the
             // listener's own answer being forgotten.
             if (!explicit && !AppSettings.effectiveAutoUpgradeLocalStorage.value) return false
+            // The source the file was downloaded from, when it was downloaded
+            // from one.
+            //
+            // It counts, and it counts whatever rank the listener gave it: it
+            // is the source that holds this recording, and the only one that
+            // can hold a *better* tier of it. Leaving it out made "upgrade
+            // local music" do nothing at all on every track an extension had
+            // downloaded — the file was already on the device, the extension
+            // held the FLAC, and the question was never asked.
+            val serving = servingSourceOf(mediaId)
             // A lossy re-encode of a file is never better than the file
             // ([SourceResolver.worthSwapping] refuses one against an unknown
             // floor anyway), so only a source that can hand over a bit-exact
@@ -412,9 +423,17 @@ object QualityUpgrade {
             // and that care lives where the item is built: see
             // [Song.toStreamMediaItem] and [PlaybackService.swapPointFor].
             return if (explicit) {
-                SourceResolver.canSubstituteForYouTube()
+                // A hand-asked upgrade may take any better copy, not only a
+                // bit-exact one: the listener asked, and a 320kbps copy of a
+                // 128kbps file is what they were asking for. So every source
+                // that could stand in for YouTube counts — and so does the
+                // source the file came from, which counts only when it is
+                // still switched on and still serves audio. A source that has
+                // been turned off, or one that only describes a catalogue, is
+                // not somewhere a better copy can come from.
+                SourceResolver.canSubstituteForYouTube() || SourceResolver.canServe(serving)
             } else {
-                SourceResolver.canServeLossless()
+                SourceResolver.canServeLossless(serving)
             }
         }
         // A source-backed track is already being served by a source, so the
@@ -429,6 +448,18 @@ object QualityUpgrade {
         // when lossless was asked for.
         return SourceResolver.canSubstituteForYouTube()
     }
+
+    /**
+     * The source a track came from, when it came from one.
+     *
+     * Read off the media id, which is where a source-backed track keeps its
+     * identity: `src:<config>::<track>`. The URI cannot say it, because the
+     * file an extension downloaded is a `content://` path with no query at all
+     * — and the source behind that file is the one that may hold a better
+     * tier of the very recording it is a copy of.
+     */
+    private fun servingSourceOf(mediaId: String): String? =
+        SourceRegistry.parseTrackKey(mediaId)?.first
 
     /**
      * Marks a track that is playing without ever having been resolved.
@@ -488,6 +519,19 @@ object QualityUpgrade {
         playingMime: String?,
         playing: StreamFormat?,
         explicit: Boolean = false,
+        /**
+         * The source serving the track, when it is not in the URI.
+         *
+         * A stream-backed item says so in its own query — `bitchord://source?s=…`
+         * — but a *file* has no query at all: the file that an extension
+         * downloaded is a `content://` path, and the source it came from is
+         * known only from the media id, which is `src:<config>::<track>`.
+         *
+         * It matters because that source is the one that may hold a better
+         * tier of the very recording the file is a copy of, and the second
+         * look leaves a serving source out unless it is named here.
+         */
+        servedBy: String? = null,
     ): Boolean {
         if (!couldStillUpgrade(mediaId, uri, explicit)) return false
         // [asked] is set only on the two *verdicts* below, not on adoption.
@@ -523,7 +567,7 @@ object QualityUpgrade {
             // extension holds several copies of a recording and answers with
             // whichever its own ladder reached — and the second look leaves
             // the serving source out unless it is named here.
-            servedBy = uri.getQueryParameter("s")?.takeIf { it.isNotBlank() },
+            servedBy = servedBy ?: uri.getQueryParameter("s")?.takeIf { it.isNotBlank() },
             // The decoder said what the bytes are. A copy that is not
             // bit-exact and not the spatial mix is a lossy one, and a lossless
             // candidate over it is an upgrade rather than an intrusion — see

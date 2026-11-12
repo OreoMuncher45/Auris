@@ -127,6 +127,10 @@ object SflxCatalog {
         com.music.bitchord.data.lyrics.LyricsRepository.extensionProvider = SflxLyrics
         Log.d(TAG, "sflx store at $directory")
         refresh()
+        // The engines, loaded before anybody asks for one. A load is a token
+        // fetch and a client handshake, and paying for it on the first search
+        // is what made the first track of a session slow.
+        hostRef?.warmUp()
     }
 
     /** Re-reads the installed packages and brings the sources list in line with them. */
@@ -300,32 +304,61 @@ object SflxCatalog {
     /**
      * Makes the sources list match [packages].
      *
-     * Only `download_provider` packages get a row. A metadata-only extension
-     * cannot serve a stream, and a row that appears in the source order but can
-     * never answer is worse than no row: it takes a place in a ranking it
-     * cannot compete in, and every lookup that reaches it pays for a call that
-     * returns nothing. Such a package can still be installed — its metadata is
-     * read by whatever asks for it — it just is not a *source*.
+     * Every package that can *describe* tracks gets a row — the download
+     * providers and the metadata providers alike. A metadata-only extension
+     * used to be left out of the list on the grounds that it could never
+     * answer a stream, and that was true and useless: the row was not the
+     * point, the *catalogue* was.
+     *
+     * Apple's package in the Mornye store is the case that settles it. It
+     * answers a search with Apple's own rows — the artwork, the album, the
+     * release, the ISRC — and it can answer lyrics word by word. Its rows are
+     * what the listener sees when they search for a track, and when one of
+     * those rows is played the audio comes from whichever source holds the
+     * recording, because this one holds no audio at all. Leaving it out of
+     * the list meant the catalogue it carries was invisible, and the only
+     * thing the package could do was the one thing the app already had.
+     *
+     * A source that cannot serve audio says so on its row — see
+     * [ModuleSource.servesAudio] — and is left out of the playback walks,
+     * where it could only cost a call.
+     *
+     * A newly installed *metadata* extension goes to the top of the order.
+     * It cannot take a place in the playback ranking — there is no audio to
+     * rank — so the order is free to mean what the listener means by it: the
+     * catalogue asked first. An extension that serves audio is left where it
+     * is, because its position is a statement about which copy of a track
+     * should play, and installing something new is not a request to change
+     * that.
      */
     private fun syncSources(packages: List<InstalledSflx>) {
-        val downloadable = packages.filter { it.manifest.isDownloadProvider }
-        val wanted = downloadable.associateBy { configIdOf(it.id) }
+        val describable = packages.filter {
+            it.manifest.isDownloadProvider || it.manifest.isMetadataProvider
+        }
+        val wanted = describable.associateBy { configIdOf(it.id) }
         val existing = SourceRegistry.extensions().associateBy { it.id }
+
+        // The metadata extensions added by this pass, which are the ones that
+        // go to the top.
+        val addedMetadata = mutableListOf<String>()
 
         wanted.forEach { (configId, installed) ->
             val current = existing[configId]
             when {
-                current == null -> SourceRegistry.add(
-                    SourceConfig(
-                        id = configId,
-                        kind = SourceKind.MODULE,
-                        label = installed.manifest.displayName,
-                        baseUrl = SflxHost.configUrlFor(installed.id),
-                        // Not stock: it was the listener's install, so it is
-                        // theirs to remove. Nothing is shipped with this app.
-                        stock = false,
-                    ),
-                )
+                current == null -> {
+                    SourceRegistry.add(
+                        SourceConfig(
+                            id = configId,
+                            kind = SourceKind.MODULE,
+                            label = installed.manifest.displayName,
+                            baseUrl = SflxHost.configUrlFor(installed.id),
+                            // Not stock: it was the listener's install, so it is
+                            // theirs to remove. Nothing is shipped with this app.
+                            stock = false,
+                        ),
+                    )
+                    if (!installed.manifest.isDownloadProvider) addedMetadata += configId
+                }
                 current.label != installed.manifest.displayName -> SourceRegistry.update(
                     current.copy(label = installed.manifest.displayName),
                 )
@@ -335,6 +368,14 @@ object SflxCatalog {
         // directory cleared by the system — is removed here rather than being
         // left as a source that fails every call.
         existing.keys.filterNot { it in wanted }.forEach(SourceRegistry::remove)
+
+        // The catalogue first, and only for a catalogue that was just
+        // installed. Everything else keeps the order the listener gave it.
+        if (addedMetadata.isNotEmpty()) {
+            val order = addedMetadata + SourceRegistry.extensions().map { it.id }
+                .filterNot { it in addedMetadata }
+            SourceRegistry.reorderExtensions(order)
+        }
     }
 
     private const val DIRECTORY = "extensions"
