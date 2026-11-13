@@ -975,13 +975,27 @@ private fun DrawScope.drawLaneGround(top: Float, height: Float) {
  * average rather than its extreme — is what makes it read as sound rather
  * than as a block.
  *
- * ## Why a gap in the measurement is a gap in the drawing
+ * ## Why the columns between the samples are filled in
+ *
+ * A column is a pixel of the drawing; the curve behind it is a list of
+ * samples. When the samples are sparser than the pixels — the analyser's
+ * energy curve is a quarter of a second apart, and a pixel is far finer than
+ * that — most pixels have no sample of their own, and a run of measured
+ * pixels is one pixel wide. A one-pixel-wide envelope is a path with no area
+ * in it: nothing is drawn at all, and the lane reads as empty although the
+ * curve is there and continuous.
+ *
+ * So the columns between two samples are filled by interpolation, and the
+ * curve is drawn across the *edges* of its run rather than through the centres
+ * of its columns, so that a run one pixel wide still has area in it.
+ *
+ * ## Why a gap in the measurement is still a gap in the drawing
  *
  * A streamed track is measured in pieces, and the middle of it may be
  * unmeasured for a long time. Drawing the unmeasured stretch as a line down
- * to nothing invents a silence that is not there; so each run of measured
- * columns is drawn as its own shape, and the space between them is left
- * alone.
+ * to nothing invents a silence that is not there; so a stretch whose
+ * neighbours are further apart than [WAVEFORM_MAX_GAP_SECONDS] is left blank,
+ * and each run of measured columns is drawn as its own shape.
  */
 private fun DrawScope.drawWaveform(
     digest: TrackAnalysisDigest,
@@ -991,39 +1005,126 @@ private fun DrawScope.drawWaveform(
     span: Double,
     mapToAxis: (Double) -> Double,
 ) {
-    val peaks = digest.waveform
-    val times = digest.waveformTimes
-    if (peaks.isEmpty() || times.isEmpty()) return
+    val columns = size.width.toInt().coerceAtLeast(1)
+    val grid = waveformColumns(
+        peaks = digest.waveform,
+        times = digest.waveformTimes,
+        from = from,
+        span = span,
+        columns = columns,
+        mapToAxis = mapToAxis,
+    )
     val mid = laneTop + laneHeight / 2f
     val amplitude = laneHeight * 0.46f
-    val columns = size.width.toInt().coerceAtLeast(1)
-    val tops = FloatArray(columns)
-    val bodies = FloatArray(columns)
-    val sums = DoubleArray(columns)
-    val counts = IntArray(columns)
+    val step = size.width / columns
+    var runStart = -1
+    for (column in 0..columns) {
+        val measured = column < columns && grid.filled[column]
+        if (measured && runStart < 0) runStart = column
+        if (!measured && runStart >= 0) {
+            drawWaveformRun(runStart, column - 1, grid.tops, grid.bodies, mid, amplitude, step)
+            runStart = -1
+        }
+    }
+}
+
+/**
+ * The longest stretch, in seconds, that may be drawn across without a sample
+ * of its own.
+ *
+ * The analyser's own spacing is a quarter of a second, so this is a few
+ * samples of slack — enough that a curve at any resolution the analyser
+ * produces fills its columns, and far short of the holes a genuinely
+ * unmeasured stretch leaves.
+ */
+private const val WAVEFORM_MAX_GAP_SECONDS = 0.75
+
+/**
+ * The waveform, as the drawing's columns.
+ *
+ * The peak of each column and the average of it — the outer shape and the
+ * bright core — plus whether the column has anything in it at all.
+ */
+internal class WaveformColumns(
+    val tops: FloatArray,
+    val bodies: FloatArray,
+    val filled: BooleanArray,
+)
+
+/**
+ * The curve, read onto the drawing's columns.
+ *
+ * A column takes the loudest sample that lands in it, and the average of the
+ * samples that do. A column with no sample of its own is filled from the two
+ * samples around it, so a curve that is sparser than the drawing still reads
+ * as a shape rather than as a dotted line; a column whose neighbours are more
+ * than [maxGapSeconds] apart is left empty, because that is a stretch nobody
+ * measured rather than a pixel nobody sampled.
+ */
+internal fun waveformColumns(
+    peaks: List<Float>,
+    times: List<Double>,
+    from: Double,
+    span: Double,
+    columns: Int,
+    mapToAxis: (Double) -> Double,
+    maxGapSeconds: Double = WAVEFORM_MAX_GAP_SECONDS,
+): WaveformColumns {
+    val count = columns.coerceAtLeast(1)
+    val tops = FloatArray(count)
+    val bodies = FloatArray(count)
+    val filled = BooleanArray(count)
+    if (peaks.isEmpty() || times.isEmpty() || span <= 0.0) return WaveformColumns(tops, bodies, filled)
+
+    // The samples along the drawing's own axis, in order. The axis is the
+    // outgoing track's clock for both lanes — the arriving one is laid on it —
+    // so this is the order the columns are read in.
+    val samples = ArrayList<Pair<Double, Float>>(peaks.size)
     for (index in peaks.indices) {
         val time = times.getOrNull(index) ?: continue
+        val value = peaks[index]
+        if (!value.isFinite()) continue
         val axis = mapToAxis(time)
+        if (!axis.isFinite()) continue
+        samples += axis to value.coerceIn(0f, 1f)
+    }
+    if (samples.isEmpty()) return WaveformColumns(tops, bodies, filled)
+    samples.sortBy { it.first }
+
+    val sums = DoubleArray(count)
+    val counts = IntArray(count)
+    for ((axis, value) in samples) {
         if (axis < from || axis > from + span) continue
-        val column = (((axis - from) / span) * columns).toInt().coerceIn(0, columns - 1)
-        val value = peaks[index].coerceIn(0f, 1f)
+        val column = (((axis - from) / span) * count).toInt().coerceIn(0, count - 1)
         if (value > tops[column]) tops[column] = value
         sums[column] += value
         counts[column] += 1
     }
-    val step = size.width / columns
-    var runStart = -1
-    for (column in 0..columns) {
-        val measured = column < columns && counts[column] > 0
-        if (measured && runStart < 0) runStart = column
-        if (!measured && runStart >= 0) {
-            for (inside in runStart until column) {
-                bodies[inside] = (sums[inside] / counts[inside]).toFloat()
-            }
-            drawWaveformRun(runStart, column - 1, tops, bodies, mid, amplitude, step)
-            runStart = -1
-        }
+    for (column in 0 until count) {
+        if (counts[column] <= 0) continue
+        bodies[column] = (sums[column] / counts[column]).toFloat()
+        filled[column] = true
     }
+
+    // The columns with no sample of their own, filled from the two samples
+    // around them.
+    var index = 0
+    for (column in 0 until count) {
+        if (filled[column]) continue
+        val position = from + (column + 0.5) / count * span
+        while (index < samples.size - 1 && samples[index + 1].first <= position) index++
+        val left = samples.getOrNull(index) ?: continue
+        val right = samples.getOrNull(index + 1) ?: continue
+        if (position < left.first || position > right.first) continue
+        val gap = right.first - left.first
+        if (gap <= 0.0 || gap > maxGapSeconds) continue
+        val ratio = ((position - left.first) / gap).toFloat()
+        val value = left.second + (right.second - left.second) * ratio
+        tops[column] = value
+        bodies[column] = value
+        filled[column] = true
+    }
+    return WaveformColumns(tops, bodies, filled)
 }
 
 /**
@@ -1032,6 +1133,11 @@ private fun DrawScope.drawWaveform(
  * The outer shape is the column's peak; the inner one is its average. The
  * two together are what makes a waveform look like sound rather than like a
  * bar chart: the outer line is the transient, the inner one is the weight.
+ *
+ * The shape is drawn across the run's *edges* rather than through the centres
+ * of its columns, so a run one column wide is still a shape with area in it
+ * rather than a path with none — which is what a lane drawn from a sparse
+ * curve used to be: nothing at all.
  */
 private fun DrawScope.drawWaveformRun(
     from: Int,
@@ -1043,31 +1149,27 @@ private fun DrawScope.drawWaveformRun(
     step: Float,
 ) {
     if (to < from) return
+    val left = from * step
+    val right = (to + 1) * step
     fun xOf(column: Int): Float = column * step + step / 2f
 
     val envelope = Path()
-    for (column in from..to) {
-        val x = xOf(column)
-        val half = tops[column] * amplitude
-        if (column == from) envelope.moveTo(x, mid - half) else envelope.lineTo(x, mid - half)
-    }
-    for (column in to downTo from) {
-        val x = xOf(column)
-        envelope.lineTo(x, mid + tops[column] * amplitude)
-    }
+    envelope.moveTo(left, mid - tops[from] * amplitude)
+    for (column in from..to) envelope.lineTo(xOf(column), mid - tops[column] * amplitude)
+    envelope.lineTo(right, mid - tops[to] * amplitude)
+    envelope.lineTo(right, mid + tops[to] * amplitude)
+    for (column in to downTo from) envelope.lineTo(xOf(column), mid + tops[column] * amplitude)
+    envelope.lineTo(left, mid + tops[from] * amplitude)
     envelope.close()
     drawPath(envelope, color = AutomixBlue.copy(alpha = 0.55f))
 
     val core = Path()
-    for (column in from..to) {
-        val x = xOf(column)
-        val half = bodies[column] * amplitude
-        if (column == from) core.moveTo(x, mid - half) else core.lineTo(x, mid - half)
-    }
-    for (column in to downTo from) {
-        val x = xOf(column)
-        core.lineTo(x, mid + bodies[column] * amplitude)
-    }
+    core.moveTo(left, mid - bodies[from] * amplitude)
+    for (column in from..to) core.lineTo(xOf(column), mid - bodies[column] * amplitude)
+    core.lineTo(right, mid - bodies[to] * amplitude)
+    core.lineTo(right, mid + bodies[to] * amplitude)
+    for (column in to downTo from) core.lineTo(xOf(column), mid + bodies[column] * amplitude)
+    core.lineTo(left, mid + bodies[from] * amplitude)
     core.close()
     drawPath(core, color = AutomixCream.copy(alpha = 0.92f))
 }

@@ -32,7 +32,6 @@ import com.music.bitchord.playback.smart.TransitionVolumeShape
 import com.music.bitchord.playback.smart.AutomixPreviewState
 import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
-import com.music.bitchord.playback.smart.enforcedWaveformCurve
 import com.music.bitchord.playback.smart.keysCompatible
 import com.music.bitchord.playback.smart.panelEnergyCurve
 import com.music.bitchord.playback.smart.panelPeakCurve
@@ -1479,9 +1478,7 @@ class CrossfadeController(
         // A restored analysis carries no peaks, because they are not worth
         // persisting; the energy curve stands in for it, which is coarse but
         // honest.
-        val waveformCurve = analysis.enforcedWaveformCurve(
-            measured = analysis.panelPeakCurve.ifEmpty { curve },
-        )
+        val waveformCurve = analysis.panelPeakCurve.ifEmpty { curve }
         val waveformScale = peakScaleOf(waveformCurve.map { it.energy })
         return TrackAnalysisDigest(
             bpm = analysis.bpm,
