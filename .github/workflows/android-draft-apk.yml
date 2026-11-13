@@ -14,41 +14,37 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.39"
+        default: "3.0.40"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "146"
+        default: "147"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.39-draft"
+        default: "v3.0.40-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.39 — private preview"
+        default: "Auris 3.0.40 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.39 — private preview
+          Auris 3.0.40 — private preview
 
-          Automix comes back
-          - A pair whose tempi are close was being refused outright. The blend was cued so that the arriving track's arrival landed at the blend's end, so the arriving track needed runway between its first sound and that arrival; a track that opens straight into its arrangement has almost none, and the planner called that a reason to stop transitioning rather than to stop being ambitious. The runway now places the blend at the shortest legal length, the arriving track is cued at its own first downbeat, and a sizing that still cannot be placed falls back to the plain crossfade instead of ending the feature.
-          - The cap only applied to pairs within five per cent of each other, so the better the tempo match, the more certainly the transition was refused — and a refused plan carries no window at all, which is why the seek bar showed nothing and Automix never triggered even though the analysis behind it was perfect.
-          - A mix-in candidate at zero is the file's own opening, not an arrangement arriving. The sibling answer to the same question already required one past zero.
-          - The controller's decisions now go to the app's own log, so the reason a pair was refused travels with the report instead of dying in logcat.
+          The player opens without the stutter
+          - A frame captured off a playing cover was state of the player's own composition. Every frame recomposed the whole player — every control on it — and the captures came ten times a second. The frame now lives outside the composition and is handed out as a stream, so a frame costs the three things that want it and nothing else.
+          - The ink — the colour the buttons and text wear — was handed down as a colour, which changed everything under it when a clip's colour moved. It is a state now, so only the texts and the glyphs that wear it are redrawn.
+          - The mesh behind the player, and the legacy backdrop, each have a scope of their own. A new mesh used to recompose the entire player with it.
+          - ExoPlayer.release() blocks the thread that draws the screen for 40–50ms while the decoder is torn down. The clip is now stopped at once and released a second later, so the block lands after the player has closed rather than on its last frame.
+          - The first frame off a clip was read back on the drawing thread, a GPU stall at the exact moment the clip faded in. It is copied off the render thread now, as the periodic read already was.
+          - The clip holds still through the sheet's travel, the way upstream does, so a decoder is not competing with the slide for the frame budget.
+          - The clip's colours are read once a second rather than ten times, and the mesh follows every third frame.
 
-          The slide and the scroll
-          - The player's lyrics list and queue are no longer laid out in the middle of the slide up. They used to land on a fixed clock, 650ms after the player opened, which is the middle of the slide; they now wait for the sheet to come to rest and keep their stagger after it.
-          - The home page's scroll no longer re-records the glass on every frame. The freeze that the player sheet and the bar's fold already used was never stamped for a page's own scroll, and the engine measures that at 47ms of layer.record per scroll frame.
+          Look unchanged: the same zoom, the same blur, the same icons.
 
-          Battery
-          - The lossless badge sweeps twice and then parks, instead of sweeping forever and keeping an offscreen text layer redrawing at refresh rate for as long as the player was open.
-          - The home page's mesh tiles are still rather than drifting for eight seconds each, which was a blurred layer redrawn at refresh rate for eight seconds, per tile, several tiles at once.
-          - The clip's colours are read for the backdrop at ten times a second rather than thirty, and not at all while the sheet is travelling.
-
-          Installs over 3.0.38: same package, same signing key.
+          Installs over 3.0.39: same package, same signing key.
 
 permissions:
   contents: write
