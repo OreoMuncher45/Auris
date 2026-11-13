@@ -1,0 +1,11 @@
+// Gradle init script for perf runs: gives the debug build its own package
+// (<applicationId>.perf) so it installs next to the dev and prod apps instead
+// of replacing either. Changes nothing in the repo's build files.
+//
+//   ./gradlew -I scripts/perf/perf-build.init.gradle :app:installDevDebug
+//   PKG=com.dev.bitchord.perf scripts/perf/measure.sh <scenario> <minutes>
+allprojects {
+    plugins.withId("com.android.application") {
+        android.buildTypes.debug.applicationIdSuffix = ".perf"
+    }
+}
