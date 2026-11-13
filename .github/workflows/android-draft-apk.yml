@@ -14,45 +14,41 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.38"
+        default: "3.0.39"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "145"
+        default: "146"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.38-draft"
+        default: "v3.0.39-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.38 — private preview"
+        default: "Auris 3.0.39 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.38 — private preview
+          Auris 3.0.39 — private preview
 
-          Waveforms are back
-          - The Automix panel draws the real measured peaks again. The renderer put each sample only in the pixel column it landed in, so a sparse curve drew a zero-area path and the lane came up blank. The columns between samples are filled by interpolation now, and the measured curve is drawn as it is: nothing is synthesised to cover a gap.
-          - A Spotify catalogue row is measured through its own address. It has no YouTube id behind it, so the analyser used to ask YouTube for a video called "spotify:<id>" and got "URL not accepted" — no bytes, no peaks, no lane.
+          Automix comes back
+          - A pair whose tempi are close was being refused outright. The blend was cued so that the arriving track's arrival landed at the blend's end, so the arriving track needed runway between its first sound and that arrival; a track that opens straight into its arrangement has almost none, and the planner called that a reason to stop transitioning rather than to stop being ambitious. The runway now places the blend at the shortest legal length, the arriving track is cued at its own first downbeat, and a sizing that still cannot be placed falls back to the plain crossfade instead of ending the feature.
+          - The cap only applied to pairs within five per cent of each other, so the better the tempo match, the more certainly the transition was refused — and a refused plan carries no window at all, which is why the seek bar showed nothing and Automix never triggered even though the analysis behind it was perfect.
+          - A mix-in candidate at zero is the file's own opening, not an arrangement arriving. The sibling answer to the same question already required one past zero.
+          - The controller's decisions now go to the app's own log, so the reason a pair was refused travels with the report instead of dying in logcat.
 
-          Spotify artist pages
-          - Albums and Singles & EPs are built from the artist's own discography, so a shelf no longer shows another artist's records.
-          - The sort options are back: release date (newest first), chronological (oldest first), A–Z and popularity.
+          The slide and the scroll
+          - The player's lyrics list and queue are no longer laid out in the middle of the slide up. They used to land on a fixed clock, 650ms after the player opened, which is the middle of the slide; they now wait for the sheet to come to rest and keep their stagger after it.
+          - The home page's scroll no longer re-records the glass on every frame. The freeze that the player sheet and the bar's fold already used was never stamped for a page's own scroll, and the engine measures that at 47ms of layer.record per scroll frame.
 
-          Hi-res lossless
-          - ALAC is decoded by the bundled FFmpeg instead of the platform decoder, which crawled for a second and then died and dropped the track to YouTube. Lossless Hi-Res now plays from an Apple Music addon without the fallback.
+          Battery
+          - The lossless badge sweeps twice and then parks, instead of sweeping forever and keeping an offscreen text layer redrawing at refresh rate for as long as the player was open.
+          - The home page's mesh tiles are still rather than drifting for eight seconds each, which was a blurred layer redrawn at refresh rate for eight seconds, per tile, several tiles at once.
+          - The clip's colours are read for the backdrop at ten times a second rather than thirty, and not at all while the sheet is travelling.
 
-          Onboarding
-          - The flow stops redrawing what it does not need to: the backdrop mesh is still instead of orbiting at refresh rate, the reveal no longer recomposes the whole sheet every frame, the glass-strength slider writes once when the drag settles rather than on every pointer sample, and the cover's palette is read off the main thread and shared with the player preview.
-          - The Spotify logo is the real one from Settings, in green.
-          - The app behind the sheet moves with it again: the reveal progress was reported once, at zero, because Animatable's animateTo block runs before the animation rather than after it.
-
-          Auris Pass
-          - "Listener Card" is now "Auris Pass": a boarding pass, drawn, with your name on it. It lives in Settings under Pass, and the Settings search finds it.
-
-          Installs over 3.0.37: same package, same signing key.
+          Installs over 3.0.38: same package, same signing key.
 
 permissions:
   contents: write
