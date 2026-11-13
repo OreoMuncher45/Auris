@@ -1445,4 +1445,13 @@
     <string name="sort_release_date">Release date (newest first)</string>
     <string name="sort_chronological">Chronological (oldest first)</string>
     <string name="sort_popularity">Popularity</string>
+    <string name="auris_pass">Auris Pass</string>
+    <string name="auris_pass_subtitle">Your listening identity, printed on this device alone.</string>
+    <string name="auris_pass_stub">LISTENER PASS</string>
+    <string name="auris_pass_pass_no">PASS NO.</string>
+    <string name="auris_pass_tier">TIER</string>
+    <string name="auris_pass_tier_listener">Listener</string>
+    <string name="auris_pass_since">MEMBER SINCE</string>
+    <string name="auris_pass_device">THIS DEVICE</string>
+    <string name="auris_pass_unnamed">Auris listener</string>
 </resources>

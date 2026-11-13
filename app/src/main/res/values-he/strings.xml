@@ -1416,4 +1416,13 @@
     <string name="sort_release_date">תאריך יציאה (החדש ביותר קודם)</string>
     <string name="sort_chronological">כרונולוגי (הישן ביותר קודם)</string>
     <string name="sort_popularity">פופולריות</string>
+    <string name="auris_pass">כרטיס Auris</string>
+    <string name="auris_pass_subtitle">זהות ההאזנה שלך, מודפסת רק במכשיר הזה.</string>
+    <string name="auris_pass_stub">כרטיס מאזין</string>
+    <string name="auris_pass_pass_no">מספר כרטיס</string>
+    <string name="auris_pass_tier">דרגה</string>
+    <string name="auris_pass_tier_listener">מאזין</string>
+    <string name="auris_pass_since">חבר מאז</string>
+    <string name="auris_pass_device">המכשיר הזה</string>
+    <string name="auris_pass_unnamed">מאזין Auris</string>
 </resources>

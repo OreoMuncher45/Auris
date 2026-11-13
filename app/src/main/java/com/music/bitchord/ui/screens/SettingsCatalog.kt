@@ -26,6 +26,7 @@ enum class SettingsCategory(
     val id: String,
     @StringRes val titleRes: Int,
 ) {
+    PASS("pass", R.string.auris_pass),
     ACCOUNT("account", R.string.settings_category_account),
     AUDIO("audio", R.string.settings_category_audio),
     PLAYBACK("playback", R.string.settings_category_playback),
@@ -62,6 +63,9 @@ object SettingsCatalog {
      * catalogue doubles as the shape of the settings screen.
      */
     private val byCategory: Map<SettingsCategory, List<String>> = mapOf(
+        SettingsCategory.PASS to listOf(
+            "pass.card",
+        ),
         SettingsCategory.ACCOUNT to listOf(
             "account.integrations",
             "account.listen_together",

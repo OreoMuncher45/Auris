@@ -1350,4 +1350,13 @@
     <string name="sort_release_date">Data di uscita (più recente prima)</string>
     <string name="sort_chronological">Cronologico (più vecchio prima)</string>
     <string name="sort_popularity">Popolarità</string>
+    <string name="auris_pass">Pass Auris</string>
+    <string name="auris_pass_subtitle">La tua identità d’ascolto, stampata solo su questo dispositivo.</string>
+    <string name="auris_pass_stub">PASS ASCOLTATORE</string>
+    <string name="auris_pass_pass_no">N. PASS</string>
+    <string name="auris_pass_tier">LIVELLO</string>
+    <string name="auris_pass_tier_listener">Ascoltatore</string>
+    <string name="auris_pass_since">MEMBRO DAL</string>
+    <string name="auris_pass_device">QUESTO DISPOSITIVO</string>
+    <string name="auris_pass_unnamed">Ascoltatore Auris</string>
 </resources>

@@ -114,6 +114,7 @@ class SettingsCatalogTest {
     @Test
     fun `the known settings are all present`() {
         val required = listOf(
+            "pass.card",
             "account.integrations", "account.listen_together",
             "audio.source", "audio.offline_mode", "audio.wifi", "audio.mobile_data",
             "audio.output_precision", "audio.bit_perfect", "audio.prefer_usb_dac",

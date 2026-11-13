@@ -109,7 +109,7 @@ fun SetupWizard(
     val scope = rememberCoroutineScope()
 
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var name by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf(OnboardingState.name(context)) }
     var editing by remember { mutableIntStateOf(0) }
     var wifi by remember { mutableStateOf(AppSettings.audioQualityWifi.value) }
     var cellular by remember { mutableStateOf(AppSettings.audioQualityCellular.value) }
@@ -181,6 +181,7 @@ fun SetupWizard(
      */
     fun finish() {
         OnboardingState.savePicks(context, picks)
+        OnboardingState.saveName(context, name)
         AppSettings.setHomeProvider(provider)
         OnboardingState.markCompleted(context)
         leave {
@@ -198,6 +199,7 @@ fun SetupWizard(
     }
 
     fun dismiss() {
+        OnboardingState.saveName(context, name)
         OnboardingState.markCompleted(context)
         leave { onFinished() }
     }

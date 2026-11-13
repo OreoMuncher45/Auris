@@ -1443,4 +1443,13 @@
     <string name="sort_release_date">Дата выхода (сначала новые)</string>
     <string name="sort_chronological">По хронологии (сначала старые)</string>
     <string name="sort_popularity">Популярность</string>
+    <string name="auris_pass">Пропуск Auris</string>
+    <string name="auris_pass_subtitle">Ваша слушательская идентичность — только на этом устройстве.</string>
+    <string name="auris_pass_stub">ПРОПУСК СЛУШАТЕЛЯ</string>
+    <string name="auris_pass_pass_no">№ ПРОПУСКА</string>
+    <string name="auris_pass_tier">УРОВЕНЬ</string>
+    <string name="auris_pass_tier_listener">Слушатель</string>
+    <string name="auris_pass_since">С НАМИ С</string>
+    <string name="auris_pass_device">ЭТО УСТРОЙСТВО</string>
+    <string name="auris_pass_unnamed">Слушатель Auris</string>
 </resources>

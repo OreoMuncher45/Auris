@@ -1394,4 +1394,13 @@
     <string name="sort_release_date">วันที่วางจำหน่าย (ใหม่ที่สุดก่อน)</string>
     <string name="sort_chronological">ตามลำดับเวลา (เก่าที่สุดก่อน)</string>
     <string name="sort_popularity">ความนิยม</string>
+    <string name="auris_pass">บัตร Auris</string>
+    <string name="auris_pass_subtitle">ตัวตนการฟังของคุณ พิมพ์ไว้บนอุปกรณ์นี้เท่านั้น</string>
+    <string name="auris_pass_stub">บัตรผู้ฟัง</string>
+    <string name="auris_pass_pass_no">เลขที่บัตร</string>
+    <string name="auris_pass_tier">ระดับ</string>
+    <string name="auris_pass_tier_listener">ผู้ฟัง</string>
+    <string name="auris_pass_since">สมาชิกตั้งแต่</string>
+    <string name="auris_pass_device">อุปกรณ์นี้</string>
+    <string name="auris_pass_unnamed">ผู้ฟัง Auris</string>
 </resources>

@@ -155,6 +155,7 @@ import com.music.bitchord.ui.components.SupportDonations
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.onboarding.AurisPass
 import com.music.bitchord.ui.onboarding.OnboardingState
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
@@ -516,6 +517,22 @@ fun SettingsScreen(
             placeholder = stringResource(R.string.settings_search_hint),
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
         )
+
+        if (openCategory == SettingsCategory.PASS) {
+            val savedName = remember(context) { OnboardingState.name(context) }
+            val passName = savedName.ifBlank { account?.name.orEmpty() }
+            Column(
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                AurisPass(name = passName)
+                Text(
+                    text = stringResource(R.string.auris_pass_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         if (openCategory == null && !searchActive) {
             // The index: one row per category. Each opens a page of its own;
@@ -3253,6 +3270,7 @@ private fun SettingsCategoryIndex(onOpen: (String) -> Unit) {
 /** The glyph shown beside a category on the index. */
 private val SettingsCategory.icon: ImageVector
     get() = when (this) {
+        SettingsCategory.PASS -> Icons.Rounded.LocalOffer
         SettingsCategory.ACCOUNT -> Icons.Rounded.Person
         SettingsCategory.AUDIO -> Icons.Rounded.GraphicEq
         SettingsCategory.PLAYBACK -> Icons.Rounded.PlayArrow

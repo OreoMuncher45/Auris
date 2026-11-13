@@ -23,6 +23,7 @@ object OnboardingState {
     private const val FILE = "bitchord_onboarding"
     private const val KEY_COMPLETED = "onboarding_completed"
     private const val KEY_PICKS = "onboarding_artists"
+    private const val KEY_NAME = "listener_name"
     private const val PICK_FIELD = '\u001F'
     private const val PICK_ROW = '\n'
 
@@ -80,6 +81,26 @@ object OnboardingState {
         runCatching {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_COMPLETED, true).apply()
+        }
+    }
+
+    /**
+     * The name printed on the listener's pass.
+     *
+     * Kept with the rest of the flow's own facts rather than in the settings
+     * store: it is not a preference the app reads to decide anything, it is
+     * the word the pass shows. Blank when the listener never typed one — the
+     * pass then falls back to a neutral label rather than inventing a name.
+     */
+    fun name(context: Context): String =
+        runCatching {
+            context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(KEY_NAME, "").orEmpty()
+        }.getOrDefault("")
+
+    fun saveName(context: Context, name: String) {
+        runCatching {
+            context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                .edit().putString(KEY_NAME, name.trim()).apply()
         }
     }
 

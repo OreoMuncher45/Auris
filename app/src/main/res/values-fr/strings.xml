@@ -1412,4 +1412,13 @@
     <string name="sort_release_date">Date de sortie (plus récent d’abord)</string>
     <string name="sort_chronological">Chronologique (plus ancien d’abord)</string>
     <string name="sort_popularity">Popularité</string>
+    <string name="auris_pass">Passe Auris</string>
+    <string name="auris_pass_subtitle">Ton identité d’écoute, imprimée sur cet appareil uniquement.</string>
+    <string name="auris_pass_stub">PASSE D’ÉCOUTE</string>
+    <string name="auris_pass_pass_no">N° DE PASSE</string>
+    <string name="auris_pass_tier">NIVEAU</string>
+    <string name="auris_pass_tier_listener">Auditeur</string>
+    <string name="auris_pass_since">MEMBRE DEPUIS</string>
+    <string name="auris_pass_device">CET APPAREIL</string>
+    <string name="auris_pass_unnamed">Auditeur Auris</string>
 </resources>

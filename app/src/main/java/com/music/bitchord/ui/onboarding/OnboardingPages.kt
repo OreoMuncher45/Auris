@@ -120,7 +120,7 @@ internal fun NameStep(
         subtitle = "It stays on this device — nothing here is uploaded, and nothing needs an account.",
         footer = footer,
     ) {
-        NameCard(name = name, tilt = tilt)
+        AurisPass(name = name, tilt = tilt)
         Spacer(Modifier.height(18.dp))
         OnbField(
             value = name,
@@ -128,93 +128,6 @@ internal fun NameStep(
             placeholder = "Your name",
             modifier = Modifier.fillMaxWidth(),
         )
-    }
-}
-
-/**
- * The card, with the listener's name printed on it.
- *
- * The silver is a gradient plus a grain and a sheen that travels as the phone
- * turns — the same trick that makes a card read as metal rather than grey
- * plastic, done in one `graphicsLayer` and two brushes so nothing recomposes
- * while the accelerometer is firing.
- */
-@Composable
-private fun NameCard(name: String, tilt: () -> Pair<Float, Float>) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1.62f)
-            .graphicsLayer {
-                val (rx, ry) = tilt()
-                rotationX = -rx
-                rotationY = ry
-                cameraDistance = 18f * density
-            }
-            .onbSurface(shape = RoundedCornerShape(26.dp), elevated = true)
-            .clip(RoundedCornerShape(26.dp))
-            .background(
-                // Struck across the card rather than down it, so turning the
-                // phone carries the light across the surface — the whole of the
-                // "this is metal" effect, and none of it costs a frame.
-                Brush.linearGradient(
-                    colors = listOf(Color(0xFFF6F6FA), Color(0xFFC6C6D2), Color(0xFFEDEDF4)),
-                    start = androidx.compose.ui.geometry.Offset.Zero,
-                    end = androidx.compose.ui.geometry.Offset(760f, 470f),
-                ),
-            ),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(Onb.Ink),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("A", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Black)
-                }
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "AURIS",
-                    color = Onb.Ink.copy(alpha = 0.72f),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 0.22.em,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "LISTENER CARD",
-                    color = Onb.Ink.copy(alpha = 0.45f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.14.em,
-                )
-            }
-            Column {
-                Text(
-                    text = name.trim().ifEmpty { "your name" },
-                    color = Onb.Ink.copy(alpha = if (name.isBlank()) 0.32f else 1f),
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = OnbTitleTracking,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Auris plays your music the way it was mastered.",
-                    color = Onb.Ink.copy(alpha = 0.55f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
     }
 }
 

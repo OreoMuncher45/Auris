@@ -1388,4 +1388,13 @@
     <string name="sort_release_date">发行日期（最新优先）</string>
     <string name="sort_chronological">按时间顺序（最早优先）</string>
     <string name="sort_popularity">热度</string>
+    <string name="auris_pass">Auris 通行证</string>
+    <string name="auris_pass_subtitle">只印在这台设备上的聆听身份。</string>
+    <string name="auris_pass_stub">听众通行证</string>
+    <string name="auris_pass_pass_no">通行证编号</string>
+    <string name="auris_pass_tier">等级</string>
+    <string name="auris_pass_tier_listener">听众</string>
+    <string name="auris_pass_since">加入年份</string>
+    <string name="auris_pass_device">本设备</string>
+    <string name="auris_pass_unnamed">Auris 听众</string>
 </resources>

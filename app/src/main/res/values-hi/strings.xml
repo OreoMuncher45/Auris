@@ -1411,4 +1411,13 @@
     <string name="sort_release_date">रिलीज़ तिथि (नवीनतम पहले)</string>
     <string name="sort_chronological">कालानुक्रमिक (सबसे पुराना पहले)</string>
     <string name="sort_popularity">लोकप्रियता</string>
+    <string name="auris_pass">Auris पास</string>
+    <string name="auris_pass_subtitle">आपकी सुनने की पहचान, सिर्फ़ इस डिवाइस पर छपी।</string>
+    <string name="auris_pass_stub">श्रोता पास</string>
+    <string name="auris_pass_pass_no">पास सं.</string>
+    <string name="auris_pass_tier">स्तर</string>
+    <string name="auris_pass_tier_listener">श्रोता</string>
+    <string name="auris_pass_since">सदस्य से</string>
+    <string name="auris_pass_device">यह डिवाइस</string>
+    <string name="auris_pass_unnamed">Auris श्रोता</string>
 </resources>

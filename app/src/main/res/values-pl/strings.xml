@@ -1451,4 +1451,13 @@
     <string name="sort_release_date">Data wydania (najnowsze najpierw)</string>
     <string name="sort_chronological">Chronologicznie (najstarsze najpierw)</string>
     <string name="sort_popularity">Popularność</string>
+    <string name="auris_pass">Przepustka Auris</string>
+    <string name="auris_pass_subtitle">Twoja tożsamość słuchacza, wydrukowana tylko na tym urządzeniu.</string>
+    <string name="auris_pass_stub">PRZEPUSTKA SŁUCHACZA</string>
+    <string name="auris_pass_pass_no">NR PRZEPUSTKI</string>
+    <string name="auris_pass_tier">POZIOM</string>
+    <string name="auris_pass_tier_listener">Słuchacz</string>
+    <string name="auris_pass_since">CZŁONEK OD</string>
+    <string name="auris_pass_device">TO URZĄDZENIE</string>
+    <string name="auris_pass_unnamed">Słuchacz Auris</string>
 </resources>

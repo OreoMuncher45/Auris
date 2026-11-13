@@ -1388,4 +1388,13 @@
     <string name="sort_release_date">Tanggal rilis (terbaru dulu)</string>
     <string name="sort_chronological">Kronologis (terlama dulu)</string>
     <string name="sort_popularity">Popularitas</string>
+    <string name="auris_pass">Pas Auris</string>
+    <string name="auris_pass_subtitle">Identitas mendengarmu, tercetak hanya di perangkat ini.</string>
+    <string name="auris_pass_stub">PAS PENDENGAR</string>
+    <string name="auris_pass_pass_no">NO. PAS</string>
+    <string name="auris_pass_tier">TINGKAT</string>
+    <string name="auris_pass_tier_listener">Pendengar</string>
+    <string name="auris_pass_since">ANGGOTA SEJAK</string>
+    <string name="auris_pass_device">PERANGKAT INI</string>
+    <string name="auris_pass_unnamed">Pendengar Auris</string>
 </resources>
