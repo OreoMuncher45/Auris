@@ -14,23 +14,45 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.29"
+        default: "3.0.38"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "134"
+        default: "145"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.29-draft"
+        default: "v3.0.38-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.29 — private preview"
+        default: "Auris 3.0.38 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
-        default: ""
+        default: |
+          Auris 3.0.38 — private preview
+
+          Waveforms are back
+          - The Automix panel draws the real measured peaks again. The renderer put each sample only in the pixel column it landed in, so a sparse curve drew a zero-area path and the lane came up blank. The columns between samples are filled by interpolation now, and the measured curve is drawn as it is: nothing is synthesised to cover a gap.
+          - A Spotify catalogue row is measured through its own address. It has no YouTube id behind it, so the analyser used to ask YouTube for a video called "spotify:<id>" and got "URL not accepted" — no bytes, no peaks, no lane.
+
+          Spotify artist pages
+          - Albums and Singles & EPs are built from the artist's own discography, so a shelf no longer shows another artist's records.
+          - The sort options are back: release date (newest first), chronological (oldest first), A–Z and popularity.
+
+          Hi-res lossless
+          - ALAC is decoded by the bundled FFmpeg instead of the platform decoder, which crawled for a second and then died and dropped the track to YouTube. Lossless Hi-Res now plays from an Apple Music addon without the fallback.
+
+          Onboarding
+          - The flow stops redrawing what it does not need to: the backdrop mesh is still instead of orbiting at refresh rate, the reveal no longer recomposes the whole sheet every frame, the glass-strength slider writes once when the drag settles rather than on every pointer sample, and the cover's palette is read off the main thread and shared with the player preview.
+          - The Spotify logo is the real one from Settings, in green.
+          - The app behind the sheet moves with it again: the reveal progress was reported once, at zero, because Animatable's animateTo block runs before the animation rather than after it.
+
+          Auris Pass
+          - "Listener Card" is now "Auris Pass": a boarding pass, drawn, with your name on it. It lives in Settings under Pass, and the Settings search finds it.
+
+          Installs over 3.0.37: same package, same signing key.
 
 permissions:
   contents: write
