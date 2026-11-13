@@ -21,11 +21,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -59,11 +56,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -2032,19 +2027,26 @@ private fun ShimmerText(
     // the badge still reads as special, but a lossless track no longer keeps
     // an offscreen text layer redrawing for as long as it plays.
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val progress: State<Float> = if (reduceAnimation) {
-        remember { mutableFloatStateOf(0.5f) }
-    } else {
-        val transition = rememberInfiniteTransition(label = "lossless-shimmer")
-        transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 3_000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "lossless-shimmer-progress",
-        )
+    // The band sweeps across the word and then comes to rest.
+    //
+    // It used to sweep forever, which meant a lossless track kept an
+    // offscreen composited text layer redrawing at display refresh rate for
+    // as long as the player was open — for a badge that reads the same
+    // whether it is sweeping or not. It sweeps twice now and then parks in
+    // the middle, which is the look "reduce animation" has always parked it
+    // in, and the redrawing stops with it: nothing here wakes the display
+    // again until the track changes.
+    val progress = remember { Animatable(0.5f) }
+    LaunchedEffect(text, reduceAnimation) {
+        if (reduceAnimation) {
+            progress.snapTo(0.5f)
+            return@LaunchedEffect
+        }
+        repeat(SHIMMER_SWEEPS) {
+            progress.animateTo(1f, tween(SHIMMER_SWEEP_MS, easing = LinearEasing))
+            progress.animateTo(0f, tween(SHIMMER_SWEEP_MS, easing = LinearEasing))
+        }
+        progress.animateTo(0.5f, tween(SHIMMER_SETTLE_MS, easing = FastOutSlowInEasing))
     }
     val baseColor = ink.copy(alpha = baseAlpha)
     // The glyphs are laid out and drawn once, in plain white, and the moving
@@ -2077,6 +2079,15 @@ private fun ShimmerText(
             },
     )
 }
+
+/** How many times the lossless badge sweeps before it comes to rest. */
+private const val SHIMMER_SWEEPS = 2
+
+/** How long one half of a sweep takes — across the word, and back. */
+private const val SHIMMER_SWEEP_MS = 1_200
+
+/** How long the badge takes to park in the middle once it has swept. */
+private const val SHIMMER_SETTLE_MS = 600
 
 /**
  * "FLAC · 24-bit · 96.0 kHz · 4608 kbps · Stereo" — whichever of those the

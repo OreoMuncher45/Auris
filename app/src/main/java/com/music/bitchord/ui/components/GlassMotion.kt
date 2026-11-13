@@ -78,6 +78,27 @@ object GlassMotion {
      * refraction for the length of the fold and buys the fold its frames.
      */
     val nav: GlassMotionClock = GlassMotionClock()
+
+    /**
+     * The page's own scroll: the listener's thumb moving a feed up or down.
+     *
+     * The same argument as the sheet's and the nav's, on the largest stage
+     * there is. A scroll moves the very content every glass surface samples —
+     * the nav bar's lens, the mini player's — so every frame of it was paying
+     * a full backdrop re-record for surfaces nobody is reading mid-scroll.
+     * The vendored engine measured that cost on a screen of its own: 47ms of
+     * `layer.record` per scroll frame with the freeze off, 1.9ms with it on.
+     *
+     * Its own clock rather than [nav]'s, because [nav] is settled by the
+     * fold's animation — and the fold *is* driven by the scroll, so settling
+     * it at the end of the fold would lift the freeze in the middle of the
+     * very scroll the freeze exists for.
+     *
+     * The trade is the sheet's: while frozen, the lens shows the capture it
+     * already holds rather than tracking what passes underneath it. A scroll
+     * that keeps its frames is worth more than a lens that tracks the thumb.
+     */
+    val scroll: GlassMotionClock = GlassMotionClock()
 }
 
 /**

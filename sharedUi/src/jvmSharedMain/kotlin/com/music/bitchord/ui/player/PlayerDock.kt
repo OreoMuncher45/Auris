@@ -147,6 +147,24 @@ class PlayerDock {
     }
 
     /**
+     * Whether the player is fully open **and has stopped moving**.
+     *
+     * The answer work needs before it may touch the screen: the player's own
+     * heavy layouts — the lyrics list, the queue — must not be laid out in the
+     * middle of the sheet's slide up, because a list laid out mid-slide is a
+     * dropped frame in the middle of the slide.
+     *
+     * Derived, so a reader hears about it once — as the sheet arrives — rather
+     * than on every frame of the travel. It reads the fraction rather than the
+     * app's own motion, so it answers for the sheet's own animation too (the
+     * one M3 drives when "reduce animation" is on) and not only for the one
+     * the app drives.
+     */
+    val settled: Boolean get() = settledState.value
+
+    private val settledState = derivedStateOf { openFraction() >= 1f }
+
+    /**
      * Whether the mini player's own cover should stand aside, because the
      * player's is on its way to or from it. Not before the sheet has moved at
      * all: the sheet's window can land a frame after the page's, and a cover

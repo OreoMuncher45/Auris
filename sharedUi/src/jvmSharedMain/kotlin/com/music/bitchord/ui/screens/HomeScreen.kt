@@ -1422,13 +1422,20 @@ private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector
             .clip(RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        // One settle on arrival, not an orbit: a blurred layer redrawn at
-        // refresh rate is the most expensive thing on this screen, and there
-        // can be several of these tiles visible at once on a potato.
+        // Still, and never a drift.
+        //
+        // A mesh this size used to settle over eight seconds, which meant a
+        // blurred layer redrawn at refresh rate for eight seconds — per tile,
+        // and there are several of these on the page at once. On a potato that
+        // is the most expensive thing on the screen, and it is paid while the
+        // listener is scrolling past the very tiles it is on. The tile is a
+        // coloured box behind an icon: it reads the same settled as it does
+        // drifting.
         MeshGradientBackground(
             palette = palette,
             trackKey = trackKey,
             blurRadius = 24.dp,
+            animated = false,
         )
         Icon(
             imageVector = icon,
@@ -1579,6 +1586,10 @@ internal fun ShelfCard(
                         palette = palette,
                         trackKey = "local:downloads",
                         blurRadius = 24.dp,
+                        // Still: a blurred layer redrawn at refresh rate for
+                        // the length of a drift is the most expensive thing on
+                        // this page, and the tile reads the same settled.
+                        animated = false,
                     )
                     Icon(
                         imageVector = BitChordIcons.Download,

@@ -177,6 +177,11 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
         // dead-control failure mode.
         LocalGlassEffectConfig.current,
         shape,
-        frozen = { GlassMotion.sheet.frozen() || GlassMotion.nav.frozen() || appFrozen() },
+        frozen = {
+            GlassMotion.sheet.frozen() ||
+                GlassMotion.nav.frozen() ||
+                GlassMotion.scroll.frozen() ||
+                appFrozen()
+        },
     )
 }

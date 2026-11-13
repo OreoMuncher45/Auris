@@ -113,6 +113,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.GlassSpring
 import com.music.bitchord.ui.components.LocalGlassExport
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
@@ -284,6 +285,21 @@ class FloatingTabBarScrollConnection(
     }
 
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        // A vertical scroll moves the content every glass surface samples —
+        // the nav bar's lens, the mini player's — so each of them was paying
+        // a full backdrop re-record on every frame of the scroll. The clock
+        // tells them to hold their captures for the length of it: the lens
+        // stops tracking what passes underneath, and the scroll gets its
+        // frames.
+        //
+        // Its own clock rather than the nav's: the fold below is driven by
+        // this very scroll, and settling the nav clock at the end of the fold
+        // would lift the freeze in the middle of the scroll it exists for.
+        //
+        // Horizontal only is left alone: a shelf carousel moves nothing that
+        // sits behind the glass.
+        if (available.y != 0f) GlassMotion.scroll.moved()
+
         // If behavior is Never, don't change state
         if (inlineBehavior == FloatingTabBarInlineBehavior.Never) {
             return Offset.Zero

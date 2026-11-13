@@ -522,7 +522,14 @@ class MainActivity : AppCompatActivity() {
                     // a plain lambda: it answers "is anything moving behind
                     // the glass right now", and the glass asks that on every
                     // frame it draws.
-                    LocalAppBackdropFrozen provides { GlassMotion.nav.frozen() },
+                    //
+                    // The page's own scroll is in it: a scroll moves the very
+                    // content every glass surface samples, so without it each
+                    // scroll frame paid a full backdrop re-record for surfaces
+                    // nobody reads mid-scroll.
+                    LocalAppBackdropFrozen provides {
+                        GlassMotion.nav.frozen() || GlassMotion.scroll.frozen()
+                    },
                 ) {
                 // The window's width, measured rather than asked for.
                 //

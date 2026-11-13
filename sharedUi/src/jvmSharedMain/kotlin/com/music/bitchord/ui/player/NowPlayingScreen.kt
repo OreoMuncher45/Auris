@@ -379,8 +379,15 @@ private const val TOP_SCRIM_FRACTION = 0.14f
  * to back its own cadence off, so the picture arrived every 400ms and then
  * every 800ms. It is copied off the render thread now, so it costs the
  * screen nothing; see `CanvasArtworkPlayer`'s capture.
+ *
+ * It is a hundred milliseconds now. The read is a copy of the clip's texture
+ * off the GPU, and every copy of it is followed by a blur and a mesh
+ * recomputed from the pixels — thirty times a second was thirty of those a
+ * second, for a background nobody watches frame by frame. A tenth of a second
+ * is still ten times faster than the picture it follows changes noticeably,
+ * and the wash it paints is blurred past the point where a step would show.
  */
-private const val LIVE_REFRESH_MS = 33L
+private const val LIVE_REFRESH_MS = 100L
 
 /**
  * The same read, for a device that has asked for less motion.
@@ -1102,6 +1109,11 @@ fun NowPlayingScreen(
         mutableStateOf(restoredPlayerScreen == LastPlayerScreen.LYRICS)
     }
     val queueSlide = remember { mutableFloatStateOf(0f) }
+    // The mini player this player docks into — read here rather than further
+    // down, because the prewarm below has to know whether the sheet has come
+    // to rest before it lays anything heavy out. The read itself is free: a
+    // composition local, and the same value either side of it.
+    val dock = LocalPlayerDock.current
     // Expensive, song-scoped preparation is deliberately staggered — but the
     // backdrop goes first, and at once.
     //
@@ -1111,11 +1123,28 @@ fun NowPlayingScreen(
     // that is late, and on the tablets and in the lyrics and queue panels it
     // is the whole background. The decode is a hundred-and-twenty-eight
     // pixels and a blur on a worker thread; the hand-off can wait for that.
-    // Lyrics and queue are still composed offscreen on separate beats rather
-    // than all three competing with the song change.
+    //
+    // The other two stages are the lyrics layout and the queue layout, and
+    // they are not free: a list of lyric lines and a list of queue rows are
+    // among the heaviest things this screen composes. They used to land on a
+    // fixed clock — six hundred and fifty milliseconds after the player
+    // opened — which is the *middle of the slide up*. A lyrics list laid out
+    // in the middle of the slide is a dropped frame in the middle of the
+    // slide, and the slide is the one movement the eye is on: it is the whole
+    // of what "clicking now playing" looks like.
+    //
+    // So they wait for the sheet to come to rest instead, and keep their
+    // stagger after it. The backdrop is not waited for: it is a hundred and
+    // twenty-eight pixels on a worker thread, and the player would have no
+    // background without it.
     var playerPrewarmStage by remember(song.videoId) { mutableIntStateOf(0) }
+    val currentDock by rememberUpdatedState(dock)
     LaunchedEffect(song.videoId) {
         playerPrewarmStage = 1 // 128px backdrop decode + CPU blur
+        // Still, first: the sheet has to be where it is going before anything
+        // heavy is laid out on top of it. Read as a flow so the wait ends the
+        // moment the sheet arrives rather than on a timer of its own.
+        snapshotFlow { currentDock?.settled ?: true }.first { it }
         delay(650)
         playerPrewarmStage = 2 // lyrics layout
         delay(650)
@@ -2002,7 +2031,9 @@ fun NowPlayingScreen(
     // player take part: the portrait sleeve morphs into the cover (see the
     // sleeve), the landscape one is carried and scaled onto it (see
     // [landscapeDockPose]).
-    val dock = LocalPlayerDock.current
+    //
+    // The dock itself is read at the top of this screen, where the prewarm
+    // needs it.
     if (dock != null) {
         // Attached on first placement below rather than here: until then the
         // sheet's window may not have drawn anything, and the mini player's
@@ -2040,6 +2071,15 @@ fun NowPlayingScreen(
     // the trip, as for the collapse into the lyrics or the queue; a paused
     // clip keeps its last frame, so nothing blinks.
     val dockMoving by remember { derivedStateOf { docking() } }
+    // Whether the sheet is fully open and has stopped moving — see
+    // [PlayerDock.settled].
+    //
+    // Read here, in composition, so a reader hears about it once: as the
+    // sheet arrives. [dockMoving] cannot answer it: it is false until the
+    // sheet's first placement has told the dock where on screen it is, so
+    // during the slide *up* it says "not moving" about a sheet that is
+    // moving very much.
+    val sheetSettled: Boolean = dock?.settled ?: true
     // The rest of the player gets out of the way a little ahead of the artwork,
     // so the cover lands on the bar rather than on a ghost of the player.
     val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
@@ -2650,8 +2690,12 @@ fun NowPlayingScreen(
                     // The readback is the expensive half, so this is the number
                     // that decides what it costs. Much lower than it was, and
                     // the read itself backs off on a device where it is slow.
+                    //
+                    // Not while the sheet is still travelling: a readback
+                    // stalls the GPU's pipeline, and the one movement the eye
+                    // is on is the slide.
                     refreshFrameEveryMs = if (
-                        lyricsOpen || queueOpen || queueDragging || dockMoving
+                        lyricsOpen || queueOpen || queueDragging || dockMoving || !sheetSettled
                     ) {
                         null
                     } else {
@@ -3606,7 +3650,8 @@ fun NowPlayingScreen(
                                     }
                                 },
                                 refreshFrameEveryMs = if (
-                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
+                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving ||
+                                    !sheetSettled
                                 ) null else liveRefreshMs,
                                 modifier = Modifier.fillMaxSize(),
                             )
