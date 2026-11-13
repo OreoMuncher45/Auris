@@ -20,7 +20,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
-import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.CubicBezierEasing
@@ -85,6 +84,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
@@ -362,32 +362,134 @@ private const val TOP_SCRIM_ALPHA = 0.40f
 private const val TOP_SCRIM_FRACTION = 0.14f
 
 /**
+ * The player's ink, as a state.
+ *
+ * The ink belongs to the picture under the controls, and a playing clip
+ * changes that picture: the ink is read off the clip's own frames and eased
+ * into place when it moves.
+ *
+ * Both the palette and the animation live in this scope, and the result is
+ * handed back as a state rather than as a colour. That is the whole trick:
+ * read in the player's own composition, a frame of the clip would recompose
+ * the player — every control on it — and the ink's colour would then be
+ * handed down to every text and glyph under it. Read here, a change of ink
+ * costs the texts and the glyphs that wear it, and nothing else.
+ *
+ * A clip's colour changes while it plays, so its ink is eased in quickly —
+ * long enough not to flicker, short enough that the buttons look like they
+ * belong to the picture under them. A track change still gets the long fade,
+ * which is a change of record rather than a change of frame.
+ */
+@Composable
+private fun rememberPlayerInk(
+    palette: State<LivePalette?>,
+    fromClip: Boolean,
+    fallback: Color,
+): State<Color> {
+    val target by remember(palette, fromClip, fallback) {
+        derivedStateOf {
+            val live = palette.value
+            if (fromClip && live != null) live.palette.fg else fallback
+        }
+    }
+    val spec = remember(fromClip) {
+        tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+    }
+    return animateColorAsState(
+        targetValue = target,
+        animationSpec = spec,
+        label = "playerInk",
+    )
+}
+
+/**
+ * The halo the ink wears, as a state.
+ *
+ * Light ink needs the dark halo and the reverse, so the halo follows the ink
+ * — and it is read from the ink's state rather than from a value, for the
+ * reason [rememberPlayerInk] gives.
+ */
+@Composable
+private fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
+    val target by remember(ink) {
+        derivedStateOf {
+            if (ink.value.isLightInk()) PLAYER_GLOW_ON_LIGHT else PLAYER_GLOW_ON_DARK
+        }
+    }
+    return animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
+        label = "playerInkGlow",
+    )
+}
+
+/**
+ * The player's backdrop, in a scope of its own.
+ *
+ * The mesh is re-read whenever a playing clip produces a frame, and the read
+ * lands in a state. Read in the player's own scope, that state change
+ * recomposes the whole player — every control on it — once a frame; read in
+ * a scope of its own, it recomposes the backdrop and nothing else.
+ *
+ * Upstream BitChord does the same thing, and for the same reason: see
+ * `PlayerMeshBackdrop` in its [NowPlayingScreen].
+ */
+@Composable
+private fun PlayerMeshBackdrop(
+    trackKey: String,
+    imageUrl: String?,
+    liveFrames: Flow<ImageBitmap?>?,
+    seam: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val mesh = key(trackKey) {
+        rememberArtworkMesh(imageUrl, artPx = ART_PX, liveFrames = liveFrames)
+    }
+    ArtworkMeshBackdrop(mesh = mesh, seam = seam, modifier = modifier)
+}
+
+/**
+ * The legacy theme's backdrop, in a scope of its own for the same reason.
+ *
+ * The legacy backdrop drifts through the colours of whatever is on screen, and
+ * a playing clip changes those colours as it plays. The re-read stays here,
+ * so it costs the backdrop and not the player.
+ */
+@Composable
+private fun LegacyMeshBackdrop(
+    imageUrl: String?,
+    liveFrames: Flow<ImageBitmap?>?,
+    trackKey: String,
+    modifier: Modifier = Modifier,
+) {
+    // One frame at a time: the legacy backdrop takes a picture, not a stream.
+    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(liveFrames) {
+        liveFrames?.collectLatest { frame = it }
+    }
+    MeshGradientBackground(
+        palette = rememberArtworkColors(imageUrl, frame),
+        trackKey = trackKey,
+        modifier = modifier,
+    )
+}
+
+/**
  * How often a playing clip is read for its own colours.
  *
  * The backdrop and the ink both follow the clip, so this is the rate at which
- * the screen changes colour. It was three seconds once, which is a slideshow:
- * a Canvas that pans from black to white kept its buttons the colour of the
- * sleeve it had replaced for three whole seconds at a time. It was 400ms
- * after that, which is still a slideshow at thirty frames a second — the
- * backdrop was always a third of a second behind the picture, and the blur
- * behind an animated cover visibly stepped rather than moved.
+ * the screen changes colour.
  *
- * A third of a second: thirty times a second, which is as often as the
- * screen itself is drawn. The read is a copy of the clip's texture off the
- * GPU, and it used to be taken on the thread that draws the screen, which
- * is what made it expensive — the stall it caused was what the caller used
- * to back its own cadence off, so the picture arrived every 400ms and then
- * every 800ms. It is copied off the render thread now, so it costs the
- * screen nothing; see `CanvasArtworkPlayer`'s capture.
- *
- * It is a hundred milliseconds now. The read is a copy of the clip's texture
- * off the GPU, and every copy of it is followed by a blur and a mesh
- * recomputed from the pixels — thirty times a second was thirty of those a
- * second, for a background nobody watches frame by frame. A tenth of a second
- * is still ten times faster than the picture it follows changes noticeably,
- * and the wash it paints is blurred past the point where a step would show.
+ * It is a second now, and it was a hundred milliseconds before: the read is a
+ * copy of the clip's texture off the GPU, taken on the thread that draws the
+ * screen, and it stalls the GPU's pipeline while it happens. Ten of those a
+ * second is ten stalls a second — and, before the frame was taken out of the
+ * player's composition, ten recompositions of the whole player a second as
+ * well. A second is still faster than the picture under the ink changes
+ * noticeably, and the wash it paints is blurred past the point where a step
+ * would show.
  */
-private const val LIVE_REFRESH_MS = 100L
+private const val LIVE_REFRESH_MS = 1_000L
 
 /**
  * The same read, for a device that has asked for less motion.
@@ -1049,7 +1151,16 @@ fun NowPlayingScreen(
     // snapping open mid-loop. A different clip resets them with itself.
     val canvasRenderedState = remember(canvas?.url) { mutableStateOf(false) }
     var canvasRendered by canvasRenderedState
-    var canvasFrame by remember(canvas?.url) { mutableStateOf<ImageBitmap?>(null) }
+    // The clip's newest frame, held outside this screen's composition — see
+    // [CanvasFrameHolder].
+    //
+    // It used to be a state of this screen's own, read here for the ink, the
+    // mesh and the blurred backdrop. A frame arrives while the clip plays, so
+    // that was a recomposition of the whole player — every control on it —
+    // every time one was captured, and the captures came ten times a second.
+    // The frame is now read by the three things that want it, each in an
+    // effect of its own, and it never reaches this composition at all.
+    val canvasFrameHolder = remember(canvas?.url) { CanvasFrameHolder() }
     // Spotify's phone presentation starts with the full control deck over its
     // video. It leaves on a Canvas tap, or after the optional idle timeout.
     var spotifyCanvasControlsOpen by remember(canvas?.url) { mutableStateOf(true) }
@@ -1605,40 +1716,30 @@ fun NowPlayingScreen(
     } else {
         LiveColorSource.LIVE_ART
     }
-    val canvasPalette = rememberLivePalette(canvasFrame, canvasSource)
+    val canvasPalette = rememberLivePalette(canvasFrameHolder.frames, canvasSource)
     // The clip owns the whole screen when Spotify's presentation is on. Then
     // there is no sleeve in the answer at all.
     val canvasOwnsScreen = spotifyCanvasPresentation || clipFullscreen
-    val inkFromClip = canvasOwnsScreen && canvasPalette != null
-    val playerInkTarget = if (inkFromClip) canvasPalette.palette.fg else nowPlayingPalette.fg
-    // A clip's colour changes while it plays, so its ink is eased in quickly —
-    // long enough not to flicker, short enough that the buttons look like they
-    // belong to the picture under them. A track change still gets the long
-    // fade, which is a change of record rather than a change of frame.
-    val playerInkSpec: AnimationSpec<Color> = tween(
-        durationMillis = if (inkFromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS,
-    )
-    val playerInk by animateColorAsState(
-        targetValue = playerInkTarget,
-        animationSpec = playerInkSpec,
-        label = "playerInk",
+    // The ink, as a state.
+    //
+    // The ink follows a playing clip, so it changes while the player is open,
+    // and the palette that decides it changes with it. Both are read inside
+    // [rememberPlayerInk]'s own scope, and the ink is handed down as a state
+    // rather than as a colour: a colour handed down through a composition
+    // local changes the whole subtree under it, and this subtree is the entire
+    // player. A state changes only the texts and the glyphs that wear it.
+    val playerInkState = rememberPlayerInk(
+        palette = canvasPalette,
+        fromClip = canvasOwnsScreen,
+        fallback = nowPlayingPalette.fg,
     )
     // The ink is always light now, so its halo is the dark one. It is also
     // strictly optional: with the switch off neither the composition local
     // nor the text shadow may carry any colour at all.
-    val playerInkGlowTarget = if (playerInkTarget.isLightInk()) {
-        PLAYER_GLOW_ON_LIGHT
-    } else {
-        PLAYER_GLOW_ON_DARK
-    }
-    val playerInkGlow by animateColorAsState(
-        targetValue = playerInkGlowTarget,
-        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
-        label = "playerInkGlow",
-    )
-    val playerShadow = remember(playerInkGlow, textGlow) {
-        if (textGlow) Shadow(color = playerInkGlow, blurRadius = 9f) else null
-    }
+    val playerInkGlowState = rememberPlayerInkGlow(playerInkState)
+    // The glow, switched off: a state of its own, so the local's value never
+    // changes and nothing under it is invalidated when the setting is off.
+    val playerInkGlowOff = remember { mutableStateOf(Color.Transparent) }
 
 
     // The setting defaults on, restoring the five-second stand-down, but the
@@ -1682,15 +1783,14 @@ fun NowPlayingScreen(
     // The mesh follows the clip only while the mesh is the backdrop. When
     // Spotify's Canvas owns the screen there is no mesh behind it, and
     // averaging one that nobody can see is work for nothing.
-    val meshFrame = if (spotifyCanvasPresentation) null else canvasFrame
-    val artMesh = if (legacyMesh && !canvasFirstPortrait) null else
-        key(song.videoId) {
-            rememberArtworkMesh(
-                remoteArt,
-                meshFrame,
-                ART_PX,
-            )
-        }
+    //
+    // The mesh itself is remembered in a scope of its own — see
+    // [PlayerMeshBackdrop] — because a playing clip re-reads it, and a mesh
+    // read in this scope would recompose the whole player every time it
+    // changed. The frames arrive as a flow, and the mesh is read from them in
+    // the mesh's own effect: a frame that reached this composition would
+    // recompose the whole player every time the clip produced one.
+    val meshLiveFrames = if (spotifyCanvasPresentation) null else canvasFrameHolder.frames
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this:
     // the sleeve goes from banner to thumbnail as one movement, rather than the
@@ -2016,12 +2116,15 @@ fun NowPlayingScreen(
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
     // it replaced. See [rememberLiveBlurImage].
-    val currentLiveBlurFrame = rememberUpdatedState(canvasFrame)
+    //
+    // A flow rather than a value: the frames are read by the backdrop's own
+    // effect, so a captured frame never reaches this composition.
+    val currentLiveBlurFrames = rememberUpdatedState(canvasFrameHolder.frames)
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
             FullArtworkBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
-                liveFrame = currentLiveBlurFrame.value,
+                liveFrames = currentLiveBlurFrames.value,
                 modifier = backdropModifier,
             )
         }
@@ -2550,8 +2653,12 @@ fun NowPlayingScreen(
             .background(Color.Black),
     ) {
         CompositionLocalProvider(
-            LocalPlayerInk provides playerInk,
-            LocalPlayerInkGlow provides if (textGlow) playerInkGlow else Color.Transparent,
+            // The ink and its glow, as states: the ink follows a playing clip,
+            // and a colour handed down as a value would change everything
+            // under this provider — which is the whole player — every time the
+            // clip's colour moved. See [LocalPlayerInk].
+            LocalPlayerInk provides playerInkState,
+            LocalPlayerInkGlow provides if (textGlow) playerInkGlowState else playerInkGlowOff,
             LocalPlayerAccent provides colors.accent,
             LocalPlayerSeekbar provides colors.seekbar,
             LocalPlayerText provides colors.text,
@@ -2594,14 +2701,21 @@ fun NowPlayingScreen(
             // Position ticks recompose this screen twice a second and must not
             // drag a full-screen blur along with them, which is why the palette
             // is passed as one immutable value.
-            MeshGradientBackground(
-                palette = rememberArtworkColors(remoteArt, meshFrame),
+            //
+            // In a scope of its own, for the same reason the mesh is: a clip's
+            // frame re-reads the colours, and a re-read in this scope would
+            // recompose the whole player.
+            LegacyMeshBackdrop(
+                imageUrl = remoteArt,
+                liveFrames = meshLiveFrames,
                 trackKey = song.videoId,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
         } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
-            ArtworkMeshBackdrop(
-                mesh = artMesh,
+            PlayerMeshBackdrop(
+                trackKey = song.videoId,
+                imageUrl = remoteArt,
+                liveFrames = meshLiveFrames,
                 seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight + MESH_SEAM_NUDGE else 0.dp,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
@@ -2656,8 +2770,17 @@ fun NowPlayingScreen(
                     // The panels asked first: a collapse a tap asked for is
                     // paused from the tap, and this screen doesn't then listen
                     // for the sleeve's first frame of movement as well.
+                    //
+                    // And the sheet's own travel: a decoder running through
+                    // the slide competes with the slide for the same frame
+                    // budget, and the slide is the one thing on screen that
+                    // cannot be late. The clip holds its last frame while it
+                    // is paused — and on the way up it has none yet, so the
+                    // sleeve stands in for it — and it starts once the player
+                    // has settled. Upstream BitChord holds the clip still
+                    // through the movement for the same reason.
                     pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                        collapseStarted || dockMoving,
+                        collapseStarted || dockMoving || !sheetSettled,
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
@@ -2685,7 +2808,15 @@ fun NowPlayingScreen(
                         // case where the sleeve's colours are worth nothing —
                         // and the mesh follows them when the mesh is the
                         // backdrop. One readback, two consumers.
-                        if (!lyricsOpen && !queueOpen && !queueDragging) canvasFrame = frame
+                        //
+                        // Into the holder, not into this screen's state: the
+                        // frame is read by the ink and the mesh in effects of
+                        // their own, and a frame that reached this composition
+                        // would recompose the whole player every time the
+                        // clip produced one.
+                        if (!lyricsOpen && !queueOpen && !queueDragging) {
+                            canvasFrameHolder.offer(frame)
+                        }
                     },
                     // The readback is the expensive half, so this is the number
                     // that decides what it costs. Much lower than it was, and
@@ -2915,7 +3046,7 @@ fun NowPlayingScreen(
                         .graphicsLayer { alpha = spotifyChromeAlpha }
                         .shadow(2.dp, RoundedCornerShape(3.dp), clip = false)
                         .clip(RoundedCornerShape(3.dp))
-                        .background(LocalPlayerInk.current.copy(alpha = 0.70f)),
+                        .background(LocalPlayerInk.current.value.copy(alpha = 0.70f)),
                 )
                 // [p] is the shared album-to-panel transition. Keeping this in
                 // composition until its final frame gives the caption a real
@@ -3528,7 +3659,7 @@ fun NowPlayingScreen(
                             Icon(
                                 painter = PlayerIcons.NoArtwork.painter(),
                                 contentDescription = null,
-                                tint = LocalPlayerInk.current.copy(alpha = 0.35f),
+                                tint = LocalPlayerInk.current.value.copy(alpha = 0.35f),
                                 modifier = Modifier
                                     .size(40.dp)
                                     .graphicsLayer {
@@ -3641,12 +3772,14 @@ fun NowPlayingScreen(
                                 // The panels first: a collapse the tap asked
                                 // for is paused from the tap, and then never
                                 // asks after its first frame of movement.
+                                // And the sheet's travel, for the reason the
+                                // banner's clip gives above.
                                 pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                                    collapseStarted || dockMoving,
+                                    collapseStarted || dockMoving || !sheetSettled,
                                 onRenderedChanged = { canvasRendered = it },
                                 onFrameCaptured = {
                                     if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
-                                        canvasFrame = it
+                                        canvasFrameHolder.offer(it)
                                     }
                                 },
                                 refreshFrameEveryMs = if (
@@ -3745,7 +3878,7 @@ fun NowPlayingScreen(
                     Icon(
                         painter = (if (showNext) PlayerIcons.SkipNext else PlayerIcons.SkipPrevious).painter(),
                         contentDescription = null,
-                        tint = LocalPlayerInk.current,
+                        tint = LocalPlayerInk.current.value,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .offset {
@@ -3875,8 +4008,16 @@ fun NowPlayingScreen(
                             label = "playerCredits",
                         ) {
                             val scrolling = scrolls()
-                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current
+                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current.value
                             val alphas = LocalPlayerAlphas.current
+                            // The glow the text wears, read here rather than
+                            // in the screen above: the glow moves with the
+                            // ink, and a screen that read it would recompose
+                            // the whole player every time the ink did.
+                            val glow = LocalPlayerInkGlow.current.value
+                            val playerShadow = remember(glow, textGlow) {
+                                if (textGlow) Shadow(color = glow, blurRadius = 9f) else null
+                            }
                             Column {
                                 MarqueeText(
                                     text = song.title,

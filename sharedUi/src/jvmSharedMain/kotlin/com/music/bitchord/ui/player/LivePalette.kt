@@ -3,12 +3,13 @@ package com.music.bitchord.ui.player
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
 /**
@@ -78,17 +79,35 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
  * time the picture changes. A new frame cancels the sample of the old one —
  * only the newest picture is worth an answer — so a fast clip cannot pile
  * work up behind itself.
+ *
+ * The answer is handed back as a [MutableState] rather than as a value, and
+ * the frames arrive as a [Flow] rather than as a parameter, for the same
+ * reason: the palette changes while the player is open, and a value read in
+ * the player's own composition would recompose the whole screen every time
+ * the ink moved. The state is read by the ink's own scope instead — see
+ * [rememberPlayerInk] — so a change of colour costs the texts and glyphs that
+ * wear it and nothing else.
+ *
+ * The frames are read every [PALETTE_EVERY_NTH_FRAME]th one, not every one:
+ * the ink is a tint on a background, it eases into place over a fraction of a
+ * second, and a clip's colour moves far more slowly than the clip does.
  */
 @Composable
 internal fun rememberLivePalette(
-    frame: ImageBitmap?,
+    frames: Flow<ImageBitmap?>,
     source: LiveColorSource,
-): LivePalette? {
-    var live by remember(source) { mutableStateOf<LivePalette?>(null) }
-    LaunchedEffect(frame, source) {
-        val current = frame ?: return@LaunchedEffect
-        val sampled = withContext(Dispatchers.Default) { computeLivePalette(current, source) }
-        live = sampled
+): MutableState<LivePalette?> {
+    val live = remember(source) { mutableStateOf<LivePalette?>(null) }
+    LaunchedEffect(frames, source) {
+        var seen = 0
+        frames.collectLatest { current ->
+            if (current == null) return@collectLatest
+            seen++
+            if (seen % PALETTE_EVERY_NTH_FRAME != 0) return@collectLatest
+            live.value = withContext(Dispatchers.Default) {
+                computeLivePalette(current, source)
+            }
+        }
     }
     return live
 }
@@ -124,3 +143,16 @@ internal fun ImageBitmap.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
  * belongs to it; few enough that the clustering behind it stays cheap.
  */
 private const val LIVE_SAMPLES = 1_024
+
+/**
+ * How many captured frames go by before the ink is read again.
+ *
+ * One: the ink follows the clip as closely as the frames arrive. The read is
+ * off the main thread and costs a handful of sampled pixels, so it is not
+ * worth thinning out — and thinning it out is a visible change, which this
+ * pass is not allowed to make.
+ *
+ * The expensive read is the mesh's, and that one is thinned — see
+ * [MESH_EVERY_NTH_FRAME].
+ */
+private const val PALETTE_EVERY_NTH_FRAME = 1

@@ -2429,7 +2429,7 @@ private fun PanelVoice(
             style = style.forText(line.text),
             // The enlarged line follows the album-derived ink (or the pinned
             // lyric colour), not a fixed white — see LocalPlayerLyrics.
-            color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current).copy(alpha = lit),
+            color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current.value).copy(alpha = lit),
             onTextLayout = { layout = it },
             modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
         )
@@ -2571,10 +2571,10 @@ private fun CurrentLyricLine(
     // A pinned lyric colour wins; otherwise the strip follows the player ink,
     // which is always a light tint of the sleeve's accent — see
     // [computeNowPlayingPalette].
-    val ink = LocalPlayerLyrics.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     val lineStyle = MaterialTheme.typography.titleMedium.copy(
-        shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
+        shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
     )
     if (!isSynced) {
         Row(
@@ -2738,9 +2738,9 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
     Text(
         text = stringResource(Res.string.lyrics_not_available),
         style = MaterialTheme.typography.titleMedium.copy(
-            shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
+            shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
         ),
-        color = LocalPlayerLyrics.current ?: LocalPlayerInk.current,
+        color = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
@@ -2755,9 +2755,9 @@ private fun LyricsLoadingLine(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium.copy(
-            shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
+            shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
         ),
-        color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current)
+        color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current.value)
             .copy(alpha = LocalPlayerAlphas.current.secondary),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,

@@ -77,8 +77,45 @@ private const val TAG = "CanvasArtworkPlayer"
  */
 private const val REPAINT_TIMEOUT_MS = 700L
 
+/**
+ * How long after a clip leaves the screen its player is released.
+ *
+ * Not released at once: `ExoPlayer.release()` blocks the thread it is called
+ * on until the decoder has been torn down — 40–50 ms — and the thread it is
+ * called on here is the one that draws the screen. Released as the player
+ * closes, that block lands on the last frame of the movement.
+ *
+ * `stop()` hands the decoder back on the player's own thread and returns at
+ * once; the release that follows is a thread quitting, and it runs a second
+ * later, when the close is long over.
+ */
+private const val DEFERRED_RELEASE_MS = 1_000L
+
 /** Where a pixel copy's result comes back on — see [captureLiveFrame]. */
 private val mainHandler = Handler(Looper.getMainLooper())
+
+/**
+ * What a clip's player needs to leave the screen without blocking it.
+ *
+ * A surface taken away while the player was closing or collapsing is kept
+ * alive rather than handed back to ExoPlayer. Told the surface is gone,
+ * ExoPlayer blocks the main thread until the decoder has stopped writing to
+ * it — which is the decoder being torn down, on the thread that is drawing
+ * the screen. Left holding a surface that still exists, the decoder can be
+ * stopped and released at leisure, or move onto the next surface it is
+ * given; this one is released after either.
+ */
+private class Teardown {
+    var disposed = false
+
+    /** The surface kept alive across the teardown, if there was one. */
+    var orphan: SurfaceTexture? = null
+
+    fun releaseOrphan() {
+        orphan?.release()
+        orphan = null
+    }
+}
 
 /**
  * The looping video that plays over a track's cover art, sized to fill and
@@ -198,7 +235,9 @@ internal fun AndroidCanvasArtworkPlayer(
     val currentAlignPortraitTop by rememberUpdatedState(alignPortraitTop)
     val currentPortraitRevealBounds by rememberUpdatedState(portraitRevealBounds)
     val currentPresentationAlpha by rememberUpdatedState(presentationAlpha)
+    val currentPausedForTransition by rememberUpdatedState(pausedForTransition)
     val reportAspect by rememberUpdatedState(onAspectRatioChanged)
+    val teardown = remember { Teardown() }
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -256,7 +295,21 @@ internal fun AndroidCanvasArtworkPlayer(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            player.release()
+            // Not release(), which blocks the main thread until the decoder
+            // has been torn down — 40–50 ms, landing on the last frame of the
+            // player closing. stop() hands the decoder back on the player's
+            // own thread; the release left after that is a thread quitting,
+            // and runs once the close is long over. The surface goes with it,
+            // for the reason [Teardown] gives.
+            teardown.disposed = true
+            player.stop()
+            mainHandler.postDelayed(
+                {
+                    player.release()
+                    teardown.releaseOrphan()
+                },
+                DEFERRED_RELEASE_MS,
+            )
         }
     }
 
@@ -322,7 +375,17 @@ internal fun AndroidCanvasArtworkPlayer(
         // can still catch the previous, empty buffer.
         withFrameMillis { }
         val view = textureView ?: return@LaunchedEffect
-        val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+        // Off the main thread, as the periodic read is. This one lands at the
+        // worst possible moment otherwise: the clip has just faded in, which
+        // is the frame the player is opening on, and a synchronous copy of
+        // the texture there is a GPU stall on the screen's own thread.
+        val bitmap = view.captureLiveFrame(
+            frameCapturePx,
+            currentVideoSize,
+            clipAspect,
+            contentMode,
+            alignPortraitTop,
+        )
         if (bitmap != null) {
             Log.d(TAG, "frame captured after rendered=true, size=${bitmap.width}x${bitmap.height}")
             onFrameCaptured(bitmap.asImageBitmap())
@@ -345,13 +408,14 @@ internal fun AndroidCanvasArtworkPlayer(
         alignPortraitTop,
         foreground,
         isPlaying,
+        pausedForTransition,
         currentVideoSize,
     ) {
         val requested = refreshFrameEveryMs ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
-        if (!rendered || !foreground || !isPlaying) return@LaunchedEffect
+        if (!rendered || !foreground || !isPlaying || pausedForTransition) return@LaunchedEffect
         while (isActive) {
             val view = textureView ?: continue
             val started = SystemClock.elapsedRealtime()
@@ -442,6 +506,9 @@ internal fun AndroidCanvasArtworkPlayer(
                         height: Int,
                     ) {
                         delegate?.onSurfaceTextureAvailable(surface, width, height)
+                        // The player has moved onto the new surface, so the one
+                        // it was left holding can go.
+                        teardown.releaseOrphan()
                         // The first surface needs nothing: prepare() paints it.
                         if (!replacing) return
                         replacing = false
@@ -468,6 +535,14 @@ internal fun AndroidCanvasArtworkPlayer(
                         // artwork immediately so an empty replacement surface
                         // can never become the only visible artwork layer.
                         rendered = false
+                        // Going with the player — see [Teardown]. The surface
+                        // is kept alive rather than handed back, so the
+                        // decoder's teardown cannot block the thread that is
+                        // drawing the screen while the player is closing.
+                        if (currentPausedForTransition || teardown.disposed) {
+                            teardown.orphan = surface
+                            return false
+                        }
                         return delegate?.onSurfaceTextureDestroyed(surface) ?: true
                     }
 

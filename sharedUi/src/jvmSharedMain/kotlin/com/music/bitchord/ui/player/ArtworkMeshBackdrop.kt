@@ -43,6 +43,8 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -104,13 +106,21 @@ class ArtworkMesh internal constructor(
  * thirty frames a second the queue never builds up, and what is on screen is
  * always the last frame that finished rather than the last frame that
  * started.
+ *
+ * The frames arrive as a flow rather than as a value: a value read in the
+ * caller's composition would recompose everything above this backdrop every
+ * time a frame was captured, which is the whole player, several times a
+ * second. The flow is collected here instead, and only this backdrop is
+ * invalidated when a frame lands.
  */
 @Composable
-fun rememberLiveBlurImage(frame: ImageBitmap?): ImageBitmap? {
+fun rememberLiveBlurImage(frames: Flow<ImageBitmap?>?): ImageBitmap? {
     var blurred by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(frame) {
-        val source = frame ?: return@LaunchedEffect
-        blurred = withContext(Dispatchers.Default) { source.boxBlurred(FULL_BLUR_PASSES) }
+    LaunchedEffect(frames) {
+        frames?.collectLatest { source ->
+            if (source == null) return@collectLatest
+            blurred = withContext(Dispatchers.Default) { source.boxBlurred(FULL_BLUR_PASSES) }
+        }
     }
     return blurred
 }
@@ -176,18 +186,21 @@ fun FullArtworkBlurBackdrop(
     image: ImageBitmap?,
     modifier: Modifier = Modifier,
     /**
-     * A frame off a playing cover, when there is one.
+     * Frames off a playing cover, when there are any.
      *
      * The backdrop behind an animated cover used to be the still sleeve's
      * blur — blurred once per song and then left alone — so a picture moved
-     * over a backdrop that did not. With a frame of the clip in hand the
+     * over a backdrop that did not. With the frames of the clip in hand the
      * backdrop can be the clip too; see [rememberLiveBlurImage].
+     *
+     * A flow, not a value: see [rememberLiveBlurImage] for why a captured
+     * frame must not reach the caller's composition.
      */
-    liveFrame: ImageBitmap? = null,
+    liveFrames: Flow<ImageBitmap?>? = null,
 ) {
     // The blur of the frame, re-blurred as the frame changes. While there is
     // one it *is* the backdrop.
-    val liveBlur = rememberLiveBlurImage(liveFrame)
+    val liveBlur = rememberLiveBlurImage(liveFrames)
     val shown = liveBlur ?: image
     val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (shown != null) 1f else 0f,
@@ -231,7 +244,6 @@ fun FullArtworkBlurBackdrop(
 @Composable
 fun rememberArtworkMesh(
     imageUrl: String?,
-    canvasFrame: ImageBitmap? = null,
     /**
      * The artwork size to read, which should be the one the caller already has
      * on screen. Nothing here survives being averaged into thirty-six cells, so
@@ -240,6 +252,15 @@ fun rememberArtworkMesh(
      * second copy of the same cover comes over the wire.
      */
     artPx: Int = CARD_ART_PX,
+    /**
+     * The clip's frames, when the backdrop follows a moving cover.
+     *
+     * A flow, not a value: see [rememberLiveBlurImage] for why a captured
+     * frame must not reach the caller's composition. The mesh is read from
+     * each frame as it arrives, off the main thread, and a frame that arrives
+     * while the last one is still being read cancels it.
+     */
+    liveFrames: Flow<ImageBitmap?>? = null,
 ): ArtworkMesh? {
     val context = LocalPlatformContext.current
     // The last mesh that was on screen, whatever it was read from. A cover
@@ -300,17 +321,27 @@ fun rememberArtworkMesh(
         }
     }
 
-    LaunchedEffect(canvasFrame) {
-        val frame = canvasFrame ?: return@LaunchedEffect
-        // Reject frames that are too dark or uniform — they are almost always
-        // the first read after a surface recreation, before ExoPlayer has
-        // decoded real content.  A frame whose mean luminance is below this
-        // threshold is discarded; the last valid mesh is kept instead.
-        if (isLikelyBlackFrame(frame)) return@LaunchedEffect
-        mesh = withContext(Dispatchers.Default) {
-            meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
-        } ?: mesh
-        meshUrl = cacheKey
+    LaunchedEffect(liveFrames, cacheKey) {
+        var seen = 0
+        liveFrames?.collectLatest { frame ->
+            if (frame == null) return@collectLatest
+            // Reject frames that are too dark or uniform — they are almost always
+            // the first read after a surface recreation, before ExoPlayer has
+            // decoded real content.  A frame whose mean luminance is below this
+            // threshold is discarded; the last valid mesh is kept instead.
+            if (isLikelyBlackFrame(frame)) return@collectLatest
+            // Every frame is a mesh read on the CPU and a redraw of the whole
+            // backdrop behind it — which carries a full-screen blur. Thinned,
+            // so the wash behind a moving clip changes every third frame
+            // instead of every frame; upstream's mesh refresh is three seconds
+            // too, and the wash is blurred past the point where a step shows.
+            seen++
+            if (seen % MESH_EVERY_NTH_FRAME != 0) return@collectLatest
+            mesh = withContext(Dispatchers.Default) {
+                meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
+            } ?: mesh
+            meshUrl = cacheKey
+        }
     }
     return mesh
 }
@@ -496,6 +527,17 @@ private val FallbackBackdrop = Color(0xFF121212)
 /** A screen cannot recover detail discarded here; small is the performance feature. */
 private const val FULL_BLUR_SOURCE_PX = 128
 private const val FULL_BLUR_PASSES = 3
+
+/**
+ * How many captured frames go by before the mesh is read again.
+ *
+ * The frames arrive once a second (see `LIVE_REFRESH_MS` in
+ * [NowPlayingScreen]), so this is a read every three seconds — the same
+ * cadence upstream's mesh runs at. A mesh read is the clip's frame averaged
+ * into thirty-six cells on the CPU, and every one of them redraws the
+ * backdrop behind the player, which carries a full-screen blur.
+ */
+private const val MESH_EVERY_NTH_FRAME = 3
 
 /** A handful of recent covers; each entry is only 64 KiB at 128x128 ARGB. */
 private val fullBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {

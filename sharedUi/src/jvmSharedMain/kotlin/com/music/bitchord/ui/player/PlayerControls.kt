@@ -158,13 +158,13 @@ internal fun PlaybackOriginCaption(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall.copy(
             shadow = Shadow(
-                color = LocalPlayerInkGlow.current,
+                color = LocalPlayerInkGlow.current.value,
                 offset = Offset(0f, 1f),
                 blurRadius = 4f,
             ),
@@ -205,7 +205,7 @@ internal fun PlayerScrubber(
     centerLabel: @Composable BoxScope.() -> Unit = {},
 ) {
     val shown = shown()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     // Held as a State and read only inside the bar's draw: the blend republishes
     // every fade tick, and collecting it by value here would recompose the
@@ -252,7 +252,7 @@ internal fun PlayerScrubber(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 val timeStyle = MaterialTheme.typography.labelMedium.copy(
-                    shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
+                    shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
                 )
                 Text(
                     text = formatTime((shown * durationMs).toLong()),
@@ -312,7 +312,7 @@ private fun effectAccentOf(state: AutomixPanelState): Color? {
  */
 @Composable
 private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     Text(
         text = stringResource(Res.string.mixing),
@@ -320,7 +320,7 @@ private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.labelMedium.copy(
             fontWeight = FontWeight.SemiBold,
             fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
-            shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
+            shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
         ),
         color = ink.copy(alpha = alphas.secondary),
         maxLines = 1,
@@ -404,7 +404,7 @@ internal fun SleeveNerdStats(
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!showNerdStats) return
     // Its own switch rather than riding on [showNerdStats]: the measured line
@@ -665,7 +665,7 @@ internal fun TransportRow(
     //
     // Everything else about the row is untouched: the skips at 53dp, the
     // SpaceAround spacing and the touch boxes.
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val playSize = if (compact) 30.dp else 38.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
@@ -734,7 +734,7 @@ internal fun VolumeRow(
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -907,7 +907,7 @@ internal fun CircleGlyph(
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     // The shape carries "on" (a filled star), so the disc stays at the table's
     // 20% rather than brightening and changing the icon's contrast with it.
@@ -993,7 +993,7 @@ private fun TransportGlyph(
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
@@ -1141,7 +1141,7 @@ private fun Pill(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     Row(
         modifier = modifier
             .height(BOTTOM_ACTION_SIZE)
@@ -1160,7 +1160,7 @@ private fun Pill(
 
 @Composable
 private fun PillDivider() {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     Box(
         Modifier
             .width(1.dp)
@@ -1192,7 +1192,7 @@ private fun PillSegment(
     width: Dp = PILL_SEGMENT_WIDTH_TRIPLE,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
@@ -1272,7 +1272,7 @@ internal fun OutputCaption(
     /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
     onOpenMembers: () -> Unit,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
@@ -1402,7 +1402,7 @@ private fun BottomGlyph(
     tapWindowMs: Long = 0L,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     // The main player's own opacity scale, so the bottom row is part of the
     // same picture as the rest of the player rather than a second one with
     // its own idea of how strong a glyph is. The reference player's bottom
@@ -1958,7 +1958,7 @@ private fun LosslessLabel(
     icon: PlayerIcon? = PlayerIcons.Output,
     iconPainter: Painter? = null,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     val alphas = LocalPlayerAlphas.current
     Row(
         modifier = modifier,
@@ -2022,7 +2022,7 @@ private fun ShimmerText(
     ),
     baseAlpha: Float = LocalPlayerAlphas.current.secondary,
 ) {
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     // Under "reduce animation" the band parks mid-word rather than sweeping:
     // the badge still reads as special, but a lossless track no longer keeps
     // an offscreen text layer redrawing for as long as it plays.
