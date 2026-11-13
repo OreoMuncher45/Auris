@@ -1079,23 +1079,46 @@ internal fun waveformColumns(
     // The samples along the drawing's own axis, in order. The axis is the
     // outgoing track's clock for both lanes — the arriving one is laid on it —
     // so this is the order the columns are read in.
-    val samples = ArrayList<Pair<Double, Float>>(peaks.size)
+    //
+    // Two flat arrays rather than a list of pairs: this runs on every frame of
+    // a drag, and a drag is exactly when the app must not be collecting
+    // rubbish.
+    val axes = DoubleArray(peaks.size)
+    val values = FloatArray(peaks.size)
+    var samples = 0
+    var ordered = true
+    var lastAxis = Double.NEGATIVE_INFINITY
     for (index in peaks.indices) {
         val time = times.getOrNull(index) ?: continue
         val value = peaks[index]
         if (!value.isFinite()) continue
         val axis = mapToAxis(time)
         if (!axis.isFinite()) continue
-        samples += axis to value.coerceIn(0f, 1f)
+        if (axis < lastAxis) ordered = false
+        lastAxis = axis
+        axes[samples] = axis
+        values[samples] = value.coerceIn(0f, 1f)
+        samples++
     }
-    if (samples.isEmpty()) return WaveformColumns(tops, bodies, filled)
-    samples.sortBy { it.first }
+    if (samples == 0) return WaveformColumns(tops, bodies, filled)
+    // The curve is in order already unless something has reordered it, and the
+    // sort is only paid for when it is needed.
+    val order: Array<Int>? = if (ordered) {
+        null
+    } else {
+        IntArray(samples) { it }.toList().sortedBy { axes[it] }.toTypedArray()
+    }
+    fun axisAt(position: Int): Double = axes[order?.get(position) ?: position]
+    fun valueAt(position: Int): Float = values[order?.get(position) ?: position]
 
     val sums = DoubleArray(count)
     val counts = IntArray(count)
-    for ((axis, value) in samples) {
+    for (sample in 0 until samples) {
+        val index = order?.get(sample) ?: sample
+        val axis = axes[index]
         if (axis < from || axis > from + span) continue
         val column = (((axis - from) / span) * count).toInt().coerceIn(0, count - 1)
+        val value = values[index]
         if (value > tops[column]) tops[column] = value
         sums[column] += value
         counts[column] += 1
@@ -1112,14 +1135,16 @@ internal fun waveformColumns(
     for (column in 0 until count) {
         if (filled[column]) continue
         val position = from + (column + 0.5) / count * span
-        while (index < samples.size - 1 && samples[index + 1].first <= position) index++
-        val left = samples.getOrNull(index) ?: continue
-        val right = samples.getOrNull(index + 1) ?: continue
-        if (position < left.first || position > right.first) continue
-        val gap = right.first - left.first
+        while (index < samples - 1 && axisAt(index + 1) <= position) index++
+        // Nothing after the last sample to interpolate towards.
+        if (index + 1 >= samples) continue
+        val left = axisAt(index)
+        val right = axisAt(index + 1)
+        if (position < left || position > right) continue
+        val gap = right - left
         if (gap <= 0.0 || gap > maxGapSeconds) continue
-        val ratio = ((position - left.first) / gap).toFloat()
-        val value = left.second + (right.second - left.second) * ratio
+        val ratio = ((position - left) / gap).toFloat()
+        val value = valueAt(index) + (valueAt(index + 1) - valueAt(index)) * ratio
         tops[column] = value
         bodies[column] = value
         filled[column] = true
