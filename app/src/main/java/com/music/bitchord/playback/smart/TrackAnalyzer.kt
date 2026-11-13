@@ -29,6 +29,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.listentogether.ListenTogether
@@ -129,6 +130,46 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * the work already running instead of only the work not yet queued.
      */
     private val stopped: Boolean get() = ListenTogether.state.value.inParty
+
+    /**
+     * When the player's own decoder was taken away by the system, the analyser
+     * gives the codec back.
+     *
+     * The platform's decoders are a shared, finite resource: on a device whose
+     * codec service allows one instance of a decoder at a time, a second
+     * instance — the analyser's, decoding the very track the player is playing
+     * — takes the resources away from the first, and the player is left with
+     * `ERROR_CODE_DECODING_RESOURCES_RECLAIMED` and a track that stops and
+     * starts again. Observed on a GSI with MediaTek's software MP3 decoder: the
+     * player initialised `c2.mtk.mp3.decoder`, the analyser asked for the same
+     * decoder a second later, and the episode failed three times before it
+     * played at all.
+     *
+     * So the player says so, and the pass in flight gives the decoder up at
+     * once — the decode loop polls this — and no new pass starts until the
+     * player has had the codec to itself for a few seconds. What is lost is a
+     * measurement; what is saved is the track the listener is hearing.
+     */
+    @Volatile private var decoderYieldUntil = 0L
+
+    /**
+     * Gives the platform's decoder to the player, for [durationMs].
+     *
+     * Called by the playback service when a track has lost its decoder. The
+     * window is short enough that a stalled measurement is not a permanent
+     * hole in the Automix panel, and long enough that the player's next
+     * attempt — which comes a second or two later — has the codec to itself.
+     */
+    fun yieldDecoderToPlayer(durationMs: Long = DECODER_YIELD_MS) {
+        decoderYieldUntil = SystemClock.elapsedRealtime() + durationMs
+        Log.w(TAG, "the player needs the decoder; the analyser stands down for ${durationMs}ms")
+    }
+
+    /**
+     * Whether the analyser is standing down so the player can have the codec.
+     */
+    private val decoderHeld: Boolean
+        get() = SystemClock.elapsedRealtime() < decoderYieldUntil
 
     /**
      * Resolved on first use, not at construction, for the reason [AnalysisStore]
@@ -432,6 +473,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // a catalogue match on the network for a track the party will never
         // mix. See [stopped].
         if (stopped) return
+        // The player has lost its decoder and asked for the codec back. A pass
+        // started now would take it away again — see [yieldDecoderToPlayer].
+        if (decoderHeld) return
         if (trackId in running) return
         // A track measured in an earlier session costs nothing to restore, so
         // only the work below waits for the phone to cool.
@@ -1511,7 +1555,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         effectiveDuration: Double,
     ): Structural {
         val structRate = TrackFeatures.sampleRate
-        val decoded = copy.open()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) { stopped } }
+        val decoded = copy.open()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) { stopped || decoderHeld } }
             ?: return Structural(null)
         val (pcm, _) = decoded
 
@@ -1822,7 +1866,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
     ): Region? {
-        val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped } }
+        val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped || decoderHeld } }
             ?: run {
                 // The two ways this comes back empty mean opposite things and
                 // were reported identically, which cost a round of guessing:
@@ -2125,6 +2169,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Refusals before a track is written off as truncated rather than still filling in. */
         const val MAX_SHORT_DECODE_ATTEMPTS = 3
+
+        /**
+         * How long the analyser stands down after the player has lost its
+         * decoder.
+         *
+         * Long enough for the player's next attempt — which comes a second or
+         * two after the failure — to have the codec to itself, and short
+         * enough that a track left unmeasured is measured again on a later
+         * tick. See [yieldDecoderToPlayer].
+         */
+        const val DECODER_YIELD_MS = 8_000L
 
         /**
          * Clean-slate retries per rendition. One: a discard is worth doing when

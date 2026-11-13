@@ -4550,6 +4550,30 @@ class PlaybackService : MediaLibraryService() {
     private val recoveries = mutableMapOf<String, Int>()
 
     /**
+     * The formats whose platform decoder was lost and are handed to the bundled
+     * FFmpeg from the next attempt on.
+     *
+     * The platform's decoders are a shared, finite resource, and they are taken
+     * away: the analyser decoding the track the player is playing asks the
+     * codec service for the same decoder, and on a device whose service allows
+     * one instance at a time the second one takes the resources from the
+     * first. The player is then left with
+     * `ERROR_CODE_DECODING_RESOURCES_RECLAIMED` — a track that stops and
+     * starts again, three times, before it plays at all.
+     *
+     * The bytes are never the problem in that case, so the fix is a different
+     * decoder rather than a different stream: the bundled FFmpeg takes the
+     * format, exactly as it takes ALAC. Once it has, the platform's decoder is
+     * the analyser's alone and the two stop fighting over it.
+     *
+     * MP3 does not wait for that: it is handed over from the start, because the
+     * analyser measures podcasts — which are MP3 — off the same codec, and
+     * because a crossfade runs two players at once, which is two decoders of
+     * the same format by design. See the renderer factory.
+     */
+    private val ffmpegDecoderMimes = ConcurrentHashMap.newKeySet<String>()
+
+    /**
      * The track [recoverFrom] is about to seek-and-prepare, so that the
      * transition its own retry may fire can be told from the queue moving on or
      * the listener asking again — see [onTrackBecameCurrent]. Cleared by the
@@ -4703,6 +4727,26 @@ class PlaybackService : MediaLibraryService() {
                 announce(advice)
             }
         }
+        // A decoder that was taken away is not a broken stream.
+        //
+        // The platform's decoders are a shared resource and they are taken: the
+        // analyser decoding the track the player is playing asks the codec
+        // service for the same decoder, and on a device whose service allows
+        // one instance at a time the second one takes the resources from the
+        // first. The player is left with
+        // `ERROR_CODE_DECODING_RESOURCES_RECLAIMED`, and the episode stops and
+        // starts again — three attempts, and the track that finally plays is
+        // the one the analyser was measuring.
+        //
+        // The bytes are fine. The decoder is not there any more. So the fix is
+        // a different decoder rather than a different stream: the bundled
+        // FFmpeg takes the format, the analyser is told to give the codec
+        // back, and the track plays on from where it stopped.
+        //
+        // Ahead of the ladder below, because that ladder throws the bytes away
+        // and asks the sources again — which is the right answer for a stream
+        // that is broken and the wrong one for a stream that is fine.
+        if (retryWithBundledDecoder(player, mediaId, position, error)) return
         // A local file that is not there is the one failure retrying cannot
         // touch, and the only one where the fix is to stop asking for the file.
         //
@@ -4923,6 +4967,89 @@ class PlaybackService : MediaLibraryService() {
             }
         }
     }
+
+    /**
+     * Hands a format whose platform decoder was lost to the bundled FFmpeg,
+     * and puts the track back on the air.
+     *
+     * Returns true when it has taken the recovery over — the caller must then
+     * not run the ordinary ladder, which throws the bytes away and asks the
+     * sources again.
+     *
+     * The analyser is the other half of this. It has a decoder of its own,
+     * decoding the very track the player is playing, and it is what took the
+     * player's decoder away. It is told to stand down at once, so the attempt
+     * below has the codec to itself; and from then on the two use different
+     * decoders, so it cannot happen again.
+     */
+    private fun retryWithBundledDecoder(
+        player: ExoPlayer,
+        mediaId: String,
+        position: Long,
+        error: PlaybackException,
+    ): Boolean {
+        if (!isDecoderFailure(error)) return false
+        // The analyser is told first, and every time: even when the format
+        // cannot be handed to the FFmpeg, the codec the player lost is the one
+        // the analyser is holding.
+        trackAnalyzer.yieldDecoderToPlayer()
+        // Only the reclaimed case is a decoder problem. A plain decoding
+        // failure is the decoder refusing the bytes it was given, and the
+        // right answer to that is the ordinary ladder below: throw the bytes
+        // away and fetch them again.
+        if (error.errorCode != PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED) return false
+        val mime = player.audioFormat?.sampleMimeType
+            ?: player.currentTracks.groups
+                .asSequence()
+                .flatMap { group -> (0 until group.length).asSequence().map { group.getTrackFormat(it) } }
+                .firstOrNull { it.sampleMimeType != null }
+                ?.sampleMimeType
+            ?: return false
+        if (!bundledFfmpegDecodes(mime)) return false
+        // Already handed over and it still failed: the format is on the
+        // bundled FFmpeg now, so this is not about the decoder any more. The
+        // ordinary ladder answers that — it throws the bytes away and asks the
+        // sources again.
+        if (!ffmpegDecoderMimes.add(mime)) return false
+        TrackLog.w(
+            "BitChord",
+            "$mediaId lost the platform decoder for $mime (${error.errorCodeName}); " +
+                "the bundled FFmpeg takes it from here",
+            about = mediaId,
+        )
+        scope.launch(TrackLog.about(mediaId)) {
+            delay(RECOVERY_DELAY_MS)
+            withContext(Dispatchers.Main) {
+                val live = this@PlaybackService.player ?: return@withContext
+                if (live.currentMediaItem?.mediaId != mediaId) return@withContext
+                // Claimed before the rebuild, so the transition it fires is
+                // recognised as this retry rather than read as a fresh start.
+                retryingMediaId = mediaId
+                rebuildPlayersForDecoder(mime)
+                val rebuilt = this@PlaybackService.player ?: return@withContext
+                if (rebuilt.currentMediaItem?.mediaId != mediaId) return@withContext
+                // The rebuild carries the position across, but the failure's
+                // own position is the one to resume from: the player may have
+                // moved on while it was failing.
+                rebuilt.seekTo(rebuilt.currentMediaItemIndex, position)
+                rebuilt.prepare()
+            }
+        }
+        return true
+    }
+
+    /**
+     * Whether [error] is the platform's decoder failing rather than the stream
+     * being broken.
+     *
+     * Both are decoding failures and neither is a network one: the resources
+     * being reclaimed is the codec service handing the decoder to somebody
+     * else, and a plain decoding failure is the decoder refusing the bytes it
+     * was given. The bytes are worth another decoder in either case.
+     */
+    private fun isDecoderFailure(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
 
     /**
      * Replaces a failed addon/JioSaavn/quality-upgrade rendition with YouTube
@@ -7745,6 +7872,38 @@ class PlaybackService : MediaLibraryService() {
                     // is refused for ALAC outright, and the bundled FFmpeg
                     // takes it — but only when it is actually there to take it.
                     emptyList()
+                } else if (mimeType == MimeTypes.AUDIO_MPEG && bundledFfmpegDecodes(MimeTypes.AUDIO_MPEG)) {
+                    // MP3 never goes to the platform decoder either.
+                    //
+                    // MP3 is always a software decode, so nothing is lost by
+                    // taking it out of the shared codec service: the bundled
+                    // FFmpeg is libmp3lame, the reference decoder, and it does
+                    // not live in a service another client can take the
+                    // resources of.
+                    //
+                    // Which is what happens to a podcast. The platform decoder
+                    // is initialised, the analyser asks for the same decoder a
+                    // second later to measure the very episode the listener is
+                    // hearing, and the codec service — one instance of
+                    // `c2.mtk.mp3.decoder` at a time on that image — hands the
+                    // first one's resources to the second. The episode then
+                    // fails with `ERROR_CODE_DECODING_RESOURCES_RECLAIMED`
+                    // and again with `ERROR_CODE_DECODING_FAILED`, and is
+                    // retried three times before it plays at all.
+                    //
+                    // A crossfade is two players at once, which is two decoders
+                    // of the same format by design, so the same thing happens
+                    // there without anything to blame.
+                    //
+                    // So MP3 is refused to the platform decoder outright, the
+                    // way ALAC is, and the analyser keeps the platform's
+                    // decoder to itself.
+                    emptyList()
+                } else if (mimeType in ffmpegDecoderMimes && bundledFfmpegDecodes(mimeType)) {
+                    // A format whose platform decoder was taken away by the
+                    // system and did not come back. The bundled FFmpeg takes it
+                    // from here; see [ffmpegDecoderMimes].
+                    emptyList()
                 } else {
                     val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
                         MediaCodecSelector.PREFER_SOFTWARE
@@ -7772,12 +7931,8 @@ class PlaybackService : MediaLibraryService() {
          * on a build with no software decoder would leave the format with no
          * decoder at all, which is worse than the platform one.
          */
-        private fun bundledFfmpegDecodesAlac(): Boolean = runCatching {
-            FfmpegLibrary.isAvailable() && FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_ALAC)
-        }.getOrElse {
-            TrackLog.w("BitChord", "could not query the bundled ALAC decoder — ${it.message}")
-            false
-        }
+        private fun bundledFfmpegDecodesAlac(): Boolean =
+            bundledFfmpegDecodes(MimeTypes.AUDIO_ALAC)
 
         // FFmpeg after the MediaCodec renderer, so it only gets a track no
         // platform decoder takes: ALAC everywhere, and AC-4 and Dolby Digital
@@ -8184,12 +8339,51 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Rebuilds Media3's immutable AudioSink configuration without restarting
-     * the app or service. Queue, item, position and play state are transferred
+     * Whether the bundled FFmpeg can decode [mimeType].
+     *
+     * Asked before the platform decoder is refused for a format: refusing it
+     * on a build with no software decoder would leave the format with no
+     * decoder at all, which is worse than the platform one.
+     */
+    private fun bundledFfmpegDecodes(mimeType: String): Boolean = runCatching {
+        FfmpegLibrary.isAvailable() && FfmpegLibrary.supportsFormat(mimeType)
+    }.getOrElse {
+        TrackLog.w("BitChord", "could not query the bundled decoder for $mimeType — ${it.message}")
+        false
+    }
+
+    /**
+     * Rebuilds Media3's immutable AudioSink configuration without restarting the
+     * app or service. Queue, item, position and play state are transferred
      * to the replacement player; the old AudioTrack is released only after the
      * MediaSession points at the new one.
      */
     private fun rebuildPlayersForOutput(enableFloat: Boolean) {
+        rebuildPlayers(
+            reason = "live output switch: ${if (enableFloat) "PCM_FLOAT" else "PCM_16BIT"}",
+        ) {
+            configuredFloatOutput = enableFloat
+        }
+    }
+
+    /**
+     * Rebuilds the players after the platform's decoder was lost, so that the
+     * bundled FFmpeg takes the format from the next attempt on.
+     *
+     * A rebuild and not a re-prepare, because the renderers are chosen when the
+     * tracks are selected — and the tracks are selected once, when the item is
+     * put on the player. Refusing the platform decoder afterwards says nothing
+     * to a player that has already chosen one.
+     */
+    private fun rebuildPlayersForDecoder(mime: String) {
+        rebuildPlayers(reason = "decoder fallback: $mime is the bundled FFmpeg's now")
+    }
+
+    /**
+     * The rebuild itself: a new pair of players with the same queue, the same
+     * position and the same play state, and the old ones released.
+     */
+    private fun rebuildPlayers(reason: String, configure: () -> Unit = {}) {
         val oldActive = player ?: return
         val oldSpare = spare ?: return
         val items = List(oldActive.mediaItemCount) { oldActive.getMediaItemAt(it) }
@@ -8204,7 +8398,7 @@ class PlaybackService : MediaLibraryService() {
         oldActive.removeListener(playbackListener)
         oldActive.removeAnalyticsListener(formatListener)
 
-        configuredFloatOutput = enableFloat
+        configure()
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
         val newActive = buildPlayer(
@@ -8259,11 +8453,7 @@ class PlaybackService : MediaLibraryService() {
 
         oldActive.release()
         oldSpare.release()
-        TrackLog.i(
-            "AUDIO_OUT",
-            "live output switch: ${if (enableFloat) "PCM_FLOAT" else "PCM_16BIT"}",
-            about = newActive.currentMediaItem?.mediaId,
-        )
+        TrackLog.i("AUDIO_OUT", reason, about = newActive.currentMediaItem?.mediaId)
     }
 
     /**

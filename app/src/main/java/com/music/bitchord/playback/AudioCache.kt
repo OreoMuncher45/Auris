@@ -1640,6 +1640,41 @@ object AudioCache {
     }
 
     /**
+     * The cache key the analyser owns for a plain stream — a podcast's own URL.
+     *
+     * The same rule as everywhere else: the bytes the analyser measures live in
+     * an entry of their own, and the entry the player is streaming into is
+     * never written by the analyser.
+     *
+     * It used to be the player's own key, because a plain URL has no video id
+     * and no source to build a sibling from — so the analysis round and the
+     * player wrote the same file. The analyser fetched the head of the episode
+     * into the entry the player was reading, the entry was then thrown away
+     * and fetched again, and the stream the listener was hearing was cut in
+     * the middle: "www.podtrac.com refused the stream", a decoder fed a file
+     * with two encodings in it, and three failed attempts before the episode
+     * played at all.
+     *
+     * So the plain stream gets a sibling of its own, exactly like every other
+     * source — see [analysisKeyOfVideo] for the rule this follows.
+     */
+    private fun analysisKeyOfPlain(uri: Uri): String? = plainAnalysisKeyAddress(uri.toString())
+
+    /**
+     * The same decision, made on strings.
+     *
+     * So it can be tested without the platform's [Uri]: what it has to get
+     * right is *which entry* the analyser writes to, and that is one string.
+     */
+    internal fun plainAnalysisKeyAddress(uri: String): String? {
+        val scheme = uri.substringBefore("://", missingDelimiterValue = "").lowercase(Locale.ROOT)
+        // A local file and a platform document are not fetched: the first is
+        // already whole and read in place, the second is the app's own.
+        if (scheme.isEmpty() || scheme == "file" || scheme == "content") return null
+        return "$uri$ANALYSIS_SUFFIX"
+    }
+
+    /**
      * The cache key the analyser owns for a YouTube-backed track.
      *
      * The analyser's own copy, exactly as a source-backed track has one: the
@@ -1723,7 +1758,11 @@ object AudioCache {
     fun analysisKeyFor(uri: Uri): String? {
         val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
         if (videoId != null) return analysisKeyOfVideo(videoId)
-        return analysisKeyOf(uri)
+        analysisKeyOf(uri)?.let { return it }
+        // A plain stream — a podcast — has no video id and no source to build a
+        // sibling from, and used to be measured out of the player's own entry.
+        // It gets one of its own; see [analysisKeyOfPlain].
+        return analysisKeyOfPlain(uri)
     }
 
     /** The base key of a source-backed track's own entry — see [keyFactory]. */
@@ -1841,6 +1880,30 @@ object AudioCache {
                 },
             )
         }.onFailure { TrackLog.d(TAG, "could not tag analysis copy $key: ${it.message}", about = mediaId) }
+    }
+
+    /**
+     * The same tag for a plain stream's analysis entry.
+     *
+     * A plain stream has no media id to file the copy under — see [mediaIdIn] —
+     * so it is tagged as an addon entry with no owner, which is what it is:
+     * bytes of somebody else's stream, fetched for a measurement alone. The
+     * tag is what lets [dropForeignEntries] throw the copy away once the
+     * episode is done with, instead of leaving a megabyte of it on the device
+     * for good.
+     */
+    private fun tagPlainAnalysisCopy(key: String, uri: Uri) {
+        if (!::cache.isInitialized) return
+        runCatching {
+            cache.applyContentMetadataMutations(
+                key,
+                ContentMetadataMutations().also { mutations ->
+                    mutations.set(META_ORIGIN, Origin.OTHER.name)
+                    mutations.set(META_ANALYSIS, "1")
+                    describe(mutations, null, uri)
+                },
+            )
+        }.onFailure { TrackLog.d(TAG, "could not tag analysis copy $key: ${it.message}") }
     }
 
     /**
@@ -2376,7 +2439,11 @@ object AudioCache {
         // and knowing it up front is what lets the round below wait for the
         // copy rather than fall back on the master's bytes.
         val copyKey = analysisKeyOf(uri)
-        val key = analysis?.key ?: copyKey ?: cacheKeyOf(uri)
+        // The analyser's own key, for every source alike: the player's entry
+        // is never written to. A plain stream — a podcast — used to be measured
+        // out of the player's own entry, which put two writers on one file and
+        // cut the stream the listener was hearing; see [analysisKeyOfPlain].
+        val key = analysis?.key ?: analysisKeyFor(uri) ?: cacheKeyOf(uri)
         var source = analysis?.uri ?: uri
         var headers = analysis?.headers ?: emptyMap()
         val wanted = analysisOpeningBytes(key, durationSeconds)
@@ -2469,6 +2536,9 @@ object AudioCache {
                 // filed as a whole track — and the analyser then reads a
                 // twelve-second window as a complete recording and refuses it.
                 if (total > 0L) recordContentLength(key, total)
+                // Marked as the analyser's own, so the copy is dropped when the
+                // episode is done with it rather than living on the device.
+                if (key == analysisKeyOfPlain(uri)) tagPlainAnalysisCopy(key, uri)
                 reportAnalysisProgress(key, cachedBytesOf(key, target), target)
             } finally {
                 analysisOpeningsInFlight.remove(key)
@@ -2689,7 +2759,7 @@ object AudioCache {
         // The analyser's own key, exactly as the YouTube half uses. The
         // player's entry is never written to: the tail is measured from it, and
         // a file the player is writing is a file the analyser cannot read.
-        var key = analysis?.key ?: analysisKeyOf(uri) ?: cacheKeyOf(uri)
+        var key = analysis?.key ?: analysisKeyFor(uri) ?: cacheKeyOf(uri)
         var source = analysis?.uri ?: uri
         var headers = analysis?.headers ?: emptyMap()
         var total = ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
@@ -2747,6 +2817,9 @@ object AudioCache {
                 // key factory answers partly from a global substitution setting
                 // that can change between the two.
                 fetch(key, source, from, total - from, pinKey = true, headers = headers)
+                // Marked as the analyser's own, so the copy is dropped when the
+                // episode is done with it rather than living on the device.
+                if (key == analysisKeyOfPlain(uri)) tagPlainAnalysisCopy(key, uri)
                 val held = renditionsOf(uri).firstOrNull { it.key == key }
                     ?.let { cachedTailBytes(it, window) } ?: 0L
                 // Re-armed on progress, not on any shortfall; see the YouTube
@@ -3019,8 +3092,20 @@ object AudioCache {
      */
     private fun sourceRenditionsOf(uri: Uri): List<Rendition> {
         val base = sourceBaseKey(uri)
-            ?: return listOfNotNull(renditionFor(keyFactory.buildCacheKey(DataSpec(uri))))
-        return renditionKeysFor(base)
+        if (base != null) {
+            return renditionKeysFor(base)
+                .mapNotNull(::renditionFor)
+                .sortedBy { it.contentLength }
+        }
+        // A plain stream — a podcast — has no source and no video id, so its
+        // entries are found by the URL itself: the one the player is filling,
+        // and the analyser's own sibling under `<url>#analysis`.
+        //
+        // The sibling has to be in this list, or the analyser cannot read the
+        // copy it just fetched: it asks for the renditions of the track and
+        // gets the player's entry, which is the one it is not allowed to read.
+        val plain = keyFactory.buildCacheKey(DataSpec(uri))
+        return renditionKeysFor(plain)
             .mapNotNull(::renditionFor)
             .sortedBy { it.contentLength }
     }
