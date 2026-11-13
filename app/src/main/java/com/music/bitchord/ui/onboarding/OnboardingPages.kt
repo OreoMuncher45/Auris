@@ -57,11 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -84,7 +82,10 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.components.isGlassAllowed
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
+import com.music.bitchord.sharedui.resources.Res
+import com.music.bitchord.sharedui.resources.spotify_logo
 import kotlinx.coroutines.delay
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * The pages of the first-run flow.
@@ -805,67 +806,51 @@ private fun ProviderCard(
 }
 
 /**
- * A service's own mark, drawn rather than shipped as an asset.
+ * A service's own mark.
  *
- * Two circles and a glyph each: no trademark image to keep in step with, and
- * nothing to go missing from a drawable folder in a build variant that trims
- * it. Recognisable at a glance is the whole requirement.
+ * Spotify's is the real one — the same drawable Settings prints beside the
+ * Spotify connection, a disc with the arcs knocked out of it — tinted green
+ * here. It used to be three arcs drawn by hand over a green square, which was
+ * a likeness of the mark rather than the mark, and it read as a doodle on the
+ * one page where the listener is choosing where their music comes from.
+ *
+ * YouTube's is still drawn: the play triangle is the whole of it, and a
+ * drawable would be a file for three lines of geometry.
  */
 @Composable
 internal fun ProviderMark(provider: HomeProvider, size: androidx.compose.ui.unit.Dp) {
-    val youtube = provider == HomeProvider.YOUTUBE
+    if (provider == HomeProvider.SPOTIFY) {
+        Icon(
+            painter = painterResource(Res.drawable.spotify_logo),
+            contentDescription = "Spotify",
+            tint = SpotifyGreen,
+            modifier = Modifier.size(size),
+        )
+        return
+    }
     Box(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(size * 0.3f))
-            .background(if (youtube) Color(0xFFFF0033) else Color(0xFF1DB954)),
+            .background(Color(0xFFFF0033)),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val w = this.size.width
             val h = this.size.height
-            if (youtube) {
-                val triangle = Path().apply {
-                    moveTo(w * 0.40f, h * 0.31f)
-                    lineTo(w * 0.71f, h * 0.50f)
-                    lineTo(w * 0.40f, h * 0.69f)
-                    close()
-                }
-                drawPath(triangle, Color.White)
-            } else {
-                // Three arcs, thick to thin: Spotify's mark without the note.
-                val stroke = Stroke(width = w * 0.075f, cap = StrokeCap.Round)
-                drawArc(
-                    color = Color.White,
-                    startAngle = 200f,
-                    sweepAngle = 140f,
-                    useCenter = false,
-                    topLeft = Offset(w * 0.20f, h * 0.22f),
-                    size = androidx.compose.ui.geometry.Size(w * 0.60f, h * 0.34f),
-                    style = stroke,
-                )
-                drawArc(
-                    color = Color.White,
-                    startAngle = 205f,
-                    sweepAngle = 130f,
-                    useCenter = false,
-                    topLeft = Offset(w * 0.27f, h * 0.40f),
-                    size = androidx.compose.ui.geometry.Size(w * 0.46f, h * 0.26f),
-                    style = stroke,
-                )
-                drawArc(
-                    color = Color.White,
-                    startAngle = 210f,
-                    sweepAngle = 120f,
-                    useCenter = false,
-                    topLeft = Offset(w * 0.34f, h * 0.57f),
-                    size = androidx.compose.ui.geometry.Size(w * 0.32f, h * 0.18f),
-                    style = stroke,
-                )
+            val triangle = Path().apply {
+                moveTo(w * 0.40f, h * 0.31f)
+                lineTo(w * 0.71f, h * 0.50f)
+                lineTo(w * 0.40f, h * 0.69f)
+                close()
             }
+            drawPath(triangle, Color.White)
         }
     }
 }
+
+/** Spotify's own green, the colour of the disc the mark is printed on. */
+private val SpotifyGreen = Color(0xFF1DB954)
 
 // ---------------------------------------------------------------------------
 // 5. the artists
