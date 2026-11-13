@@ -1664,6 +1664,51 @@ object AudioCache {
     private fun analysisKeyOfVideo(videoId: String): String = "$videoId$ANALYSIS_SUFFIX"
 
     /**
+     * The copy the analyser reads, for a row.
+     *
+     * A YouTube row is read from YouTube's own Opus encoding — a private URI
+     * under the analysis marker — so the bytes are separate from whatever the
+     * listener is hearing.
+     *
+     * A Spotify catalogue row has no YouTube id behind it: the sources are
+     * asked for the recording *by name*, and the name is in the row's own
+     * address. The id-only URI this used to build asked YouTube for a video
+     * called `spotify:<id>` — which YouTube refuses with "URL not accepted" —
+     * so the analyser got nothing at all for every such row. The head and the
+     * tail both came back empty, the track was never measured, and its lane
+     * in the panel was blank for as long as the panel was open.
+     *
+     * So the copy of such a row is the row's own address: the one playback
+     * opens, carrying the title and artist the sources are asked to match on.
+     * The read-ahead already learned this — see [SPOTIFY_ROW_PREFIX].
+     */
+    internal fun analysisCopyFor(uri: Uri, videoId: String): Uri =
+        Uri.parse(analysisCopyAddress(uri.toString(), videoId))
+
+    /**
+     * The address of the copy the analyser reads, for a row.
+     *
+     * The decision is made on strings so it can be tested without the
+     * platform's [Uri]: what it has to get right is *which* address the
+     * analyser asks, and a query parameter is all that is at stake.
+     */
+    internal fun analysisCopyAddress(uri: String, videoId: String): String =
+        if (isCatalogueRow(videoId)) {
+            uri
+        } else {
+            AutomixAnalysisSource.opusUri(videoId)
+        }
+
+    /**
+     * Whether [videoId] is a row with no YouTube id behind it.
+     *
+     * Such a row is served by whichever source holds it, so what decides
+     * whether it can be measured is that source's own switch, read where the
+     * row is resolved — not YouTube's.
+     */
+    private fun isCatalogueRow(videoId: String): Boolean = videoId.startsWith(SPOTIFY_ROW_PREFIX)
+
+    /**
      * The cache key the analyser owns for [uri], or null when it has none.
      *
      * The one question every part of the analysis asks — *where do my own
@@ -1989,6 +2034,11 @@ object AudioCache {
         // switch, which is read where the work is queued.
         if (!SourceRegistry.youtubeAnalysisEnabled()) return false
         val videoId = uri.getQueryParameter("v") ?: return false
+        // A catalogue row has no YouTube copy to align against: its id is not
+        // a video id, and the copy the analyser reads is the one the sources
+        // serve. There is nothing here to wait for, and asking anyway would
+        // spend the whole deadline on a request that cannot be answered.
+        if (isCatalogueRow(videoId)) return false
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         // A previous round that wrote nothing would otherwise block retries
@@ -2119,7 +2169,17 @@ object AudioCache {
         //
         // What does stop it is the listener's own Automix switch, which is
         // read where the work is queued — see [TrackAnalyzer].
-        if (!SourceRegistry.youtubeAnalysisEnabled()) return
+        //
+        // A row with no YouTube id behind it is not YouTube's to reach: the
+        // sources are asked for it by name, and the switch that matters is
+        // the source's own, read where the row is resolved. Asking YouTube
+        // about it answered nothing and stopped the measurement.
+        if (!isCatalogueRow(videoId) && !SourceRegistry.youtubeAnalysisEnabled()) return
+        // The copy the analyser reads — see [analysisCopyFor]. For a YouTube
+        // row that is YouTube's own Opus encoding; for a catalogue row it is
+        // the row's own address, which carries the name the sources are
+        // asked to match on.
+        val copy = analysisCopyFor(uri, videoId)
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape. A forced round ignores the guard: the panel asked
@@ -2134,14 +2194,24 @@ object AudioCache {
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
         val key = analysisKeyOfVideo(videoId)
-        val copy = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         scope.launch {
             try {
-                val total = runCatching { StreamResolver.contentLength(videoId) }
-                    .onFailure {
-                        TrackLog.w(TAG, "contentLength failed for $videoId: ${it.message}", videoId)
-                    }
-                    .getOrNull() ?: 0L
+                // The copy's own length.
+                //
+                // A YouTube row's length comes from YouTube, which knows it
+                // before a byte is asked for. A catalogue row's comes from
+                // the stream the row resolves to — the same stream the head
+                // is read from — because the id-only request YouTube was
+                // asked for answered nothing at all.
+                val total = if (isCatalogueRow(videoId)) {
+                    measureUpstream(copy)
+                } else {
+                    runCatching { StreamResolver.contentLength(videoId) }
+                        .onFailure {
+                            TrackLog.w(TAG, "contentLength failed for $videoId: ${it.message}", videoId)
+                        }
+                        .getOrNull() ?: 0L
+                }
                 val want = analysisHeadSize(total, durationSeconds)
                 analysisHeadWant[videoId] = want
                 val already = cachedBytesOf(key, want)
@@ -2187,7 +2257,7 @@ object AudioCache {
                 }
                 reportAnalysisProgress(key, cachedBytesOf(key, want), want)
                 val held = cachedBytesOf(key, want)
-                if (held * 2 < want) {
+                if (held * 2 < want && !isCatalogueRow(videoId)) {
                     // The plain Opus copy would not come: on the networks where
                     // its googlevideo resolve fails it never does, while
                     // playback of the very same track is unbothered because it
@@ -2202,6 +2272,10 @@ object AudioCache {
                     // parse. A partial Opus is worth nothing anyway — the
                     // window is sized for exactly the seconds the pass needs,
                     // so half of it is half a container.
+                    //
+                    // A catalogue row has no second copy to fall back on: the
+                    // row's own address *is* the copy, so pulling it again
+                    // would ask the same server for the same bytes.
                     clearPartialHead(key, want)
                     pull(
                         key,
@@ -2523,7 +2597,7 @@ object AudioCache {
             requestSourceAnalysisTail(uri, seconds, force)
             return
         }
-        if (!SourceRegistry.youtubeAnalysisEnabled()) return
+        if (!isCatalogueRow(videoId) && !SourceRegistry.youtubeAnalysisEnabled()) return
         if (!force && analysisTails[videoId] != null) return
         if (!force && !analysisTailsInFlight.add(videoId)) return
         if (force) analysisTailsInFlight.add(videoId)
@@ -2541,7 +2615,11 @@ object AudioCache {
         // other end of the same recording and belongs beside the head rather
         // than in the player's file.
         val key = analysisKeyOfVideo(videoId)
-        val copy = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
+        // The copy the tail is read from — see [analysisCopyFor]. For a
+        // catalogue row this is the row's own address: the ending of the
+        // recording the sources serve, fetched from the same server the head
+        // came from.
+        val copy = analysisCopyFor(uri, videoId)
         scope.launch {
             try {
                 // The copy's *own* length, measured from the stream the copy
