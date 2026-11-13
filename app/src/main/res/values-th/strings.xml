@@ -1391,4 +1391,7 @@
     <string name="auto_upgrade_local_storage">อัปเกรดเพลงในที่จัดเก็บในเครื่องอัตโนมัติ</string>
     <string name="auto_upgrade_local_storage_subtitle">มองหาสำเนาที่ดีกว่าของเพลงที่บันทึกไว้ในเครื่องนี้</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">โหมดออฟไลน์เปิดอยู่ — การอัปเกรดถูกหยุดชั่วคราว</string>
+    <string name="sort_release_date">วันที่วางจำหน่าย (ใหม่ที่สุดก่อน)</string>
+    <string name="sort_chronological">ตามลำดับเวลา (เก่าที่สุดก่อน)</string>
+    <string name="sort_popularity">ความนิยม</string>
 </resources>

@@ -1408,4 +1408,7 @@
     <string name="auto_upgrade_local_storage">Gespeicherte Songs automatisch hochstufen</string>
     <string name="auto_upgrade_local_storage_subtitle">Nach einer besseren Kopie der gespeicherten Songs suchen</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Offline-Modus ist an – Upgrades sind pausiert</string>
+    <string name="sort_release_date">Veröffentlichungsdatum (neueste zuerst)</string>
+    <string name="sort_chronological">Chronologisch (älteste zuerst)</string>
+    <string name="sort_popularity">Beliebtheit</string>
 </resources>

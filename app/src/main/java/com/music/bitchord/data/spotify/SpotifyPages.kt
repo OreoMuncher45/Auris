@@ -120,14 +120,15 @@ internal object SpotifyPages {
     internal fun parseAlbumPage(root: JsonObject): Page {
         val album = root.obj("albumUnion")
             ?: throw IllegalStateException("Spotify album was not found")
+        val artists = album.artists()
         val tracks = album.obj("tracksV2")?.arr("items").orEmpty().mapNotNull { row ->
             val row = row.objOrNull() ?: return@mapNotNull null
             val track = row.obj("track") ?: row
-            parseTrack(track)
+            parseTrack(track, fallbackArtist = artists)
         }
         return Page(
             title = album.str("name").orEmpty(),
-            subtitle = album.artists(),
+            subtitle = artists,
             imageUrl = album.obj("coverArt")?.arr("sources").bestImage(),
             tracks = tracks,
             shelves = emptyList(),
@@ -145,14 +146,38 @@ internal object SpotifyPages {
         val artist = root.obj("artistUnion")
             ?: throw IllegalStateException("Spotify artist was not found")
         val discography = artist.obj("discography")
+        val artistName = artist.obj("profile")?.str("name").orEmpty()
         val tracks = discography?.obj("topTracks")?.arr("items").orEmpty().mapNotNull { row ->
             val row = row.objOrNull() ?: return@mapNotNull null
             val track = row.obj("track") ?: row
-            parseTrack(track)
+            parseTrack(track, fallbackArtist = artistName)
         }
-        val shelves = mutableListOf<HomeShelf>()
-        discography?.obj("popularReleasesAlbums")?.arr("items").orEmpty()
+        // Spotify ranks its "popular releases" list; the position is the only
+        // popularity signal the artist page carries, so it is kept and offered
+        // to the shelf sorter rather than thrown away with the list.
+        val popular = discography?.obj("popularReleasesAlbums")?.arr("items").orEmpty()
             .mapNotNull { item -> item.objOrNull()?.let { card -> parseAlbumCard(card) } }
+        val popularity = popular.withIndex().associate { (index, card) -> card.id to index }
+        val shelves = mutableListOf<HomeShelf>()
+        // The discography, the way Spotify's own artist page opens it: the
+        // albums, then the singles and EPs. Each entry groups its pressings
+        // under `releases`, so the card is the release and not the group.
+        fun discographyShelf(path: String, title: String): HomeShelf? {
+            val cards = discography?.obj(path)?.arr("items").orEmpty()
+                .flatMap { entry ->
+                    val entry = entry.objOrNull() ?: return@flatMap emptyList()
+                    val releases = entry.obj("releases")?.arr("items") ?: return@flatMap listOf(entry)
+                    releases.mapNotNull { it.objOrNull() }
+                }
+                .mapNotNull { release -> parseAlbumCard(release) }
+                .map { card -> card.copy(popularity = popularity[card.id]) }
+                .distinctBy { it.id }
+            if (cards.isEmpty()) return null
+            return HomeShelf(title = title, items = cards.mapNotNull { it.item() })
+        }
+        discographyShelf("albums", "Albums")?.let { shelves += it }
+        discographyShelf("singles", "Singles & EPs")?.let { shelves += it }
+        popular
             .takeIf { it.isNotEmpty() }
             ?.let { cards -> shelves += HomeShelf(title = "Popular releases", items = cards.mapNotNull { it.item() }) }
         artist.obj("relatedContent")?.obj("relatedArtists")?.arr("items").orEmpty()
@@ -160,7 +185,7 @@ internal object SpotifyPages {
             .takeIf { it.isNotEmpty() }
             ?.let { cards -> shelves += HomeShelf(title = "Fans also like", items = cards.mapNotNull { it.item() }) }
         return Page(
-            title = artist.obj("profile")?.str("name").orEmpty(),
+            title = artistName,
             subtitle = "",
             imageUrl = artist.obj("visuals")?.obj("avatarImage")?.arr("sources").bestImage(),
             tracks = tracks,
@@ -204,7 +229,7 @@ internal object SpotifyPages {
      * a track from a playlist are the same thing to everything downstream —
      * including the matcher that finds it on YouTube Music.
      */
-    private fun parseTrack(data: JsonObject): SpotifyTrack? {
+    private fun parseTrack(data: JsonObject, fallbackArtist: String = ""): SpotifyTrack? {
         val uri = data.str("uri") ?: return null
         // Only a *track* is a row. An album page can list an episode or a
         // book, and neither of those can be queued — see [SpotifyLongForm].
@@ -214,7 +239,10 @@ internal object SpotifyPages {
         return SpotifyTrack(
             id = uri.substringAfterLast(':'),
             title = title,
-            artist = data.artists().ifBlank { album?.str("name").orEmpty() },
+            // The album *credit*, not the album *title*: an answer that leaves
+            // a track's artists out used to file it under the release's name,
+            // which is how a song came back credited to its own album.
+            artist = data.artists().ifBlank { fallbackArtist },
             album = album?.str("name"),
             durationMs = (data.obj("duration") ?: data.obj("trackDuration"))?.int("totalMilliseconds") ?: 0,
             imageUrl = album?.obj("coverArt")?.arr("sources").bestImage(),
@@ -232,6 +260,7 @@ internal object SpotifyPages {
             title = title,
             subtitle = data.artists(),
             imageUrl = data.obj("coverArt")?.arr("sources").bestImage(),
+            year = data.int("date.year") ?: data.int("releaseDate.year") ?: data.int("year"),
         )
     }
 

@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -337,11 +338,19 @@ fun DetailScreen(
     // The overflow menu's two shortcuts. Titles are localised, so the match is
     // on the stable words YouTube uses across locales plus a positional
     // fallback — an artist page's first shelf is albums and its second singles.
+    // The fallback only ever considers shelves that open *releases*: Spotify's
+    // artist page carries a "Fans also like" shelf of artists, and choosing it
+    // for "Singles & EPs" is exactly how that menu came to open a page of
+    // unrelated artists.
+    val releaseShelves = page.sections.filter { shelf ->
+        shelf.items.any { item -> item.browseId?.startsWith("spotify:artist:") == false }
+    }
     val albumsShelf = page.sections.firstOrNull { it.title.contains("album", true) }
+        ?: releaseShelves.getOrNull(0)
         ?: page.sections.getOrNull(0)
     val singlesShelf = page.sections.firstOrNull {
         it.title.contains("single", true) || ARTIST_EP_TITLE.containsMatchIn(it.title)
-    } ?: page.sections.getOrNull(1)?.takeIf { it !== albumsShelf }
+    } ?: releaseShelves.firstOrNull { it !== albumsShelf }
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -2188,31 +2197,137 @@ private fun ArtistShelfGridPage(
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
+    // Release date is the order a discography is normally read in: newest
+    // first. Chronological is the same list the other way round, which is the
+    // order a career is usually read in. Popularity keeps Spotify's own
+    // ranking where it gave one, and the catalogue's order everywhere else.
+    var sort by rememberSaveable(shelf.title) { mutableStateOf(ShelfSort.RELEASE_DATE) }
+    val items = remember(shelf.items, sort) { shelf.items.sortedForShelf(sort) }
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(grid.columns),
-            state = gridState,
-            contentPadding = PaddingValues(
-                top = topBarContentPadding(),
-                bottom = contentPadding.calculateBottomPadding() + 16.dp,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = PAGE_GUTTER),
-        ) {
-            items(shelf.items, key = { it.browseId ?: it.title }) { item ->
-                SectionCard(
-                    item = item,
-                    palette = palette,
-                    onClick = { onItemClick(item) },
-                    onLongPress = onItemLongPress?.let { { it(item) } },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        Column(Modifier.fillMaxSize()) {
+            ShelfSortRow(palette = palette, selected = sort, onSelect = { sort = it })
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(grid.columns),
+                state = gridState,
+                contentPadding = PaddingValues(
+                    top = 4.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 16.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = PAGE_GUTTER),
+            ) {
+                items(items, key = { it.browseId ?: it.title }) { item ->
+                    SectionCard(
+                        item = item,
+                        palette = palette,
+                        onClick = { onItemClick(item) },
+                        onLongPress = onItemLongPress?.let { { it(item) } },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
+    }
+}
+
+/** The orders a discography shelf can be read in. */
+private enum class ShelfSort { RELEASE_DATE, CHRONOLOGICAL, TITLE, POPULARITY }
+
+@Composable
+private fun ShelfSortRow(
+    palette: ArtworkPalette,
+    selected: ShelfSort,
+    onSelect: (ShelfSort) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PAGE_GUTTER,
+                end = PAGE_GUTTER,
+                top = topBarContentPadding() + 6.dp,
+                bottom = 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(palette.elevated)
+                    .clickable { expanded = true }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = selected.localizedLabel(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.onBackground,
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = Icons.Rounded.Sort,
+                    contentDescription = stringResource(R.string.sort_music),
+                    tint = palette.onBackgroundVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ShelfSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.localizedLabel()) },
+                        leadingIcon = {
+                            if (option == selected) {
+                                Icon(Icons.Rounded.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelect(option)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfSort.localizedLabel(): String = stringResource(
+    when (this) {
+        ShelfSort.RELEASE_DATE -> R.string.sort_release_date
+        ShelfSort.CHRONOLOGICAL -> R.string.sort_chronological
+        ShelfSort.TITLE -> R.string.sort_title_ascending
+        ShelfSort.POPULARITY -> R.string.sort_popularity
+    },
+)
+
+/**
+ * The shelf in the order the listener asked for.
+ *
+ * A card with no stated year sinks to the end of both date orders rather than
+ * claiming to be the oldest or the newest thing on the page; a card with no
+ * popularity rank keeps the catalogue's order and sits after the ranked ones.
+ */
+private fun List<ShelfItem>.sortedForShelf(sort: ShelfSort): List<ShelfItem> {
+    val byTitle = compareBy<ShelfItem, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+    val year: (ShelfItem) -> Int? = { it.year ?: it.releaseYear() }
+    return when (sort) {
+        ShelfSort.RELEASE_DATE -> sortedWith(
+            compareByDescending<ShelfItem> { year(it) ?: Int.MIN_VALUE }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+        ShelfSort.CHRONOLOGICAL -> sortedWith(
+            compareBy<ShelfItem> { year(it) ?: Int.MAX_VALUE }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+        ShelfSort.TITLE -> sortedWith(byTitle)
+        ShelfSort.POPULARITY -> sortedWith(compareBy { it.popularity ?: Int.MAX_VALUE })
     }
 }
 

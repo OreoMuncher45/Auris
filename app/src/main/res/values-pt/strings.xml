@@ -1413,4 +1413,7 @@
     <string name="auto_upgrade_local_storage">Melhorar automaticamente as músicas guardadas no dispositivo</string>
     <string name="auto_upgrade_local_storage_subtitle">Procurar uma cópia melhor das músicas guardadas neste dispositivo</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">O modo offline está ligado — as melhorias estão em pausa</string>
+    <string name="sort_release_date">Data de lançamento (mais recente primeiro)</string>
+    <string name="sort_chronological">Cronológico (mais antigo primeiro)</string>
+    <string name="sort_popularity">Popularidade</string>
 </resources>

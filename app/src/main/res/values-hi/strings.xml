@@ -1408,4 +1408,7 @@
     <string name="auto_upgrade_local_storage">स्थानीय स्टोरेज के गाने स्वतः अपग्रेड करें</string>
     <string name="auto_upgrade_local_storage_subtitle">इस डिवाइस पर सहेजे गए गानों की बेहतर कॉपी खोजें</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">ऑफ़लाइन मोड चालू है — अपग्रेड रुके हैं</string>
+    <string name="sort_release_date">रिलीज़ तिथि (नवीनतम पहले)</string>
+    <string name="sort_chronological">कालानुक्रमिक (सबसे पुराना पहले)</string>
+    <string name="sort_popularity">लोकप्रियता</string>
 </resources>

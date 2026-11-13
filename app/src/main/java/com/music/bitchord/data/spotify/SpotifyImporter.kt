@@ -204,7 +204,14 @@ object SpotifyImporter {
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
-            (TrackMatcher.best(candidates, target) ?: candidates.firstOrNull())?.let { return it }
+            // Only a candidate the matcher accepts. This used to fall back to
+            // the search engine's first row, which is how an album page came
+            // back with the right titles under entirely different artists: a
+            // track none of the sources held was silently replaced by whatever
+            // YouTube returned first. A miss is a `spotify:` row now — the
+            // page keeps Spotify's own credit, and the player resolves the
+            // recording by name when it is actually played.
+            TrackMatcher.best(candidates, target)?.let { return it }
         }
         // Then the sources themselves. Their rows already carry their own ids
         // (see [MusicSource.search]), so a hit here is directly playable and

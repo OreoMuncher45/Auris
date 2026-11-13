@@ -644,6 +644,8 @@ internal fun SpotifyCard.item(): ShelfItem? {
         thumbnailUrl = imageUrl,
         videoId = null,
         browseId = browseIdOf(),
+        year = year,
+        popularity = popularity,
     )
 }
 

@@ -76,6 +76,10 @@ internal data class SpotifyCard(
     val title: String,
     val subtitle: String,
     val imageUrl: String?,
+    /** Release year, when the answer carried a date. */
+    val year: Int? = null,
+    /** The card's place in the catalogue's own popularity order, when known. */
+    val popularity: Int? = null,
 ) {
     /** What kind of collection the card opens. */
     enum class Kind { PLAYLIST, ALBUM, ARTIST, SHOW, TRACK, CATEGORY, OTHER;

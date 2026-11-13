@@ -1347,4 +1347,7 @@
     <string name="auto_upgrade_local_storage">Aggiorna automaticamente i brani memorizzati localmente</string>
     <string name="auto_upgrade_local_storage_subtitle">Cerca una copia migliore dei brani salvati sul dispositivo</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Modalità offline attiva: gli aggiornamenti sono in pausa</string>
+    <string name="sort_release_date">Data di uscita (più recente prima)</string>
+    <string name="sort_chronological">Cronologico (più vecchio prima)</string>
+    <string name="sort_popularity">Popolarità</string>
 </resources>

@@ -1325,4 +1325,7 @@
     <string name="auto_upgrade_local_storage">Tự động nâng cấp các bài hát trong bộ nhớ cục bộ</string>
     <string name="auto_upgrade_local_storage_subtitle">Tìm bản tốt hơn cho các bài hát đã lưu trên thiết bị này</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Đang bật chế độ ngoại tuyến — nâng cấp tạm dừng</string>
+    <string name="sort_release_date">Ngày phát hành (mới nhất trước)</string>
+    <string name="sort_chronological">Theo thời gian (cũ nhất trước)</string>
+    <string name="sort_popularity">Độ phổ biến</string>
 </resources>

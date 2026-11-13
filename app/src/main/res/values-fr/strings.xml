@@ -1409,4 +1409,7 @@
     <string name="auto_upgrade_local_storage">Améliorer automatiquement les titres stockés</string>
     <string name="auto_upgrade_local_storage_subtitle">Chercher une meilleure copie des titres enregistrés sur cet appareil</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Le mode hors ligne est activé — les améliorations sont en pause</string>
+    <string name="sort_release_date">Date de sortie (plus récent d’abord)</string>
+    <string name="sort_chronological">Chronologique (plus ancien d’abord)</string>
+    <string name="sort_popularity">Popularité</string>
 </resources>

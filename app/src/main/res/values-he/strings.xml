@@ -1413,4 +1413,7 @@
     <string name="auto_upgrade_local_storage">שדרג אוטומטית שירים באחסון מקומי</string>
     <string name="auto_upgrade_local_storage_subtitle">חפש עותק טוב יותר לשירים שנשמרו במכשיר</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">מצב לא מקוון פעיל — שיפורים מושהים</string>
+    <string name="sort_release_date">תאריך יציאה (החדש ביותר קודם)</string>
+    <string name="sort_chronological">כרונולוגי (הישן ביותר קודם)</string>
+    <string name="sort_popularity">פופולריות</string>
 </resources>

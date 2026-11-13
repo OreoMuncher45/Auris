@@ -1448,4 +1448,7 @@
     <string name="auto_upgrade_local_storage">Automatycznie aktualizuj utwory w pamięci lokalnej</string>
     <string name="auto_upgrade_local_storage_subtitle">Szukaj lepszej kopii utworów zapisanych na tym urządzeniu</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Tryb offline jest włączony — aktualizacje są wstrzymane</string>
+    <string name="sort_release_date">Data wydania (najnowsze najpierw)</string>
+    <string name="sort_chronological">Chronologicznie (najstarsze najpierw)</string>
+    <string name="sort_popularity">Popularność</string>
 </resources>

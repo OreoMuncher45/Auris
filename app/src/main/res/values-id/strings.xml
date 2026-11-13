@@ -1385,4 +1385,7 @@
     <string name="auto_upgrade_local_storage">Tingkatkan otomatis lagu tersimpan lokal</string>
     <string name="auto_upgrade_local_storage_subtitle">Cari salinan lebih baik dari lagu yang tersimpan di perangkat ini</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Mode offline aktif — peningkatan dijeda</string>
+    <string name="sort_release_date">Tanggal rilis (terbaru dulu)</string>
+    <string name="sort_chronological">Kronologis (terlama dulu)</string>
+    <string name="sort_popularity">Popularitas</string>
 </resources>

@@ -357,6 +357,19 @@ data class ShelfItem(
     val thumbnailUrl: String?,
     val videoId: String?,
     val browseId: String?,
+    /**
+     * The year the release came out, when the catalogue states one.
+     *
+     * Only Spotify's release cards carry it so far; a YouTube card keeps it
+     * null and the shelf sorter falls back to the catalogue's own order.
+     */
+    val year: Int? = null,
+    /**
+     * Where the card sat in the catalogue's own popularity ranking, when it
+     * gave one — smaller is more popular. Null for every card whose order is
+     * not a statement about popularity.
+     */
+    val popularity: Int? = null,
 )
 
 /** The signed-in Google account, as YouTube Music reports it. */

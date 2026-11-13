@@ -1385,4 +1385,7 @@
     <string name="auto_upgrade_local_storage">自动升级本地存储中的歌曲</string>
     <string name="auto_upgrade_local_storage_subtitle">为保存在此设备上的歌曲寻找更好的副本</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">离线模式已开启 — 升级已暂停</string>
+    <string name="sort_release_date">发行日期（最新优先）</string>
+    <string name="sort_chronological">按时间顺序（最早优先）</string>
+    <string name="sort_popularity">热度</string>
 </resources>

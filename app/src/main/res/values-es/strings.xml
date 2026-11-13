@@ -1380,4 +1380,7 @@
     <string name="auto_upgrade_local_storage">Actualizar automáticamente las canciones guardadas</string>
     <string name="auto_upgrade_local_storage_subtitle">Buscar una copia mejor de las canciones guardadas en este dispositivo</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">El modo sin conexión está activo: las mejoras están en pausa</string>
+    <string name="sort_release_date">Fecha de lanzamiento (más reciente primero)</string>
+    <string name="sort_chronological">Cronológico (más antiguo primero)</string>
+    <string name="sort_popularity">Popularidad</string>
 </resources>

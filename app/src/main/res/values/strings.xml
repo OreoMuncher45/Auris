@@ -1442,4 +1442,7 @@
     <string name="auto_upgrade_local_storage">Auto upgrade songs in local storage</string>
     <string name="auto_upgrade_local_storage_subtitle">Look for a better copy of the songs saved on this device</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Offline mode is on — upgrades are paused</string>
+    <string name="sort_release_date">Release date (newest first)</string>
+    <string name="sort_chronological">Chronological (oldest first)</string>
+    <string name="sort_popularity">Popularity</string>
 </resources>

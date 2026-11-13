@@ -1440,4 +1440,7 @@
     <string name="auto_upgrade_local_storage">Автоматически улучшать треки в локальном хранилище</string>
     <string name="auto_upgrade_local_storage_subtitle">Искать лучшую копию треков, сохранённых на этом устройстве</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Включён офлайн-режим — улучшения приостановлены</string>
+    <string name="sort_release_date">Дата выхода (сначала новые)</string>
+    <string name="sort_chronological">По хронологии (сначала старые)</string>
+    <string name="sort_popularity">Популярность</string>
 </resources>

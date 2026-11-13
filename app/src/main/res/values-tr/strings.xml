@@ -1365,4 +1365,7 @@
     <string name="auto_upgrade_local_storage">Yerel depolamadaki şarkıları otomatik yükselt</string>
     <string name="auto_upgrade_local_storage_subtitle">Bu cihazda kayıtlı şarkılar için daha iyi bir kopya ara</string>
     <string name="auto_upgrade_local_storage_offline_subtitle">Çevrimdışı mod açık — yükseltmeler duraklatıldı</string>
+    <string name="sort_release_date">Çıkış tarihi (en yeni önce)</string>
+    <string name="sort_chronological">Kronolojik (en eski önce)</string>
+    <string name="sort_popularity">Popülerlik</string>
 </resources>
