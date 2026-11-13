@@ -423,7 +423,12 @@ fun latestIncomingCue(length: Double): Double =
  * passed over for the best one before it.
  */
  fun incomingCuePoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE_INFINITY): Double {
-    rankMixInCandidates(analysis).firstOrNull { it.time <= latest }?.let { return it.time }
+    // A candidate at zero is the file's own opening, not an arrangement
+    // arriving: every track's head analysis has one, and treating it as the
+    // drop left the arriving track's runway at nothing. The sibling answer to
+    // the same question — [incomingMixInPoint] — has always required a
+    // candidate past zero, and the two disagreed about the same track.
+    rankMixInCandidates(analysis).firstOrNull { it.time > 0.0 && it.time <= latest }?.let { return it.time }
 
     val interval = analysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (analysis.bpm.orZero() > 0) 60 / analysis.bpm else 0.0
@@ -567,6 +572,20 @@ const val FILTER_SWEEP = 1.0
 
 /** The outgoing track must have this much audio before the overlap and the incoming this much after it. */
 private const val MIN_CLEARANCE_SECONDS = 5.0
+
+/**
+ * The plain crossfade's own bounds, used when the advanced whole-bar sizing
+ * cannot be placed and the pair falls back to an equal-power fade.
+ *
+ * A fade shorter than [MIN_PLAIN_FADE_SECONDS] is not a fade — it is a cut
+ * with a volume ramp on it — so a pair that cannot even fit that is left with
+ * no transition at all, which is the one refusal here that is honest.
+ */
+private const val MIN_PLAIN_FADE_SECONDS = 1.0
+private const val MAX_PLAIN_FADE_SECONDS = 12.0
+
+/** The plain fade's length when the caller has none of its own to offer. */
+private const val DEFAULT_PLAIN_FADE_SECONDS = 6.0
 
 private fun averageEnergy(curve: List<EnergySample>, from: Double, until: Double): Double? {
     if (until <= from) return null
@@ -1729,8 +1748,16 @@ fun planTransition(
         FilterTransitionVariant.SWEEP
     }
     val primary = mixPlan(
-        analysis, nextAnalysis, mixAnchor, mixOutAnchor.type, length, nextLength, traits, filterVariant,
+        analysis,
+        nextAnalysis,
+        mixAnchor,
+        mixOutAnchor.type,
+        length,
+        nextLength,
+        traits,
+        filterVariant,
         override,
+        standardFade,
     )
     // An exit where the outgoing track is still singing over the incoming one
     // is worth trading for another the analysis ranked, if one halves the
@@ -1758,6 +1785,7 @@ fun planTransition(
                     traits,
                     filterVariant,
                     override,
+                    standardFade,
                 )
             }
             .filter { playbackTime < it.transitionStart }
@@ -1926,6 +1954,8 @@ private fun mixPlan(
     traits: PairTraits?,
     filterVariant: FilterTransitionVariant,
     override: AutomixOverride? = null,
+    /** The plain crossfade's own length, used when the advanced sizing cannot be placed. */
+    plainFadeSeconds: Double = DEFAULT_PLAIN_FADE_SECONDS,
 ): TransitionPlan {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -2037,12 +2067,39 @@ private fun mixPlan(
         v2Reasons += "v2-entrance+${tenths(v2Entrance.improvementDb)}dB"
     }
     val maxIncomingHandoff = nextLength - MIN_INCOMING_CLEARANCE_SECONDS
-    val incomingHandoffTime =
+    var incomingHandoffTime =
         if (maxIncomingHandoff >= incomingDropTime) {
             min(effectiveIncomingHandoff, maxIncomingHandoff)
         } else {
             incomingDropTime
         }
+    // The arriving track's **runway**: how much of it sits between the moment
+    // it starts making sound and the handoff the blend is built around. A
+    // beat-locked blend is cued so that this handoff lands at the blend's end,
+    // so the runway is what decides how long the blend can be.
+    //
+    // A track that opens straight into its arrangement has almost no runway: a
+    // few seconds, where the shortest legal beat-locked blend — four bars —
+    // needs rather more. That is a reason to stop being ambitious, not a
+    // reason to stop transitioning: the handoff is moved out to the first
+    // place the shortest legal blend can reach, the arriving track is cued at
+    // its own first downbeat, and the blend runs at the floor.
+    //
+    // This used to be fatal instead. The runway cap only applies to pairs
+    // whose tempi are within five per cent — the pairs a shared grid was going
+    // to make work beautifully — so the better the tempo match, the more
+    // certainly the transition was refused: no window in the seek bar, no
+    // blend, and an analysis that was perfect. It fired for every pair whose
+    // arriving track had no arrangement to wait for, which is most of them,
+    // and never for the pairs more than five per cent apart that did not need
+    // the cap at all.
+    val incomingRate = incomingRateFor(incomingPlaybackRate, true)
+    val incomingAudibleStart = incomingStartPoint(nextAnalysis)
+    val outgoingBarSeconds = BEATS_PER_BAR * 60.0 / currentBpm
+    val minimumHandoff = incomingAudibleStart + MIN_TRANSITION_BARS * incomingRate * outgoingBarSeconds
+    if (incomingHandoffTime < minimumHandoff && minimumHandoff <= maxIncomingHandoff) {
+        incomingHandoffTime = minimumHandoff
+    }
     val rawIncomingCueTime = incomingStartPoint(nextAnalysis)
     val analyzedIncomingHandoff = nextAnalysis.mixInTime
     val hasIncomingPreroll = analyzedIncomingHandoff.isFinite() &&
@@ -2092,10 +2149,50 @@ private fun mixPlan(
             sameBeatBlend = sameBeatBlend,
         )
         if (placement == null) {
-            return blocked(
-                "advanced-overlap-too-long",
-                transitionStart = mixEnd,
-                transitionEnd = mixEnd,
+            // The whole-bar sizing could not be placed.
+            //
+            // Every other refusal in this file degrades — to a plain crossfade,
+            // to a shorter overlap, to a filter ride — and this one used to end
+            // the feature instead. A blocked plan carries no window, so the seek
+            // bar showed nothing, and the controller arms nothing for a blocked
+            // plan, so the transition never happened at all. For a pair whose
+            // analysis was perfect that read as Automix being broken, which it
+            // was, and it read as broken *only* for the pairs whose analysis
+            // was perfect.
+            //
+            // So the pair falls back to the plain crossfade the policy ladder
+            // promises for weak evidence: an equal-power fade at the analysed
+            // mix-out anchor, with the arriving track cued at its own start.
+            val plainEnd = if (mixEnd > 0.0) mixEnd else length
+            val plainFade = clamp(plainFadeSeconds, MIN_PLAIN_FADE_SECONDS, MAX_PLAIN_FADE_SECONDS)
+            val plainStart = max(0.0, plainEnd - plainFade)
+            val plainSeconds = plainEnd - plainStart
+            if (plainSeconds < MIN_PLAIN_FADE_SECONDS) {
+                // Not even a fade fits: there is genuinely nothing to transition
+                // into, and saying so is honest.
+                return blocked("no-room-for-a-fade", transitionStart = plainEnd, transitionEnd = plainEnd)
+            }
+            val plainBeat = if (currentBpm > 0) 60.0 / currentBpm else 0.0
+            val plainBars = if (plainBeat > 0) {
+                round(plainSeconds / (BEATS_PER_BAR * plainBeat)).toInt()
+            } else {
+                0
+            }
+            val plainCue = incomingStartPoint(nextAnalysis)
+            return TransitionPlan(
+                markerVisible = true,
+                transitionStart = plainStart,
+                transitionEnd = plainEnd,
+                fadeSeconds = plainSeconds,
+                transitionStyle = TransitionStyle.EQUAL_POWER,
+                incomingCueTime = plainCue,
+                incomingHandoffTime = plainCue + plainSeconds * incomingRate,
+                transitionBeats = plainBars * BEATS_PER_BAR,
+                transitionBars = plainBars,
+                maxTransitionBars = plainBars,
+                volumeShape = override?.volume ?: TransitionVolumeShape.AUTO,
+                policyReasons = listOf("advanced-placement-refused"),
+                reason = "smart-plain-crossfade",
             )
         }
         if (placement.gateSeconds > 0.05) {

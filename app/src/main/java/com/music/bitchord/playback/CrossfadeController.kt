@@ -1,7 +1,6 @@
 package com.music.bitchord.playback
 
 import android.os.SystemClock
-import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -9,6 +8,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPanelState
@@ -1210,11 +1210,18 @@ class CrossfadeController(
         lastPlan = plan
         if (verdict != lastPlanVerdict) {
             lastPlanVerdict = verdict
-            Log.d(
+            // The app's own log, not logcat: this line is the answer to "why
+            // did Automix do nothing", and the log the app exports is the one
+            // a listener can actually send. It used to go to logcat under its
+            // own tag, where it never reached the exported log at all — so a
+            // pair the planner refused was invisible in the very report that
+            // was supposed to carry the reason.
+            TrackLog.d(
                 TAG,
                 "plan ${currentItem.mediaId}->${nextItem.mediaId}: $verdict " +
                     "bpm=${currentAnalysis.bpm}/${nextAnalysis.bpm} " +
                     "conf=${currentAnalysis.beatConfidence}/${nextAnalysis.beatConfidence}",
+                currentItem.mediaId,
             )
         }
 
@@ -1769,7 +1776,7 @@ class CrossfadeController(
         if (nextIndex >= items.size) return false
         queuedItemCount = items.size
 
-        Log.d(
+        TrackLog.d(
             TAG,
             "arm ${if (smart) "smart" else "standard"} fade=${fade}ms end=${endMs}ms " +
                 "cue=${incomingCueTimeMs}ms rate=$incomingPlaybackRate at=${out.currentPosition}ms " +
@@ -1777,6 +1784,7 @@ class CrossfadeController(
                 "advanced=${render.advanced} lock=${render.phaseLock} handoff=${render.handoffAt} " +
                 "echo=${if (render.echo) "${render.echoSecondsF}s@${render.echoAt}" else "off"} " +
                 "sweep=${render.filterSweep}",
+            out.currentMediaItem?.mediaId,
         )
 
         holdAtEnd(out)
@@ -1839,7 +1847,11 @@ class CrossfadeController(
         val duration = out.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
         if (duration - out.currentPosition <= readAheadMs()) {
-            Log.d(TAG, "end not held: ${duration - out.currentPosition}ms left, read-ahead ${readAheadMs()}ms")
+            TrackLog.d(
+                TAG,
+                "end not held: ${duration - out.currentPosition}ms left, read-ahead ${readAheadMs()}ms",
+                out.currentMediaItem?.mediaId,
+            )
             return
         }
         out.pauseAtEndOfMediaItems = true
@@ -1947,7 +1959,11 @@ class CrossfadeController(
         outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
         incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
 
-        Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
+        TrackLog.d(
+            TAG,
+            "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms",
+            out.currentMediaItem?.mediaId,
+        )
 
         // Published before the mix flag, in the same tick: the scrubber shows
         // the old sheen for a mix flag with no blend beside it, and would flash
@@ -1976,7 +1992,11 @@ class CrossfadeController(
         // otherwise be lost at the swap.
         reconcileQueue(out, into)
 
-        Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
+        TrackLog.d(
+            TAG,
+            "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms",
+            out.currentMediaItem?.mediaId,
+        )
 
         // Before the swap, so the listener follows the session rather than
         // firing on a player this class is about to demote.
@@ -2026,7 +2046,11 @@ class CrossfadeController(
         if (appended.isEmpty()) return
         into.addMediaItems(appended)
         queuedItemCount = out.mediaItemCount
-        Log.d(TAG, "reconciled ${appended.size} appended item(s) onto the incoming player")
+        TrackLog.d(
+            TAG,
+            "reconciled ${appended.size} appended item(s) onto the incoming player",
+            outgoing?.currentMediaItem?.mediaId,
+        )
     }
 
     /**
@@ -2220,7 +2244,11 @@ class CrossfadeController(
         outgoing = out
         incoming = null
         handedOff = false
-        Log.d(TAG, "sleep timer due: fading out over ${fade}ms instead of transitioning")
+        TrackLog.d(
+            TAG,
+            "sleep timer due: fading out over ${fade}ms instead of transitioning",
+            out.currentMediaItem?.mediaId,
+        )
         phase = Phase.SLEEP_FADE
     }
 
@@ -2290,7 +2318,11 @@ class CrossfadeController(
      */
     private fun bail() {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
-        Log.d(TAG, "bail from $phase")
+        TrackLog.d(
+            TAG,
+            "bail from $phase",
+            outgoing?.currentMediaItem?.mediaId ?: incoming?.currentMediaItem?.mediaId,
+        )
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
         if (!handedOff && phase != Phase.FADING) {
@@ -2315,7 +2347,11 @@ class CrossfadeController(
 
     private fun finish() {
         if (phase != Phase.IDLE) {
-            Log.d(TAG, "finish from $phase")
+            TrackLog.d(
+                TAG,
+                "finish from $phase",
+                outgoing?.currentMediaItem?.mediaId ?: incoming?.currentMediaItem?.mediaId,
+            )
             // Stamped under this guard rather than beside the assignment at the
             // bottom, because this function is idempotent and gets called with
             // nothing in flight: marking every one of those as a transition
