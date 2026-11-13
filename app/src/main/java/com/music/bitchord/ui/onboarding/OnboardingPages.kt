@@ -49,10 +49,13 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,7 +84,7 @@ import com.music.bitchord.data.settings.HomeProvider
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.components.isGlassAllowed
 import com.music.bitchord.ui.player.MeshGradientBackground
-import com.music.bitchord.ui.player.rememberArtworkColors
+import com.music.bitchord.ui.player.MeshPalette
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.spotify_logo
 import kotlinx.coroutines.delay
@@ -395,6 +398,7 @@ private fun QualityRung(
 @Composable
 internal fun FeelStep(
     song: Song?,
+    palette: MeshPalette,
     liquidGlass: Boolean,
     onLiquidGlass: (Boolean) -> Unit,
     frosted: Boolean,
@@ -405,13 +409,38 @@ internal fun FeelStep(
     footer: @Composable ColumnScope.() -> Unit,
 ) {
     val glassAvailable = isGlassAllowed()
+
+    // The strength the finger is choosing lives here, not in the flow.
+    //
+    // A drag fires this at display rate. When the value was state in the
+    // flow, every sample recomposed the whole sheet — backdrop, rail, every
+    // page — and published the value to the app's own glass behind the
+    // sheet, which recomposed that too. Here the card is all that moves,
+    // and the value is published once the drag stops.
+    var live by remember { mutableFloatStateOf(intensity) }
+    val publish = rememberUpdatedState(onIntensity)
+    val published = remember { mutableStateOf(intensity) }
+    LaunchedEffect(live) {
+        if (live == published.value) return@LaunchedEffect
+        delay(GLASS_SETTLE_MS)
+        publish.value(live)
+        published.value = live
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            // Leaving the page with a value still pending: keep it, or the
+            // last thing the listener chose is the one thing not kept.
+            if (live != published.value) publish.value(live)
+        }
+    }
+
     OnboardingPage(
         badge = { PageBadge(Icons.Rounded.AutoAwesome) },
         title = "Make it yours",
         subtitle = "Auris' player is glass over the music — the whole app takes its colour from the cover.",
         footer = footer,
     ) {
-        NowPlayingPreview(song = song, glass = liquidGlass, frosted = frosted)
+        NowPlayingPreview(song = song, palette = palette, glass = liquidGlass, frosted = frosted)
         Spacer(Modifier.height(14.dp))
         OnbToggle(
             icon = Icons.Rounded.Animation,
@@ -442,14 +471,14 @@ internal fun FeelStep(
                         Text("Glass strength", color = Onb.Title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
                         Text(
-                            "${(intensity * 100).toInt()}%",
+                            "${(live * 100).toInt()}%",
                             color = Onb.Muted,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    GlassStrength(value = intensity, onChange = onIntensity)
+                    GlassStrength(value = live, onChange = { live = it })
                 }
             }
         }
@@ -548,11 +577,19 @@ private fun GlassStrength(value: Float, onChange: (Float) -> Unit) {
  * listener an actual record rather than a drawing of one. The mesh behind it is
  * the app's own Now Playing backdrop, built from that cover — which is why the
  * glass above it has something worth refracting.
+ *
+ * The [palette] is passed in rather than read here: the flow's own backdrop
+ * is built from the same cover, and reading it twice meant two downloads of
+ * the same image and two passes over its pixels for one backdrop.
  */
 @Composable
-internal fun NowPlayingPreview(song: Song?, glass: Boolean, frosted: Boolean) {
+internal fun NowPlayingPreview(
+    song: Song?,
+    palette: MeshPalette,
+    glass: Boolean,
+    frosted: Boolean,
+) {
     val shape = remember { RoundedCornerShape(28.dp) }
-    val palette = rememberArtworkColors(song?.thumbnailUrl)
     var playing by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
@@ -565,7 +602,10 @@ internal fun NowPlayingPreview(song: Song?, glass: Boolean, frosted: Boolean) {
             palette = palette,
             modifier = Modifier.fillMaxSize(),
             trackKey = song?.thumbnailUrl,
-            continuous = true,
+            // Still, for the same reason the flow's own backdrop is: a blurred
+            // layer that redraws itself at refresh rate is the most expensive
+            // thing on the screen, and this one sits inside another one.
+            animated = false,
             blurRadius = 34.dp,
         )
         Column(
@@ -1114,6 +1154,14 @@ private fun SummaryChip(label: String, value: String) {
 
 /** What the grid shows before anybody has typed: an ordinary chart search. */
 private const val SEED_QUERY = "hits"
+
+/**
+ * How long the glass-strength slider waits before the value is published.
+ *
+ * Long enough that a drag is one change rather than a hundred, short enough
+ * that the app's own glass has caught up by the time the finger lifts.
+ */
+private const val GLASS_SETTLE_MS = 320L
 
 /** How many picks the tray nudges toward; more is allowed, and never required. */
 internal const val TARGET_PICKS = 5

@@ -228,7 +228,15 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
             .build()
         val result = SingletonImageLoader.get(context).execute(request)
         val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@LaunchedEffect
-        palette = MeshPalette(paletteOf(bitmap))
+        // Off the main thread, like the frame path below.
+        //
+        // The swatch pass reads every pixel of the artwork and sorts the
+        // result, and doing that on the main thread is a dropped frame on
+        // the screen that is asking for it — the onboarding opens onto a
+        // screen that loads a cover, and the cover's palette is the first
+        // thing it wants.
+        val colors = withContext(Dispatchers.Default) { paletteOf(bitmap) }
+        palette = MeshPalette(colors)
     }
 
     LaunchedEffect(canvasFrame) {

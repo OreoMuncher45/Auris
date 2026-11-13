@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +73,9 @@ import com.music.bitchord.ui.components.SflxInstallDialog
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.util.AppRelaunch
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -116,6 +119,14 @@ fun SetupWizard(
     var download by remember { mutableStateOf(AppSettings.downloadQuality.value) }
     var liquidGlass by remember { mutableStateOf(AppSettings.liquidGlass.value) }
     var frosted by remember { mutableStateOf(AppSettings.glassPerformance.value) }
+    // The glass strength the listener has settled on.
+    //
+    // It changes when the slider settles, not while it moves: a drag fires
+    // its callback at display rate, and every one of those samples used to
+    // write the preference file, publish the value to the app's own glass
+    // behind the sheet, and recompose this whole flow. The live value lives
+    // on the page that owns the slider; this is what the flow remembers once
+    // the page has let go of it.
     var intensity by remember { mutableFloatStateOf(AppSettings.liquidGlassIntensity.value) }
     // The catalogue is the one answer that cannot be half-applied: Flow and
     // Autoplay each train against whichever provider built them, which is why
@@ -135,6 +146,14 @@ fun SetupWizard(
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val addonCount = sourceConfigs.count { it.kind == SourceKind.ADDON || it.kind == SourceKind.MODULE }
 
+    // The demo record's palette, read once.
+    //
+    // The flow's own backdrop and the player's miniature both want the
+    // colours of the same cover, and each used to ask for them separately:
+    // two downloads of the same image and two passes over its pixels, for
+    // one backdrop.
+    val demoPalette = rememberArtworkColors(demo?.thumbnailUrl)
+
     // A real record, fetched live: the preview is the app showing the listener a
     // song rather than a drawing of one, and its cover is what tints the flow.
     LaunchedEffect(Unit) {
@@ -150,12 +169,40 @@ fun SetupWizard(
     }
 
     val reveal = remember { Animatable(0f) }
+
+    /**
+     * The sheet's motion, reported to the host as it happens.
+     *
+     * The host shrinks the app behind as the sheet arrives, so the two move as
+     * one gesture — which needs the progress *while* the sheet moves.
+     * [Animatable.animateTo]'s own block runs before the animation rather than
+     * after it, so the value used to be handed over once, at zero, and the app
+     * behind never moved at all. It is reported per frame here instead, and
+     * only while something is actually moving.
+     */
+    suspend fun animateReveal(to: Float, durationMs: Int) {
+        coroutineScope {
+            val animating = launch {
+                reveal.animateTo(to, tween(durationMs, easing = FastOutSlowInEasing))
+            }
+            val reporting = launch {
+                while (isActive) {
+                    onReveal(reveal.value)
+                    withFrameNanos { }
+                }
+            }
+            animating.join()
+            reporting.cancel()
+            onReveal(to)
+        }
+    }
+
     LaunchedEffect(Unit) {
         // A beat for the app behind to settle: the library has just begun
         // loading, and a sheet that arrives before the first frame of the thing
         // it covers reads as a separate app.
         delay(SHEET_AFTER_BONES_MS)
-        reveal.animateTo(1f, tween(520, easing = FastOutSlowInEasing)) { onReveal(value) }
+        animateReveal(1f, 520)
     }
 
     /**
@@ -167,7 +214,7 @@ fun SetupWizard(
      */
     fun leave(then: () -> Unit) {
         scope.launch {
-            reveal.animateTo(0f, tween(320, easing = FastOutSlowInEasing)) { onReveal(value) }
+            animateReveal(0f, 320)
             then()
         }
     }
@@ -211,10 +258,17 @@ fun SetupWizard(
     Box(modifier.fillMaxSize()) {
         // The page behind, dimmed. Deliberately not tappable: a flow that can be
         // dismissed by tapping past it makes its own Skip button a lie.
+        //
+        // The dim is a layer property rather than a colour: reading the
+        // reveal's value while composing invalidated this whole composable —
+        // the sheet, the rail, every page in it — sixty times a second, all
+        // of it to change the shade of a scrim. Read inside the layer block,
+        // only the layer is re-applied.
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.52f * reveal.value))
+                .graphicsLayer { alpha = 0.52f * reveal.value }
+                .background(Color.Black)
                 .clickable(enabled = false, onClick = {}),
         )
         Box(
@@ -225,10 +279,23 @@ fun SetupWizard(
                 .background(Onb.Surface.copy(alpha = 0.93f)),
         ) {
             MeshGradientBackground(
-                palette = rememberArtworkColors(demo?.thumbnailUrl),
+                palette = demoPalette,
                 modifier = Modifier.fillMaxSize(),
                 trackKey = demo?.thumbnailUrl,
-                continuous = true,
+                // Still, not orbiting.
+                //
+                // A full-screen mesh behind a full-screen blur is re-rendered
+                // at display refresh rate for as long as the flow is up, and
+                // the mesh's own note says so: "a full-screen blur re-drawn at
+                // refresh rate is the most expensive thing this app does, and
+                // nobody is looking at it". The onboarding had it orbiting
+                // anyway — which is how a flow of five calm pages came to
+                // feel like the app could not keep up.
+                //
+                // The colours still arrive: the artwork is fetched, the
+                // palette is read from it, and the backdrop takes those
+                // colours. It simply stops moving once it is there.
+                animated = false,
                 blurRadius = 56.dp,
             )
             Column(Modifier.fillMaxSize()) {
@@ -248,7 +315,12 @@ fun SetupWizard(
                     label = "onboardingStep",
                     modifier = Modifier.weight(1f),
                 ) { current ->
-                    val advance = { step = (current + 1).coerceAtMost(STEP_COUNT - 1) }
+                    // One lambda per step, not one per composition: a new
+                    // identity on every pass made the page it was handed to
+                    // recompose for a function that had not changed.
+                    val advance = remember(current) {
+                        { step = (current + 1).coerceAtMost(STEP_COUNT - 1) }
+                    }
                     val footer: @Composable ColumnScope.() -> Unit = {
                         OnbPillButton(
                             text = continueLabel(current, picks.size),
@@ -279,6 +351,7 @@ fun SetupWizard(
                         )
                         FEEL_STEP -> FeelStep(
                             song = demo,
+                            palette = demoPalette,
                             liquidGlass = liquidGlass,
                             onLiquidGlass = { liquidGlass = it; AppSettings.setLiquidGlass(it) },
                             frosted = frosted,

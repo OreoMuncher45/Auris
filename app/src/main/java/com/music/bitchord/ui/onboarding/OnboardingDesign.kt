@@ -71,6 +71,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.lightweightLiquidGlass
 import kotlinx.coroutines.isActive
+import kotlin.math.abs
 
 /**
  * The first-run flow's own palette.
@@ -505,6 +506,10 @@ internal fun OnbDivider() {
  * the page it lands on sixty times a second for a two-degree tilt. Read inside
  * the layer block, only the layer is re-applied.
  *
+ * The provider is remembered, so it keeps its identity across recompositions
+ * and the card it is handed to is not invalidated by a function that has not
+ * changed.
+ *
  * Nothing is registered when the device has no accelerometer, and nothing is
  * read when the listener has asked for reduced motion.
  */
@@ -513,7 +518,7 @@ internal fun rememberDeviceTilt(maxDegrees: Float = 5f): () -> Pair<Float, Float
     val context = LocalContext.current
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val tilt = remember { mutableStateOf(0f to 0f) }
-    DisposableEffect(context) {
+    DisposableEffect(context, reduceAnimation) {
         if (reduceAnimation) return@DisposableEffect onDispose { }
         val manager = runCatching {
             context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -521,25 +526,46 @@ internal fun rememberDeviceTilt(maxDegrees: Float = 5f): () -> Pair<Float, Float
         val sensor = manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         if (manager == null || sensor == null) return@DisposableEffect onDispose { }
         val listener = object : SensorEventListener {
+            private var lastX = 0f
+            private var lastY = 0f
+
             override fun onSensorChanged(event: SensorEvent) {
                 val rawX = (-event.values[0] / SensorManager.GRAVITY_EARTH).coerceIn(-1f, 1f)
                 val rawY = (event.values[1] / SensorManager.GRAVITY_EARTH).coerceIn(-1f, 1f)
                 val (x, y) = tilt.value
-                tilt.value = (x * 0.88f + rawX * 0.12f) to (y * 0.88f + rawY * 0.12f)
+                val nextX = x * 0.88f + rawX * 0.12f
+                val nextY = y * 0.88f + rawY * 0.12f
+                // A deadband: the card leans by degrees, and a difference the
+                // listener cannot see is not worth a redraw.
+                if (abs(nextX - lastX) < TILT_DEADBAND && abs(nextY - lastY) < TILT_DEADBAND) return
+                lastX = nextX
+                lastY = nextY
+                tilt.value = nextX to nextY
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
         val registered = runCatching {
-            manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            // Thirty times a second, not the fifty the game rate asks for: the
+            // card moves by degrees, and a sensor that fires faster than the
+            // screen can show only feeds the compositor.
+            manager.registerListener(listener, sensor, TILT_SAMPLE_MICROS)
         }.getOrDefault(false)
         onDispose { if (registered) runCatching { manager.unregisterListener(listener) } }
     }
-    return {
-        val (x, y) = tilt.value
-        (-y * maxDegrees) to (x * maxDegrees)
+    return remember(maxDegrees) {
+        {
+            val (x, y) = tilt.value
+            (-y * maxDegrees) to (x * maxDegrees)
+        }
     }
 }
+
+/** How often the accelerometer is read: 30Hz, a little under half the game rate. */
+private const val TILT_SAMPLE_MICROS = 33_000
+
+/** Below this much change in gravity-fraction, the card does not move. */
+private const val TILT_DEADBAND = 0.02f
 
 /**
  * How the frames are actually going, measured on the page itself.
