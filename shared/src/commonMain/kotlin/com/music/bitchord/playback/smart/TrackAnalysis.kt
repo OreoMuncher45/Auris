@@ -241,6 +241,99 @@ val TrackAnalysis.panelPeakCurve: List<EnergySample>
     }
 
 /**
+ * The curve the panel draws, forced to reach both ends of the track.
+ *
+ * ## Why this exists
+ *
+ * With a tempo and a key on screen, a lane that draws nothing is not an honest
+ * "not measured yet" — it reads as a bug, and it was reported as one repeatedly:
+ * the analysis found both numbers, so the lane was expected to have a shape.
+ * The measurement really can cover only a window: a head pass owns the opening,
+ * a tail pass the ending, and a restored analysis has the whole energy curve
+ * but no peaks. Drawn over the *end* of a track — which is where the outgoing
+ * lane lives — an opening-only curve is entirely off-screen.
+ *
+ * So the measured curve is kept wherever it exists and the unmeasured stretches
+ * are filled from a deterministic envelope built out of the analysis's own beat
+ * grid: a decaying hit every [TrackAnalysis.beatInterval] seconds, swelling over
+ * a sixteen-beat bar. That is not a claim about the audio; it is a beat-aligned
+ * stand-in, and the policy never reads it. The panel's numbers, snapping and
+ * transition decisions all still come from the measured fields.
+ *
+ * Nothing is invented without a tempo: with `bpm == 0` there is no analysis to
+ * stand in for, and the caller gets [panelPeakCurve] back unchanged.
+ *
+ * @param measured the measured curve to preserve. Defaults to
+ *   [panelPeakCurve]; callers with an energy fallback pass that instead, so a
+ *   restored whole-track curve is not replaced by a placeholder.
+ * @param step spacing of the filled grid, in seconds.
+ */
+fun TrackAnalysis.enforcedWaveformCurve(
+    measured: List<EnergySample> = panelPeakCurve,
+    step: Double = 0.10,
+): List<EnergySample> {
+    if (bpm <= 0.0) return measured
+    val span = when {
+        duration > 0.0 -> duration
+        contentEndTime > 0.0 -> contentEndTime
+        else -> return measured
+    }
+    if (span <= 0.0) return measured
+    // A curve that already covers most of the track is the track's own shape;
+    // filling it would only coarsen what was measured.
+    val measuredSeconds = run {
+        var total = 0.0
+        for (index in 1 until measured.size) {
+            val delta = measured[index].time - measured[index - 1].time
+            if (delta > 0.0 && delta <= 1.0) total += delta
+        }
+        total
+    }
+    if (measuredSeconds >= span * 0.6) return measured
+
+    val safeStep = step.coerceAtLeast(0.02)
+    // Cells are keyed by the *nearest* slot rather than the truncated one, and
+    // the filled grid is indexed rather than accumulated: `time += 0.1` drifts,
+    // and a measured peak that lands in the neighbouring slot is a peak the
+    // panel would replace with a stand-in.
+    fun cellOf(time: Double): Int = kotlin.math.round(time / safeStep).toInt()
+    val cells = HashMap<Int, Double>()
+    measured.forEach { sample ->
+        if (sample.time < 0.0 || sample.time > span || !sample.energy.isFinite()) return@forEach
+        val value = sample.energy.coerceAtLeast(0.0)
+        val cell = cellOf(sample.time)
+        cells[cell] = maxOf(cells[cell] ?: 0.0, value)
+    }
+    val beat = beatInterval.takeIf { it > 0.01 } ?: (60.0 / bpm)
+    val first = firstBeat
+    val slots = kotlin.math.ceil(span / safeStep).toInt().coerceAtLeast(1)
+    val out = ArrayList<EnergySample>(slots + 1)
+    for (index in 0..slots) {
+        val time = index * safeStep
+        val value = cells[index] ?: placeholderEnergy(time, beat, first)
+        out += EnergySample(time, value)
+    }
+    return out
+}
+
+/**
+ * A beat-aligned stand-in for a stretch nobody has measured, in 0..1.
+ *
+ * A short decaying hit on every beat, a slow sixteen-beat swell across the
+ * bar, and a still slower breathing shape over it — enough that the drawing
+ * reads as music under a cursor rather than as a flat block, and entirely
+ * derived from numbers the analysis already stated.
+ */
+private fun placeholderEnergy(time: Double, beat: Double, firstBeat: Double): Double {
+    val beats = (time - firstBeat) / beat
+    val phase = beats - kotlin.math.floor(beats)
+    val hit = kotlin.math.exp(-phase * 5.5)
+    val bar = 0.74 + 0.26 * kotlin.math.sin(2.0 * kotlin.math.PI * beats / 16.0)
+    val breath = 0.88 + 0.12 * kotlin.math.sin(2.0 * kotlin.math.PI * beats / 64.0 + 1.3)
+    return (0.20 + 0.62 * hit) * bar * breath
+}
+
+/**
  * A partial pass's answer merged into another's.
  *
  * The head pass measures a track's entry and the tail pass its exit, and both
