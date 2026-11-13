@@ -534,6 +534,22 @@ fun SettingsScreen(
             }
         }
 
+        // The pass is also a row of its own in the search, so that typing
+        // "pass" or "Auris" finds it without knowing which category it lives
+        // under.
+        if (openCategory == null && searchActive) {
+            SearchableSettingsGroup(search, SettingsCategory.PASS) {
+                row("pass", "auris", "card", "listener", "identity") {
+                    SettingsRow(
+                        icon = Icons.Rounded.LocalOffer,
+                        title = stringResource(R.string.auris_pass),
+                        subtitle = stringResource(R.string.auris_pass_subtitle),
+                        onClick = { onOpenCategory(SettingsCategory.PASS.id) },
+                    )
+                }
+            }
+        }
+
         if (openCategory == null && !searchActive) {
             // The index: one row per category. Each opens a page of its own;
             // the search field above reaches into all of them at once.
