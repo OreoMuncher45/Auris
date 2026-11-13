@@ -1452,4 +1452,6 @@
     <string name="auris_pass_since">С НАМИ С</string>
     <string name="auris_pass_device">ЭТО УСТРОЙСТВО</string>
     <string name="auris_pass_unnamed">Слушатель Auris</string>
+    <string name="custom_lyrics_buttons">Кнопки панели текста</string>
+    <string name="custom_lyrics_source">Строка источника текста</string>
 </resources>

@@ -1425,4 +1425,6 @@
     <string name="auris_pass_since">חבר מאז</string>
     <string name="auris_pass_device">המכשיר הזה</string>
     <string name="auris_pass_unnamed">מאזין Auris</string>
+    <string name="custom_lyrics_buttons">כפתורי פאנל המילים</string>
+    <string name="custom_lyrics_source">שורת מקור המילים</string>
 </resources>

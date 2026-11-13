@@ -520,7 +520,12 @@ internal fun LandscapeLyricsPane(
                 Text(
                     text = placeholder,
                     style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.6f),
+                    // The panel's ink, like every other word in it: the
+                    // placeholder sits over the artwork, and it was the one
+                    // line in the pane that stayed white while the lyrics
+                    // around it followed the cover.
+                    color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current.value)
+                        .copy(alpha = 0.6f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.align(Alignment.Center),
                 )

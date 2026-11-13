@@ -424,6 +424,45 @@ private fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
 }
 
 /**
+ * The player's colours, handed down to everything inside it.
+ *
+ * The ink and its glow are states, not colours: the ink follows a playing
+ * clip, and a colour handed down as a value would change everything under
+ * this provider — which is the whole player — every time the clip's colour
+ * moved. A state changes only the texts and the glyphs that wear it.
+ *
+ * Both layouts get one of these: the portrait player and the landscape player
+ * are different trees, and the lyrics panel's own controls have to follow the
+ * artwork in both of them.
+ */
+@Composable
+private fun PlayerColors(
+    ink: State<Color>,
+    glow: State<Color>,
+    glowOff: State<Color>,
+    textGlow: Boolean,
+    colors: PlayerColorOverrides,
+    lyricsButtons: State<Color>,
+    lyricsSource: State<Color>,
+    alphas: NowPlayingAlphas,
+    content: @Composable () -> Unit,
+) {
+    CompositionLocalProvider(
+        LocalPlayerInk provides ink,
+        LocalPlayerInkGlow provides if (textGlow) glow else glowOff,
+        LocalPlayerAccent provides colors.accent,
+        LocalPlayerSeekbar provides colors.seekbar,
+        LocalPlayerText provides colors.text,
+        LocalPlayerLyrics provides colors.lyrics,
+        LocalPlayerLyricsButtons provides lyricsButtons,
+        LocalPlayerLyricsSource provides lyricsSource,
+        LocalPlayerAlphas provides alphas,
+    ) {
+        content()
+    }
+}
+
+/**
  * The player's backdrop, in a scope of its own.
  *
  * The mesh is re-read whenever a playing clip produces a frame, and the read
@@ -1740,6 +1779,15 @@ fun NowPlayingScreen(
     // The glow, switched off: a state of its own, so the local's value never
     // changes and nothing under it is invalidated when the setting is off.
     val playerInkGlowOff = remember { mutableStateOf(Color.Transparent) }
+    // The lyrics panel's own controls, and the line that says where the lyrics
+    // came from: the artwork's ink, unless the listener pinned a colour for
+    // them. A pinned colour stands still; the ink moves with a playing clip.
+    val lyricsButtonsInk: State<Color> = remember(colors.lyricsButtons, playerInkState) {
+        colors.lyricsButtons?.let { mutableStateOf(it) } ?: playerInkState
+    }
+    val lyricsSourceInk: State<Color> = remember(colors.lyricsSource, playerInkState) {
+        colors.lyricsSource?.let { mutableStateOf(it) } ?: playerInkState
+    }
 
 
     // The setting defaults on, restoring the five-second stand-down, but the
@@ -2374,6 +2422,16 @@ fun NowPlayingScreen(
             }
         }
 
+        PlayerColors(
+            ink = playerInkState,
+            glow = playerInkGlowState,
+            glowOff = playerInkGlowOff,
+            textGlow = textGlow,
+            colors = colors,
+            lyricsButtons = lyricsButtonsInk,
+            lyricsSource = lyricsSourceInk,
+            alphas = nowPlayingPalette.alphas,
+        ) {
         Box(modifier = modifier.fillMaxSize().then(dockHost)) {
             LandscapePlayerLayout(
                 pane = when {
@@ -2641,6 +2699,7 @@ fun NowPlayingScreen(
             )
             playerOverlays()
         }
+        }
         return
     }
 
@@ -2652,18 +2711,15 @@ fun NowPlayingScreen(
             .then(dockHost)
             .background(Color.Black),
     ) {
-        CompositionLocalProvider(
-            // The ink and its glow, as states: the ink follows a playing clip,
-            // and a colour handed down as a value would change everything
-            // under this provider — which is the whole player — every time the
-            // clip's colour moved. See [LocalPlayerInk].
-            LocalPlayerInk provides playerInkState,
-            LocalPlayerInkGlow provides if (textGlow) playerInkGlowState else playerInkGlowOff,
-            LocalPlayerAccent provides colors.accent,
-            LocalPlayerSeekbar provides colors.seekbar,
-            LocalPlayerText provides colors.text,
-            LocalPlayerLyrics provides colors.lyrics,
-            LocalPlayerAlphas provides nowPlayingPalette.alphas,
+        PlayerColors(
+            ink = playerInkState,
+            glow = playerInkGlowState,
+            glowOff = playerInkGlowOff,
+            textGlow = textGlow,
+            colors = colors,
+            lyricsButtons = lyricsButtonsInk,
+            lyricsSource = lyricsSourceInk,
+            alphas = nowPlayingPalette.alphas,
         ) {
         // Anchored to the sleeve's bottom edge, so the screen carries on in the
         // colours the artwork ended in rather than in a quantiser's idea of what

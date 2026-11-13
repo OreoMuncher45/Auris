@@ -1403,4 +1403,6 @@
     <string name="auris_pass_since">สมาชิกตั้งแต่</string>
     <string name="auris_pass_device">อุปกรณ์นี้</string>
     <string name="auris_pass_unnamed">ผู้ฟัง Auris</string>
+    <string name="custom_lyrics_buttons">ปุ่มแผงคำร้อง</string>
+    <string name="custom_lyrics_source">บรรทัดแหล่งที่มาของคำร้อง</string>
 </resources>

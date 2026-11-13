@@ -1460,4 +1460,6 @@
     <string name="auris_pass_since">CZŁONEK OD</string>
     <string name="auris_pass_device">TO URZĄDZENIE</string>
     <string name="auris_pass_unnamed">Słuchacz Auris</string>
+    <string name="custom_lyrics_buttons">Przyciski panelu tekstu piosenki</string>
+    <string name="custom_lyrics_source">Wiersz źródła tekstu piosenki</string>
 </resources>

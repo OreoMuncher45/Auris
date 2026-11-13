@@ -1027,6 +1027,8 @@ private fun BitChordApp(
     val playerSeekbarColor by AppSettings.playerSeekbarColor.collectAsStateWithLifecycle()
     val playerTextColor by AppSettings.playerTextColor.collectAsStateWithLifecycle()
     val playerLyricsColor by AppSettings.playerLyricsColor.collectAsStateWithLifecycle()
+    val playerLyricsButtonsColor by AppSettings.playerLyricsButtonsColor.collectAsStateWithLifecycle()
+    val playerLyricsSourceColor by AppSettings.playerLyricsSourceColor.collectAsStateWithLifecycle()
     val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val flowQueueState by viewModel.flowQueue.collectAsStateWithLifecycle()
     val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
@@ -3108,6 +3110,8 @@ private fun BitChordApp(
                 seekbar = playerSeekbarColor?.let { Color(it) },
                 text = playerTextColor?.let { Color(it) },
                 lyrics = playerLyricsColor?.let { Color(it) },
+                lyricsButtons = playerLyricsButtonsColor?.let { Color(it) },
+                lyricsSource = playerLyricsSourceColor?.let { Color(it) },
             ),
             isAiTrack = remember(displayedSong, aiArtists) {
                 AppSettings.isSongAi(displayedSong)

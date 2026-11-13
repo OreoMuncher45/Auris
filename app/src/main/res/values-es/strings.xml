@@ -1392,4 +1392,6 @@
     <string name="auris_pass_since">MIEMBRO DESDE</string>
     <string name="auris_pass_device">ESTE DISPOSITIVO</string>
     <string name="auris_pass_unnamed">Oyente de Auris</string>
+    <string name="custom_lyrics_buttons">Botones del panel de letras</string>
+    <string name="custom_lyrics_source">Línea de fuente de las letras</string>
 </resources>

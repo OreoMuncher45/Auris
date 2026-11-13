@@ -1377,4 +1377,6 @@
     <string name="auris_pass_since">ÜYELİK BAŞLANGICI</string>
     <string name="auris_pass_device">BU CİHAZ</string>
     <string name="auris_pass_unnamed">Auris dinleyicisi</string>
+    <string name="custom_lyrics_buttons">Şarkı sözleri düğmeleri</string>
+    <string name="custom_lyrics_source">Şarkı sözü kaynak satırı</string>
 </resources>

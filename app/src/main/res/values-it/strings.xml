@@ -1359,4 +1359,6 @@
     <string name="auris_pass_since">MEMBRO DAL</string>
     <string name="auris_pass_device">QUESTO DISPOSITIVO</string>
     <string name="auris_pass_unnamed">Ascoltatore Auris</string>
+    <string name="custom_lyrics_buttons">Pulsanti del pannello testi</string>
+    <string name="custom_lyrics_source">Riga della fonte dei testi</string>
 </resources>

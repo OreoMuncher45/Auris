@@ -460,6 +460,10 @@ private data class TranslationParticle(
  * The link is absent where it has nothing to open: a line that only says the
  * lookup is still running is a fact, and one that says there are no lyrics is a
  * finding rather than a choice.
+ *
+ * In the player's ink, like the rest of the panel: this line names where the
+ * lyrics came from, and it sat over the artwork in white while everything
+ * around it had already taken the cover's colour.
  */
 @Composable
 internal fun LyricsStatusWithChange(
@@ -469,6 +473,7 @@ internal fun LyricsStatusWithChange(
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
+    val ink = LocalPlayerLyricsSource.current.value
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -476,7 +481,7 @@ internal fun LyricsStatusWithChange(
         Text(
             text = status,
             style = MaterialTheme.typography.titleMedium,
-            color = Color.White.copy(alpha = 0.55f),
+            color = ink.copy(alpha = 0.55f),
             textDecoration = if (onStatusClick != null) TextDecoration.Underline else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1251,6 +1256,10 @@ private fun ContentDrawScope.sweepTo(
  * see [CircleGlyph]. Its own composable rather than a [CircleGlyph] call
  * because it has a fourth state the others do not: a request in flight, which
  * takes the icon's place rather than sitting beside it.
+ *
+ * Lit in the player's ink, like the rest of the player's controls: the discs
+ * sit over the artwork, and a disc that kept to white while everything around
+ * it followed the cover was the one thing in the panel that did not belong.
  */
 @Composable
 internal fun TranslationToggleButton(
@@ -1259,11 +1268,12 @@ internal fun TranslationToggleButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val ink = LocalPlayerLyricsButtons.current.value
     val active = showingTranslation || state is LyricsTranslationUiState.Loading
     val tint = when {
-        !enabled || state is LyricsTranslationUiState.SameLanguage -> Color.White.copy(alpha = 0.42f)
-        active -> Color.White
-        else -> Color.White.copy(alpha = 0.78f)
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> ink.copy(alpha = 0.42f)
+        active -> ink
+        else -> ink.copy(alpha = 0.78f)
     }
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
@@ -1273,7 +1283,7 @@ internal fun TranslationToggleButton(
         modifier = Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = discAlpha))
+            .background(ink.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1310,11 +1320,12 @@ internal fun RomanizationToggleButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val ink = LocalPlayerLyricsButtons.current.value
     val active = showingRomanization || state is LyricsTranslationUiState.Loading
     val tint = when {
-        !enabled || state is LyricsTranslationUiState.SameLanguage -> Color.White.copy(alpha = 0.42f)
-        active -> Color.White
-        else -> Color.White.copy(alpha = 0.78f)
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> ink.copy(alpha = 0.42f)
+        active -> ink
+        else -> ink.copy(alpha = 0.78f)
     }
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
@@ -1324,7 +1335,7 @@ internal fun RomanizationToggleButton(
         modifier = Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = discAlpha))
+            .background(ink.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1364,10 +1375,11 @@ internal fun SingMicButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val ink = LocalPlayerLyricsButtons.current.value
     val tint = when {
-        !enabled -> Color.White.copy(alpha = 0.42f)
-        singActive -> Color.White
-        else -> Color.White.copy(alpha = 0.78f)
+        !enabled -> ink.copy(alpha = 0.42f)
+        singActive -> ink
+        else -> ink.copy(alpha = 0.78f)
     }
     val discAlpha by animateFloatAsState(
         targetValue = if (singActive) 0.34f else 0.18f,
@@ -1377,7 +1389,7 @@ internal fun SingMicButton(
         modifier = Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = discAlpha))
+            .background(ink.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1830,7 +1842,12 @@ internal fun LyricsPanel(
                 Text(
                     text = stringResource(Res.string.no_lyrics_for_track),
                     style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.6f),
+                    // The panel's ink, like every other word in it: a message
+                    // that says there are no lyrics is part of the panel, and it
+                    // sat over the artwork in white while the lines around it
+                    // had already taken the cover's colour.
+                    color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current.value)
+                        .copy(alpha = 0.6f),
                 )
             }
         }
@@ -1863,6 +1880,11 @@ internal fun LyricsPanel(
         itemsIndexed(lines) { index, line ->
             if (!isSynced && isGeniusSectionHeader(line.text)) {
                 val sectionTitle = line.text.removePrefix("[").removeSuffix("]").trim()
+                // The panel's ink, like the words around it: a section heading
+                // is a label in the panel, and it was drawn in white over the
+                // artwork while the lines it introduces had taken the cover's
+                // colour.
+                val headerInk = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1872,7 +1894,7 @@ internal fun LyricsPanel(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(Color.White.copy(alpha = 0.14f))
+                            .background(headerInk.copy(alpha = 0.14f))
                             .padding(horizontal = 11.dp, vertical = 4.dp),
                     ) {
                         Text(
@@ -1882,7 +1904,7 @@ internal fun LyricsPanel(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.5.sp,
                             ),
-                            color = Color.White.copy(alpha = 0.9f),
+                            color = headerInk.copy(alpha = 0.9f),
                         )
                     }
                 }
@@ -1959,6 +1981,11 @@ internal fun LyricsPanel(
                     label = "gapSwell",
                 )
                 val instrumental = stringResource(Res.string.instrumental)
+                // The break's dots are the panel's ink as well: they sit over
+                // the artwork beside the words, and three white dots in a row
+                // that has taken the cover's colour were the same inconsistency
+                // the words had.
+                val gapInk = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value
                 Box(
                     contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
@@ -2001,7 +2028,7 @@ internal fun LyricsPanel(
                                 // fills across it, so they light left to right.
                                 val lit = (through * GAP_DOTS - dot).coerceIn(0f, 1f)
                                 drawCircle(
-                                    color = Color.White.copy(
+                                    color = gapInk.copy(
                                         alpha = GAP_DOT_REST + (1f - GAP_DOT_REST) * lit,
                                     ),
                                     radius = radius,
@@ -2361,6 +2388,16 @@ private fun PanelVoice(
     rise: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    // The panel's own ink: the lyric colour the listener pinned, or the
+    // artwork's.
+    //
+    // The same one the plain path at the bottom of this function uses, and the
+    // reason it is named here rather than left to the sweep's default is that
+    // the two used to disagree: a line with word timings was drawn in white
+    // while a line without them followed the cover, so the panel changed
+    // colour with the provider rather than with the artwork. One source, one
+    // colour.
+    val ink = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value
     if (line.isWordSynced && !browsing) {
         // Every word-synced line goes through the sweep, not just the playing
         // one — a line that has already been sung is fully revealed and one
@@ -2380,6 +2417,7 @@ private fun PanelVoice(
             clock = clock,
             style = style,
             dimAlpha = tail,
+            ink = ink,
             modifier = modifier,
             glowAlpha = glowAlpha,
             glowRoom = room,
@@ -2402,6 +2440,7 @@ private fun PanelVoice(
             clock = clock,
             style = style,
             dimAlpha = tail,
+            ink = ink,
             modifier = modifier,
             glowAlpha = 0f,
             glowRoom = room,

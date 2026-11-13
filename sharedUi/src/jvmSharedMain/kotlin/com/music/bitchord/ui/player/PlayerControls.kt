@@ -1413,7 +1413,10 @@ private fun BottomGlyph(
     // costs no recomposition. Starts a full window in the past so the first tap
     // is never the one that gets swallowed.
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
-    val tileColor = Color.White.copy(alpha = BOTTOM_ACTIVE_TILE_ALPHA)
+    // The lit tile is the player's ink, like the glyph beside it: a white tile
+    // on a bright cover was the one thing in the row that ignored the scheme
+    // the rest of the player follows.
+    val tileColor = ink.copy(alpha = BOTTOM_ACTIVE_TILE_ALPHA)
     Box(
         modifier = Modifier
             .size(BOTTOM_ACTION_SIZE)
@@ -1458,7 +1461,7 @@ private fun BottomGlyph(
     ) {
         // Not while lit: the tile's cut-out needs the glyph drawn plainly in the
         // layer above, which is blended as a whole.
-        val tint = if (highlighted) Color.White else ink.copy(alpha = alphas.tertiary)
+        val tint = if (highlighted) ink else ink.copy(alpha = alphas.tertiary)
         if (icon != null) {
             Icon(
                 painter = icon.painter(),

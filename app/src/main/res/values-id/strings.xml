@@ -1397,4 +1397,6 @@
     <string name="auris_pass_since">ANGGOTA SEJAK</string>
     <string name="auris_pass_device">PERANGKAT INI</string>
     <string name="auris_pass_unnamed">Pendengar Auris</string>
+    <string name="custom_lyrics_buttons">Tombol panel lirik</string>
+    <string name="custom_lyrics_source">Baris sumber lirik</string>
 </resources>

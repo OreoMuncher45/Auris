@@ -1398,4 +1398,6 @@
     <string name="auris_pass_since">メンバー開始</string>
     <string name="auris_pass_device">この端末</string>
     <string name="auris_pass_unnamed">Aurisリスナー</string>
+    <string name="custom_lyrics_buttons">歌詞パネルのボタン</string>
+    <string name="custom_lyrics_source">歌詞の出所行</string>
 </resources>

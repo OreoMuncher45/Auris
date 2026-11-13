@@ -1420,4 +1420,6 @@
     <string name="auris_pass_since">DABEI SEIT</string>
     <string name="auris_pass_device">DIESES GERÄT</string>
     <string name="auris_pass_unnamed">Auris-Hörer</string>
+    <string name="custom_lyrics_buttons">Lyrics-Panel-Schaltflächen</string>
+    <string name="custom_lyrics_source">Lyrics-Quellenzeile</string>
 </resources>

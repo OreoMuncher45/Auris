@@ -623,6 +623,18 @@ object AppSettings {
     val playerLyricsColor = MutableStateFlow<Int?>(null)
 
     /**
+     * The lyrics panel's own controls — the translate, romanize and sing discs.
+     * Null follows the artwork ink, like the rest of the player's controls.
+     */
+    val playerLyricsButtonsColor = MutableStateFlow<Int?>(null)
+
+    /**
+     * The line above the scrubber that says where the lyrics came from.
+     * Null follows the artwork ink.
+     */
+    val playerLyricsSourceColor = MutableStateFlow<Int?>(null)
+
+    /**
      * How round the transport glyphs' corners are, 0 (sharp) to 1 (soft).
      *
      * The play triangle and both skip arrows are drawn from polygons, so the
@@ -1588,6 +1600,10 @@ object AppSettings {
             .takeUnless { it == RESET_COLOR }
         playerLyricsColor.value = prefs.getInt(KEY_PLAYER_LYRICS, RESET_COLOR)
             .takeUnless { it == RESET_COLOR }
+        playerLyricsButtonsColor.value = prefs.getInt(KEY_PLAYER_LYRICS_BUTTONS, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerLyricsSourceColor.value = prefs.getInt(KEY_PLAYER_LYRICS_SOURCE, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
         recentPlayerColors.value = prefs.getString(KEY_RECENT_PLAYER_COLORS, null)
             ?.split(',')
             ?.mapNotNull { it.toIntOrNull() }
@@ -1900,7 +1916,7 @@ object AppSettings {
     }
 
     /** Which part of Now Playing a colour pick applies to. */
-    enum class PlayerColorTarget { ACCENT, SEEKBAR, TEXT, LYRICS }
+    enum class PlayerColorTarget { ACCENT, SEEKBAR, TEXT, LYRICS, LYRICS_BUTTONS, LYRICS_SOURCE }
 
     fun setPlayerColor(target: PlayerColorTarget, argb: Int?) {
         when (target) {
@@ -1908,6 +1924,8 @@ object AppSettings {
             PlayerColorTarget.SEEKBAR -> playerSeekbarColor.value = argb
             PlayerColorTarget.TEXT -> playerTextColor.value = argb
             PlayerColorTarget.LYRICS -> playerLyricsColor.value = argb
+            PlayerColorTarget.LYRICS_BUTTONS -> playerLyricsButtonsColor.value = argb
+            PlayerColorTarget.LYRICS_SOURCE -> playerLyricsSourceColor.value = argb
         }
         prefs.edit()
             .putInt(
@@ -1916,6 +1934,8 @@ object AppSettings {
                     PlayerColorTarget.SEEKBAR -> KEY_PLAYER_SEEKBAR
                     PlayerColorTarget.TEXT -> KEY_PLAYER_TEXT
                     PlayerColorTarget.LYRICS -> KEY_PLAYER_LYRICS
+                    PlayerColorTarget.LYRICS_BUTTONS -> KEY_PLAYER_LYRICS_BUTTONS
+                    PlayerColorTarget.LYRICS_SOURCE -> KEY_PLAYER_LYRICS_SOURCE
                 },
                 argb ?: RESET_COLOR,
             )
@@ -1934,11 +1954,15 @@ object AppSettings {
         playerSeekbarColor.value = null
         playerTextColor.value = null
         playerLyricsColor.value = null
+        playerLyricsButtonsColor.value = null
+        playerLyricsSourceColor.value = null
         prefs.edit()
             .putInt(KEY_PLAYER_ACCENT, RESET_COLOR)
             .putInt(KEY_PLAYER_SEEKBAR, RESET_COLOR)
             .putInt(KEY_PLAYER_TEXT, RESET_COLOR)
             .putInt(KEY_PLAYER_LYRICS, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS_BUTTONS, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS_SOURCE, RESET_COLOR)
             .apply()
     }
 
@@ -3187,6 +3211,8 @@ object AppSettings {
     private const val KEY_PLAYER_SEEKBAR = "player_seekbar_color"
     private const val KEY_PLAYER_TEXT = "player_text_color"
     private const val KEY_PLAYER_LYRICS = "player_lyrics_color"
+    private const val KEY_PLAYER_LYRICS_BUTTONS = "player_lyrics_buttons_color"
+    private const val KEY_PLAYER_LYRICS_SOURCE = "player_lyrics_source_color"
     private const val KEY_RECENT_PLAYER_COLORS = "recent_player_colors"
     private const val KEY_HOME_SHELF_ORDER = "home_shelf_order"
     private const val KEY_HIDDEN_HOME_SHELVES = "hidden_home_shelves"

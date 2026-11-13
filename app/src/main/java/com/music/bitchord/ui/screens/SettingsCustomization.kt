@@ -80,6 +80,8 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
     val seekbar by AppSettings.playerSeekbarColor.collectAsStateWithLifecycle()
     val text by AppSettings.playerTextColor.collectAsStateWithLifecycle()
     val lyrics by AppSettings.playerLyricsColor.collectAsStateWithLifecycle()
+    val lyricsButtons by AppSettings.playerLyricsButtonsColor.collectAsStateWithLifecycle()
+    val lyricsSource by AppSettings.playerLyricsSourceColor.collectAsStateWithLifecycle()
     val recents by AppSettings.recentPlayerColors.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<AppSettings.PlayerColorTarget?>(null) }
 
@@ -136,6 +138,16 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
                 value = lyrics,
                 onPick = { picking = AppSettings.PlayerColorTarget.LYRICS },
             )
+            ColorSettingRow(
+                label = stringResource(R.string.custom_lyrics_buttons),
+                value = lyricsButtons,
+                onPick = { picking = AppSettings.PlayerColorTarget.LYRICS_BUTTONS },
+            )
+            ColorSettingRow(
+                label = stringResource(R.string.custom_lyrics_source),
+                value = lyricsSource,
+                onPick = { picking = AppSettings.PlayerColorTarget.LYRICS_SOURCE },
+            )
             if (recents.isNotEmpty()) {
                 Text(
                     text = stringResource(R.string.custom_recent),
@@ -173,12 +185,18 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
                 AppSettings.PlayerColorTarget.SEEKBAR -> stringResource(R.string.custom_seekbar)
                 AppSettings.PlayerColorTarget.TEXT -> stringResource(R.string.custom_text)
                 AppSettings.PlayerColorTarget.LYRICS -> stringResource(R.string.custom_lyrics)
+                AppSettings.PlayerColorTarget.LYRICS_BUTTONS ->
+                    stringResource(R.string.custom_lyrics_buttons)
+                AppSettings.PlayerColorTarget.LYRICS_SOURCE ->
+                    stringResource(R.string.custom_lyrics_source)
             },
             selected = when (target) {
                 AppSettings.PlayerColorTarget.ACCENT -> accent
                 AppSettings.PlayerColorTarget.SEEKBAR -> seekbar
                 AppSettings.PlayerColorTarget.TEXT -> text
                 AppSettings.PlayerColorTarget.LYRICS -> lyrics
+                AppSettings.PlayerColorTarget.LYRICS_BUTTONS -> lyricsButtons
+                AppSettings.PlayerColorTarget.LYRICS_SOURCE -> lyricsSource
             },
             onPick = {
                 AppSettings.setPlayerColor(target, it)

@@ -1420,4 +1420,6 @@
     <string name="auris_pass_since">सदस्य से</string>
     <string name="auris_pass_device">यह डिवाइस</string>
     <string name="auris_pass_unnamed">Auris श्रोता</string>
+    <string name="custom_lyrics_buttons">लिरिक्स पैनल बटन</string>
+    <string name="custom_lyrics_source">लिरिक्स स्रोत पंक्ति</string>
 </resources>

@@ -1421,4 +1421,6 @@
     <string name="auris_pass_since">MEMBRE DEPUIS</string>
     <string name="auris_pass_device">CET APPAREIL</string>
     <string name="auris_pass_unnamed">Auditeur Auris</string>
+    <string name="custom_lyrics_buttons">Boutons du panneau de paroles</string>
+    <string name="custom_lyrics_source">Ligne de source des paroles</string>
 </resources>

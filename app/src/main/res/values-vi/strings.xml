@@ -1337,4 +1337,6 @@
     <string name="auris_pass_since">THÀNH VIÊN TỪ</string>
     <string name="auris_pass_device">THIẾT BỊ NÀY</string>
     <string name="auris_pass_unnamed">Người nghe Auris</string>
+    <string name="custom_lyrics_buttons">Nút bảng lời bài hát</string>
+    <string name="custom_lyrics_source">Dòng nguồn lời bài hát</string>
 </resources>
