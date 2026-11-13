@@ -383,9 +383,90 @@ class SpotifyHomeTest {
         assertEquals("spotify:artist:other", page.shelves.last().items.first().browseId)
     }
 
+    /**
+     * The artist's discography, as the web player groups it.
+     *
+     * The artist page carries its releases in groups — one group per album,
+     * one per single — and each group holds the pressings of it under
+     * `releases`. The card on the page is the *release*, not the group: a
+     * group is a way of saying "this album, in these editions", and showing
+     * the group would show one card for six records.
+     *
+     * The shape here is the web player's own; if it moves, this test is where
+     * that shows up.
+     */
     @Test
-    fun aCategoryPageIsRead() {
+    fun theDiscographyIsReadAsReleasesRatherThanGroups() {
         val answer = """
+            {"artistUnion": {
+              "profile": {"name": "The Artist"},
+              "discography": {
+                "albums": {"items": [
+                  {"uri": "spotify:album:group1", "name": "The Album", "releases": {"items": [
+                    {"uri": "spotify:album:album1", "name": "The Album",
+                     "artists": {"items": [{"profile": {"name": "The Artist"}}]},
+                     "date": {"year": 2019},
+                     "coverArt": {"sources": [{"url": "https://i.scdn.co/a1", "width": 300}]}},
+                    {"uri": "spotify:album:album1deluxe", "name": "The Album (Deluxe)",
+                     "artists": {"items": [{"profile": {"name": "The Artist"}}]},
+                     "date": {"year": 2020},
+                     "coverArt": {"sources": [{"url": "https://i.scdn.co/a2", "width": 300}]}}
+                  ]}}
+                ]},
+                "singles": {"items": [
+                  {"uri": "spotify:album:group2", "name": "A Single", "releases": {"items": [
+                    {"uri": "spotify:album:single1", "name": "A Single",
+                     "artists": {"items": [{"profile": {"name": "The Artist"}}]},
+                     "date": {"year": 2021},
+                     "coverArt": {"sources": [{"url": "https://i.scdn.co/s1", "width": 300}]}}
+                  ]}}
+                ]},
+                "popularReleasesAlbums": {"items": [
+                  {"uri": "spotify:album:single1", "name": "A Single",
+                   "artists": {"items": [{"profile": {"name": "The Artist"}}]},
+                   "coverArt": {"sources": [{"url": "https://i.scdn.co/s1", "width": 300}]}}
+                ]}
+              },
+              "relatedContent": {"relatedArtists": {"items": [
+                {"uri": "spotify:artist:other", "profile": {"name": "Another Artist"}}
+              ]}}
+            }}
+        """.trimIndent()
+
+        val page = SpotifyPages.parseArtistPage(root(answer))
+
+        // The shelves, in the order the page reads them.
+        assertEquals(
+            listOf("Albums", "Singles & EPs", "Popular releases", "Fans also like"),
+            page.shelves.map { it.title },
+        )
+
+        // The albums shelf holds the releases, not the groups: two pressings
+        // of one album are two cards.
+        val albums = page.shelves[0].items
+        assertEquals(listOf("The Album", "The Album (Deluxe)"), albums.map { it.title })
+        assertEquals(listOf("spotify:album:album1", "spotify:album:album1deluxe"), albums.map { it.browseId })
+        // And the release's own date and credit.
+        assertEquals(2019, albums[0].year)
+        assertEquals("The Artist", albums[0].subtitle)
+
+        // The singles shelf holds the single.
+        assertEquals(listOf("A Single"), page.shelves[1].items.map { it.title })
+
+        // Popularity is the position in Spotify's own ranking, and only for
+        // the releases that are in it. The popular shelf itself carries no
+        // rank: its own order is the ranking.
+        assertEquals(0, page.shelves[1].items.first().popularity)
+        assertNull(page.shelves[2].items.first().popularity)
+        assertNull(page.shelves[0].items.first().popularity)
+
+        // The related artists are still artists: their browse ids say so, and
+        // that is what keeps them out of the release shelves.
+        assertEquals("spotify:artist:other", page.shelves[3].items.first().browseId)
+    }
+
+    @Test
+    fun aCategoryPageIsRead() {        val answer = """
             {"browse": {
               "header": {"title": {"transformedLabel": "Pop"}},
               "sections": {"items": [

@@ -1839,7 +1839,19 @@ class PlaybackService : MediaLibraryService() {
                         emptyList()
                     }
                     val songs = rows.mapNotNull { row -> (row as? SearchResult.Track)?.song }
-                    val best = TrackMatcher.best(songs, target) ?: songs.firstOrNull()
+                    // The matcher's answer, and then — only if it has none — a
+                    // row by the *same* artist.
+                    //
+                    // This used to fall back to the search engine's first row,
+                    // which is the one thing that must not happen: a Spotify
+                    // row says "this recording, by this artist", and playing
+                    // somebody else's recording under it is the wrong answer
+                    // dressed as a working one. A row the matcher refused for
+                    // a duration or an album disagreement is still the right
+                    // artist, so it plays; a row by a different artist does
+                    // not, and the row says so instead.
+                    val best = TrackMatcher.best(songs, target)
+                        ?: songs.firstOrNull { TrackMatcher.sharesArtist(target.artist, it.artist) }
                     best?.let { song ->
                         runCatching { StreamResolver.resolve(song.videoId) }
                             .getOrNull()
