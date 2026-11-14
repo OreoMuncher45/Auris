@@ -14,24 +14,24 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.44"
+        default: "3.0.45"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "151"
+        default: "152"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.44-draft"
+        default: "v3.0.45-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.44 — private preview"
+        default: "Auris 3.0.45 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.44 — private preview
+          Auris 3.0.45 — private preview
 
           Performance
           - Live blur stays ON by default and now tracks the picture properly:
@@ -66,6 +66,15 @@ on:
             WebView starts (WEBVIEW). "Copy log" now includes the whole
             performance report, so a copied log answers the CPU questions
             without another run.
+          - The Automix's memory is now bounded. Each track it measures leaves
+            behind a quarter of a megabyte of numbers — three envelope curves
+            and a waveform of up to four thousand points — and they were kept
+            for ever. The waveform is now dropped from every track but the few
+            the panel is drawing, and the oldest results are let go of once
+            there are more than two dozen. Nothing the mixer reads is lost: the
+            tempo, the beat grid and the mix points stay, and a track that
+            comes round again is read back from the app's own store rather
+            than measured a second time.
 
           Player
           - The title and the artist sit lower, under the artwork, and the
@@ -78,7 +87,6 @@ on:
             rather than as grey paint.
 
           Installs over 3.0.43: same package, same signing key.
-
 permissions:
   contents: write
 
