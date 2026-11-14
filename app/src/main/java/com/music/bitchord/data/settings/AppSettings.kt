@@ -774,6 +774,12 @@ object AppSettings {
      * once a second.
      */
     val liveBlur = MutableStateFlow(false)
+    /**
+     * Sample this process's CPU and the player's per-frame counters, and keep
+     * a log that can be written out. Off by default and off in every sense:
+     * no timer runs unless this is on.
+     */
+    val perfMonitor = MutableStateFlow(false)
 
     /** Draws the bloom behind lyrics and the shadow behind player text. */
     val textGlow = MutableStateFlow(true)
@@ -1652,6 +1658,7 @@ object AppSettings {
         glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
         liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, false)
+        perfMonitor.value = prefs.getBoolean(KEY_PERF_MONITOR, false)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
         showNextTrackStatus.value = prefs.getBoolean(KEY_SHOW_NEXT_TRACK_STATUS, true)
@@ -2400,6 +2407,11 @@ object AppSettings {
     fun setLiveBlur(value: Boolean) {
         liveBlur.value = value
         prefs.edit().putBoolean(KEY_LIVE_BLUR, value).apply()
+    }
+
+    fun setPerfMonitor(value: Boolean) {
+        perfMonitor.value = value
+        prefs.edit().putBoolean(KEY_PERF_MONITOR, value).apply()
     }
 
     fun setTextGlow(value: Boolean) {
@@ -3276,6 +3288,7 @@ object AppSettings {
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_LIVE_BLUR = "live_blur"
+    private const val KEY_PERF_MONITOR = "perf_monitor"
     private const val KEY_TEXT_GLOW = "text_glow"
     private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
     private const val KEY_SHOW_NEXT_TRACK_STATUS = "show_next_track_status"

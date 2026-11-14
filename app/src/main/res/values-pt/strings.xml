@@ -1317,6 +1317,10 @@
     <string name="mark_as_ai">Marcar artista como gerado por IA</string>
     <string name="remove_ai_mark">Remover marca de IA</string>
     <string name="custom_live_blur">Desfoque ao vivo</string>
+    <string name="perf_monitor">Monitor de desempenho</string>
+    <string name="perf_monitor_help">Mede o uso de CPU e o trabalho por quadro. Desligado, nada roda.</string>
+    <string name="perf_save_log">Salvar registro de desempenho</string>
+    <string name="perf_save_log_help">Grava um .txt na pasta do app. CPU agora %1$d%%.</string>
     <string name="custom_live_blur_help">Acompanha capas animadas suavemente. Consome mais bateria.</string>
     <string name="custom_transport_smoothness">Suavização dos cantos dos controlos</string>
     <string name="custom_transport_smoothness_help">Arredonda os botões de reproduzir, pausar e avançar. Em 0 mantém o canto afiado; em 100 a forma fica suave mas continua um triângulo.</string>

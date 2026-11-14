@@ -1344,6 +1344,10 @@
     <string name="mark_as_ai">Отметить исполнителя как созданного ИИ</string>
     <string name="remove_ai_mark">Убрать отметку ИИ</string>
     <string name="custom_live_blur">Живое размытие</string>
+    <string name="perf_monitor">Монитор производительности</string>
+    <string name="perf_monitor_help">Измеряет нагрузку ЦП и работу на кадр. Когда выключен, ничего не запускается.</string>
+    <string name="perf_save_log">Сохранить отчёт</string>
+    <string name="perf_save_log_help">Пишет .txt в папку приложения. ЦП сейчас %1$d%%.</string>
     <string name="custom_live_blur_help">Плавно следует за анимированными обложками. Больше расход батареи.</string>
     <string name="custom_transport_smoothness">Сглаживание углов кнопок управления</string>
     <string name="custom_transport_smoothness_help">Скругляет кнопки воспроизведения, паузы и перехода. При 0 остаётся прежний острый край; при 100 форма мягкая, но остаётся треугольником.</string>

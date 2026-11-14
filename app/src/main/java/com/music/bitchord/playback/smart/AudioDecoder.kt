@@ -116,6 +116,9 @@ object AudioDecoder {
         endSeconds: Double,
         abort: () -> Boolean = { false },
     ): Pair<Pcm, Double>? {
+        com.music.bitchord.data.PerfCounters.bump(
+            com.music.bitchord.data.PerfCounters.Counter.ANALYSER_PASS,
+        )
         val samples = SampleBuffer()
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
             samples.add(toMono(buffer, info, channels))

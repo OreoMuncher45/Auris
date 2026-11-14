@@ -320,6 +320,8 @@ fun SettingsScreen(
     // categories now.
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
+    val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
+    val perfCpu by com.music.bitchord.perf.PerfMonitor.cpuPercent.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
     val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
@@ -1296,6 +1298,50 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setLiveBlur(!liveBlur) },
                 )
+            }
+            val perfMonitorTitle = stringResource(R.string.perf_monitor)
+            row(perfMonitorTitle, "performance", "cpu", "debug", "log") {
+                SettingsRow(
+                    icon = Icons.Rounded.Speed,
+                    title = perfMonitorTitle,
+                    subtitle = stringResource(R.string.perf_monitor_help),
+                    trailing = {
+                        Switch(
+                            checked = perfMonitor,
+                            onCheckedChange = AppSettings::setPerfMonitor,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setPerfMonitor(!perfMonitor) },
+                )
+            }
+            if (perfMonitor) {
+                row(
+                    stringResource(R.string.perf_save_log),
+                    "performance",
+                    "log",
+                    "save",
+                ) {
+                    SettingsRow(
+                        icon = Icons.Rounded.FileDownload,
+                        title = stringResource(R.string.perf_save_log),
+                        subtitle = stringResource(
+                            R.string.perf_save_log_help,
+                            perfCpu.roundToInt(),
+                        ),
+                        onClick = {
+                            val file = com.music.bitchord.perf.PerfMonitor.save(context)
+                            android.widget.Toast.makeText(
+                                context,
+                                file.absolutePath,
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        },
+                    )
+                }
             }
             // Left out where the player won't honour it: a window too wide for
             // the player to fill and too narrow to stand a page beside it keeps

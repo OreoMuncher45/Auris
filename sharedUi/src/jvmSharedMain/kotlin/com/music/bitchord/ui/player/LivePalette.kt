@@ -114,6 +114,9 @@ internal fun rememberLivePalette(
             live.value = withContext(Dispatchers.Default) {
                 computeLivePalette(current, source)
             }
+            com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.INK_READ,
+            )
         }
     }
     return live

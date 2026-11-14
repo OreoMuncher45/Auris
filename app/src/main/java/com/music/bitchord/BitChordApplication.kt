@@ -59,6 +59,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
         CrashLog.install(this)
+        // The performance monitor. Idle unless its switch is on: it collects
+        // the setting and starts a two-second sampler only while it is.
+        com.music.bitchord.perf.PerfMonitor.start(this)
+        com.music.bitchord.perf.AppAwake.install(this)
         // One system-service probe needs a context; answered once, cached for
         // the process. See DeviceCodecs for what it is and is not.
         com.music.bitchord.data.sources.DeviceCodecs.init(this)

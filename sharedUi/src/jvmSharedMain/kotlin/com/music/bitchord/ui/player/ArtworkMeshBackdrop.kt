@@ -346,6 +346,9 @@ fun rememberArtworkMesh(
             mesh = withContext(Dispatchers.Default) {
                 meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
             } ?: mesh
+            com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.MESH_READ,
+            )
             meshUrl = cacheKey
         }
     }
@@ -560,6 +563,7 @@ private fun ImageBitmap.boxBlurred(passes: Int): ImageBitmap {
     val radius = (minOf(width, height) / 12).coerceAtLeast(2)
 
     repeat(passes) {
+        com.music.bitchord.data.PerfCounters.bump(com.music.bitchord.data.PerfCounters.Counter.BLUR_PASS)
         boxBlurPass(source, target, width, height, radius, horizontal = true)
         boxBlurPass(target, source, width, height, radius, horizontal = false)
     }

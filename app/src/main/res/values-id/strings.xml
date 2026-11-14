@@ -1289,6 +1289,10 @@
     <string name="mark_as_ai">Tandai artis sebagai dibuat oleh AI</string>
     <string name="remove_ai_mark">Hapus tanda AI</string>
     <string name="custom_live_blur">Buram langsung</string>
+    <string name="perf_monitor">Monitor performa</string>
+    <string name="perf_monitor_help">Mengukur penggunaan CPU dan kerja per frame. Saat mati tidak ada yang berjalan.</string>
+    <string name="perf_save_log">Simpan log performa</string>
+    <string name="perf_save_log_help">Menulis .txt ke folder aplikasi. CPU sekarang %1$d%%.</string>
     <string name="custom_live_blur_help">Mengikuti sampul animasi dengan mulus. Lebih boros baterai.</string>
     <string name="custom_transport_smoothness">Kehalusan sudut tombol pemutar</string>
     <string name="custom_transport_smoothness_help">Membulatkan tombol putar, jeda, dan lewati. Pada 0, sudut tajam lama tetap ada; pada 100, bentuknya lembut tetapi tetap segitiga.</string>

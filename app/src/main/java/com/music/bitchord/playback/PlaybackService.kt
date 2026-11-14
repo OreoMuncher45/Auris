@@ -2195,8 +2195,16 @@ class PlaybackService : MediaLibraryService() {
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
             requestAnalysis = { item, durationMs, outgoing ->
-                item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                // Nothing the eye cannot see is worth a decode. Off screen, or
+                // with the display off, an analysis pass is the largest thing
+                // this process would otherwise do — a full decode of a track's
+                // audio, competing with whatever the listener is looking at.
+                // Skipped at the request rather than inside the analyser so the
+                // analyser stays a plain object with no Android lifecycle in it.
+                if (com.music.bitchord.perf.AppAwake.isAwake()) {
+                    item.localConfiguration?.uri?.let { uri ->
+                        trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                    }
                 }
             },
             // The panel's demand: the same work, asked for at the listener's
@@ -2205,8 +2213,10 @@ class PlaybackService : MediaLibraryService() {
             // track is already in the air, because the lane the listener is
             // looking at is worth a second fetch.
             forceAnalysisFor = { item, durationMs, outgoing ->
-                item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                if (com.music.bitchord.perf.AppAwake.isAwake()) {
+                    item.localConfiguration?.uri?.let { uri ->
+                        trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                    }
                 }
             },
             // How far each track's analysis fetch has got. The panel's

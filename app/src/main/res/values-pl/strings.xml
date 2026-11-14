@@ -1352,6 +1352,10 @@
     <string name="mark_as_ai">Oznacz artystę jako wygenerowanego przez AI</string>
     <string name="remove_ai_mark">Usuń oznaczenie AI</string>
     <string name="custom_live_blur">Rozmycie na żywo</string>
+    <string name="perf_monitor">Monitor wydajności</string>
+    <string name="perf_monitor_help">Mierzy użycie CPU i pracę na klatkę. Wyłączony nic nie uruchamia.</string>
+    <string name="perf_save_log">Zapisz dziennik wydajności</string>
+    <string name="perf_save_log_help">Zapisuje .txt w folderze aplikacji. CPU teraz %1$d%%.</string>
     <string name="custom_live_blur_help">Płynnie śledzi animowane okładki. Zużywa więcej baterii.</string>
     <string name="custom_transport_smoothness">Zaokrąglenie rogów przycisków odtwarzania</string>
     <string name="custom_transport_smoothness_help">Zaokrągla przyciski odtwarzania, pauzy i pomijania. Przy 0 pozostaje ostry brzeg; przy 100 kształt jest miękki, ale nadal trójkątny.</string>

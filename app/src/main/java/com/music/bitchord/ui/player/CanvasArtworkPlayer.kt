@@ -388,6 +388,9 @@ internal fun AndroidCanvasArtworkPlayer(
         )
         if (bitmap != null) {
             Log.d(TAG, "frame captured after rendered=true, size=${bitmap.width}x${bitmap.height}")
+            com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
+            )
             onFrameCaptured(bitmap.asImageBitmap())
         } else {
             Log.w(TAG, "frame capture returned null after rendered=true")
@@ -429,7 +432,10 @@ internal fun AndroidCanvasArtworkPlayer(
             val cost = SystemClock.elapsedRealtime() - started
             if (bitmap != null) {
                 Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}, cost=${cost}ms")
-                onFrameCaptured(bitmap.asImageBitmap())
+                com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
+            )
+            onFrameCaptured(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
             }

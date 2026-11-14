@@ -311,9 +311,13 @@ internal fun PlayerScrubber(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                // The slider's touch target extends well past the drawn bar,
-                // so pull the labels back up under it.
-                .offset(y = (-9).dp),
+                // Below the slider's own touch box, not inside it. That box is
+                // [activeHeight] + 22dp tall, so its bottom edge sits eleven dp
+                // under the drawn bar — and the times, pulled up under the bar,
+                // sat in it. A tap on "0:16" landed on the slider and started a
+                // scrub. Laid out after the slider instead of over it, they are
+                // out of its reach.
+                .padding(top = 2.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2119,7 +2123,7 @@ private fun LosslessLabel(
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier
-                    .size(width = 13.dp, height = 10.dp),
+                    .size(width = 15.dp, height = 11.dp),
             )
         } else if (icon != null) {
             Icon(
@@ -2127,7 +2131,7 @@ private fun LosslessLabel(
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier
-                    .size(13.dp),
+                    .size(14.dp),
             )
         }
         Spacer(Modifier.width(4.dp))
@@ -2137,7 +2141,7 @@ private fun LosslessLabel(
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
+                    fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 2).sp,
                 ),
                 color = ink.copy(alpha = alphas.secondary),
                 maxLines = 1,

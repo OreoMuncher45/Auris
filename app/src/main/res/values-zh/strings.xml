@@ -1289,6 +1289,10 @@
     <string name="mark_as_ai">将艺术家标记为 AI 生成</string>
     <string name="remove_ai_mark">移除 AI 标记</string>
     <string name="custom_live_blur">实时模糊</string>
+    <string name="perf_monitor">性能监视器</string>
+    <string name="perf_monitor_help">采样 CPU 占用与每帧工作。关闭时不会运行任何东西。</string>
+    <string name="perf_save_log">保存性能日志</string>
+    <string name="perf_save_log_help">将 .txt 写入应用文件夹。当前 CPU %1$d%%。</string>
     <string name="custom_live_blur_help">流畅跟随动态封面。耗电更多。</string>
     <string name="custom_transport_smoothness">播放按钮边角圆润度</string>
     <string name="custom_transport_smoothness_help">让播放、暂停和跳过按钮的边角更圆。0 保留原来的尖角，100 更柔和但仍保留三角形。</string>
