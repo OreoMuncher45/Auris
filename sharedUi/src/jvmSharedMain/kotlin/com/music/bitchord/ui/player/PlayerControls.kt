@@ -327,12 +327,12 @@ internal fun PlayerScrubber(
                 Text(
                     text = formatTime((shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary * 0.8f),
+                    color = ink.copy(alpha = alphas.secondary * 0.9f),
                 )
                 Text(
                     text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary * 0.8f),
+                    color = ink.copy(alpha = alphas.secondary * 0.9f),
                 )
             }
             // Pinned to the box's own centre rather than squeezed into the gap
@@ -736,16 +736,22 @@ internal fun TransportRow(
     // Everything else about the row is untouched: the skips at 53dp, the
     // SpaceAround spacing and the touch boxes.
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
-    val playSize = if (compact) 30.dp else 38.dp
+    // The reference player's own geometry, measured off its pause: an 87px
+    // bar pair on the same 1080px-wide screen the skip pair sits 125px across
+    // on. On this grid that is a 30dp play box — the pause spans 23.4 of the
+    // 24 units, so 30dp draws 29dp of bar — and a 51dp skip at 0.80 of the
+    // box's height. The touch boxes stay where they were: a hit target is not
+    // a picture of one.
+    val playSize = 30.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
     Row(
-        // Fixed gap between the three transport buttons, centred by the
-        // column that owns this row. The reference player's skips and play
-        // sit apart with a steady gap rather than spreading to the edges the
-        // way SpaceAround does on wide screens.
+        // The gap that puts the three buttons' centres 263px apart on a
+        // 1080px screen, as the reference does: the boxes are 53dp and 92dp,
+        // so 15dp between them lands the skips either side of the play button
+        // rather than out at the edges the way SpaceAround spread them.
         modifier = Modifier.wrapContentWidth(),
-        horizontalArrangement = Arrangement.spacedBy(32.dp),
+        horizontalArrangement = Arrangement.spacedBy(15.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportGlyph(
@@ -766,7 +772,7 @@ internal fun TransportRow(
                 CircularProgressIndicator(
                     color = ink,
                     strokeWidth = 3.dp,
-                    modifier = Modifier.size(if (compact) 30.dp else 38.dp),
+                    modifier = Modifier.size(playSize),
                 )
             }
         } else {
@@ -844,12 +850,19 @@ internal fun VolumeRow(
     }
 }
 
-/** The speakers either side of the volume bar. */
-private val VOLUME_ICON_SIZE = 17.dp
+/**
+ * The speakers either side of the volume bar.
+ *
+ * Eleven dp on the reference player's own row, measured against the 1080px
+ * screen both players were shot on: the volume row is a courtesy under the
+ * transport, not a second set of transport buttons, and at the size of the
+ * row's glyphs it read as one.
+ */
+private val VOLUME_ICON_SIZE = 12.dp
 
 /** The volume bar at rest, and while a finger is on it. */
-private val VOLUME_IDLE_HEIGHT = 4.dp
-private val VOLUME_ACTIVE_HEIGHT = 6.dp
+private val VOLUME_IDLE_HEIGHT = 3.dp
+private val VOLUME_ACTIVE_HEIGHT = 5.dp
 
 /**
  * The green a route wears while the music is on it.
@@ -1222,14 +1235,14 @@ private fun TransportGlyph(
  * The skip glyphs' width and touch box, beside the larger play button, and
  * the vertical squash that keeps the pair low and long.
  */
-private val PLAYER_SKIP_ICON_SIZE = 53.dp
+private val PLAYER_SKIP_ICON_SIZE = 51.dp
 private val PLAYER_SKIP_TOUCH_SIZE = 53.dp
-private const val PLAYER_SKIP_HEIGHT_SCALE = 0.85f
+private const val PLAYER_SKIP_HEIGHT_SCALE = 0.80f
 
 private val BOTTOM_ACTION_SIZE = 44.dp
 
 /** What the lyrics and queue glyphs are drawn at inside [BOTTOM_ACTION_SIZE]. */
-private val BOTTOM_ICON_SIZE = 26.dp
+private val BOTTOM_ICON_SIZE = 29.dp
 
 /**
  * The lit lyrics/queue tile, measured off Apple Music's as BitChord has it:
