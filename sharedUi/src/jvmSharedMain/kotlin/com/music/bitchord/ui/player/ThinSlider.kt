@@ -123,6 +123,15 @@ fun ThinSlider(
     onTransitionWindowLongPress: (() -> Unit)? = null,
     idleHeight: Dp = 7.dp,
     activeHeight: Dp = 12.dp,
+    /**
+     * How far the invisible hit box reaches above and below the drawn bar.
+     *
+     * The bar is a hairline, so it needs a touch target it does not paint. The
+     * default is the player-wide one; the seek bar asks for less so the times
+     * and the quality badge beneath it can sit closer without landing inside
+     * the box — a tap on "0:16" used to start a scrub.
+     */
+    touchPadding: Dp = 22.dp,
     activeColor: Color = Color.White.copy(alpha = 0.92f),
     inactiveColor: Color = Color.White.copy(alpha = 0.26f),
     /** Halfway between the two track colours: visible against unplayed, invisible under played. */
@@ -186,7 +195,7 @@ fun ThinSlider(
         modifier = modifier
             .fillMaxWidth()
             // Generous invisible touch target — the visible bar is only ~7dp.
-            .height(activeHeight + 22.dp)
+            .height(activeHeight + touchPadding)
             // One gesture loop for both taps and drags. Two separate detectors
             // — a drag one plus a tap one — meant taps never landed: the drag
             // detector took the pointer and a tap has no drag to report.

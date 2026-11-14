@@ -2407,6 +2407,19 @@ fun NowPlayingScreen(
                     translate(at.x, at.y) {
                         scale(size, size, pivot = Offset.Zero) { drawLayer(creditsLayer) }
                     }
+                } else if (dockFrame.creditsKnown) {
+                    // Nothing to fly to this trip: the mini player's own title
+                    // has not been laid out, so there is no target and no
+                    // dissolve to run. Keep the recorded words where they are
+                    // — on top of the sleeve drawn a few lines up, which is
+                    // the point. Left to the layout, they were under the
+                    // artwork for the whole of the open, and the title and
+                    // artist slid out from behind the cover when it settled.
+                    creditsLayer.alpha = 1f
+                    val inPlace = 1f - 0.2f * p()
+                    translate(dockFrame.creditsLeft, dockFrame.creditsTop) {
+                        scale(inPlace, inPlace, pivot = Offset.Zero) { drawLayer(creditsLayer) }
+                    }
                 }
             }
         }
@@ -4091,7 +4104,15 @@ fun NowPlayingScreen(
                             // lines, and a title that flew to the bar from the
                             // unscaled size would jump as it left.
                             .drawWithContent {
-                                if (creditsHandover()) {
+                                // Recorded for as long as the player is on its
+                                // way in or out of the mini player, not only
+                                // while there is a bar to fly to: the artwork
+                                // is drawn over the player on that trip, and
+                                // words left in place are words behind it. The
+                                // overlay above puts them back on top, at the
+                                // bar when its title is known and where they
+                                // are when it is not.
+                                if (docking()) {
                                     creditsLayer.record { this@drawWithContent.drawContent() }
                                 } else {
                                     drawContent()

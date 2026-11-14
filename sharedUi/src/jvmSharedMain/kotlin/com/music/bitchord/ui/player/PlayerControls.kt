@@ -307,16 +307,20 @@ internal fun PlayerScrubber(
             activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
             markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
+            // Smaller than the player's default box, so the times can sit just
+            // under the bar instead of well under it. 12dp of bar + 16dp of
+            // reach is a 28dp target along a bar the width of the screen.
+            touchPadding = 16.dp,
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 // Below the slider's own touch box, not inside it. That box is
-                // [activeHeight] + 22dp tall, so its bottom edge sits eleven dp
-                // under the drawn bar — and the times, pulled up under the bar,
-                // sat in it. A tap on "0:16" landed on the slider and started a
-                // scrub. Laid out after the slider instead of over it, they are
-                // out of its reach.
+                // [activeHeight] + 16dp tall on this bar, so its bottom edge
+                // sits eight dp under the drawn bar — and the times, pulled up
+                // under the bar, sat in it. A tap on "0:16" landed on the
+                // slider and started a scrub. Laid out after the slider instead
+                // of over it, they are out of its reach.
                 .padding(top = 2.dp),
         ) {
             Row(
