@@ -37,6 +37,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.playback.AudioCache
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -181,6 +182,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
     private val running = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * The tracks whose results are in memory, oldest first.
+     *
+     * The order is the whole point: the tracks a listener is looking at are
+     * the ones they have just played, so the newest results are the ones
+     * worth keeping whole and the oldest are the ones worth letting go of.
+     */
+    private val resultOrder = ConcurrentLinkedQueue<String>()
 
     /** The last thermal status the system reported; see [overheated]. */
     @Volatile private var thermalStatus = 0
@@ -419,8 +429,118 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // [wholeResults].
             wholeResults.add(trackId)
             results.putIfAbsent(trackId, stored)
+            touchResult(trackId)
+            trimResults()
         }
     }
+
+    /**
+     * Puts [analysis] in [results] and keeps the memory of the cache bounded.
+     *
+     * Every write goes through here, because the bound is a property of the
+     * cache rather than of any one of the places that fill it.
+     */
+    private fun rememberResult(trackId: String, analysis: TrackAnalysis) {
+        results[trackId] = analysis
+        touchResult(trackId)
+        trimResults()
+    }
+
+    /** Moves [trackId] to the newest end of [resultOrder]. */
+    private fun touchResult(trackId: String) {
+        resultOrder.remove(trackId)
+        resultOrder.add(trackId)
+    }
+
+    /**
+     * Keeps the analyses in memory to a size the phone can afford.
+     *
+     * An analysis is not a small thing: it carries three envelope curves and
+     * a waveform of up to four thousand points, each point its own object.
+     * That is a quarter of a megabyte for one track, and the Automix measures
+     * every track it plays — so an evening of listening left tens of megabytes
+     * of numbers in the heap for tracks nobody was looking at any more.
+     *
+     * Two steps, in the order the memory is worth least:
+     *
+     * - The waveform is dropped from every result but the newest few. It is a
+     *   picture, not evidence: nothing the transition policy reads is in it,
+     *   and the panel already draws the coarse energy curve when a waveform
+     *   is not there — the same thing a restored analysis does.
+     * - The oldest results are then let go of altogether, and the track is
+     *   marked as one that may be looked up on disk again. Its numbers are
+     *   still on disk, so a track that comes round again is restored rather
+     *   than measured a second time.
+     */
+    private fun trimResults() {
+        val order = resultOrder.toList()
+        order.forEachIndexed { index, trackId ->
+            if (index < ANALYSIS_PEAKS_KEPT) return@forEachIndexed
+            results[trackId]?.let { current ->
+                val stripped = current.withoutPeaks()
+                if (stripped !== current) results[trackId] = stripped
+            }
+            partials[trackId]?.let { current ->
+                val stripped = current.withoutPeaks()
+                if (stripped !== current) partials[trackId] = stripped
+            }
+        }
+        var guard = 0
+        while (
+            (results.size > ANALYSIS_MEMORY_MAX || partials.size > ANALYSIS_MEMORY_MAX) &&
+            guard < ANALYSIS_MEMORY_MAX * 8
+        ) {
+            guard++
+            val trackId = resultOrder.poll() ?: break
+            if (trackId == null) continue
+            // A pass in flight owns its result: taking it away now would have
+            // the pass publish over an empty cache and start the whole dance
+            // again.
+            if (trackId in running) {
+                resultOrder.add(trackId)
+                continue
+            }
+            results.remove(trackId)
+            partials.remove(trackId)
+            // The numbers are still on disk, so the track may be looked up
+            // again: the once-guard is lifted with the result.
+            restoreAttempted.remove(trackId)
+        }
+    }
+
+    /**
+     * This analysis without its waveform.
+     *
+     * The peaks exist to be drawn. They are the bulkiest part of an analysis
+     * and none of them is read by the policy that decides how one track hands
+     * over to the next.
+     */
+    private fun TrackAnalysis.withoutPeaks(): TrackAnalysis =
+        if (peakCurve.isEmpty() && headPeakCurve.isEmpty() && tailPeakCurve.isEmpty()) {
+            this
+        } else {
+            copy(
+                peakCurve = emptyList(),
+                headPeakCurve = emptyList(),
+                tailPeakCurve = emptyList(),
+            )
+        }
+
+    /**
+     * This pair of partial answers without their waveforms.
+     *
+     * The same bargain as [TrackAnalysis.withoutPeaks], applied to the two
+     * halves of a track that has not been measured whole.
+     */
+    private fun Partial.withoutPeaks(): Partial =
+        if (head == null && tail == null) {
+            this
+        } else {
+            copy(
+                head = head?.withoutPeaks(),
+                tail = tail?.withoutPeaks(),
+            )
+        }
 
     /** True once [trackId] has a result, including a failure. Nothing more will arrive. */
     fun isAnalysed(trackId: String): Boolean = results.containsKey(trackId)
@@ -699,7 +819,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val measured = outcome.analysis
                     if (measured != null) {
-                        results[trackId] = measured
+                        rememberResult(trackId, measured)
                         provisional.remove(trackId)
                         // The partial halves are spent: they were the answer
                         // until this one arrived, and merging them into it would
@@ -724,10 +844,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // stays: a partial analysis beats an empty one.
                         Log.w(TAG, "Giving up on $trackId after $MAX_SHORT_DECODE_ATTEMPTS short decodes")
                         if (trackId !in provisional) {
-                            results[trackId] = TrackAnalysis(
-                                status = TrackAnalysis.STATUS_READY,
-                                trackId = trackId,
-                                duration = durationSeconds,
+                            rememberResult(
+                                trackId,
+                                TrackAnalysis(
+                                    status = TrackAnalysis.STATUS_READY,
+                                    trackId = trackId,
+                                    duration = durationSeconds,
+                                ),
                             )
                         }
                     }
@@ -747,10 +870,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
                     // session.
-                    results[trackId] = TrackAnalysis(
-                        status = TrackAnalysis.STATUS_READY,
-                        trackId = trackId,
-                        duration = durationSeconds,
+                    rememberResult(
+                        trackId,
+                        TrackAnalysis(
+                            status = TrackAnalysis.STATUS_READY,
+                            trackId = trackId,
+                            duration = durationSeconds,
+                        ),
                     )
                     provisional.remove(trackId)
                 }
@@ -829,7 +955,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         } ?: return
         val merged = pair.merged() ?: return
         provisional.add(trackId)
-        results[trackId] = merged
+        rememberResult(trackId, merged)
     }
 
     /**
@@ -2216,6 +2342,26 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * closely.
          */
         const val MAX_PEAK_POINTS = 4000
+
+        /**
+         * How many of the most recent analyses keep their waveform in memory.
+         *
+         * The panel draws the track being played and the one before it, so
+         * four is a small margin over that: the waveform is there for the
+         * tracks a listener is looking at, and gone for the ones they are not.
+         */
+        const val ANALYSIS_PEAKS_KEPT = 4
+
+        /**
+         * How many analyses are held at once.
+         *
+         * The Automix measures every track it plays, and an analysis is a
+         * quarter of a megabyte of numbers. Twenty-four is several times more
+         * than a transition needs — it reads the track playing and the one
+         * coming — and it is a ceiling rather than a target: the cache fills
+         * to it and stays there.
+         */
+        const val ANALYSIS_MEMORY_MAX = 24
 
         /**
          * Stand-in bitrate for a rendition whose real length isn't recorded yet,
