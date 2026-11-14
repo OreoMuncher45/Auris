@@ -14,24 +14,24 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.45"
+        default: "3.0.46"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "152"
+        default: "153"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.45-draft"
+        default: "v3.0.46-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.45 — private preview"
+        default: "Auris 3.0.46 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.45 — private preview
+          Auris 3.0.46 — private preview
 
           Performance
           - Live blur stays ON by default and now tracks the picture properly:
@@ -79,6 +79,16 @@ on:
           Player
           - The title and the artist sit lower, under the artwork, and the
             whole control deck sits a little lower with them.
+          - The line of lyrics, the scrubber, the timestamps and the quality
+            badge now sit lower again, as one block, and the gap they take
+            comes out of the scrubber's own gap to the transport. The
+            reference player has no lyric line, so its title is followed by
+            the scrubber and nothing else; this one has both, and after the
+            credits moved down the lyric line came up with them and sat
+            almost against the artist's name. The sleeve, the title, the
+            artist, the transport, the volume and the action row stay exactly
+            where they were — only that one block moved, and on a screen with
+            little to spare it moves by as much as the gap has, down to 6dp.
           - The item strengths were measured against the reference player and
             matched: the seek bar and the volume bar are dimmer and thinner,
             the timestamps are quieter, the quality badge is quieter, the
