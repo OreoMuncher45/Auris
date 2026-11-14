@@ -156,7 +156,8 @@ case "$SCENARIO" in
         # The sheet is opened once there's a track; re-send in case the first
         # intent landed before the controller connected.
         sleep 3
-        sh_ am start -a android.intent.action.MAIN -p "$PKG" --ez bitchord.openPlayer true >/dev/null || true
+        sh_ am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$PKG" \
+            --ez bitchord.openPlayer true >/dev/null || true
         EXPECT_STATE=PLAYING EXPECT_SCREEN=on
         ;;
     screen-off-playing)
