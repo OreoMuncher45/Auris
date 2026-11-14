@@ -218,7 +218,8 @@ internal fun PlaybackOriginCaptionStacked(
         Text(
             text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 10.sp,
+                fontSize = 9.sp,
+                lineHeight = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.6.sp,
                 shadow = shadow,
@@ -233,7 +234,8 @@ internal fun PlaybackOriginCaptionStacked(
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
+                fontSize = 12.sp,
+                lineHeight = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 shadow = shadow,
             ),

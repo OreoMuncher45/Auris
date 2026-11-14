@@ -341,7 +341,7 @@ private const val QUEUE_FLICK_VELOCITY = 450f
  * theirs on as well, which is what makes the whole top of the player closable
  * rather than just its topmost 32dp. See the dismiss band in `NowPlayingScreen`.
  */
-private val DISMISS_STRIP_HEIGHT = 56.dp
+private val DISMISS_STRIP_HEIGHT = 64.dp
 /** The breathing room above the sleeve, needed twice: once to apply, once to measure past. */
 private val ART_BOX_TOP_PAD = 8.dp
 /**
@@ -2046,7 +2046,16 @@ fun NowPlayingScreen(
     // Lyrics, output and queue, with the output name under them — the row both
     // layouts end on, and the only thing in the landscape player's left column
     // besides the sleeve.
-    val playerActions: @Composable () -> Unit = {
+    // The row both shapes of the player end on, and — on the wide one — the
+    // output line beneath it.
+    //
+    // [showOutputLine] is about the portrait player: the reference player has
+    // no line under its controls at all, and the AirPlay mark already says
+    // whether the sound is on a receiver. So portrait passes false and drops
+    // the plain device name, keeping it only while a Listen Together party is
+    // live — the one state nothing else on that screen shows. Landscape has
+    // room under the row and keeps it.
+    val playerActions: @Composable (showOutputLine: Boolean) -> Unit = { showOutputLine ->
         PlayerActionRow(
             lyricsOpen = lyricsOpen,
             queueOpen = queueOpen,
@@ -2061,17 +2070,18 @@ fun NowPlayingScreen(
             onOpenOutput = openAudioOutput,
             outputActive = castConnected,
         )
-        // Keep the current output caption visible in every state.
-        Spacer(Modifier.height(18.dp))
-        Box(
-            modifier = Modifier.fillMaxWidth().height(20.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            OutputCaption(
-                accountName = accountName,
-                onOpenOutput = openAudioOutput,
-                onOpenMembers = openListenTogetherMembers,
-            )
+        if (showOutputLine || rememberPartyBadge().inParty) {
+            Spacer(Modifier.height(18.dp))
+            Box(
+                modifier = Modifier.fillMaxWidth().height(20.dp),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                OutputCaption(
+                    accountName = accountName,
+                    onOpenOutput = openAudioOutput,
+                    onOpenMembers = openListenTogetherMembers,
+                )
+            }
         }
     }
 
@@ -2556,7 +2566,7 @@ fun NowPlayingScreen(
                         )
                     }
                 },
-                actions = playerActions,
+                actions = { playerActions(true) },
                 mainPane = { compact ->
                     LandscapeMainPane(
                         compact = compact,
@@ -3120,10 +3130,10 @@ fun NowPlayingScreen(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        // Centred in the strip's first line, level with the
-                        // "playing from" label rather than with the pair — the
-                        // same place the reference player draws it.
-                        .offset(x = PLAYER_GUTTER - 10.dp, y = 4.dp)
+                        // Centred on the caption block rather than the strip's
+                        // top: the reference player draws it level with the
+                        // two caption lines, not floating above them.
+                        .offset(x = PLAYER_GUTTER - 10.dp, y = 24.dp)
                         .size(44.dp)
                         .graphicsLayer { alpha = spotifyChromeAlpha }
                         .clip(CircleShape)
@@ -4563,7 +4573,7 @@ fun NowPlayingScreen(
             // Balance that invisible inset with the caption gap below the icons.
             Spacer(Modifier.height(6.dp))
 
-            playerActions()
+            playerActions(false)
             Spacer(Modifier.height(18.dp))
             }
             }
