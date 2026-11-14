@@ -23,10 +23,12 @@
 #   PERF_TRACK_URL   link to start playback from (default: a fixed YT Music track)
 #   PERF_SETTLE_S    seconds to let the scenario settle before counters reset (20)
 #   PERF_OUT         directory for raw dumps (default /tmp/auris-perf/<stamp>-<scenario>)
+#   PERF_VOLUME      media volume index held for the run (default 5), restored after
 #   PERF_DOWNLOAD_STARTED=1  skip the "start a download, then press Enter" prompt
 #
-# The device must have no secure lock screen (or be unlocked) - the script
-# wakes and dismisses the keyguard but can't enter a PIN.
+# The script wakes the screen and dismisses a plain keyguard but can't enter a
+# PIN: with a secure lock it waits for someone to unlock the phone. Keep audio
+# on the phone speaker (Bluetooth off) so runs compare across machines.
 #
 # How it measures: the scenario is set up first and left to settle, then
 # batterystats and gfxinfo are reset, the device is told it is on battery
@@ -79,7 +81,11 @@ mkdir -p "$OUT"
 # ---- Device state that has to be put back ----------------------------------
 
 ORIG_TIMEOUT=$(sh_ settings get system screen_off_timeout)
+# Speaker output costs power in proportion to volume, so every run uses the same index.
+volume() { sh_ cmd media_session volume --stream 3 "$@" 2>/dev/null; }
+ORIG_VOLUME=$(volume --get | sed -n 's/.*volume is \([0-9]*\).*/\1/p')
 restore() {
+    [[ -n "$ORIG_VOLUME" ]] && volume --set "$ORIG_VOLUME" >/dev/null || true
     adb shell dumpsys battery reset >/dev/null 2>&1 || true
     [[ -n "$ORIG_TIMEOUT" && "$ORIG_TIMEOUT" != "null" ]] &&
         adb shell settings put system screen_off_timeout "$ORIG_TIMEOUT" >/dev/null 2>&1 || true
@@ -93,9 +99,15 @@ screen_on() {
     sh_ input keyevent KEYCODE_WAKEUP >/dev/null
     sh_ wm dismiss-keyguard >/dev/null 2>&1 || true
     sleep 1
-    if sh_ dumpsys window | grep 'isKeyguardShowing=true' >/dev/null; then
-        die "device is locked; remove the secure lock screen for perf runs, or unlock it and rerun"
-    fi
+    # A secure lock can't be dismissed from adb; wait (up to 10 min) for a
+    # person to unlock it rather than failing a batch of runs halfway through.
+    local waited=0
+    while sh_ dumpsys window | grep 'isKeyguardShowing=true' >/dev/null; do
+        (( waited == 0 )) && log "device is locked: unlock it to continue (waiting up to 10 min)"
+        (( waited >= 600 )) && die "device still locked after 10 min"
+        sleep 5; waited=$(( waited + 5 ))
+        sh_ input keyevent KEYCODE_WAKEUP >/dev/null
+    done
 }
 screen_off() { sh_ input keyevent KEYCODE_SLEEP >/dev/null; }
 interactive() { sh_ dumpsys power | grep 'mWakefulness=Awake' >/dev/null; }
@@ -146,6 +158,7 @@ log "scenario=$SCENARIO minutes=$MINUTES pkg=$PKG ($VERSION) device=$DEVICE"
 # wakes the screen on devices with config_unplugTurnsOnScreen, which would
 # silently turn a screen-off run into a screen-on one.
 sh_ dumpsys battery unplug >/dev/null
+volume --set "${PERF_VOLUME:-5}" >/dev/null
 case "$SCENARIO" in
     screen-on-nowplaying)
         # Keep the screen on for the whole run plus slack, without relying on
@@ -156,8 +169,11 @@ case "$SCENARIO" in
         # The sheet is opened once there's a track; re-send in case the first
         # intent landed before the controller connected.
         sleep 3
-        sh_ am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$PKG" \
-            --ez bitchord.openPlayer true >/dev/null || true
+        # Explicit component: implicit starts only match filters with
+        # CATEGORY_DEFAULT, which a launcher filter doesn't have.
+        launcher=$(sh_ cmd package resolve-activity --brief -a android.intent.action.MAIN \
+            -c android.intent.category.LAUNCHER "$PKG" | tail -1)
+        sh_ am start -n "$launcher" --ez bitchord.openPlayer true >/dev/null || true
         EXPECT_STATE=PLAYING EXPECT_SCREEN=on
         ;;
     screen-off-playing)
@@ -174,7 +190,8 @@ case "$SCENARIO" in
         sleep 2
         sh_ input keyevent KEYCODE_HOME >/dev/null
         screen_off
-        EXPECT_STATE=PAUSED EXPECT_SCREEN=off
+        # NONE is fine too: the service releases its session after a while paused.
+        EXPECT_STATE="PAUSED|NONE" EXPECT_SCREEN=off
         ;;
     downloading)
         # Downloads can't be queued from outside the app on purpose
@@ -265,7 +282,7 @@ JANKY=$(awk '/^Janky frames:/ { print $3, $4; exit }' "$OUT/gfxinfo.txt")
 
 STATUS=0
 WARN=""
-if [[ -n "$EXPECT_STATE" && "$END_STATE" != "$EXPECT_STATE" ]]; then
+if [[ -n "$EXPECT_STATE" && ! "$END_STATE" =~ ^($EXPECT_STATE)$ ]]; then
     WARN+=" playback=$END_STATE(expected $EXPECT_STATE)"; STATUS=2
 fi
 if [[ "$END_SCREEN" != "$EXPECT_SCREEN" || "$SCREEN_BAD" -gt 0 ]]; then
