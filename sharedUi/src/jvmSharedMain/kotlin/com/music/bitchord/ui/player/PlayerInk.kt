@@ -36,6 +36,36 @@ internal val LocalPlayerInkGlow = staticCompositionLocalOf<State<Color>> {
     mutableStateOf(Color.Transparent)
 }
 
+/**
+ * The ink as the loudest marks on the screen wear it: the title and the
+ * transport.
+ *
+ * The ink itself is a tint of the record's own colour, and a tint cannot be
+ * as bright as white without ceasing to be a tint — pushed to the top of the
+ * range it turns into a pale wash with a hue nobody could name. So the two
+ * things that should look like light get the ink lifted toward white, and
+ * everything else keeps the colour.
+ *
+ * The reference player writes both of them in white: its title sits at 253 of
+ * 255 against the backdrop and its transport glyphs at 255, where this one
+ * sat at 228 — a difference of about a tenth of the range, which the eye
+ * reads as the difference between white and grey, and the grey is what makes
+ * a screen look careful rather than expensive.
+ *
+ * A state, for the reason [LocalPlayerInk] is one.
+ */
+internal val LocalPlayerPrimary = staticCompositionLocalOf<State<Color>> {
+    mutableStateOf(Color.White)
+}
+
+/**
+ * How much of the ink survives the lift toward white.
+ *
+ * Enough that the record is still in it — a sleeve's own colour, pale — and
+ * not so much that it is white.
+ */
+internal const val PRIMARY_INK_KEEP = 0.38f
+
 /** Light ink needs the dark glow, and the reverse. */
 internal fun Color.isLightInk(): Boolean =
     ColorUtils.calculateLuminance(toArgb()) >= 0.5f

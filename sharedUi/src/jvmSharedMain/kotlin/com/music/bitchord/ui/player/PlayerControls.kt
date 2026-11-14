@@ -335,12 +335,12 @@ internal fun PlayerScrubber(
                 Text(
                     text = formatTime((shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary * 0.9f),
+                    color = ink.copy(alpha = alphas.secondary * TIME_LABEL_ALPHA),
                 )
                 Text(
                     text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary * 0.9f),
+                    color = ink.copy(alpha = alphas.secondary * TIME_LABEL_ALPHA),
                 )
             }
             // Pinned to the box's own centre rather than squeezed into the gap
@@ -409,12 +409,49 @@ private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
 private const val MIXING_LABEL_REST = 0.5f
 
 /**
- * The bars are drawn at ninety per cent.
+ * The bars are drawn at eighty per cent.
  *
  * Fully opaque, a filled track reads as a printed line rather than as a
  * level; Apple's own bars are not quite solid, and neither are these.
+ *
+ * The number is off the reference player's own screen: its seek bar's filled
+ * part sits at 205 of 255 against the backdrop, which is four fifths of the
+ * range, where this one was drawn a shade brighter.
  */
-private const val BAR_OPACITY = 0.9f
+private const val BAR_OPACITY = 0.81f
+
+/**
+ * The volume bar, which the reference player draws at half strength.
+ *
+ * The volume row is a courtesy under the transport, and the reference player
+ * treats it as one: its bar is a hairline at half the opacity of the seek
+ * bar's, where this one was drawn as a second progress bar at nearly the
+ * seek bar's own weight. It is the loudest-looking thing on the screen after
+ * the artwork, and it is the one thing on it that has nothing to do with the
+ * music.
+ */
+private const val VOLUME_BAR_OPACITY = 0.49f
+
+/**
+ * The elapsed and remaining times, which the reference player keeps quiet.
+ *
+ * Measured off its own screen: the two timestamps sit at about a third of the
+ * range against the backdrop, well under the artist above them, so they read
+ * as the quietest writing on the screen rather than as a second pair of
+ * labels. These were drawn at nearly two thirds, which is why the bottom of
+ * this screen looked busier than the reference one's.
+ */
+private const val TIME_LABEL_ALPHA = 0.5f
+
+/**
+ * The quality badge, which the reference player writes quietly.
+ *
+ * Measured off its own screen: the badge sits at about 0.57 of the range
+ * against the backdrop — dimmer than the artist above it and far dimmer than
+ * the timestamps beside it. This one was drawn at the full secondary strength,
+ * which put the smallest word on the screen in the brightest ink.
+ */
+private const val QUALITY_BADGE_ALPHA = 0.82f
 
 /**
  * The quality badge between the timestamps — "Lossless", "Hi-Res", a loading
@@ -743,7 +780,7 @@ internal fun TransportRow(
     //
     // Everything else about the row is untouched: the skips at 53dp, the
     // SpaceAround spacing and the touch boxes.
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
+    val ink = LocalPlayerAccent.current ?: LocalPlayerPrimary.current.value
     // The reference player's own geometry, measured off its pause: an 87px
     // bar pair on the same 1080px-wide screen the skip pair sits 125px across
     // on. On this grid that is a 30dp play box — the pause spans 23.4 of the
@@ -842,9 +879,9 @@ internal fun VolumeRow(
             // bar's weight it read as a second progress bar.
             idleHeight = VOLUME_IDLE_HEIGHT,
             activeHeight = VOLUME_ACTIVE_HEIGHT,
-            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
+            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * VOLUME_BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
-            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
+            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * VOLUME_BAR_OPACITY),
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(10.dp))
@@ -869,8 +906,8 @@ internal fun VolumeRow(
 private val VOLUME_ICON_SIZE = 12.dp
 
 /** The volume bar at rest, and while a finger is on it. */
-private val VOLUME_IDLE_HEIGHT = 3.dp
-private val VOLUME_ACTIVE_HEIGHT = 5.dp
+private val VOLUME_IDLE_HEIGHT = 2.dp
+private val VOLUME_ACTIVE_HEIGHT = 3.dp
 
 /**
  * The green a route wears while the music is on it.
@@ -1044,6 +1081,15 @@ internal fun CircleGlyph(
     touchSize: Dp = 38.dp,
     /** Whether the button is drawn on its translucent disc. */
     disc: Boolean = true,
+    /**
+     * How strongly the glyph itself is written, when it is not full strength.
+     *
+     * The reference player writes the star and the menu beside the title at
+     * half strength — they are there, and they are not the loudest thing on
+     * the screen. Drawn at full strength they were the brightest marks on the
+     * player, brighter than the transport and nearly as bright as the title.
+     */
+    glyphAlpha: Float? = null,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -1081,7 +1127,7 @@ internal fun CircleGlyph(
             Icon(
                 painter = glyph.painter(),
                 contentDescription = contentDescription,
-                tint = ink,
+                tint = glyphAlpha?.let { ink.copy(alpha = it) } ?: ink,
                 modifier = Modifier
                     .size(glyphSize),
             )
@@ -1140,7 +1186,9 @@ private fun TransportGlyph(
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
+    // A primary mark: the ink lifted toward white, unless the listener pinned
+    // an accent colour for the transport. See [LocalPlayerPrimary].
+    val ink = LocalPlayerAccent.current ?: LocalPlayerPrimary.current.value
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
@@ -2120,7 +2168,7 @@ private fun LosslessLabel(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val tint = ink.copy(alpha = alphas.secondary)
+        val tint = ink.copy(alpha = alphas.secondary * QUALITY_BADGE_ALPHA)
         if (iconPainter != null) {
             Icon(
                 painter = iconPainter,
@@ -2147,7 +2195,7 @@ private fun LosslessLabel(
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 2).sp,
                 ),
-                color = ink.copy(alpha = alphas.secondary),
+                color = ink.copy(alpha = alphas.secondary * QUALITY_BADGE_ALPHA),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

@@ -42,7 +42,7 @@ internal data class NowPlayingAlphas(
     /** Artist, time labels, the quality badge and the current lyric. */
     val secondary: Float = 0.70f,
     /** Lyrics, AirPlay, queue and volume icons, and the device name. */
-    val tertiary: Float = 0.65f,
+    val tertiary: Float = 0.55f,
     /** The unfilled part of the progress and volume tracks. */
     val track: Float = 0.30f,
     /** The discs behind the round star and "..." buttons. */
@@ -51,7 +51,7 @@ internal data class NowPlayingAlphas(
 
 /** The palette before any artwork has been read: neutral, dark, near-white ink. */
 internal val DefaultNowPlayingPalette = NowPlayingPalette(
-    fg = Oklch(0.92f, 0f, 0f).toColor(),
+    fg = Oklch(0.94f, 0f, 0f).toColor(),
 )
 
 /**
@@ -278,8 +278,22 @@ private const val DARK_INK_MAX_L = 0.34f
 
 /** Dark sleeve: lift the colour clear of the backdrop. */
 private const val LIGHT_INK_LIFT = 0.42f
-private const val LIGHT_INK_MIN_L = 0.72f
-private const val LIGHT_INK_MAX_L = 0.82f
+
+/**
+ * The band the lifted ink lands in.
+ *
+ * High enough to read as light rather than as paint, and no higher: a colour
+ * near white has almost no room left for a tint, and the ink is the record's
+ * own colour. Carried too far it turns into a pale wash with a hue nobody
+ * could name — which is not the same thing as being bright.
+ *
+ * The brightness the reference player has is not taken from the ink but from
+ * the primary marks: the title and the transport are the ink lifted toward
+ * white, so they can be as light as it wants without the ink itself losing
+ * its colour. See [LocalPlayerPrimary].
+ */
+private const val LIGHT_INK_MIN_L = 0.78f
+private const val LIGHT_INK_MAX_L = 0.86f
 
 /**
  * A floor on the ink's chroma, so a muted secondary still reads as its colour
@@ -291,7 +305,7 @@ private const val MIN_INK_CHROMA = 0.09f
 private const val MAX_INK_CHROMA = 0.22f
 
 private val DARK_NEUTRAL_INK = Oklch(0.20f, 0f, 0f).toColor()
-private val LIGHT_NEUTRAL_INK = Oklch(0.92f, 0f, 0f).toColor()
+private val LIGHT_NEUTRAL_INK = Oklch(0.94f, 0f, 0f).toColor()
 
 /** Binary-search steps for the largest in-gamut chroma; far below a JND. */
 private const val GAMUT_STEPS = 18

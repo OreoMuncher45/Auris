@@ -114,6 +114,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
@@ -285,7 +286,38 @@ private val ART_TITLE_GAP = 20.dp
  */
 private val CREDITS_TITLE_SIZE = 22.sp
 private val CREDITS_ARTIST_SIZE = 17.sp
-private val CREDITS_ARTIST_ALPHA = 0.82f
+
+/**
+ * How strongly the artist is written.
+ *
+ * The artist is the second line of the block, not a second heading: the
+ * reference player writes it at about half strength, which is where this one
+ * sat as well.
+ */
+private val CREDITS_ARTIST_ALPHA = 0.73f
+
+/**
+ * How far below the artwork the title and the artist sit.
+ *
+ * Measured off the reference player's own screen rather than guessed: its
+ * title begins about seven per cent of the screen lower than this one did,
+ * and the gap between the sleeve's edge and the words is what carries most of
+ * that difference.
+ *
+ * The drop is added to the title's own position rather than to the space the
+ * artwork is measured with, because that space is what decides how big the
+ * sleeve is: taking it out of there would shrink the picture to pay for it,
+ * and the picture is not the thing being adjusted.
+ *
+ * It is added on its own, and not to [ART_TITLE_GAP], because that gap is
+ * inside the sleeve's own measurement — a bigger one makes the sleeve smaller
+ * on a tall screen and leaves the title exactly where it was.
+ *
+ * Forty dp is as far as it goes: below the artist there is the lyric strip,
+ * and the reference player has no such strip, so it cannot be matched
+ * exactly without dropping the feature that carries the current line.
+ */
+private val CREDITS_DROP = 40.dp
 /**
  * How much the hero banner's still artwork is scaled past its frame, measured
  * — twice, independently, to the same number — against Apple's player: 123.4%
@@ -464,9 +496,18 @@ private fun PlayerColors(
     alphas: NowPlayingAlphas,
     content: @Composable () -> Unit,
 ) {
+    // The title and the transport wear the ink lifted toward white — see
+    // [LocalPlayerPrimary]. Derived from the ink rather than given on its own,
+    // so it follows a playing clip with everything else.
+    val primary = remember(ink) {
+        derivedStateOf {
+            lerp(Color.White, ink.value, PRIMARY_INK_KEEP)
+        }
+    }
     CompositionLocalProvider(
         LocalPlayerInk provides ink,
         LocalPlayerInkGlow provides if (textGlow) glow else glowOff,
+        LocalPlayerPrimary provides primary,
         LocalPlayerAccent provides colors.accent,
         LocalPlayerSeekbar provides colors.seekbar,
         LocalPlayerText provides colors.text,
@@ -3446,7 +3487,7 @@ fun NowPlayingScreen(
                 // player and has to be centred in it; collapsed, it belongs
                 // hard against the left edge with the credits beside it.
                 fun artStart(): Dp = lerp((maxWidth - fullArt) / 2, 0.dp, p())
-                fun regularTitleTop(): Dp = lerp(groupTop + fullArt + ART_TITLE_GAP, 0.dp, p())
+                fun regularTitleTop(): Dp = lerp(groupTop + fullArt + ART_TITLE_GAP + CREDITS_DROP, 0.dp, p())
                 // Once Spotify's control deck has left, keep the only remaining
                 // player chrome against the bottom edge instead of stranding it
                 // where the artwork's title normally sits near mid-screen.
@@ -4158,7 +4199,13 @@ fun NowPlayingScreen(
                             label = "playerCredits",
                         ) {
                             val scrolling = scrolls()
-                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current.value
+                            // The title is a primary mark: the ink lifted toward
+                            // white, unless the listener pinned a colour for
+                            // the text. The artist below it keeps the ink
+                            // itself — the second line of the block is not the
+                            // loudest thing on the screen.
+                            val ink = LocalPlayerText.current ?: LocalPlayerPrimary.current.value
+                            val artistInk = LocalPlayerText.current ?: LocalPlayerInk.current.value
                             val alphas = LocalPlayerAlphas.current
                             // The glow the text wears, read here rather than
                             // in the screen above: the glow moves with the
@@ -4205,7 +4252,7 @@ fun NowPlayingScreen(
                                     // as the reference player sets it: the name
                                     // is the second line of the block, not a
                                     // second heading.
-                                    color = ink.copy(alpha = alphas.secondary * CREDITS_ARTIST_ALPHA),
+                                    color = artistInk.copy(alpha = alphas.secondary * CREDITS_ARTIST_ALPHA),
                                     enabled = scrolling,
                                     // A title that's also scrolling gets to go first —
                                     // starting together reads as clutter, so the artist
@@ -4269,6 +4316,13 @@ fun NowPlayingScreen(
                             glyphSize = 24.dp,
                             touchSize = 40.dp,
                             disc = false,
+                            // A liked song says so: the filled star is written
+                            // at full strength, an empty one quietly.
+                            glyphAlpha = if (liked) {
+                                LocalPlayerAlphas.current.primary
+                            } else {
+                                LocalPlayerAlphas.current.tertiary
+                            },
                         )
                         Spacer(Modifier.width(2.dp))
                     }
@@ -4279,6 +4333,10 @@ fun NowPlayingScreen(
                         glyphSize = 22.dp,
                         touchSize = 40.dp,
                         disc = false,
+                        // Beside the title, and quiet: the reference player
+                        // writes it at half strength, where this one was the
+                        // brightest mark on the screen.
+                        glyphAlpha = LocalPlayerAlphas.current.tertiary,
                         modifier = Modifier.reportMenuAnchor(onMenuAnchor),
                     )
                 }
@@ -4611,7 +4669,18 @@ fun NowPlayingScreen(
             Spacer(Modifier.height(6.dp))
 
             playerActions(false)
-            Spacer(Modifier.height(18.dp))
+            // The deck is pinned to the foot of the player, so every dp taken
+            // off this gap moves the whole deck down by a dp: the lyric strip,
+            // the scrubber, the times, the transport and the action row all
+            // ride a little lower, and the space comes out of the bottom
+            // margin instead.
+            //
+            // Which is where the reference player's own deck sits: its scrubber
+            // is at seventy per cent of the screen and its transport at
+            // eighty, where this one had them three per cent higher. It is
+            // the smallest move on the screen and the one that makes the
+            // bottom of it line up with the reference's.
+            Spacer(Modifier.height(6.dp))
             }
             }
             }
