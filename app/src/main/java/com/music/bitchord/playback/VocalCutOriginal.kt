@@ -34,8 +34,11 @@ class VocalCutOriginal : SingEngine {
 
     override fun reset() = Unit
 
+    /** Nothing is filtered, so there is nothing to settle: it cuts at once. */
+    override val needsWarmup: Boolean get() = false
+
     override fun processSpan(samples: FloatArray, sampleCount: Int, cut: Float) {
-        val active = cut > 0.001f
+        val active = cut > SING_IDLE_LEVEL
         val c = cut.coerceIn(0f, 1f)
         // Headroom is preserved rather than clamped: the makeup gain is what
         // brings a full cut back to a listenable level, and clamping first

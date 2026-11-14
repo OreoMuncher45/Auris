@@ -87,9 +87,16 @@ enum class SingMethod {
          * This is what decides whether the model is opened at all.
          */
         fun studioAskedFor(method: SingMethod, level: Float): Boolean =
-            method == NEURAL && level > 0.001f
+            method == NEURAL && level > SING_IDLE_LEVEL
     }
 }
+
+/**
+ * At or below this Sing level, Sing is off: no engine cuts, the processor
+ * skips its engine entirely, and Studio isn't asked for. One threshold for
+ * every place that asks "is Sing on?".
+ */
+internal const val SING_IDLE_LEVEL = 0.001f
 
 /** The one shape all three engines answer to, so the processor can swap them. */
 interface SingEngine {
@@ -97,6 +104,13 @@ interface SingEngine {
     fun processSpan(samples: FloatArray, sampleCount: Int, cut: Float)
     fun processFrame(left: Float, right: Float, cut: Float): FloatArray
     fun reset()
+
+    /**
+     * Whether the engine carries filter or detector state that has to settle
+     * before it cuts cleanly. [VocalCutProcessor] runs a silent warm-up first
+     * when it does.
+     */
+    val needsWarmup: Boolean get() = true
 }
 
 internal fun engineFor(method: SingMethod): SingEngine = when (method) {
