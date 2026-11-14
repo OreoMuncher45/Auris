@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">Chọn nguồn lời bài hát</string>
     <string name="clear">Xóa</string>
     <string name="close_lyrics">Đóng lời bài hát</string>
+    <string name="close_player">Đóng trình phát</string>
+    <string name="playing_from_label">Đang phát từ</string>
+    <string name="played_by_label">Phát bởi</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ từ %1$s</string>

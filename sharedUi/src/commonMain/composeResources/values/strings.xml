@@ -80,6 +80,9 @@
     <string name="choose_lyrics_provider">Choose lyrics provider</string>
     <string name="clear">Clear</string>
     <string name="close_lyrics">Close lyrics</string>
+    <string name="close_player">Close player</string>
+    <string name="playing_from_label">Playing from</string>
+    <string name="played_by_label">Played by</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ from %1$s</string>

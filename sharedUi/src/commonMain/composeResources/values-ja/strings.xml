@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">歌詞の提供元を選択</string>
     <string name="clear">消去</string>
     <string name="close_lyrics">歌詞を閉じる</string>
+    <string name="close_player">プレーヤーを閉じる</string>
+    <string name="playing_from_label">再生中</string>
+    <string name="played_by_label">再生した人</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ %1$sから</string>

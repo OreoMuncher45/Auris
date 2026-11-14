@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">Söz sağlayıcısını seç</string>
     <string name="clear">Temizle</string>
     <string name="close_lyrics">Sözleri kapat</string>
+    <string name="close_player">Oynatıcıyı kapat</string>
+    <string name="playing_from_label">Şuradan çalıyor</string>
+    <string name="played_by_label">Çalan</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ %1$s kaynağından</string>

@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">选择歌词来源</string>
     <string name="clear">清除</string>
     <string name="close_lyrics">关闭歌词</string>
+    <string name="close_player">关闭播放器</string>
+    <string name="playing_from_label">播放自</string>
+    <string name="played_by_label">播放者</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ 来自 %1$s</string>

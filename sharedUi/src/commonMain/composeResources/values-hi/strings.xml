@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">लिरिक्स प्रदाता चुनें</string>
     <string name="clear">साफ़ करें</string>
     <string name="close_lyrics">लिरिक्स बंद करें</string>
+    <string name="close_player">प्लेयर बंद करें</string>
+    <string name="playing_from_label">यहाँ से चल रहा है</string>
+    <string name="played_by_label">द्वारा चलाया गया</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ %1$s से</string>

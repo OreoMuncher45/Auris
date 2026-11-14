@@ -453,10 +453,11 @@ internal fun LandscapeCredits(
                 )
             }
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(4.dp))
         // Same gate as the portrait player's: no account to like against for a
         // guest, and no YouTube identity to rate a local file or a finished
-        // download against either.
+        // download against either. The marks are bare here too — the two
+        // layouts are the same player at two shapes.
         if (signedIn && song.localUri == null) {
             val liked = likeStatus == LikeStatus.LIKE
             CircleGlyph(
@@ -466,14 +467,19 @@ internal fun LandscapeCredits(
                 ),
                 onClick = onToggleLike,
                 haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                glyphSize = 22.dp,
+                glyphSize = 24.dp,
+                touchSize = 40.dp,
+                disc = false,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(2.dp))
         }
         CircleGlyph(
             icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
             contentDescription = stringResource(Res.string.more),
             onClick = onOpenMenu,
+            glyphSize = 22.dp,
+            touchSize = 40.dp,
+            disc = false,
             modifier = Modifier.reportMenuAnchor(onMenuAnchor),
         )
     }

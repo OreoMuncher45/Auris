@@ -180,6 +180,72 @@ internal fun PlaybackOriginCaption(
 }
 
 /**
+ * The caption above the credits, stacked the way the reference player sets it:
+ * a small uppercase line naming what the source is ("PLAYING FROM", "PLAYED
+ * BY"), and the source itself in a line of its own beneath.
+ *
+ * Two lines rather than one sentence because the source is the thing a finger
+ * reaches for — naming what kind of thing it is makes the line read as a
+ * heading rather than as prose, and the name can then be as long as it needs
+ * without the label competing with it.
+ */
+@Composable
+internal fun PlaybackOriginCaptionStacked(
+    /** The heading: "Playing from", "Played by". Upper-cased here. */
+    label: String,
+    /** The playlist, album, station or listener. */
+    title: String,
+    onClick: () -> Unit,
+    textAlign: TextAlign = TextAlign.Center,
+    modifier: Modifier = Modifier,
+) {
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
+    val alphas = LocalPlayerAlphas.current
+    val glow = LocalPlayerInkGlow.current.value
+    val shadow = remember(glow) {
+        Shadow(color = glow, offset = Offset(0f, 1f), blurRadius = 4f)
+    }
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = PLAYER_GUTTER, vertical = 2.dp),
+        horizontalAlignment = if (textAlign == TextAlign.Center) {
+            Alignment.CenterHorizontally
+        } else {
+            Alignment.Start
+        },
+    ) {
+        Text(
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.6.sp,
+                shadow = shadow,
+            ),
+            // The heading is a signpost, not a title: it holds well under the
+            // name's strength, which is what makes the pair read in one look.
+            color = ink.copy(alpha = alphas.tertiary * 0.82f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                shadow = shadow,
+            ),
+            color = ink.copy(alpha = minOf(1f, alphas.secondary + 0.25f)),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+        )
+    }
+}
+
+/**
  * The seek bar, with elapsed and remaining either side under it and
  * [centerLabel] — the quality badge — between them.
  */
@@ -252,17 +318,19 @@ internal fun PlayerScrubber(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 val timeStyle = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
                     shadow = Shadow(LocalPlayerInkGlow.current.value, blurRadius = 9f),
                 )
                 Text(
                     text = formatTime((shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary),
+                    color = ink.copy(alpha = alphas.secondary * 0.8f),
                 )
                 Text(
                     text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = alphas.secondary),
+                    color = ink.copy(alpha = alphas.secondary * 0.8f),
                 )
             }
             // Pinned to the box's own centre rather than squeezed into the gap
@@ -670,11 +738,12 @@ internal fun TransportRow(
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
     Row(
-        // SpaceAround, as BitChord spaces it: the outer margins take half a
-        // gap, so the three buttons spread a little further apart from each
-        // other than a fixed gap would.
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceAround,
+        // Fixed gap between the three transport buttons, centred by the
+        // column that owns this row. The reference player's skips and play
+        // sit apart with a steady gap rather than spreading to the edges the
+        // way SpaceAround does on wide screens.
+        modifier = Modifier.wrapContentWidth(),
+        horizontalArrangement = Arrangement.spacedBy(32.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportGlyph(
@@ -745,15 +814,18 @@ internal fun VolumeRow(
             contentDescription = null,
             tint = ink.copy(alpha = alphas.tertiary),
             modifier = Modifier
-                .size(20.dp),
+                .size(VOLUME_ICON_SIZE),
         )
         Spacer(Modifier.width(10.dp))
         ThinSlider(
             value = value(),
             onValueChange = onValueChange,
             onValueChangeFinished = onValueChangeFinished,
-            idleHeight = 6.dp,
-            activeHeight = 10.dp,
+            // Thinner than the seek bar, and thinner than it used to be: the
+            // volume row is a courtesy under the transport, and at the seek
+            // bar's weight it read as a second progress bar.
+            idleHeight = VOLUME_IDLE_HEIGHT,
+            activeHeight = VOLUME_ACTIVE_HEIGHT,
             activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
             markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
@@ -765,10 +837,25 @@ internal fun VolumeRow(
             contentDescription = null,
             tint = ink.copy(alpha = alphas.tertiary),
             modifier = Modifier
-                .size(20.dp),
+                .size(VOLUME_ICON_SIZE),
         )
     }
 }
+
+/** The speakers either side of the volume bar. */
+private val VOLUME_ICON_SIZE = 17.dp
+
+/** The volume bar at rest, and while a finger is on it. */
+private val VOLUME_IDLE_HEIGHT = 4.dp
+private val VOLUME_ACTIVE_HEIGHT = 6.dp
+
+/**
+ * The green a route wears while the music is on it.
+ *
+ * Not the artwork ink: this is a state of the *device*, true whatever cover is
+ * playing, and it has to read as the same green on every one of them.
+ */
+internal val CAST_CONNECTED_GREEN = Color(0xFF32D74B)
 
 /**
  * Lyrics, AirPlay, and the queue — the row both layouts end on.
@@ -777,6 +864,11 @@ internal fun VolumeRow(
  * state, so they are simply always here. The centre glyph is AirPlay normally,
  * and the three playback modes while the queue is up, since that is when they
  * are what you are about to reach for.
+ *
+ * The queue's own glyph carries the mode, so the row says which of shuffle,
+ * repeat and autoplay is on without a second row of controls over the artwork.
+ * The centre keeps [outputActive]: a route connected is the one state the
+ * AirPlay mark has, and it is green while it holds.
  */
 @Composable
 internal fun PlayerActionRow(
@@ -791,6 +883,8 @@ internal fun PlayerActionRow(
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
     onOpenOutput: () -> Unit,
+    /** The sound is on a receiver rather than this device — see [CAST_CONNECTED_GREEN]. */
+    outputActive: Boolean = false,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // Sized for the wider centre control — the three-up capsule — in both
@@ -798,6 +892,16 @@ internal fun PlayerActionRow(
         // swap, and the lyrics and queue glyphs would slide with it.
         val widestRow = BOTTOM_ACTION_SIZE * 2 + pillWidth(3)
         val edgeInset = ((maxWidth - widestRow) / 4).coerceAtLeast(0.dp)
+        // One badge at a time, and the strongest of them wins: repeat is a
+        // loop the listener asked to be held to, shuffle a reordering of what
+        // comes next, autoplay a guess at what comes after the queue. A row of
+        // badges in a 26dp glyph would be three marks too small to tell apart.
+        val queueIcon = when {
+            repeatMode != RepeatModes.OFF -> PlayerIcons.QueueWithRepeat
+            shuffleEnabled -> PlayerIcons.QueueWithShuffle
+            autoplayEnabled -> PlayerIcons.QueueWithAutoplay
+            else -> PlayerIcons.Queue
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -875,11 +979,14 @@ internal fun PlayerActionRow(
                         icon = PlayerIcons.AirPlay,
                         contentDescription = stringResource(Res.string.audio_output),
                         onClick = onOpenOutput,
+                        // Green is a route, not a menu: while the sound is on
+                        // this device the mark stays in the row's own ink.
+                        tint = if (outputActive) CAST_CONNECTED_GREEN else null,
                     )
                 }
             }
             BottomGlyph(
-                icon = PlayerIcons.Queue,
+                icon = queueIcon,
                 contentDescription = stringResource(Res.string.up_next),
                 onClick = onToggleQueue,
                 highlighted = queueOpen,
@@ -890,7 +997,13 @@ internal fun PlayerActionRow(
 }
 
 /**
- * Translucent circular button used for the track menu and the like control.
+ * A player glyph, on a translucent disc or on nothing at all.
+ *
+ * The disc is the credits row's older treatment; the bare mark is the player's
+ * current one — a star and an ellipsis drawn straight over the artwork, with no
+ * button behind them. Both stay here because the landscape player and the
+ * portrait one are the same screen at two shapes, and a role that changes shape
+ * should change in one place.
  *
  * The disc stays at one translucency whatever the state, because the palette's
  * icon contrast is measured against that fill. A liked track is drawn with a
@@ -904,6 +1017,10 @@ internal fun CircleGlyph(
     haptic: Haptic = Haptic.Tap,
     /** Optical size override for glyphs that sit small or large in their box. */
     glyphSize: Dp = 19.dp,
+    /** What the glyph's touch box measures when there is no disc to pad it. */
+    touchSize: Dp = 38.dp,
+    /** Whether the button is drawn on its translucent disc. */
+    disc: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -914,9 +1031,16 @@ internal fun CircleGlyph(
     val discAlpha = alphas.buttonFill
     Box(
         modifier = modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(ink.copy(alpha = discAlpha))
+            .size(if (disc) 34.dp else touchSize)
+            .then(
+                if (disc) {
+                    Modifier
+                        .clip(CircleShape)
+                        .background(ink.copy(alpha = discAlpha))
+                } else {
+                    Modifier
+                },
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1393,6 +1517,11 @@ private fun BottomGlyph(
     haptic: Haptic = Haptic.Tap,
     label: String? = null,
     /**
+     * Draws the glyph in this colour rather than the row's ink. Used for the
+     * one state that is not about strength: a connected output route.
+     */
+    tint: Color? = null,
+    /**
      * Shortest gap between taps that both reach [onClick]. A tap inside the
      * window of the last one is dropped whole — haptic included, so a swallowed
      * tap doesn't buzz as though something happened. The default lets every tap
@@ -1461,19 +1590,19 @@ private fun BottomGlyph(
     ) {
         // Not while lit: the tile's cut-out needs the glyph drawn plainly in the
         // layer above, which is blended as a whole.
-        val tint = if (highlighted) ink else ink.copy(alpha = alphas.tertiary)
+        val tintColor = tint ?: if (highlighted) ink else ink.copy(alpha = alphas.tertiary)
         if (icon != null) {
             Icon(
                 painter = icon.painter(),
                 contentDescription = null,
-                tint = tint,
+                tint = tintColor,
                 modifier = Modifier
                     .size(BOTTOM_ICON_SIZE),
             )
         } else if (label != null) {
             Text(
                 text = label,
-                color = tint,
+                color = tintColor,
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
             )

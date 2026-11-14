@@ -40,9 +40,13 @@ internal class CanvasFrameHolder {
      * Each new frame, as it arrives.
      *
      * Stable, so it can be handed to an effect as a key without restarting it
-     * every time the player recomposes.
+     * every time the player recomposes. Cached once so callers always receive
+     * the same flow object: `snapshotFlow` builds a new instance on every
+     * property access, and a new instance restarts every [LaunchedEffect] keyed
+     * on it — which is what kept cancelling the live blur before it finished.
      */
-    val frames: Flow<ImageBitmap?> = snapshotFlow { state.value }
+    private val framesFlow = snapshotFlow { state.value }
+    val frames: Flow<ImageBitmap?> get() = framesFlow
 
     /** A frame from the clip's own capture. */
     fun offer(frame: ImageBitmap?) {

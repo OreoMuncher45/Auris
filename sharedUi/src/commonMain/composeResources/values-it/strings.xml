@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">Scegli la fonte dei testi</string>
     <string name="clear">Cancella</string>
     <string name="close_lyrics">Chiudi testi</string>
+    <string name="close_player">Chiudi lettore</string>
+    <string name="playing_from_label">Riproduzione da</string>
+    <string name="played_by_label">Riprodotto da</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ da %1$s</string>

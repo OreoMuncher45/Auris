@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">เลือกผู้ให้บริการเนื้อเพลง</string>
     <string name="clear">ล้าง</string>
     <string name="close_lyrics">ปิดเนื้อเพลง</string>
+    <string name="close_player">ปิดเครื่องเล่น</string>
+    <string name="playing_from_label">กำลังเล่นจาก</string>
+    <string name="played_by_label">เล่นโดย</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ จาก %1$s</string>

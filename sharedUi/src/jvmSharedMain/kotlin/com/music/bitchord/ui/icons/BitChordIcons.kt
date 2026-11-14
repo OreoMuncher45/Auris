@@ -794,7 +794,7 @@ object BitChordIcons {
         }.build()
     }
 
-    /** Three rows of a dot and a line — Apple Music's queue mark. */
+    /** Three rows of a dot and a line — the queue mark, plain. */
     val PlayerQueue: ImageVector by lazy {
         ImageVector.Builder(
             name = "bc_player_queue",
@@ -803,18 +803,116 @@ object BitChordIcons {
         ).apply {
             path(
                 stroke = stroke,
-                strokeLineWidth = 1.7f,
+                strokeLineWidth = 1.4f,
                 strokeLineCap = StrokeCap.Round,
             ) {
-                for (y in listOf(6.4f, 12f, 17.6f)) {
-                    moveTo(8.7f, y)
-                    lineTo(20.5f, y)
+                for (y in listOf(8f, 12f, 16f)) {
+                    moveTo(7.8f, y)
+                    lineTo(19.5f, y)
                 }
             }
             path(fill = stroke) {
-                for (y in listOf(6.4f, 12f, 17.6f)) {
-                    circle(4.7f, y, 1.0f)
+                for (y in listOf(8f, 12f, 16f)) {
+                    circle(4.5f, y, 1.05f)
                 }
+            }
+        }.build()
+    }
+
+    /**
+     * The queue mark with repeat arrows in place of the top line's tail.
+     *
+     * The badge is the whole point: the queue's button says both what it opens
+     * and which playback mode is on, so the state does not need a second row of
+     * controls over the artwork.
+     */
+    val PlayerQueueRepeat: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_player_queue_repeat",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            queueRowsWithBadge()
+            path(
+                stroke = stroke,
+                strokeLineWidth = 1.15f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Upper arrow: right, along the top of the badge.
+                moveTo(15.85f, 6.20f)
+                verticalLineTo(5.65f)
+                curveTo(15.85f, 5.18f, 16.22f, 4.82f, 16.68f, 4.82f)
+                horizontalLineTo(19.65f)
+                moveTo(18.95f, 4.02f)
+                lineTo(19.95f, 4.82f)
+                lineTo(18.95f, 5.62f)
+                // Lower arrow: left, along the bottom of the badge.
+                moveTo(20.55f, 6.90f)
+                verticalLineTo(7.45f)
+                curveTo(20.55f, 7.92f, 20.18f, 8.28f, 19.72f, 8.28f)
+                horizontalLineTo(16.75f)
+                moveTo(17.45f, 7.48f)
+                lineTo(16.45f, 8.28f)
+                lineTo(17.45f, 9.08f)
+            }
+        }.build()
+    }
+
+    /** The queue mark, its badge a pair of crossing shuffle arrows. */
+    val PlayerQueueShuffle: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_player_queue_shuffle",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            queueRowsWithBadge()
+            path(
+                stroke = stroke,
+                strokeLineWidth = 1.15f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Two lines, crossed, each running out to an arrowhead.
+                moveTo(15.00f, 4.90f)
+                horizontalLineTo(16.90f)
+                lineTo(19.40f, 8.60f)
+                horizontalLineTo(20.55f)
+                moveTo(15.00f, 8.60f)
+                horizontalLineTo(16.90f)
+                lineTo(19.40f, 4.90f)
+                horizontalLineTo(20.55f)
+                moveTo(19.60f, 3.95f)
+                lineTo(20.70f, 4.90f)
+                lineTo(19.60f, 5.85f)
+                moveTo(19.60f, 7.65f)
+                lineTo(20.70f, 8.60f)
+                lineTo(19.60f, 9.55f)
+            }
+        }.build()
+    }
+
+    /** The queue mark, its badge autoplay's lemniscate. */
+    val PlayerQueueAutoplay: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_player_queue_autoplay",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            queueRowsWithBadge()
+            path(
+                stroke = stroke,
+                strokeLineWidth = 1.15f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(18f, 6.75f)
+                curveTo(17.4f, 5.60f, 16.9f, 5.05f, 16.1f, 5.05f)
+                arcToRelative(1.7f, 1.7f, 0f, isMoreThanHalf = false, isPositiveArc = false, 0f, 3.4f)
+                curveTo(16.9f, 8.45f, 17.4f, 7.90f, 18f, 6.75f)
+                curveTo(18.6f, 5.60f, 19.1f, 5.05f, 19.9f, 5.05f)
+                arcToRelative(1.7f, 1.7f, 0f, isMoreThanHalf = false, isPositiveArc = true, 0f, 3.4f)
+                curveTo(19.1f, 8.45f, 18.6f, 7.90f, 18f, 6.75f)
             }
         }.build()
     }
@@ -828,26 +926,47 @@ object BitChordIcons {
         ).apply {
             path(
                 stroke = stroke,
-                strokeLineWidth = 1.7f,
+                strokeLineWidth = 1.55f,
                 strokeLineCap = StrokeCap.Round,
                 strokeLineJoin = StrokeJoin.Round,
             ) {
-                moveTo(7.2f, 4.4f)
-                lineTo(16.8f, 4.4f)
-                quadTo(20.6f, 4.4f, 20.6f, 8.2f)
-                lineTo(20.6f, 14.4f)
-                quadTo(20.6f, 18.2f, 16.8f, 18.2f)
-                lineTo(10.8f, 18.2f)
-                lineTo(6.9f, 21.6f)
-                lineTo(6.9f, 18.2f)
-                quadTo(3.4f, 18.2f, 3.4f, 14.4f)
-                lineTo(3.4f, 8.2f)
-                quadTo(3.4f, 4.4f, 7.2f, 4.4f)
+                moveTo(6.15f, 4.35f)
+                horizontalLineTo(17.85f)
+                arcTo(2.8f, 2.8f, 0f, isMoreThanHalf = false, isPositiveArc = true, 20.65f, 7.15f)
+                verticalLineTo(14.85f)
+                arcTo(2.8f, 2.8f, 0f, isMoreThanHalf = false, isPositiveArc = true, 17.85f, 17.65f)
+                horizontalLineTo(10.75f)
+                lineTo(7.25f, 20.75f)
+                verticalLineTo(17.65f)
+                horizontalLineTo(6.15f)
+                arcTo(2.8f, 2.8f, 0f, isMoreThanHalf = false, isPositiveArc = true, 3.35f, 14.85f)
+                verticalLineTo(7.15f)
+                arcTo(2.8f, 2.8f, 0f, isMoreThanHalf = false, isPositiveArc = true, 6.15f, 4.35f)
                 close()
             }
             path(fill = stroke) {
-                quoteMark(7.6f)
-                quoteMark(12.4f)
+                quoteMark(9.65f)
+                quoteMark(14.35f)
+            }
+        }.build()
+    }
+
+    /** A wide, thin chevron pointing down: the player's dismiss control. */
+    val PlayerChevronDown: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_player_chevron_down",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = 2.2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(5.2f, 9.2f)
+                lineTo(12f, 15.5f)
+                lineTo(18.8f, 9.2f)
             }
         }.build()
     }
@@ -904,7 +1023,14 @@ object BitChordIcons {
         }.build()
     }
 
-    /** AirPlay: concentric rings with a filled triangle at the base. */
+    /**
+     * AirPlay: three concentric arcs with a filled receiver triangle at the
+     * base.
+     *
+     * The arcs are struck rather than full circles — the opening at the base is
+     * where the triangle sits, so the mark reads as a broadcast, not as a
+     * target.
+     */
     val PlayerAirPlay: ImageVector by lazy {
         ImageVector.Builder(
             name = "bc_player_airplay",
@@ -913,21 +1039,41 @@ object BitChordIcons {
         ).apply {
             path(
                 stroke = stroke,
-                strokeLineWidth = 1.7f,
+                strokeLineWidth = 1.38f,
+                strokeLineCap = StrokeCap.Round,
             ) {
-                circle(12f, 11.8f, 9.2f)
-                circle(12f, 11.8f, 5.8f)
-                circle(12f, 11.8f, 2.8f)
+                moveTo(9.45f, 13.70f)
+                arcTo(3.15f, 3.15f, 0f, isMoreThanHalf = true, isPositiveArc = true, 14.55f, 13.70f)
+            }
+            path(
+                stroke = stroke,
+                strokeLineWidth = 1.38f,
+                strokeLineCap = StrokeCap.Round,
+            ) {
+                moveTo(7.90f, 15.81f)
+                arcTo(5.70f, 5.70f, 0f, isMoreThanHalf = true, isPositiveArc = true, 16.10f, 15.81f)
+            }
+            path(
+                stroke = stroke,
+                strokeLineWidth = 1.38f,
+                strokeLineCap = StrokeCap.Round,
+            ) {
+                moveTo(6.37f, 17.88f)
+                arcTo(8.25f, 8.25f, 0f, isMoreThanHalf = true, isPositiveArc = true, 17.63f, 17.88f)
             }
             path(
                 fill = stroke,
                 stroke = stroke,
-                strokeLineWidth = 1.2f,
+                strokeLineWidth = 1.0f,
                 strokeLineJoin = StrokeJoin.Round,
             ) {
-                moveTo(7.0f, 20.9f)
-                lineTo(17.0f, 20.9f)
-                lineTo(12f, 12.2f)
+                moveTo(11.60f, 14.35f)
+                lineTo(6.82f, 19.95f)
+                curveTo(6.55f, 20.27f, 6.78f, 20.75f, 7.20f, 20.75f)
+                horizontalLineTo(16.80f)
+                curveTo(17.22f, 20.75f, 17.45f, 20.27f, 17.18f, 19.95f)
+                lineTo(12.40f, 14.35f)
+                curveTo(12.19f, 14.10f, 11.81f, 14.10f, 11.60f, 14.35f)
                 close()
             }
         }.build()
@@ -1110,15 +1256,46 @@ object BitChordIcons {
     }
 
     private fun PathBuilder.quoteMark(x: Float) {
-        moveTo(x + 0.5f, 9.0f)
-        curveTo(x + 2.2f, 9.0f, x + 2.6f, 10.0f, x + 2.6f, 10.9f)
-        curveTo(x + 2.6f, 12.3f, x + 1.7f, 13.4f, x + 0.5f, 14.2f)
-        lineTo(x - 0.2f, 13.4f)
-        curveTo(x + 0.8f, 12.7f, x + 1.2f, 12.0f, x + 1.2f, 11.3f)
-        lineTo(x + 0.5f, 11.3f)
-        curveTo(x - 0.3f, 11.3f, x - 0.3f, 10.5f, x - 0.3f, 10.1f)
-        curveTo(x - 0.3f, 9.4f, x + 0.1f, 9.0f, x + 0.5f, 9.0f)
+        // The reference mark, drawn on its own bounds: a beak curling down out
+        // of a round head. [x] is where that bound starts, so the right-hand
+        // mark is the same shape shifted by the width of the pair's gap.
+        val dx = x - 9.65f
+        moveTo(9.65f + dx, 8.55f)
+        curveTo(10.57f + dx, 8.55f, 11.25f + dx, 9.23f, 11.25f + dx, 10.20f)
+        curveTo(11.25f + dx, 11.60f, 10.43f + dx, 12.90f, 9.30f + dx, 13.67f)
+        curveTo(9.00f + dx, 13.87f, 8.63f + dx, 13.55f, 8.85f + dx, 13.23f)
+        curveTo(9.47f + dx, 12.40f, 9.77f + dx, 11.80f, 9.79f + dx, 11.33f)
+        curveTo(9.63f + dx, 11.39f, 9.47f + dx, 11.43f, 9.30f + dx, 11.43f)
+        curveTo(8.57f + dx, 11.43f, 8.05f + dx, 10.85f, 8.05f + dx, 10.00f)
+        curveTo(8.05f + dx, 9.17f, 8.73f + dx, 8.55f, 9.65f + dx, 8.55f)
         close()
+    }
+
+    /**
+     * The queue's three rows, shortened at the top so a badge can sit in the
+     * corner without touching them.
+     *
+     * Shared by every badged variant, so repeat, shuffle and autoplay all draw
+     * the same queue under them.
+     */
+    private fun ImageVector.Builder.queueRowsWithBadge() {
+        path(
+            stroke = stroke,
+            strokeLineWidth = 1.35f,
+            strokeLineCap = StrokeCap.Round,
+        ) {
+            moveTo(6.2f, 10f)
+            horizontalLineTo(14.6f)
+            moveTo(6.2f, 14f)
+            horizontalLineTo(16.9f)
+            moveTo(6.2f, 18f)
+            horizontalLineTo(16.9f)
+        }
+        path(fill = stroke) {
+            for (y in listOf(10f, 14f, 18f)) {
+                circle(3.2f, y, 1.0f)
+            }
+        }
     }
 
     private fun PathBuilder.star() {

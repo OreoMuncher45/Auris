@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">Pilih penyedia lirik</string>
     <string name="clear">Hapus</string>
     <string name="close_lyrics">Tutup lirik</string>
+    <string name="close_player">Tutup pemutar</string>
+    <string name="playing_from_label">Diputar dari</string>
+    <string name="played_by_label">Diputar oleh</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ dari %1$s</string>

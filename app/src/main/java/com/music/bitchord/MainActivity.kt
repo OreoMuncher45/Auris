@@ -217,6 +217,7 @@ import com.music.bitchord.playback.QueueCoordinator
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
 import com.music.bitchord.playback.autoplaySectionStart
@@ -3102,6 +3103,11 @@ private fun BitChordApp(
                         it.memberId == playback.startedBy
                     }?.displayName?.takeIf(String::isNotBlank)
             }
+        // What the AirPlay mark in the player's bottom row is tinted on: green
+        // only while the sound is on a receiver. Collected whole and read for
+        // the one flag, because the route list changes far less often than the
+        // player redraws.
+        val castState by CastController.state.collectAsStateWithLifecycle()
         NowPlayingScreen(
             song = displayedSong,
             playedBy = playedBy,
@@ -3120,6 +3126,8 @@ private fun BitChordApp(
             accountName = account?.name,
             windowWidth = windowWidth,
             windowHeight = windowHeight,
+            onClose = dismissPlayer,
+            castConnected = castState.casting,
             isPlaying = player.isPlaying,
             isLoading = playPauseBusy,
             position = player.position,

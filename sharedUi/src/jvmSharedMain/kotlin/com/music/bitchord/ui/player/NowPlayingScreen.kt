@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -131,6 +132,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -273,7 +275,17 @@ private val ART_TITLE_GAP = 20.dp
  * player, so the two ends of that journey are the same number rather than two
  * numbers that happen to look alike.
  */
-private val CREDITS_TITLE_SIZE = 20.sp
+/**
+ * The title and the artist under the sleeve.
+ *
+ * The reference player's own pair: the title at roughly a track-name heading's
+ * size and weight, the artist a few points down and in a lighter cut, so the
+ * two read as one block with the title on top rather than as two lines of the
+ * same importance.
+ */
+private val CREDITS_TITLE_SIZE = 22.sp
+private val CREDITS_ARTIST_SIZE = 17.sp
+private val CREDITS_ARTIST_ALPHA = 0.82f
 /**
  * How much the hero banner's still artwork is scaled past its frame, measured
  * — twice, independently, to the same number — against Apple's player: 123.4%
@@ -318,13 +330,18 @@ private const val QUEUE_CARRY_FRACTION = 0.3f
  */
 private const val QUEUE_FLICK_VELOCITY = 450f
 /**
- * The handle strip above the artwork, which always hands drags to the sheet.
+ * The header strip above the artwork, which always hands drags to the sheet.
+ *
+ * It holds the reference player's two-line caption — the heading and the source
+ * it names — with the dismiss chevron beside the heading, so it is taller than
+ * the handle-only strip it used to be. The extra height comes off the artwork
+ * block above the credits rather than out of the controls.
  *
  * It isn't the only place that does — the artwork and the credits under it pass
  * theirs on as well, which is what makes the whole top of the player closable
  * rather than just its topmost 32dp. See the dismiss band in `NowPlayingScreen`.
  */
-private val DISMISS_STRIP_HEIGHT = 32.dp
+private val DISMISS_STRIP_HEIGHT = 56.dp
 /** The breathing room above the sleeve, needed twice: once to apply, once to measure past. */
 private val ART_BOX_TOP_PAD = 8.dp
 /**
@@ -1114,6 +1131,18 @@ fun NowPlayingScreen(
      * width comfortably clears a phone's landscape width.
      */
     windowHeight: Dp,
+    /**
+     * Takes the player down, from the chevron at the top.
+     *
+     * The sheet's own drag is the other way out; this is the one you can tap.
+     * Kept as a callback because the sheet, not the player, owns the dismissal.
+     */
+    onClose: () -> Unit = {},
+    /**
+     * The sound is on a receiver — Chromecast, AirPlay, anything routed — rather
+     * than on this device. The AirPlay mark is green only while this is true.
+     */
+    castConnected: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -1169,6 +1198,7 @@ fun NowPlayingScreen(
     }
     val hideVolumeBar by PlayerSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by PlayerSettings.hideSongStatus.collectAsStateWithLifecycle()
+    val closeLabel = stringResource(Res.string.close_player)
 
     // Animated cover art: the looping video some labels publish alongside a
     // release, laid over the sleeve. A miss is the normal answer — see
@@ -2029,6 +2059,7 @@ fun NowPlayingScreen(
             onCycleRepeat = onCycleRepeat,
             onToggleAutoplay = onToggleAutoplay,
             onOpenOutput = openAudioOutput,
+            outputActive = castConnected,
         )
         // Keep the current output caption visible in every state.
         Spacer(Modifier.height(18.dp))
@@ -3080,41 +3111,57 @@ fun NowPlayingScreen(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                // While the origin caption is present the handle belongs at
-                // the top of the strip. As lyrics or the queue replace the
-                // album-cover player, it glides into the now-empty strip's
-                // vertical centre alongside the caption's fade.
+                // The way out, at the top left where the reference player puts
+                // it: a chevron that reads as "down to the rest of the app".
+                // It replaces the grab handle — a pill says "drag me", and a
+                // mark that looks like a button should do what a button does.
+                // The strip still hands drags to the sheet, so the gesture is
+                // untouched; the chevron is simply the tap for it.
                 Box(
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .offset {
-                            IntOffset(
-                                x = 0,
-                                y = lerp(
-                                    6.dp,
-                                    (topStrip - 5.dp).coerceAtLeast(0.dp) / 2,
-                                    p(),
-                                ).roundToPx(),
-                            )
-                        }
-                        .width(38.dp)
-                        .height(5.dp)
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        // Centred in the strip's first line, level with the
+                        // "playing from" label rather than with the pair — the
+                        // same place the reference player draws it.
+                        .offset(x = PLAYER_GUTTER - 10.dp, y = 4.dp)
+                        .size(44.dp)
                         .graphicsLayer { alpha = spotifyChromeAlpha }
-                        .shadow(2.dp, RoundedCornerShape(3.dp), clip = false)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(LocalPlayerInk.current.value.copy(alpha = 0.70f)),
-                )
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            haptics.play(Haptic.Tap)
+                            onClose()
+                        }
+                        .semantics { contentDescription = closeLabel },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = PlayerIcons.ChevronDown.painter(),
+                        contentDescription = null,
+                        tint = LocalPlayerInk.current.value.copy(alpha = 0.92f),
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
                 // [p] is the shared album-to-panel transition. Keeping this in
                 // composition until its final frame gives the caption a real
                 // fade on both entry and exit, but removes its click target
                 // entirely once lyrics or the queue owns the player.
                 if (!hideSongStatus) {
                     WhileShown({ !collapseAlmostDone }) {
-                        PlaybackOriginCaption(
-                            text = playbackOriginText(song, playedBy),
+                        PlaybackOriginCaptionStacked(
+                            label = if (playedBy != null) {
+                                stringResource(Res.string.played_by_label)
+                            } else {
+                                stringResource(Res.string.playing_from_label)
+                            },
+                            title = playedBy
+                                ?: song.radioName
+                                ?: song.playbackSource
+                                ?: song.albumName
+                                ?: stringResource(Res.string.queue),
                             onClick = openPlaybackOrigin,
-                            textAlign = TextAlign.Center,
-                            contentPadding = PaddingValues(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .graphicsLayer { alpha = (1f - p()) * spotifyChromeAlpha },
@@ -4079,6 +4126,8 @@ fun NowPlayingScreen(
                                     text = song.title,
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontSize = CREDITS_TITLE_SIZE,
+                                        lineHeight = 27.sp,
+                                        fontWeight = FontWeight.Bold,
                                         shadow = playerShadow,
                                     ),
                                     color = ink,
@@ -4099,12 +4148,17 @@ fun NowPlayingScreen(
                                     credits = remember(song.artist, song.artists, song.artistId) {
                                         artistCredits(song.artist, song.artists, song.artistId)
                                     },
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.W500,
-                                        fontSize = CREDITS_TITLE_SIZE,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = CREDITS_ARTIST_SIZE,
+                                        lineHeight = 24.sp,
+                                        fontWeight = FontWeight.Normal,
                                         shadow = playerShadow,
                                     ),
-                                    color = ink.copy(alpha = alphas.secondary),
+                                    // Under the title in weight and in strength,
+                                    // as the reference player sets it: the name
+                                    // is the second line of the block, not a
+                                    // second heading.
+                                    color = ink.copy(alpha = alphas.secondary * CREDITS_ARTIST_ALPHA),
                                     enabled = scrolling,
                                     // A title that's also scrolling gets to go first —
                                     // starting together reads as clutter, so the artist
@@ -4144,13 +4198,18 @@ fun NowPlayingScreen(
                             }
                         }
                     }
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(4.dp))
                     // Beside the credits rather than down in the toggle row:
                     // liking is about *this song*, and the row below is about
                     // how the queue plays. Guests get nothing to tap, since
                     // there's no account to record it against — and neither
                     // does a local file or a finished download, which carries
                     // no YouTube identity to rate.
+                    //
+                    // Both marks are bare, with no disc behind them: the star
+                    // and the ellipsis are things about the song, and a filled
+                    // circle under each turned them into two more buttons on a
+                    // screen that already has a row of them.
                     if (signedIn && song.localUri == null) {
                         val liked = likeStatus == LikeStatus.LIKE
                         CircleGlyph(
@@ -4160,14 +4219,19 @@ fun NowPlayingScreen(
                             ),
                             onClick = onToggleLike,
                             haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                            glyphSize = 22.dp,
+                            glyphSize = 24.dp,
+                            touchSize = 40.dp,
+                            disc = false,
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(2.dp))
                     }
                     CircleGlyph(
                         icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
                         contentDescription = stringResource(Res.string.more),
                         onClick = onOpenMenu,
+                        glyphSize = 22.dp,
+                        touchSize = 40.dp,
+                        disc = false,
                         modifier = Modifier.reportMenuAnchor(onMenuAnchor),
                     )
                 }

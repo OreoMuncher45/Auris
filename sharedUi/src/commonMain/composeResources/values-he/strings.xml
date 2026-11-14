@@ -77,6 +77,9 @@
     <string name="choose_lyrics_provider">בחירת ספק מילים</string>
     <string name="clear">ניקוי</string>
     <string name="close_lyrics">סגור מילים</string>
+    <string name="close_player">סגור נגן</string>
+    <string name="playing_from_label">מנגן מתוך</string>
+    <string name="played_by_label">מושמע על ידי</string>
     <string name="data_saver">Data-Saver</string>
     <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
     <string name="downgraded_from">↓ מ-%1$s</string>

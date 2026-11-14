@@ -22,8 +22,13 @@ import kotlin.math.tan
  *
  * Passed down from the player so the app can expose it as a setting; the
  * desktop client takes the default.
+ *
+ * The default is the reference player's own weight: its play triangle and skip
+ * arrows are drawn with a corner just small enough to take the point off, not
+ * with a radius you would notice at arm's length. The slider still goes all the
+ * way to round — this is only where it starts.
  */
-internal const val DEFAULT_TRANSPORT_SMOOTHNESS = 0.55f
+internal const val DEFAULT_TRANSPORT_SMOOTHNESS = 0.28f
 
 /** The three glyphs that used to be fixed vectors or vendored drawables. */
 internal enum class TransportShape { PLAY, PAUSE, PREVIOUS, NEXT }
