@@ -320,6 +320,42 @@ private val CREDITS_ARTIST_ALPHA = 0.73f
 private val CREDITS_DROP = 40.dp
 
 /**
+ * How far the sleeve may reach into the player's gutter.
+ *
+ * The controls keep the screen's margins — the scrubber, the volume and the
+ * action row all line up with them — but the artwork is allowed past them,
+ * because a card with a phone's worth of margin on each side reads as a
+ * thumbnail rather than as the album.
+ *
+ * Fourteen dp on each side of the player's own thirty dp gutter leaves the
+ * card sixteen dp from the screen's edge, which is about where the reference
+ * player's own artwork sits.
+ */
+private val ART_CARD_BLEED = 14.dp
+
+/**
+ * The margin the card keeps from the screen's own edge.
+ *
+ * The card's width is the player's width less this on each side, and the
+ * sleeve's own cap on top of that. On a phone the gutter is the wider of the
+ * two, so the card lands sixteen dp from the edge; on a tablet, where the
+ * controls stop at their own maximum width, the card stops with them rather
+ * than running the whole width of the screen.
+ */
+private val ART_CARD_MARGIN = 12.dp
+
+/**
+ * How much lower the sleeve sits once it is bigger.
+ *
+ * A bigger card centred where the old one was would grow upwards and
+ * downwards equally, which is not what a bigger card is for: the space under
+ * it is the space the title is in, and the title is not moving. So the card is
+ * pushed down by this much, and the credits' own drop — the room between the
+ * card and the title — gives up the same amount to pay for it.
+ */
+private val ART_CARD_BIAS = 16.dp
+
+/**
  * How far below its old line the lyric line, the scrubber, the timestamps and
  * the quality badge sit.
  *
@@ -3439,23 +3475,89 @@ fun NowPlayingScreen(
                 // credits rather than the sleeve's own size.
                 val scrubberDrop = scrubberDropOf(controlSpread)
                 val roomy = maxHeight + controlSpread - scrubberDrop
+                // The screen's own width, and how far the box is inset from it.
+                // The box carries the player's gutter so the controls line up
+                // with the screen's margins; the card is measured against the
+                // screen and brought back into the box's own coordinates.
+                //
+                // The player's width is not known on the first pass, so the
+                // gutter it is inset by is assumed: on a phone that is exactly
+                // what it is, and a card sized against it does not jump when
+                // the real width arrives.
+                val playerWidthPx = if (playerBounds.width > 0) {
+                    playerBounds.width
+                } else {
+                    constraints.maxWidth + with(density) {
+                        (PLAYER_GUTTER * 2).toPx().roundToInt()
+                    }
+                }
+                val playerWidth = with(density) { playerWidthPx.toDp() }
+                val boxInset = with(density) {
+                    ((playerWidthPx - constraints.maxWidth) / 2f).toDp()
+                }
+                // The card's width. It may reach into the player's gutter — the
+                // controls keep their margins, the artwork gets the screen's —
+                // but never past the screen's own edge.
+                //
+                // Only while the card is the artwork on screen. With the
+                // full-bleed canvas up, the card is the sleeve the panels
+                // collapse into rather than the picture being looked at, and
+                // it is sized from the numbers it always was.
+                val cardMode = !spotifyCanvasPresentation
+                val artWidth = if (cardMode) {
+                    minOf(
+                        playerWidth - ART_CARD_MARGIN * 2,
+                        maxWidth + ART_CARD_BLEED * 2,
+                    )
+                } else {
+                    maxWidth
+                }
                 // The sleeve is square, so it is bounded by whichever of the
                 // two axes runs out first: the player's width on a phone, or —
                 // on a tablet, where there is width to spare — the height left
                 // over once the credits row and the gap above it have had
                 // theirs. Sizing it off the width alone is what pushed the
                 // credits down across the scrubber on anything but a phone.
-                val wantArt = minOf(maxWidth, roomy - ART_TITLE_GAP - HEADER_HEIGHT)
-                // Held to what the box has actually got, for the single frame it
-                // takes the gaps below to catch up with a change in their own
-                // height: a sleeve a few dp under for one frame is a better
-                // failure than a credits row overhanging the lyric strip.
+                val artHeight = roomy - ART_TITLE_GAP - HEADER_HEIGHT
+                val wantArt = minOf(maxWidth, artHeight)
+                // The card as it was sized before it was allowed into the
+                // gutter: the size the title's position was worked out from,
+                // and the size the growth below is measured against.
+                val fullArtBefore = minOf(
+                    wantArt,
+                    maxHeight - scrubberDrop - ART_TITLE_GAP - HEADER_HEIGHT,
+                ).coerceAtLeast(THUMB_SIZE)
+                // The card as it is now.
+                //
+                // Held to what the box has actually got, for the single frame
+                // it takes the gaps below to catch up with a change in their
+                // own height: a sleeve a few dp under for one frame is a
+                // better failure than a credits row overhanging the lyric
+                // strip.
                 //
                 // The drop is taken off this height as well, so the sleeve is
                 // the size it was before the scrubber dropped rather than
                 // slightly larger because there is now more room for it.
-                val fullArt = minOf(wantArt, maxHeight - scrubberDrop - ART_TITLE_GAP - HEADER_HEIGHT)
-                    .coerceAtLeast(THUMB_SIZE)
+                val fullArt = minOf(
+                    artWidth,
+                    maxHeight - scrubberDrop - ART_TITLE_GAP - HEADER_HEIGHT,
+                ).coerceAtLeast(THUMB_SIZE)
+                // How much bigger the card is than it was, and what that costs
+                // the credits.
+                //
+                // The title is not moving, so the drop between the card and the
+                // title gives up half the growth — a card that grows evenly
+                // about its centre pushes its own bottom down by half of that
+                // — and the card's own lower bias gives up the rest of what it
+                // moves. What is left is the gap the card and the title still
+                // keep between them.
+                val artGrowth = (fullArt - fullArtBefore).coerceAtLeast(0.dp)
+                val artBias = if (cardMode) {
+                    minOf(ART_CARD_BIAS, (CREDITS_DROP - artGrowth / 2).coerceAtLeast(0.dp))
+                } else {
+                    0.dp
+                }
+                val creditsDrop = (CREDITS_DROP - artGrowth / 2 - artBias).coerceAtLeast(0.dp)
                 // What's left over once the sleeve, the gap and the credits have
                 // had theirs. A few dp on a phone; the better part of a
                 // centimetre on anything taller, and since the group is centred,
@@ -3536,8 +3638,13 @@ fun NowPlayingScreen(
                 // its height: the sleeve and the credits stay exactly where
                 // they were, and the space the scrubber dropped into is the
                 // band of backdrop under the artist.
+                //
+                // The bias is the card's own: a bigger card would grow evenly
+                // about the middle of the screen, and this pushes it down
+                // instead, into the gap the title is in. The credits pay for
+                // it, so the title does not move.
                 val groupTop = (maxHeight - scrubberDrop - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
-                    .coerceAtLeast(0.dp) / 2
+                    .coerceAtLeast(0.dp) / 2 + artBias
                 // Functions of the collapse, called at placement and measure
                 // — see [p]. Composition never reads them.
                 fun artSize(): Dp = lerp(fullArt, THUMB_SIZE, p())
@@ -3545,8 +3652,25 @@ fun NowPlayingScreen(
                 // Expanded and height-bound, the sleeve is narrower than the
                 // player and has to be centred in it; collapsed, it belongs
                 // hard against the left edge with the credits beside it.
-                fun artStart(): Dp = lerp((maxWidth - fullArt) / 2, 0.dp, p())
-                fun regularTitleTop(): Dp = lerp(groupTop + fullArt + ART_TITLE_GAP + CREDITS_DROP, 0.dp, p())
+                //
+                // Centred on the *screen*, not on the box: the box is inset by
+                // the player's gutter, and the card is allowed to reach past
+                // it, so its own left edge is measured from the screen and
+                // brought back into the box's coordinates.
+                fun artStart(): Dp = lerp(
+                    (playerWidth - fullArt) / 2 - boxInset,
+                    0.dp,
+                    p(),
+                )
+                // The title's own position: the gap below the card, plus what
+                // is left of the credits' drop after the card's growth and its
+                // bias have been paid for out of it. The sum of the two is the
+                // same as it was, which is why the title does not move.
+                fun regularTitleTop(): Dp = lerp(
+                    groupTop + fullArt + ART_TITLE_GAP + creditsDrop,
+                    0.dp,
+                    p(),
+                )
                 // Once Spotify's control deck has left, keep the only remaining
                 // player chrome against the bottom edge instead of stranding it
                 // where the artwork's title normally sits near mid-screen.

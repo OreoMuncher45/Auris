@@ -79,6 +79,14 @@ on:
           Player
           - The title and the artist sit lower, under the artwork, and the
             whole control deck sits a little lower with them.
+          - With the full-screen album art turned off, the album art is bigger
+            and lower. The card now reaches past the player's own margins — the
+            controls keep them, the artwork does not — and ends up sixteen dp
+            from the screen's edge instead of thirty. It is also pushed down
+            into the gap it used to leave above the title, and the title and
+            the artist stay exactly where they were: the card's growth and its
+            new lower position are paid for out of the gap between the card
+            and the title, not out of the title's own place.
           - The line of lyrics, the scrubber, the timestamps and the quality
             badge now sit lower again, as one block, and the gap they take
             comes out of the scrubber's own gap to the transport. The
