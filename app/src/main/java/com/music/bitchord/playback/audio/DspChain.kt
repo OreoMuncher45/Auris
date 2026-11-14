@@ -4,6 +4,7 @@ import android.util.Log
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.playback.EqualizerProcessor
 import com.music.bitchord.playback.LoudnessProcessor
+import com.music.bitchord.playback.SING_IDLE_LEVEL
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
 import com.music.bitchord.playback.VocalCutProcessor
@@ -78,7 +79,7 @@ class DspChain(
      */
     fun isBypassed(): Boolean =
         currentSampleRate > 0 &&
-            sing.effectiveLevel <= 0.001f &&
+            sing.effectiveLevel <= SING_IDLE_LEVEL &&
             !spatial.enabled &&
             !simAtmos.enabled &&
             !equalizer.isEnabled &&

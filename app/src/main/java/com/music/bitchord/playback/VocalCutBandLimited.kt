@@ -143,7 +143,7 @@ class VocalCutBandLimited : SingEngine {
      * while [cut] is idle — a disabled Sing leaves the block byte-identical.
      */
     override fun processSpan(samples: FloatArray, sampleCount: Int, cut: Float) {
-        val active = cut > 0.001f
+        val active = cut > SING_IDLE_LEVEL
         val c = cut.coerceIn(0f, 1f)
         var idx = 0
         while (idx < sampleCount) {
@@ -160,7 +160,7 @@ class VocalCutBandLimited : SingEngine {
 
     /** One stereo frame into [frameOut]; the short path's per-sample entry. */
     override fun processFrame(left: Float, right: Float, cut: Float): FloatArray {
-        step(left, right, cut.coerceIn(0f, 1f), cut > 0.001f)
+        step(left, right, cut.coerceIn(0f, 1f), cut > SING_IDLE_LEVEL)
         return frameOut
     }
 
