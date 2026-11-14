@@ -14,53 +14,70 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.43"
+        default: "3.0.44"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "150"
+        default: "151"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.43-draft"
+        default: "v3.0.44-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.43 — private preview"
+        default: "Auris 3.0.44 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.43 — private preview
+          Auris 3.0.44 — private preview
 
           Performance
-          - The player's ink was re-read on every captured frame, and every read
-            started a colour tween the next frame interrupted — so the tween
-            never finished and every text and glyph in the player was redrawn
-            thirty times a second for a wash nobody could see moving. The frame
-            read, the backdrop's mesh and the ink now run on three clocks
-            (33ms / 100ms / 400ms), and a new frame no longer cancels a read
-            already in flight.
-          - Live blur is now a switch under Settings > Customization, off by
-            default: on, the player reads the playing cover thirty times a
-            second instead of once.
-          - The Automix analyser no longer runs while the app is off screen or
-            the display is off. It was decoding whole tracks in the background.
-          - New: Settings > Customization > Performance monitor. Samples CPU and
-            the player's per-frame work every two seconds and can write a .txt
-            log. Off by default, and inert while off.
+          - Live blur stays ON by default and now tracks the picture properly:
+            the colour behind the player is read every 33ms (thirty times a
+            second), and the backdrop's mesh is redrawn on every one of those
+            frames instead of ten times a second. The colour is only published
+            when it has actually moved far enough to see, so the text and the
+            buttons are not redrawn thirty times a second for a wash nobody
+            could see changing.
+          - The player's ink no longer fights itself: a frame no longer
+            cancels the colour read already in flight, so the wash settles
+            instead of chasing itself.
+          - The frame capture callback now runs on its own thread instead of
+            waiting for the main thread, and the capture loop no longer spins
+            when there is no picture to copy. That spin was the app's own
+            heartbeat, and it is gone.
+          - The next track's source search is now single-flight: one search per
+            track at a time, and a second request waits for the first answer
+            instead of starting another one. The queue changes several times a
+            minute, and each change used to start the same patient search
+            again — five searches for one track in one minute, each asking
+            every source and waiting for all of them. That was the addon
+            traffic, the hundred-odd threads and the two hundred percent of
+            CPU.
+          - The PO-token WebView — the browser page the app loads to prove it
+            is not a bot — is released after three minutes of doing nothing.
+            A browser inside the app costs tens of megabytes and a few dozen
+            threads.
+          - The performance monitor now reports the system CPU and this app's
+            share of it, and counts the three things that cost the most:
+            source searches (RESOLVE), next-track preparations (PREPARE) and
+            WebView starts (WEBVIEW). "Copy log" now includes the whole
+            performance report, so a copied log answers the CPU questions
+            without another run.
 
           Player
-          - The elapsed and remaining times and the quality badge now sit below
-            the seek bar's touch box, so a tap on "0:16" no longer starts a
-            scrub. The quality badge is a little larger.
+          - The title and the artist sit lower, under the artwork, and the
+            whole control deck sits a little lower with them.
+          - The item strengths were measured against the reference player and
+            matched: the seek bar and the volume bar are dimmer and thinner,
+            the timestamps are quieter, the quality badge is quieter, the
+            star and the menu beside the title are quieter, and the title and
+            the transport are carried closer to white so they read as light
+            rather than as grey paint.
 
-          Thanks
-          - The Sing idle fix, the vocal-cut warm-up on re-activation and the
-            adb measurement harness under scripts/perf are Vassista's
-            (@Vassista).
-
-          Installs over 3.0.42: same package, same signing key.
+          Installs over 3.0.43: same package, same signing key.
 
 permissions:
   contents: write
