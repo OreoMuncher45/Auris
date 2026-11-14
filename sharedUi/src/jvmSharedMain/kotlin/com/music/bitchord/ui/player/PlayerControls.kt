@@ -2169,7 +2169,11 @@ private fun ShimmerText(
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.labelMedium.copy(
         fontWeight = FontWeight.SemiBold,
-        fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
+        // One size for the badge whichever way it is drawn: this default is the
+        // quality badge's own look, and the plain labels beside it are asked
+        // for the same +2. They drifted apart when only one of the two was
+        // raised, which left "Lossless" the small one.
+        fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 2).sp,
     ),
     baseAlpha: Float = LocalPlayerAlphas.current.secondary,
 ) {
