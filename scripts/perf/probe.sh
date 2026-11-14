@@ -12,24 +12,21 @@
 
 set -euo pipefail
 
-PKG="${PKG:-com.dev.bitchord.benchmark}"
+source "$(dirname "$0")/common.sh"
 SECS="${1:-10}"
 
-sh_() { adb shell "$@" </dev/null | tr -d '\r'; }
-
-pid=$(sh_ pidof "$PKG" || true)
-[[ -n "$pid" ]] || { echo "probe.sh: $PKG is not running" >&2; exit 1; }
+pid=$(app_pid_or_die)
 
 # utime + stime of the whole process, in clock ticks (fields 14 and 15; the
 # comm field has no spaces for an app process).
-ticks() { sh_ cat "/proc/$pid/stat" | awk '{ print $14 + $15 }'; }
-hz=$(sh_ getconf CLK_TCK 2>/dev/null || echo 100)
+ticks() { adb_sh cat "/proc/$pid/stat" | awk '{ print $14 + $15 }'; }
+hz=$(clock_ticks_per_s)
 
-sh_ dumpsys gfxinfo "$PKG" reset >/dev/null
+adb_sh dumpsys gfxinfo "$PKG" reset >/dev/null
 t0=$(ticks)
 sleep "$SECS"
 t1=$(ticks)
-frames=$(sh_ dumpsys gfxinfo "$PKG" | awk -F': ' '/^Total frames rendered:/ && f == "" { f = $2 } END { print f + 0 }')
+frames=$(adb_sh dumpsys gfxinfo "$PKG" | awk -F': ' '/^Total frames rendered:/ && f == "" { f = $2 } END { print f + 0 }')
 
 awk -v f="$frames" -v s="$SECS" -v d="$(( t1 - t0 ))" -v hz="$hz" 'BEGIN {
     printf "fps: %.1f (%d frames in %ds)\ncpu: %.0f%% of one core\n", f / s, f, s, 100 * d / hz / s

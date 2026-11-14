@@ -42,7 +42,7 @@
 
 set -euo pipefail
 
-PKG="${PKG:-com.dev.bitchord.benchmark}"
+source "$(dirname "$0")/common.sh"
 # A fixed, long-lived track so runs are comparable. Override to taste.
 TRACK_URL="${PERF_TRACK_URL:-https://music.youtube.com/watch?v=dQw4w9WgXcQ}"
 SETTLE_S="${PERF_SETTLE_S:-20}"
@@ -64,25 +64,22 @@ MINUTES="$2"
 
 command -v adb >/dev/null || die "adb not on PATH"
 
-# `adb shell` output carries \r on some devices; strip it everywhere.
-sh_() { adb shell "$@" </dev/null | tr -d '\r'; }
-
 state=$(adb get-state 2>/dev/null || true)
 [[ "$state" == "device" ]] || die "no device attached (adb get-state: ${state:-none}); set ANDROID_SERIAL if several"
 
-UID_=$(sh_ cmd package list packages -U "$PKG" | awk -v p="package:$PKG" '$1 == p { sub("uid:", "", $2); print $2 }')
-[[ -n "$UID_" ]] || die "$PKG not installed (build it with ./gradlew :app:installDevBenchmark, or set PKG)"
-VERSION=$(sh_ dumpsys package "$PKG" | awk -F= '/versionName=/ && v == "" { v = $2 } END { print v }')
-DEVICE="$(sh_ getprop ro.product.model) / API $(sh_ getprop ro.build.version.sdk)"
+APP_UID=$(adb_sh cmd package list packages -U "$PKG" | awk -v p="package:$PKG" '$1 == p { sub("uid:", "", $2); print $2 }')
+[[ -n "$APP_UID" ]] || die "$PKG not installed (build it with ./gradlew :app:installDevBenchmark, or set PKG)"
+VERSION=$(adb_sh dumpsys package "$PKG" | awk -F= '/versionName=/ && v == "" { v = $2 } END { print v }')
+DEVICE="$(adb_sh getprop ro.product.model) / API $(adb_sh getprop ro.build.version.sdk)"
 
 OUT="${PERF_OUT:-/tmp/auris-perf/$(date +%Y%m%d-%H%M%S)-$SCENARIO}"
 mkdir -p "$OUT"
 
 # ---- Device state that has to be put back ----------------------------------
 
-ORIG_TIMEOUT=$(sh_ settings get system screen_off_timeout)
+ORIG_TIMEOUT=$(adb_sh settings get system screen_off_timeout)
 # Speaker output costs power in proportion to volume, so every run uses the same index.
-volume() { sh_ cmd media_session volume --stream 3 "$@" 2>/dev/null; }
+volume() { adb_sh cmd media_session volume --stream 3 "$@" 2>/dev/null; }
 ORIG_VOLUME=$(volume --get | sed -n 's/.*volume is \([0-9]*\).*/\1/p')
 restore() {
     [[ -n "$ORIG_VOLUME" ]] && volume --set "$ORIG_VOLUME" >/dev/null || true
@@ -96,25 +93,25 @@ trap 'exit 130' INT TERM
 # ---- Helpers ---------------------------------------------------------------
 
 screen_on() {
-    sh_ input keyevent KEYCODE_WAKEUP >/dev/null
-    sh_ wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb_sh input keyevent KEYCODE_WAKEUP >/dev/null
+    adb_sh wm dismiss-keyguard >/dev/null 2>&1 || true
     sleep 1
     # A secure lock can't be dismissed from adb; wait (up to 10 min) for a
     # person to unlock it rather than failing a batch of runs halfway through.
     local waited=0
-    while sh_ dumpsys window | grep 'isKeyguardShowing=true' >/dev/null; do
+    while adb_sh dumpsys window | grep 'isKeyguardShowing=true' >/dev/null; do
         (( waited == 0 )) && log "device is locked: unlock it to continue (waiting up to 10 min)"
         (( waited >= 600 )) && die "device still locked after 10 min"
         sleep 5; waited=$(( waited + 5 ))
-        sh_ input keyevent KEYCODE_WAKEUP >/dev/null
+        adb_sh input keyevent KEYCODE_WAKEUP >/dev/null
     done
 }
-screen_off() { sh_ input keyevent KEYCODE_SLEEP >/dev/null; }
-interactive() { sh_ dumpsys power | grep 'mWakefulness=Awake' >/dev/null; }
+screen_off() { adb_sh input keyevent KEYCODE_SLEEP >/dev/null; }
+interactive() { adb_sh dumpsys power | grep 'mWakefulness=Awake' >/dev/null; }
 
 # PlaybackState of $PKG's media session: PLAYING, PAUSED, ... or NONE.
 playback_state() {
-    sh_ dumpsys media_session | awk -v p="package=$PKG" '
+    adb_sh dumpsys media_session | awk -v p="package=$PKG" '
         $1 == p { found = 1 }
         found && !st && /state=PlaybackState/ { match($0, /\{state=[A-Z_]+/); st = substr($0, RSTART + 7, RLENGTH - 7) }
         END { print (st == "" ? "NONE" : st) }'
@@ -131,22 +128,22 @@ wait_playing() {
 
 start_playback() {
     # Fresh process each run: no state carried over from the previous scenario.
-    sh_ am force-stop "$PKG"
+    adb_sh am force-stop "$PKG"
     sleep 1
     # MusicLink plays the track as radio; bitchord.openPlayer opens the
     # now-playing sheet (PlayerDeepLink). Both read the same intent.
-    sh_ am start -W -a android.intent.action.VIEW -d "$TRACK_URL" -p "$PKG" \
+    adb_sh am start -W -a android.intent.action.VIEW -d "$TRACK_URL" -p "$PKG" \
         --ez bitchord.openPlayer "${1:-false}" >/dev/null
     wait_playing
 }
 
 skin_temp() {
-    sh_ dumpsys thermalservice | awk '
+    adb_sh dumpsys thermalservice | awk '
         /Current temperatures from HAL/ { hal = 1; next }
         hal && !t && /mName=SKIN/ { match($0, /mValue=[0-9.]+/); t = substr($0, RSTART + 7, RLENGTH - 7) }
         END { print t }'
 }
-thermal_status() { sh_ dumpsys thermalservice | awk -F': ' '/^Thermal Status:/ && s == "" { s = $2 } END { print s }'; }
+thermal_status() { adb_sh dumpsys thermalservice | awk -F': ' '/^Thermal Status:/ && s == "" { s = $2 } END { print s }'; }
 
 # ---- Scenario setup --------------------------------------------------------
 
@@ -157,13 +154,13 @@ log "scenario=$SCENARIO minutes=$MINUTES pkg=$PKG ($VERSION) device=$DEVICE"
 # is charging. Done before setup, not at reset time, because (un)plugging
 # wakes the screen on devices with config_unplugTurnsOnScreen, which would
 # silently turn a screen-off run into a screen-on one.
-sh_ dumpsys battery unplug >/dev/null
+adb_sh dumpsys battery unplug >/dev/null
 volume --set "${PERF_VOLUME:-5}" >/dev/null
 case "$SCENARIO" in
     screen-on-nowplaying)
         # Keep the screen on for the whole run plus slack, without relying on
         # stay-awake-while-plugged (the device is about to think it's unplugged).
-        sh_ settings put system screen_off_timeout $(( (MINUTES + 5) * 60 * 1000 ))
+        adb_sh settings put system screen_off_timeout $(( (MINUTES + 5) * 60 * 1000 ))
         screen_on
         start_playback true
         # The sheet is opened once there's a track; re-send in case the first
@@ -171,9 +168,9 @@ case "$SCENARIO" in
         sleep 3
         # Explicit component: implicit starts only match filters with
         # CATEGORY_DEFAULT, which a launcher filter doesn't have.
-        launcher=$(sh_ cmd package resolve-activity --brief -a android.intent.action.MAIN \
+        launcher=$(adb_sh cmd package resolve-activity --brief -a android.intent.action.MAIN \
             -c android.intent.category.LAUNCHER "$PKG" | tail -1)
-        sh_ am start -n "$launcher" --ez bitchord.openPlayer true >/dev/null || true
+        adb_sh am start -n "$launcher" --ez bitchord.openPlayer true >/dev/null || true
         EXPECT_STATE=PLAYING EXPECT_SCREEN=on
         ;;
     screen-off-playing)
@@ -186,9 +183,9 @@ case "$SCENARIO" in
         screen_on
         start_playback false
         sleep 5
-        sh_ input keyevent KEYCODE_MEDIA_PAUSE >/dev/null
+        adb_sh input keyevent KEYCODE_MEDIA_PAUSE >/dev/null
         sleep 2
-        sh_ input keyevent KEYCODE_HOME >/dev/null
+        adb_sh input keyevent KEYCODE_HOME >/dev/null
         screen_off
         # NONE is fine too: the service releases its session after a while paused.
         EXPECT_STATE="PAUSED|NONE" EXPECT_SCREEN=off
@@ -197,7 +194,7 @@ case "$SCENARIO" in
         # Downloads can't be queued from outside the app on purpose
         # (DownloadService isn't exported), so this one needs a hand.
         screen_on
-        sh_ monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+        adb_sh monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
         if [[ "${PERF_DOWNLOAD_STARTED:-}" != 1 ]]; then
             [[ -t 0 ]] || die "downloading needs a download started in the app; do that, then rerun with PERF_DOWNLOAD_STARTED=1"
             echo "Start downloading a playlist/album of at least ~20 tracks in the app, then press Enter." >&2
@@ -214,12 +211,12 @@ if [[ "$EXPECT_SCREEN" == off ]] && interactive; then screen_off; sleep 2; fi
 
 # ---- Measure ---------------------------------------------------------------
 
-sh_ dumpsys batterystats --reset >/dev/null
-sh_ dumpsys gfxinfo "$PKG" reset >/dev/null
+adb_sh dumpsys batterystats --reset >/dev/null
+adb_sh dumpsys gfxinfo "$PKG" reset >/dev/null
 TH_START=$(thermal_status)
 SKIN_START=$(skin_temp)
 SKIN_MAX="$SKIN_START"
-sh_ dumpsys thermalservice >"$OUT/thermal-start.txt"
+adb_sh dumpsys thermalservice >"$OUT/thermal-start.txt"
 
 log "measuring for ${MINUTES}m (raw dumps -> $OUT)"
 END=$(( $(date +%s) + MINUTES * 60 ))
@@ -235,10 +232,10 @@ done
 
 END_STATE=$(playback_state)
 END_SCREEN=$(interactive && echo on || echo off)
-sh_ dumpsys batterystats --checkin >"$OUT/batterystats-checkin.txt"
-sh_ dumpsys batterystats "$PKG" >"$OUT/batterystats-$PKG.txt"
-sh_ dumpsys gfxinfo "$PKG" >"$OUT/gfxinfo.txt"
-sh_ dumpsys thermalservice >"$OUT/thermal-end.txt"
+adb_sh dumpsys batterystats --checkin >"$OUT/batterystats-checkin.txt"
+adb_sh dumpsys batterystats "$PKG" >"$OUT/batterystats-$PKG.txt"
+adb_sh dumpsys gfxinfo "$PKG" >"$OUT/gfxinfo.txt"
+adb_sh dumpsys thermalservice >"$OUT/thermal-end.txt"
 TH_END=$(thermal_status)
 SKIN_END=$(skin_temp)
 [[ -n "$SKIN_END" ]] && SKIN_MAX=$(max_temp "$SKIN_MAX" "$SKIN_END")
@@ -255,7 +252,7 @@ restore
 #   nt,<mobile_rx>,<mobile_tx>,<wifi_rx>,<wifi_tx>,...  (bytes)
 #   pwi,uid,<mAh>,...                           (estimated drain)
 
-awk -F, -v uid="$UID_" -v min="$MINUTES" '
+awk -F, -v uid="$APP_UID" -v min="$MINUTES" '
     $1 == 9 && $2 == uid && $3 == "l" {
         k = $4
         if (k == "cpu") { user += $5; sys += $6 }

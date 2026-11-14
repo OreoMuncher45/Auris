@@ -12,20 +12,17 @@
 
 set -euo pipefail
 
-PKG="${PKG:-com.dev.bitchord.benchmark}"
+source "$(dirname "$0")/common.sh"
 SECS="${1:-10}"
 TOP="${2:-15}"
 
-sh_() { adb shell "$@" </dev/null | tr -d '\r'; }
-
-pid=$(sh_ pidof "$PKG" || true)
-[[ -n "$pid" ]] || { echo "threads.sh: $PKG is not running" >&2; exit 1; }
-hz=$(sh_ getconf CLK_TCK 2>/dev/null || echo 100)
+pid=$(app_pid_or_die)
+hz=$(clock_ticks_per_s)
 
 # One line per thread: tid, utime+stime (ticks), name. The comm field is in
 # parentheses and may contain spaces, so split on the last ')'.
 snap() {
-    sh_ "for f in /proc/$pid/task/*/stat; do cat \$f 2>/dev/null; echo; done" | awk '
+    adb_sh "for f in /proc/$pid/task/*/stat; do cat \$f 2>/dev/null; echo; done" | awk '
         NF {
             l = index($0, "("); r = 0
             for (i = length($0); i > 0; i--) if (substr($0, i, 1) == ")") { r = i; break }
@@ -35,15 +32,15 @@ snap() {
         }'
 }
 
-a=$(snap)
+snap_start=$(snap)
 sleep "$SECS"
-b=$(snap)
+snap_end=$(snap)
 
-awk -v s="$SECS" -v hz="$hz" -v top="$TOP" '
+awk '
     NR == FNR { t0[$1] = $2; next }
     { d = $2 - ($1 in t0 ? t0[$1] : 0); tot += d; if (d > 0) printf "%d %s %s\n", d, $1, $3 }
     END { printf "TOTAL %d\n", tot > "/dev/stderr" }
-' <(echo "$a") <(echo "$b") 2>"${TMPDIR:-/tmp}/threads.total.$$" | sort -rn | head -n "$TOP" |
+' <(echo "$snap_start") <(echo "$snap_end") 2>"${TMPDIR:-/tmp}/threads.total.$$" | sort -rn | head -n "$TOP" |
     awk -v s="$SECS" -v hz="$hz" '{ printf "%6.1f%%  %-7s %s\n", 100 * $1 / hz / s, $2, $3 }' >"${TMPDIR:-/tmp}/threads.rows.$$"
 
 tot=$(awk '{ print $2 }' "${TMPDIR:-/tmp}/threads.total.$$")
