@@ -18,13 +18,17 @@ import java.nio.ByteOrder
  * which kind of mix it suits. This is a thin shell over whichever pure kernel
  * is selected, so all the math stays testable without an audio stack.
  *
- * At cut = 0 every engine tracks its own state but writes nothing, so a
- * disabled Sing leaves the block byte-identical — see [DspChain]'s exactness
- * contract. That holds for all three, including [VocalCutOriginal], whose
- * makeup gain is unity at zero cut.
+ * A disabled Sing doesn't run its engine at all and leaves the block
+ * byte-identical — see [DspChain]'s exactness contract and [process] for how
+ * the engine is warmed up again when the slider is raised.
  */
 @UnstableApi
-class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
+class VocalCutProcessor internal constructor(
+    /** Builds the engine for a method; tests pass a recording fake. */
+    private val engineFactory: (SingMethod) -> SingEngine,
+) : BaseAudioProcessor(), FloatAudioProcessor {
+
+    constructor() : this(::engineFor)
 
     /**
      * How much of the vocal band to remove, 0..1. Written from the UI thread via
@@ -43,12 +47,15 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
      * three of them per player to switch between costs memory nobody asked for.
      */
     @Volatile
-    private var engine: SingEngine = engineFor(AppSettings.singMethod.value)
+    private var engine: SingEngine = engineFactory(AppSettings.singMethod.value)
 
     private var configuredSampleRate: Int = VocalCutDsp.DEFAULT_SAMPLE_RATE
 
-    /** Whether the engine has already been cleared since the last active block. */
+    /** Audio-thread state: Sing was off on the last block, so the engine is stale. */
     private var idle = true
+
+    /** Frames of silent run-in left before the cut is applied. Audio thread only. */
+    private var warmupFramesLeft = 0
 
     /**
      * Switch engines, configured for the rate this processor is already
@@ -60,7 +67,7 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
      */
     fun setMethod(method: SingMethod) {
         if (method == currentMethod()) return
-        engine = engineFor(method).apply {
+        engine = engineFactory(method).apply {
             configure(configuredSampleRate)
             reset()
         }
@@ -79,25 +86,41 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
 
     /**
      * Processes interleaved Float32 audio samples in [block] in-place.
-     * Returns before touching a sample when idle or non-stereo, so a
-     * disabled Sing — or a mono track — passes through byte-identical.
      *
-     * Idle costs nothing at all: the kernels' filter scan used to run every
-     * sample even at cut = 0 purely to keep their state current. The engine is
-     * cleared once on going idle instead, so a later enable starts from a clean
-     * state and settles into the cut without a click.
+     * Off means off: while [level] is idle the engine doesn't run at all, and
+     * the block passes through byte-identical. Tracking the engine's filters
+     * and voice gate through every song just in case the slider moved cost
+     * ~14% of a core during all playback, for a feature that is off nearly
+     * all the time.
+     *
+     * The price is paid on the way back in instead. Raised from off, the
+     * engine starts fresh and runs [WARMUP_MS] of audio at zero cut — tracking
+     * but writing nothing — so its crossover filters settle and the voice
+     * detector's history fills before the first cut sample. Cutting through
+     * cold filters would click. The voice gate then starts from its fail-open
+     * state, so in an instrumental passage it may cut briefly (until its
+     * ~400 ms release) before it learns there is no singer.
      */
     override fun process(block: AudioBlock) {
         if (block.channelCount != 2 || block.frameCount == 0) return
         val cut = level
-        if (cut <= 0.001f) {
-            if (!idle) {
-                idle = true
-                engine.reset()
-            }
+        if (cut <= IDLE_LEVEL) {
+            idle = true
             return
         }
-        idle = false
+        val engine = engine
+        if (idle) {
+            idle = false
+            engine.reset()
+            warmupFramesLeft = configuredSampleRate * WARMUP_MS / 1000
+        }
+        if (warmupFramesLeft > 0) {
+            // Whole blocks only: the engine takes no offset. Overshoot is less
+            // than one block (decoder-sized, ~20 ms for Opus; 4096 frames at most).
+            engine.processSpan(block.samples, block.frameCount * 2, 0f)
+            warmupFramesLeft -= block.frameCount
+            return
+        }
         engine.processSpan(block.samples, block.frameCount * 2, cut)
     }
 
@@ -126,7 +149,7 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
         val outputBuffer = replaceOutputBuffer(frameCount * BYTES_PER_FRAME)
 
         val cut = level
-        if (cut <= 0.001f) {
+        if (cut <= IDLE_LEVEL) {
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()
             return
@@ -146,7 +169,13 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
         outputBuffer.flip()
     }
 
-    private companion object {
-        const val BYTES_PER_FRAME = 4 // stereo, 16-bit
+    internal companion object {
+        private const val BYTES_PER_FRAME = 4 // stereo, 16-bit
+
+        /** Silent run-in after Sing is raised from off; see [process]. */
+        const val WARMUP_MS = 85
+
+        /** At or below this, Sing is off — the same threshold every engine uses. */
+        private const val IDLE_LEVEL = 0.001f
     }
 }
