@@ -1311,6 +1311,8 @@
     <string name="ai_generated">AI-निर्मित</string>
     <string name="mark_as_ai">कलाकार को AI-निर्मित के रूप में चिह्नित करें</string>
     <string name="remove_ai_mark">AI चिह्न हटाएँ</string>
+    <string name="custom_live_blur">लाइव ब्लर</string>
+    <string name="custom_live_blur_help">एनिमेटेड आर्टवर्क को सहजता से फॉलो करता है। अधिक बैटरी लेता है।</string>
     <string name="custom_transport_smoothness">ट्रांसपोर्ट कोनों की चिकनाई</string>
     <string name="custom_transport_smoothness_help">प्ले, पॉज़ और स्किप बटन के कोनों को गोल करता है। 0 पर पुराना तेज़ किनारा रहता है; 100 पर आकार मुलायम है लेकिन फिर भी त्रिकोण है।</string>
     <string name="custom_smoothness_reset">चिकनाई रीसेट करें</string>

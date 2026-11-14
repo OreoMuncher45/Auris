@@ -1283,6 +1283,8 @@
     <string name="ai_generated">Generado por IA</string>
     <string name="mark_as_ai">Marcar artista como generado por IA</string>
     <string name="remove_ai_mark">Quitar marca de IA</string>
+    <string name="custom_live_blur">Desenfoque en vivo</string>
+    <string name="custom_live_blur_help">Sigue las portadas animadas con fluidez. Consume más batería.</string>
     <string name="custom_transport_smoothness">Suavizado de las esquinas del transporte</string>
     <string name="custom_transport_smoothness_help">Redondea los botones de reproducir, pausar y saltar. Con 0 se mantiene el borde afilado; con 100 la forma es suave pero sigue siendo un triángulo.</string>
     <string name="custom_smoothness_reset">Restablecer suavizado</string>

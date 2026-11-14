@@ -1311,6 +1311,8 @@
     <string name="ai_generated">KI-generiert</string>
     <string name="mark_as_ai">Künstler als KI-generiert markieren</string>
     <string name="remove_ai_mark">KI-Markierung entfernen</string>
+    <string name="custom_live_blur">Live-Unschärfe</string>
+    <string name="custom_live_blur_help">Folgt animierten Covern flüssig. Verbraucht mehr Akku.</string>
     <string name="custom_transport_smoothness">Glättung der Transport-Ecken</string>
     <string name="custom_transport_smoothness_help">Rundet die Wiedergabe-, Pause- und Skip-Tasten ab. Bei 0 bleibt die alte scharfe Kante; bei 100 ist die Form weich, aber noch ein Dreieck.</string>
     <string name="custom_smoothness_reset">Glättung zurücksetzen</string>

@@ -1316,6 +1316,8 @@
     <string name="ai_generated">Gerado por IA</string>
     <string name="mark_as_ai">Marcar artista como gerado por IA</string>
     <string name="remove_ai_mark">Remover marca de IA</string>
+    <string name="custom_live_blur">Desfoque ao vivo</string>
+    <string name="custom_live_blur_help">Acompanha capas animadas suavemente. Consome mais bateria.</string>
     <string name="custom_transport_smoothness">Suavização dos cantos dos controlos</string>
     <string name="custom_transport_smoothness_help">Arredonda os botões de reproduzir, pausar e avançar. Em 0 mantém o canto afiado; em 100 a forma fica suave mas continua um triângulo.</string>
     <string name="custom_smoothness_reset">Repor suavização</string>

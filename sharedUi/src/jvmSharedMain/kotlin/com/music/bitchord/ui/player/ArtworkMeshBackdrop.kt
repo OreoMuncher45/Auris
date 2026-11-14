@@ -322,21 +322,27 @@ fun rememberArtworkMesh(
     }
 
     LaunchedEffect(liveFrames, cacheKey) {
-        var seen = 0
-        liveFrames?.collectLatest { frame ->
-            if (frame == null) return@collectLatest
+        var lastReadAt = 0L
+        liveFrames?.collect { frame ->
+            if (frame == null) return@collect
             // Reject frames that are too dark or uniform — they are almost always
             // the first read after a surface recreation, before ExoPlayer has
             // decoded real content.  A frame whose mean luminance is below this
             // threshold is discarded; the last valid mesh is kept instead.
-            if (isLikelyBlackFrame(frame)) return@collectLatest
-            // Every frame is a mesh read on the CPU and a redraw of the whole
-            // backdrop behind it — which carries a full-screen blur. Thinned,
-            // so the wash behind a moving clip changes every third frame
-            // instead of every frame; upstream's mesh refresh is three seconds
-            // too, and the wash is blurred past the point where a step shows.
-            seen++
-            if (seen % MESH_EVERY_NTH_FRAME != 0) return@collectLatest
+            if (isLikelyBlackFrame(frame)) return@collect
+            // Every read is a mesh built on the CPU and a redraw of the whole
+            // backdrop behind it, which carries a full-screen blur. Held to one
+            // every [LIVE_READ_GAP_MS] however fast the frames arrive, so
+            // turning live blur up to thirty frames a second buys a wash that
+            // moves, not thirty backdrop redraws a second. Frames slower than
+            // that gap all get read, so the slow setting is untouched.
+            //
+            // Read with `collect` rather than `collectLatest`: a new frame must
+            // not cancel a read that is already running, or a clip producing
+            // frames faster than a read takes would never finish one.
+            val now = System.nanoTime()
+            if (lastReadAt != 0L && now - lastReadAt < LIVE_READ_GAP_MS * 1_000_000L) return@collect
+            lastReadAt = now
             mesh = withContext(Dispatchers.Default) {
                 meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
             } ?: mesh
@@ -529,15 +535,15 @@ private const val FULL_BLUR_SOURCE_PX = 128
 private const val FULL_BLUR_PASSES = 3
 
 /**
- * How many captured frames go by before the mesh is read again.
+ * How long between reads of a moving cover for the mesh.
  *
- * The frames arrive once a second (see `LIVE_REFRESH_MS` in
- * [NowPlayingScreen]), so this is a read every three seconds — the same
- * cadence upstream's mesh runs at. A mesh read is the clip's frame averaged
- * into thirty-six cells on the CPU, and every one of them redraws the
- * backdrop behind the player, which carries a full-screen blur.
+ * A hundred milliseconds, which is ten washes a second — what the backdrop
+ * followed at when frames arrived every hundred. With live blur on the frames
+ * come thirty times a second, and reading every one of them would be thirty
+ * full-screen backdrop redraws for a wash that is blurred past the point where
+ * a step between two of them shows.
  */
-private const val MESH_EVERY_NTH_FRAME = 3
+private const val LIVE_READ_GAP_MS = 100L
 
 /** A handful of recent covers; each entry is only 64 KiB at 128x128 ARGB. */
 private val fullBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {

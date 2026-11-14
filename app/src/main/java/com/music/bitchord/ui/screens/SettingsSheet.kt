@@ -319,6 +319,7 @@ fun SettingsScreen(
     // because their rows sit in the Now Playing, Home & library and Appearance
     // categories now.
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
+    val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
     val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
@@ -1275,6 +1276,25 @@ fun SettingsScreen(
                     onSliderValue = { AppSettings.setTransportSmoothness(it) },
                     valueRange = 0f..1f,
                     steps = 0,
+                )
+            }
+            val liveBlurTitle = stringResource(R.string.custom_live_blur)
+            row(liveBlurTitle, "blur", "artwork", "player", "battery") {
+                SettingsRow(
+                    icon = Icons.Rounded.BlurOn,
+                    title = liveBlurTitle,
+                    subtitle = stringResource(R.string.custom_live_blur_help),
+                    trailing = {
+                        Switch(
+                            checked = liveBlur,
+                            onCheckedChange = AppSettings::setLiveBlur,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setLiveBlur(!liveBlur) },
                 )
             }
             // Left out where the player won't honour it: a window too wide for

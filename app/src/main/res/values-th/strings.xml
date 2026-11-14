@@ -1294,6 +1294,8 @@
     <string name="ai_generated">สร้างด้วย AI</string>
     <string name="mark_as_ai">ทำเครื่องหมายศิลปินว่าสร้างด้วย AI</string>
     <string name="remove_ai_mark">ลบเครื่องหมาย AI</string>
+    <string name="custom_live_blur">เบลอแบบสด</string>
+    <string name="custom_live_blur_help">ตามอาร์ตเวิร์กเคลื่อนไหวอย่างลื่นไหล ใช้แบตเตอรี่มากขึ้น</string>
     <string name="custom_transport_smoothness">ความนุ่มนวลของมุมปุ่มควบคุม</string>
     <string name="custom_transport_smoothness_help">ปรับมุมของปุ่มเล่น หยุดชั่วคราว และข้ามให้กลมขึ้น ที่ 0 จะคงมุมแหลมเดิม ที่ 100 รูปทรงจะนุ่มแต่ยังเป็นสามเหลี่ยม</string>
     <string name="custom_smoothness_reset">รีเซ็ตความนุ่มนวล</string>

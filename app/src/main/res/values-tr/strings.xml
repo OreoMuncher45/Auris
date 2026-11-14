@@ -1268,6 +1268,8 @@
     <string name="ai_generated">Yapay zekâ üretimi</string>
     <string name="mark_as_ai">Sanatçıyı yapay zekâ üretimi olarak işaretle</string>
     <string name="remove_ai_mark">Yapay zekâ işaretini kaldır</string>
+    <string name="custom_live_blur">Canlı bulanıklık</string>
+    <string name="custom_live_blur_help">Hareketli kapakları akıcı biçimde izler. Daha fazla pil tüketir.</string>
     <string name="custom_transport_smoothness">Oynatma düğmelerinin köşe yumuşaklığı</string>
     <string name="custom_transport_smoothness_help">Oynat, duraklat ve atla düğmelerinin köşelerini yuvarlar. 0\'da eski keskin kenar kalır; 100\'de şekil yumuşar ama yine de üçgendir.</string>
     <string name="custom_smoothness_reset">Yumuşaklığı sıfırla</string>

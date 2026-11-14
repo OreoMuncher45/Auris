@@ -1343,6 +1343,8 @@
     <string name="ai_generated">Создано ИИ</string>
     <string name="mark_as_ai">Отметить исполнителя как созданного ИИ</string>
     <string name="remove_ai_mark">Убрать отметку ИИ</string>
+    <string name="custom_live_blur">Живое размытие</string>
+    <string name="custom_live_blur_help">Плавно следует за анимированными обложками. Больше расход батареи.</string>
     <string name="custom_transport_smoothness">Сглаживание углов кнопок управления</string>
     <string name="custom_transport_smoothness_help">Скругляет кнопки воспроизведения, паузы и перехода. При 0 остаётся прежний острый край; при 100 форма мягкая, но остаётся треугольником.</string>
     <string name="custom_smoothness_reset">Сбросить сглаживание</string>

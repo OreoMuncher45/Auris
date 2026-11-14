@@ -531,19 +531,26 @@ private fun LegacyMeshBackdrop(
 }
 
 /**
- * How often a playing clip is read for its own colours.
+ * How often a playing cover is read with "live blur" on.
+ *
+ * Thirty a second: as often as the screen itself is drawn, which is what makes
+ * the wash behind an animated cover *move* rather than step. It is also the
+ * expensive setting, so it is a switch the listener owns — see [liveBlur].
+ */
+private const val LIVE_REFRESH_LIVE_MS = 33L
+
+/**
+ * How often a playing clip is read for its own colours with live blur off.
  *
  * The backdrop and the ink both follow the clip, so this is the rate at which
  * the screen changes colour.
  *
- * It is a second now, and it was a hundred milliseconds before: the read is a
- * copy of the clip's texture off the GPU, taken on the thread that draws the
+ * It is a second, and it was a hundred milliseconds before: the read is a copy
+ * of the clip's texture off the GPU, taken on the thread that draws the
  * screen, and it stalls the GPU's pipeline while it happens. Ten of those a
- * second is ten stalls a second — and, before the frame was taken out of the
- * player's composition, ten recompositions of the whole player a second as
- * well. A second is still faster than the picture under the ink changes
- * noticeably, and the wash it paints is blurred past the point where a step
- * would show.
+ * second is ten stalls a second. A second is still faster than the picture
+ * under the ink changes noticeably, and the wash it paints is blurred past the
+ * point where a step would show.
  */
 private const val LIVE_REFRESH_MS = 1_000L
 
@@ -1265,7 +1272,16 @@ fun NowPlayingScreen(
     // read stalls the GPU to copy a texture, and the mesh it re-tints is a
     // subtle background wash nobody is watching frame by frame.
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val liveRefreshMs = if (reduceAnimation) LIVE_REFRESH_REDUCED_MS else LIVE_REFRESH_MS
+    // "Live blur": read the playing cover thirty times a second so the wash
+    // behind it moves, rather than once a second so it steps. The switch is
+    // the listener's because the difference is visible only on animated
+    // artwork and the cost is paid on every frame either way.
+    val liveBlur by PlayerSettings.liveBlur.collectAsStateWithLifecycle()
+    val liveRefreshMs = when {
+        reduceAnimation -> LIVE_REFRESH_REDUCED_MS
+        liveBlur -> LIVE_REFRESH_LIVE_MS
+        else -> LIVE_REFRESH_MS
+    }
 
     val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].

@@ -764,6 +764,16 @@ object AppSettings {
 
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
+    /**
+     * Re-read a playing cover's frame often enough to follow it.
+     *
+     * Off by default: the read is a copy of the clip's texture off the GPU,
+     * and thirty of those a second is a real cost on every frame the artwork
+     * plays, for a wash that only a moving cover makes visible. On, the
+     * backdrop and the mesh follow the picture; off, they still follow it,
+     * once a second.
+     */
+    val liveBlur = MutableStateFlow(false)
 
     /** Draws the bloom behind lyrics and the shadow behind player text. */
     val textGlow = MutableStateFlow(true)
@@ -1641,6 +1651,7 @@ object AppSettings {
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
         glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
+        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, false)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
         showNextTrackStatus.value = prefs.getBoolean(KEY_SHOW_NEXT_TRACK_STATUS, true)
@@ -2384,6 +2395,11 @@ object AppSettings {
     fun setLyricsBlur(value: Boolean) {
         lyricsBlur.value = value
         prefs.edit().putBoolean(KEY_LYRICS_BLUR, value).apply()
+    }
+
+    fun setLiveBlur(value: Boolean) {
+        liveBlur.value = value
+        prefs.edit().putBoolean(KEY_LIVE_BLUR, value).apply()
     }
 
     fun setTextGlow(value: Boolean) {
@@ -3259,6 +3275,7 @@ object AppSettings {
     private const val KEY_PODCASTS_ENABLED = "podcasts_enabled"
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
+    private const val KEY_LIVE_BLUR = "live_blur"
     private const val KEY_TEXT_GLOW = "text_glow"
     private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
     private const val KEY_SHOW_NEXT_TRACK_STATUS = "show_next_track_status"

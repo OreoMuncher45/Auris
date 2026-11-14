@@ -1316,6 +1316,8 @@
     <string name="ai_generated">נוצר ב-AI</string>
     <string name="mark_as_ai">סמן אמן כנוצר ב-AI</string>
     <string name="remove_ai_mark">הסר סימון AI</string>
+    <string name="custom_live_blur">טשטוש חי</string>
+    <string name="custom_live_blur_help">עוקב אחרי עטיפות מונפשות בצורה חלקה. צורך יותר סוללה.</string>
     <string name="custom_transport_smoothness">החלקת פינות כפתורי השליטה</string>
     <string name="custom_transport_smoothness_help">מעגל את כפתורי הנגן, ההשהיה והדילוג. ב-0 נשמרת הפינה החדה; ב-100 הצורה רכה אך עדיין משולש.</string>
     <string name="custom_smoothness_reset">איפוס החלקת הפינות</string>

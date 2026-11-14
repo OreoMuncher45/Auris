@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
 /**
@@ -76,9 +75,17 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
  *
  * The sampling happens off the main thread: a frame is read pixel by pixel,
  * and doing that on the thread that draws the screen is a frame of jank every
- * time the picture changes. A new frame cancels the sample of the old one —
- * only the newest picture is worth an answer — so a fast clip cannot pile
- * work up behind itself.
+ * time the picture changes.
+ *
+ * Read on a clock of its own rather than once per frame, and that is the whole
+ * point of this being separate from the backdrop's reads. The ink is a *tint*:
+ * its colour changes far more slowly than the picture does, and every new
+ * colour starts a tween that the next one interrupts. With live blur on, a
+ * frame a second had become thirty, so the tween never finished — which left
+ * every text and glyph in the player invalidated and redrawn on every frame the
+ * clip produced, for a colour nobody could see moving. [PALETTE_MIN_GAP_MS]
+ * lets each colour land before the next is asked for; the picture behind it
+ * still moves, because the backdrop's own reads are not on this clock.
  *
  * The answer is handed back as a [MutableState] rather than as a value, and
  * the frames arrive as a [Flow] rather than as a parameter, for the same
@@ -87,10 +94,6 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
  * the ink moved. The state is read by the ink's own scope instead — see
  * [rememberPlayerInk] — so a change of colour costs the texts and glyphs that
  * wear it and nothing else.
- *
- * The frames are read every [PALETTE_EVERY_NTH_FRAME]th one, not every one:
- * the ink is a tint on a background, it eases into place over a fraction of a
- * second, and a clip's colour moves far more slowly than the clip does.
  */
 @Composable
 internal fun rememberLivePalette(
@@ -99,11 +102,15 @@ internal fun rememberLivePalette(
 ): MutableState<LivePalette?> {
     val live = remember(source) { mutableStateOf<LivePalette?>(null) }
     LaunchedEffect(frames, source) {
-        var seen = 0
-        frames.collectLatest { current ->
-            if (current == null) return@collectLatest
-            seen++
-            if (seen % PALETTE_EVERY_NTH_FRAME != 0) return@collectLatest
+        var lastReadAt = 0L
+        frames.collect { current ->
+            if (current == null) return@collect
+            // The first frame is taken at once, so the ink belongs to the
+            // picture from the player's first drawn frame rather than a fifth
+            // of a second into it.
+            val now = System.nanoTime()
+            if (lastReadAt != 0L && now - lastReadAt < PALETTE_MIN_GAP_MS * 1_000_000L) return@collect
+            lastReadAt = now
             live.value = withContext(Dispatchers.Default) {
                 computeLivePalette(current, source)
             }
@@ -145,14 +152,12 @@ internal fun ImageBitmap.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
 private const val LIVE_SAMPLES = 1_024
 
 /**
- * How many captured frames go by before the ink is read again.
+ * How long between reads of a moving picture for the ink.
  *
- * One: the ink follows the clip as closely as the frames arrive. The read is
- * off the main thread and costs a handful of sampled pixels, so it is not
- * worth thinning out — and thinning it out is a visible change, which this
- * pass is not allowed to make.
- *
- * The expensive read is the mesh's, and that one is thinned — see
- * [MESH_EVERY_NTH_FRAME].
+ * Four hundred milliseconds, against the thirty frames a second the backdrop
+ * may be reading at. The ink is a wash over the artwork, not the artwork: it
+ * has to belong to the picture, and it has to stop moving so the controls
+ * wearing it can stop being redrawn. This is the number that keeps live blur
+ * from costing every text on the screen a redraw per frame.
  */
-private const val PALETTE_EVERY_NTH_FRAME = 1
+private const val PALETTE_MIN_GAP_MS = 400L

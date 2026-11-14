@@ -1340,6 +1340,8 @@
     <string name="custom_now_playing_lyrics_help">Shows the current lyric above the player controls. Turn it off for a cleaner, minimal player.</string>
     <string name="custom_recent">Recent colours</string>
     <string name="custom_reset_colors">Reset all player colours</string>
+    <string name="custom_live_blur">Live blur</string>
+    <string name="custom_live_blur_help">Follows animated artwork smoothly. Uses more battery.</string>
     <string name="custom_transport_smoothness">Transport corner smoothness</string>
     <string name="custom_transport_smoothness_help">Rounds the play, pause and skip buttons. At 0 the old sharp edge stays; at 100 the glyph is soft but still a triangle.</string>
     <string name="custom_smoothness_reset">Reset smoothness</string>

@@ -1228,6 +1228,8 @@
     <string name="ai_generated">Do AI tạo</string>
     <string name="mark_as_ai">Đánh dấu nghệ sĩ là do AI tạo</string>
     <string name="remove_ai_mark">Xóa dấu AI</string>
+    <string name="custom_live_blur">Làm mờ trực tiếp</string>
+    <string name="custom_live_blur_help">Theo dõi bìa động mượt mà. Tốn pin hơn.</string>
     <string name="custom_transport_smoothness">Độ mềm góc nút điều khiển</string>
     <string name="custom_transport_smoothness_help">Bo tròn các nút phát, tạm dừng và chuyển bài. Ở mức 0 vẫn giữ cạnh sắc cũ; ở mức 100 hình dạng mềm hơn nhưng vẫn là hình tam giác.</string>
     <string name="custom_smoothness_reset">Đặt lại độ mềm</string>

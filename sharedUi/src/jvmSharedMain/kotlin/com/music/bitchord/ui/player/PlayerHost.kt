@@ -208,6 +208,11 @@ interface PlayerSettingsSource {
     val lastPlayerScreen: StateFlow<LastPlayerScreen>
     val legacyMeshGradient: StateFlow<Boolean>
     val lyricsBlur: StateFlow<Boolean>
+    /**
+     * Re-read a playing cover's frame often enough to follow it, rather than
+     * once a second. The player's one battery-for-motion switch.
+     */
+    val liveBlur: StateFlow<Boolean>
     val textGlow: StateFlow<Boolean>
     val lyricsOffsetMs: StateFlow<Int>
     val lyricsSourceOrder: StateFlow<List<LyricsSource>>

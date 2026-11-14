@@ -1289,6 +1289,8 @@
     <string name="ai_generated">AI 生成</string>
     <string name="mark_as_ai">アーティストを AI 生成としてマーク</string>
     <string name="remove_ai_mark">AI マークを解除</string>
+    <string name="custom_live_blur">ライブブラー</string>
+    <string name="custom_live_blur_help">アニメーションアートワークを滑らかに追従します。バッテリー消費が増えます。</string>
     <string name="custom_transport_smoothness">再生ボタンの角の丸み</string>
     <string name="custom_transport_smoothness_help">再生・一時停止・スキップボタンの角を丸くします。0 では従来の鋭い角、100 では柔らかい形になりますが三角形のままです。</string>
     <string name="custom_smoothness_reset">丸みをリセット</string>

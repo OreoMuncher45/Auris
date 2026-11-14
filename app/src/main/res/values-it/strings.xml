@@ -1250,6 +1250,8 @@
     <string name="ai_generated">Generato con IA</string>
     <string name="mark_as_ai">Contrassegna l\'artista come generato con IA</string>
     <string name="remove_ai_mark">Rimuovi contrassegno IA</string>
+    <string name="custom_live_blur">Sfocatura live</string>
+    <string name="custom_live_blur_help">Segue le copertine animate in modo fluido. Consuma più batteria.</string>
     <string name="custom_transport_smoothness">Arrotondamento degli angoli dei comandi</string>
     <string name="custom_transport_smoothness_help">Arrotonda i pulsanti riproduci, pausa e salta. A 0 resta il bordo affilato; a 100 la forma è morbida ma sempre un triangolo.</string>
     <string name="custom_smoothness_reset">Reimposta arrotondamento</string>

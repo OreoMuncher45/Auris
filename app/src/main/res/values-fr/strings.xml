@@ -1312,6 +1312,8 @@
     <string name="ai_generated">Généré par IA</string>
     <string name="mark_as_ai">Marquer l’artiste comme généré par IA</string>
     <string name="remove_ai_mark">Retirer la marque IA</string>
+    <string name="custom_live_blur">Flou en direct</string>
+    <string name="custom_live_blur_help">Suit les pochettes animées en douceur. Consomme plus de batterie.</string>
     <string name="custom_transport_smoothness">Arrondi des coins des commandes</string>
     <string name="custom_transport_smoothness_help">Arrondit les boutons lecture, pause et suivant. À 0, le bord reste net ; à 100, la forme est douce mais reste un triangle.</string>
     <string name="custom_smoothness_reset">Réinitialiser l’arrondi</string>
