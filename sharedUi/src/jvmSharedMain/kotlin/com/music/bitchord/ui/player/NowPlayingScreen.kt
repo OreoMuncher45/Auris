@@ -318,6 +318,50 @@ private val CREDITS_ARTIST_ALPHA = 0.73f
  * exactly without dropping the feature that carries the current line.
  */
 private val CREDITS_DROP = 40.dp
+
+/**
+ * How far below its old line the lyric line, the scrubber, the timestamps and
+ * the quality badge sit.
+ *
+ * The reference player has no lyric line, so its title is followed by the
+ * scrubber and nothing else. This one has both, and when the credits were
+ * dropped to sit lower the line of lyrics came up with them and sat almost
+ * against the artist's name — the one place on the screen where three pieces
+ * of writing were stacked on top of each other with no air between them.
+ *
+ * So the lyric line and the scrubber go back down, as one block, and the gap
+ * they take comes out of the space between the scrubber and the transport.
+ * Nothing else moves: the sleeve, the title and the artist stay exactly where
+ * they are, and the transport, the volume and the action row stay where they
+ * are too — the drop is the deck giving up its own height, not the deck
+ * sliding.
+ *
+ * Sixteen dp is a little under half a centimetre: enough for the artist's
+ * name to have its own band of backdrop under it, and small enough that the
+ * scrubber still reads as part of the deck rather than as something that
+ * fell.
+ */
+private val SCRUBBER_DROP = 16.dp
+
+/**
+ * The least gap that may be left between the scrubber and the transport.
+ *
+ * The drop is taken out of that gap, so a screen with little to spare takes
+ * less of it rather than closing the gap to nothing.
+ */
+private val SCRUBBER_MIN_GAP = 6.dp
+
+/**
+ * The drop the deck can actually take.
+ *
+ * [spread] is the extra gap the tall screen hands to the controls, and the
+ * scrubber's own gap is half of it plus eight. On a screen with room to
+ * spare the whole [SCRUBBER_DROP] comes out of that; on a cramped one only
+ * what is there.
+ */
+private fun scrubberDropOf(spread: Dp): Dp =
+    (8.dp + spread / 2 - SCRUBBER_MIN_GAP).coerceIn(0.dp, SCRUBBER_DROP)
+
 /**
  * How much the hero banner's still artwork is scaled past its frame, measured
  * — twice, independently, to the same number — against Apple's player: 123.4%
@@ -3389,7 +3433,12 @@ fun NowPlayingScreen(
                 // or coming back from the lyrics panel, where the strip is
                 // rebuilt from scratch) was pocketed for good. The gaps
                 // ratcheted open a little at a time and the sleeve paid for it.
-                val roomy = maxHeight + controlSpread
+                // The drop the deck takes for the scrubber comes back off this
+                // height, so the sleeve is sized from the box as it would be
+                // without it and the space it gives up is the gap under the
+                // credits rather than the sleeve's own size.
+                val scrubberDrop = scrubberDropOf(controlSpread)
+                val roomy = maxHeight + controlSpread - scrubberDrop
                 // The sleeve is square, so it is bounded by whichever of the
                 // two axes runs out first: the player's width on a phone, or —
                 // on a tablet, where there is width to spare — the height left
@@ -3401,7 +3450,11 @@ fun NowPlayingScreen(
                 // takes the gaps below to catch up with a change in their own
                 // height: a sleeve a few dp under for one frame is a better
                 // failure than a credits row overhanging the lyric strip.
-                val fullArt = minOf(wantArt, maxHeight - ART_TITLE_GAP - HEADER_HEIGHT)
+                //
+                // The drop is taken off this height as well, so the sleeve is
+                // the size it was before the scrubber dropped rather than
+                // slightly larger because there is now more room for it.
+                val fullArt = minOf(wantArt, maxHeight - scrubberDrop - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(THUMB_SIZE)
                 // What's left over once the sleeve, the gap and the credits have
                 // had theirs. A few dp on a phone; the better part of a
@@ -3477,7 +3530,13 @@ fun NowPlayingScreen(
                 // the pair sits centred while the queue is closed — in whatever
                 // the controls couldn't take, which on all but the tallest
                 // screens is nothing.
-                val groupTop = (maxHeight - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
+                //
+                // The drop the deck took for the scrubber comes off this height
+                // too, so the block does not drift down as the deck gives up
+                // its height: the sleeve and the credits stay exactly where
+                // they were, and the space the scrubber dropped into is the
+                // band of backdrop under the artist.
+                val groupTop = (maxHeight - scrubberDrop - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp) / 2
                 // Functions of the collapse, called at placement and measure
                 // — see [p]. Composition never reads them.
@@ -4636,7 +4695,11 @@ fun NowPlayingScreen(
             // which sit close enough together to read as one. Both of its own
             // gaps take half the spread, so on a tall screen it holds the
             // centre rather than drifting up under the seek bar.
-            Spacer(Modifier.height(8.dp + controlSpread / 2))
+            //
+            // The gap above it also gives up the scrubber's drop: the lyric
+            // line and the scrubber go down by that much, and the transport
+            // stays where it is. See [SCRUBBER_DROP].
+            Spacer(Modifier.height(8.dp + controlSpread / 2 - scrubberDropOf(controlSpread)))
 
             TransportRow(
                 isPlaying = isPlaying,
