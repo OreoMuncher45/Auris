@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import android.net.Uri
 import android.util.Log
+import com.music.bitchord.data.PerfCounters
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -392,6 +393,10 @@ object SourceResolver {
         servedBy: String? = null,
     ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
+        // A track prepared for the Automix to play next. Counted, because each
+        // one is a resolution of its own and can hold a player, a decoder and
+        // an artwork bitmap.
+        PerfCounters.bump(PerfCounters.Counter.PREPARE)
         val active = SourceRegistry.activeForPlayback()
         val pool = upgradeCandidates(
             candidates = candidatesForYouTube(active),
@@ -1178,6 +1183,10 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
+        // One resolution. Counted, because this is where the app's time goes
+        // when it is not playing: the network calls, the extractor, the addon
+        // scripts and the browser page all live inside it.
+        PerfCounters.bump(PerfCounters.Counter.RESOLVE)
         val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
             .map { source ->
                 async {

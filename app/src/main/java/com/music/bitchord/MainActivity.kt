@@ -3896,7 +3896,16 @@ private fun BitChordApp(
                                 NerdStats.current.value,
                                 AppSettings.smartAnalysis.value,
                             )
-                            clipboard.setText(AnnotatedString(text))
+                            // The performance numbers go with it. A log of
+                            // what the app *did* says nothing about what it
+                            // *cost*, and the question a listener is usually
+                            // asking — which of these lines is eating the
+                            // battery — needs both. The report is a few
+                            // dozen lines, and it is the difference between a
+                            // log and an answer.
+                            val full = text + "\n" +
+                                com.music.bitchord.perf.PerfMonitor.report(context) + "\n"
+                            clipboard.setText(AnnotatedString(full))
                             // The line count, not just "copied": it is the
                             // one thing the system's own paste confirmation
                             // doesn't say, and an empty log is a real
@@ -3905,8 +3914,8 @@ private fun BitChordApp(
                                 context,
                                 context.resources.getQuantityString(
                                     R.plurals.log_copied_line_count,
-                                    text.lineSequence().count(),
-                                    text.lineSequence().count(),
+                                    full.lineSequence().count(),
+                                    full.lineSequence().count(),
                                 ),
                                 Toast.LENGTH_SHORT,
                             ).show()

@@ -33,6 +33,7 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.download.Downloads
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1039,6 +1040,61 @@ object AudioCache {
     private var pendingQueue: List<String> = emptyList()
 
     /**
+     * The source searches currently running, by track.
+     *
+     * One search per track at a time.
+     *
+     * The next track's preparation is deliberately not cancellable — a search
+     * already in flight is worth finishing. That makes it worth knowing
+     * whether one is already in flight: the queue changes several times a
+     * minute (a flow top-up, an Automix plan, a reorder), and each change
+     * used to start the patient search again for the same track. Five
+     * searches for one track in one minute, each asking every source and
+     * waiting for all of them, is where the addon traffic, the hundred-odd
+     * threads and the two hundred percent of CPU came from.
+     *
+     * A second caller for a track that is already being prepared waits for
+     * the answer instead of asking again.
+     */
+    private val preparations = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
+
+    /** The map's own lock; the map itself is concurrent, but a claim is two steps. */
+    private val preparationLock = Any()
+
+    /**
+     * Claims the search for [key], or joins the one already running.
+     *
+     * Returns the deferred that holds the answer and whether this caller owns
+     * the search: an owner does the work, a joiner waits for it.
+     */
+    private fun claimPreparation(key: String): Pair<CompletableDeferred<SourceStream?>, Boolean> = synchronized(preparationLock) {
+        val existing = preparations[key]
+        if (existing != null) {
+            return@synchronized existing to false
+        }
+        val deferred = CompletableDeferred<SourceStream?>()
+        preparations[key] = deferred
+        deferred to true
+    }
+
+    /** Finishes the search for [key] and hands its answer to everyone waiting. */
+    private fun completePreparation(key: String, deferred: CompletableDeferred<SourceStream?>, prepared: SourceStream?) {
+        synchronized(preparationLock) {
+            preparations.remove(key, deferred)
+        }
+        deferred.complete(prepared)
+    }
+
+    /**
+     * The identity of a preparation.
+     *
+     * The track, and the source it is being prepared *for*: the same track
+     * asked for on behalf of a substitute and on behalf of its own server are
+     * two different questions, and neither should wait for the other.
+     */
+    private fun preparationKey(mediaId: String, servedBy: String?): String = "$mediaId|${servedBy ?: ""}"
+
+    /**
      * The preparation of the next track when that track is a download.
      *
      * Separate from [job] because it is the opposite instruction: [job] gathers
@@ -1207,40 +1263,64 @@ object AudioCache {
                         // the byte pass below is the part that should stop when
                         // the queue moves.
                         withContext(kotlinx.coroutines.NonCancellable) {
-                            runCatching {
-                                // A Spotify catalogue row is the one case
-                                // where the patient search is the wrong
-                                // shape.
-                                //
-                                // The row has no playable id of its own: the
-                                // sources are asked for the recording by name,
-                                // and the listener is waiting for the *first*
-                                // answer rather than for the best one. The
-                                // patient pass waits for every source — up to
-                                // twenty seconds — while the player's own
-                                // open gives up after one and a half and
-                                // resolves the same question again, pinning
-                                // its own answer and throwing the preparation
-                                // away. Which is what the first tap on a radio
-                                // row paid: the wait, and then the search.
-                                if (next.startsWith(SPOTIFY_ROW_PREFIX)) {
-                                    SourceResolver.substituteForYouTube(target)
-                                } else {
-                                    SourceResolver.prepareForPlayback(target)
+                            // One search per track at a time — see
+                            // [preparations]. The search above is deliberately
+                            // not cancellable, so without this every queue
+                            // change left the old search running *and* started
+                            // another one: five searches for the same track in
+                            // one minute, each of them the patient kind that
+                            // asks every source and waits for all of them.
+                            // That is where the addon traffic, the threads and
+                            // the two hundred percent of CPU came from.
+                            val (deferred, owner) = claimPreparation(preparationKey(next, null))
+                            if (!owner) {
+                                // The same question is already being asked. Wait
+                                // for that answer rather than asking again.
+                                TrackLog.d(TAG, "preparation for $next is already running; waiting for it", about = next)
+                                deferred.await()?.also {
+                                    StreamChoice.remember(next, it, substituted = true)
+                                }
+                            } else {
+                                var prepared: SourceStream? = null
+                                try {
+                                    prepared = runCatching {
+                                        // A Spotify catalogue row is the one case
+                                        // where the patient search is the wrong
+                                        // shape.
+                                        //
+                                        // The row has no playable id of its own: the
+                                        // sources are asked for the recording by name,
+                                        // and the listener is waiting for the *first*
+                                        // answer rather than for the best one. The
+                                        // patient pass waits for every source — up to
+                                        // twenty seconds — while the player's own
+                                        // open gives up after one and a half and
+                                        // resolves the same question again, pinning
+                                        // its own answer and throwing the preparation
+                                        // away. Which is what the first tap on a radio
+                                        // row paid: the wait, and then the search.
+                                        if (next.startsWith(SPOTIFY_ROW_PREFIX)) {
+                                            SourceResolver.substituteForYouTube(target)
+                                        } else {
+                                            SourceResolver.prepareForPlayback(target)
+                                        }
+                                    }
+                                        .onFailure { error ->
+                                            // A cancellation here is this job being
+                                            // stopped, not the preparation failing.
+                                            if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                                            TrackLog.d(
+                                                TAG,
+                                                "next-track preparation failed for $next: ${error.message}",
+                                                about = next,
+                                            )
+                                        }
+                                        .getOrNull()
+                                    prepared?.also { StreamChoice.remember(next, it, substituted = true) }
+                                } finally {
+                                    completePreparation(preparationKey(next, null), deferred, prepared)
                                 }
                             }
-                                .onFailure { error ->
-                                    // A cancellation here is this job being
-                                    // stopped, not the preparation failing.
-                                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
-                                    TrackLog.d(
-                                        TAG,
-                                        "next-track preparation failed for $next: ${error.message}",
-                                        about = next,
-                                    )
-                                }
-                                .getOrNull()
-                                ?.also { StreamChoice.remember(next, it, substituted = true) }
                         }
                     } finally {
                         StreamChoice.endPreparing(next)
@@ -1411,15 +1491,31 @@ object AudioCache {
         // whatever rank the listener gave it.
         if (!SourceResolver.canServeLossless(serving)) return
         localJob = scope.launch {
-            runCatching { SourceResolver.prepareForPlayback(head.target, servedBy = serving) }
-                .onFailure { error ->
-                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
-                    TrackLog.d(
-                        TAG,
-                        "local next-track preparation failed for ${head.mediaId}: ${error.message}",
-                        about = head.mediaId,
-                    )
-                }
+            // The same guard as the read-ahead's own preparation: one search
+            // per track at a time, so a queue that keeps moving does not keep
+            // starting the same patient search again. See [preparations].
+            val key = preparationKey(head.mediaId, serving)
+            val (deferred, owner) = claimPreparation(key)
+            if (!owner) {
+                TrackLog.d(TAG, "local preparation for ${head.mediaId} is already running; waiting for it", about = head.mediaId)
+                deferred.await()
+                return@launch
+            }
+            var prepared: SourceStream? = null
+            try {
+                prepared = runCatching { SourceResolver.prepareForPlayback(head.target, servedBy = serving) }
+                    .onFailure { error ->
+                        if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                        TrackLog.d(
+                            TAG,
+                            "local next-track preparation failed for ${head.mediaId}: ${error.message}",
+                            about = head.mediaId,
+                        )
+                    }
+                    .getOrNull()
+            } finally {
+                completePreparation(key, deferred, prepared)
+            }
         }
     }
 

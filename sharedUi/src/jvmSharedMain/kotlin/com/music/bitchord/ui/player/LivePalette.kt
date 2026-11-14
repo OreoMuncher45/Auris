@@ -4,9 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -83,9 +85,19 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
  * colour starts a tween that the next one interrupts. With live blur on, a
  * frame a second had become thirty, so the tween never finished — which left
  * every text and glyph in the player invalidated and redrawn on every frame the
- * clip produced, for a colour nobody could see moving. [PALETTE_MIN_GAP_MS]
- * lets each colour land before the next is asked for; the picture behind it
- * still moves, because the backdrop's own reads are not on this clock.
+ * clip produced, for a colour nobody could see moving.
+ *
+ * The clock is therefore two numbers, not one. With live blur off the read is
+ * cheap and rare, and four hundred milliseconds is long enough for each colour
+ * to land before the next is asked for. With live blur on the picture is being
+ * read thirty times a second, and an ink that trails it by half a second is
+ * the lag the listener sees: the controls are tinted with a colour the clip
+ * left behind a moment ago. So the read comes at the picture's own rate, and
+ * what keeps the cost down is not the clock but the *publish*: a read that
+ * produces a colour nobody could see the difference of is not handed on at all
+ * (see [inkMoved]), so the ink still only moves when it has really moved, and
+ * every text wearing it is redrawn a handful of times a second rather than
+ * thirty.
  *
  * The answer is handed back as a [MutableState] rather than as a value, and
  * the frames arrive as a [Flow] rather than as a parameter, for the same
@@ -101,25 +113,72 @@ internal fun rememberLivePalette(
     source: LiveColorSource,
 ): MutableState<LivePalette?> {
     val live = remember(source) { mutableStateOf<LivePalette?>(null) }
-    LaunchedEffect(frames, source) {
+    // Live blur on: the ink follows the picture while it moves, which is what
+    // the old live blur did and what the switch now promises. Off: the ink is
+    // allowed to be a little behind, because the picture itself is only read
+    // once a second anyway and there is nothing to follow.
+    val liveBlur by PlayerSettings.liveBlur.collectAsStateWithLifecycle()
+    LaunchedEffect(frames, source, liveBlur) {
         var lastReadAt = 0L
+        val gapMs = if (liveBlur) PALETTE_MIN_GAP_LIVE_MS else PALETTE_MIN_GAP_MS
         frames.collect { current ->
             if (current == null) return@collect
             // The first frame is taken at once, so the ink belongs to the
             // picture from the player's first drawn frame rather than a fifth
             // of a second into it.
             val now = System.nanoTime()
-            if (lastReadAt != 0L && now - lastReadAt < PALETTE_MIN_GAP_MS * 1_000_000L) return@collect
+            if (lastReadAt != 0L && now - lastReadAt < gapMs * 1_000_000L) return@collect
             lastReadAt = now
-            live.value = withContext(Dispatchers.Default) {
+            val next = withContext(Dispatchers.Default) {
                 computeLivePalette(current, source)
             }
             com.music.bitchord.data.PerfCounters.bump(
                 com.music.bitchord.data.PerfCounters.Counter.INK_READ,
             )
+            // Published only when the ink has actually moved. Reading the
+            // picture thirty times a second is cheap; *changing* the ink
+            // thirty times a second is not — each change starts a tween, and
+            // every text and glyph wearing the ink is invalidated and redrawn
+            // for its whole duration. A moving picture's average colour
+            // drifts slowly, so most of those reads produce a colour nobody
+            // could see the difference of, and publishing them is work for
+            // nothing.
+            val previous = live.value
+            if (previous != null && !inkMoved(previous.palette, next.palette)) return@collect
+            live.value = next
         }
     }
     return live
+}
+
+/**
+ * Whether the ink has moved far enough to be worth a redraw.
+ *
+ * A difference of less than a percent of the range is under three levels of
+ * eight-bit colour: not a difference the eye picks out of a tint, and not one
+ * it would notice arriving a moment later either. The alphas are held to a
+ * tighter tolerance, because they are legibility rather than colour — a
+ * half-percent of opacity is the difference between a label that reads and
+ * one that does not.
+ */
+private fun inkMoved(previous: NowPlayingPalette, next: NowPlayingPalette): Boolean {
+    val a = previous.fg
+    val b = next.fg
+    if (
+        kotlin.math.abs(a.red - b.red) > INK_MOVE_EPSILON ||
+        kotlin.math.abs(a.green - b.green) > INK_MOVE_EPSILON ||
+        kotlin.math.abs(a.blue - b.blue) > INK_MOVE_EPSILON ||
+        kotlin.math.abs(a.alpha - b.alpha) > INK_MOVE_EPSILON
+    ) {
+        return true
+    }
+    val pa = previous.alphas
+    val na = next.alphas
+    return kotlin.math.abs(pa.primary - na.primary) > ALPHA_MOVE_EPSILON ||
+        kotlin.math.abs(pa.secondary - na.secondary) > ALPHA_MOVE_EPSILON ||
+        kotlin.math.abs(pa.tertiary - na.tertiary) > ALPHA_MOVE_EPSILON ||
+        kotlin.math.abs(pa.track - na.track) > ALPHA_MOVE_EPSILON ||
+        kotlin.math.abs(pa.buttonFill - na.buttonFill) > ALPHA_MOVE_EPSILON
 }
 
 /**
@@ -155,7 +214,7 @@ internal fun ImageBitmap.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
 private const val LIVE_SAMPLES = 1_024
 
 /**
- * How long between reads of a moving picture for the ink.
+ * How long between reads of a moving picture for the ink, with live blur off.
  *
  * Four hundred milliseconds, against the thirty frames a second the backdrop
  * may be reading at. The ink is a wash over the artwork, not the artwork: it
@@ -164,3 +223,21 @@ private const val LIVE_SAMPLES = 1_024
  * from costing every text on the screen a redraw per frame.
  */
 private const val PALETTE_MIN_GAP_MS = 400L
+
+/**
+ * The same read, with live blur on.
+ *
+ * The picture's own rate: a frame is read every thirty-three milliseconds, so
+ * the ink is read at the same rate and lands on the picture's colour rather
+ * than on the colour it had half a second ago. What stops this from costing
+ * the same as the old per-frame ink is not this clock but the publish — see
+ * [inkMoved] — so the texts and glyphs wearing the ink are still only redrawn
+ * when the tint has really changed.
+ */
+private const val PALETTE_MIN_GAP_LIVE_MS = 33L
+
+/** How far the ink has to move before it is published. See [inkMoved]. */
+private const val INK_MOVE_EPSILON = 0.01f
+
+/** How far an opacity has to move before it is published. See [inkMoved]. */
+private const val ALPHA_MOVE_EPSILON = 0.005f

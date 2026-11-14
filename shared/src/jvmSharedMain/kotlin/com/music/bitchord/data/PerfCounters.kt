@@ -32,8 +32,32 @@ object PerfCounters {
         /** A pass of the Automix analyser over a track's audio. */
         ANALYSER_PASS,
 
-        /** The playhead republished to the UI. */
-        POSITION_TICK,
+        /**
+         * A track's source worked out — which service it plays from, at what
+         * quality.
+         *
+         * The expensive half of the app's startup and of every skip: it is
+         * where the network calls, the extractor, the addon scripts and the
+         * browser page live, and none of that shows up in the counters above.
+         */
+        RESOLVE,
+
+        /**
+         * A track prepared for the Automix to play next.
+         *
+         * Each one is a resolution of its own and can hold a player, a decoder
+         * and an artwork bitmap, so the count is the honest measure of how
+         * much the app is keeping ready.
+         */
+        PREPARE,
+
+        /**
+         * A BotGuard page loaded for YouTube's tokens.
+         *
+         * A browser, inside the app's own process: tens of megabytes and a
+         * few dozen threads, alive for as long as it is held.
+         */
+        WEBVIEW,
     }
 
     private val counts = AtomicLongArray(Counter.entries.size)

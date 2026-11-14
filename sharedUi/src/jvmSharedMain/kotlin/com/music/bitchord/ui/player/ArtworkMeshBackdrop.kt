@@ -271,6 +271,9 @@ fun rememberArtworkMesh(
     // colour was the flicker.
     val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
     val cacheKey = imageUrl?.let(::meshKey)
+    // Live blur on: the wash follows the clip frame by frame. Off: it follows
+    // it at the slow rate the frames arrive at anyway.
+    val liveBlur by PlayerSettings.liveBlur.collectAsStateWithLifecycle()
     // Seeded from the cache so a cover that has been seen before is on colour
     // in its first frame, with nothing to fade in from — and from
     // [heldMesh] otherwise, carried over for the reason above.
@@ -321,8 +324,18 @@ fun rememberArtworkMesh(
         }
     }
 
-    LaunchedEffect(liveFrames, cacheKey) {
+    LaunchedEffect(liveFrames, cacheKey, liveBlur) {
         var lastReadAt = 0L
+        // Live blur on: every frame the clip produces is read, so the wash
+        // behind it moves with the picture rather than a tenth of a second
+        // behind it. That is what the old live blur did, and what the switch
+        // promises; the bill is a mesh read and a backdrop redraw per frame,
+        // which is the battery cost the switch exists to offer.
+        //
+        // Live blur off: the frames arrive once a second anyway, so this gate
+        // is not what limits the wash — it only stops a burst of frames from
+        // turning into a burst of full-screen redraws.
+        val gapMs = if (liveBlur) 0L else LIVE_READ_GAP_MS
         liveFrames?.collect { frame ->
             if (frame == null) return@collect
             // Reject frames that are too dark or uniform — they are almost always
@@ -341,7 +354,9 @@ fun rememberArtworkMesh(
             // not cancel a read that is already running, or a clip producing
             // frames faster than a read takes would never finish one.
             val now = System.nanoTime()
-            if (lastReadAt != 0L && now - lastReadAt < LIVE_READ_GAP_MS * 1_000_000L) return@collect
+            if (gapMs > 0L && lastReadAt != 0L && now - lastReadAt < gapMs * 1_000_000L) {
+                return@collect
+            }
             lastReadAt = now
             mesh = withContext(Dispatchers.Default) {
                 meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
@@ -686,12 +701,17 @@ private const val MESH_FADE_MS = 900
 /**
  * The fade for a mesh read off a moving picture.
  *
- * Well inside the gap between reads — see `LIVE_REFRESH_MS` in
- * `NowPlayingScreen` — because a fade that outlives its own input never
- * arrives: the backdrop would sit at a fraction of every colour for ever
- * instead of at the colour the picture is actually at.
+ * Two frames, so that a wash read every thirty-three milliseconds is a
+ * continuous blend of the last two frames rather than a series of jumps, and
+ * so that the wash is never more than a frame or two behind the picture it is
+ * a wash of.
+ *
+ * It used to be a hundred and eighty, which is longer than the gap between
+ * reads: every fade was cut off partway by the next read and restarted, so
+ * the backdrop sat at a fraction of every colour for ever — a wash trailing
+ * the clip by a fifth of a second, which read as the blur being slow.
  */
-private const val LIVE_MESH_FADE_MS = 180
+private const val LIVE_MESH_FADE_MS = 60
 
 /**
  * The most rows and columns of [source] that are actually looked at.

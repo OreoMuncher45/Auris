@@ -14,6 +14,7 @@ import android.graphics.Shader
 import android.graphics.SurfaceTexture
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
@@ -94,6 +95,29 @@ private const val DEFERRED_RELEASE_MS = 1_000L
 /** Where a pixel copy's result comes back on — see [captureLiveFrame]. */
 private val mainHandler = Handler(Looper.getMainLooper())
 
+/**
+ * The thread a clip's frame copies report back on.
+ *
+ * Its own thread, and not the app's main one.
+ *
+ * A copy is a read of the clip's frame off the GPU: it finishes when the GPU
+ * finishes with it. It used to be told to report back to the main thread,
+ * where it waited behind whatever the main thread was doing — and on a busy
+ * phone the main thread is busy. The live blur's frames then arrived at the
+ * rate the main thread got round to them: two a second, sometimes none, and
+ * the wash behind an animated cover trailed it by seconds.
+ *
+ * The copy now reports to a thread of its own, so it finishes when the copy
+ * finishes. One thread, alive only while a clip is on screen.
+ */
+private class FrameCopyThread {
+    private val thread = HandlerThread("AurisFrameCopy").apply { start() }
+    val handler = Handler(thread.looper)
+
+    fun stop() {
+        thread.quitSafely()
+    }
+}
 /**
  * What a clip's player needs to leave the screen without blocking it.
  *
@@ -367,6 +391,12 @@ internal fun AndroidCanvasArtworkPlayer(
     }
 
     val reportRendered by rememberUpdatedState(onRenderedChanged)
+    // The thread the frame copies report back on — see [FrameCopyThread]. It
+    // exists only while a clip is on screen.
+    val copyThread = remember { FrameCopyThread() }
+    DisposableEffect(copyThread) {
+        onDispose { copyThread.stop() }
+    }
     LaunchedEffect(rendered) {
         reportRendered(rendered)
         if (!rendered) return@LaunchedEffect
@@ -385,6 +415,7 @@ internal fun AndroidCanvasArtworkPlayer(
             clipAspect,
             contentMode,
             alignPortraitTop,
+            copyThread.handler,
         )
         if (bitmap != null) {
             Log.d(TAG, "frame captured after rendered=true, size=${bitmap.width}x${bitmap.height}")
@@ -420,7 +451,16 @@ internal fun AndroidCanvasArtworkPlayer(
         // frame off the GPU would only stall it.
         if (!rendered || !foreground || !isPlaying || pausedForTransition) return@LaunchedEffect
         while (isActive) {
-            val view = textureView ?: continue
+            val view = textureView
+            if (view == null) {
+                // The view is not there — the clip has not been laid out, or
+                // its surface has gone. This used to be a bare `continue`, and
+                // a loop with no delay in it is a loop that spins: a whole
+                // core, burning, with no frame read and nothing on screen to
+                // show for it. It waits instead.
+                delay(100)
+                continue
+            }
             val started = SystemClock.elapsedRealtime()
             val bitmap = view.captureLiveFrame(
                 frameCapturePx,
@@ -428,6 +468,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 clipAspect,
                 contentMode,
                 alignPortraitTop,
+                copyThread.handler,
             )
             val cost = SystemClock.elapsedRealtime() - started
             if (bitmap != null) {
@@ -706,6 +747,7 @@ private suspend fun TextureView.captureLiveFrame(
     clipAspect: Float,
     contentMode: CanvasContentMode,
     alignPortraitTop: Boolean,
+    copyHandler: Handler,
 ): Bitmap? {
     val texture = surfaceTexture
     val size = video
@@ -735,7 +777,10 @@ private suspend fun TextureView.captureLiveFrame(
                     // the copy may still be reading from it.
                     if (continuation.isActive) continuation.resume(copied)
                 },
-                mainHandler,
+                // The copy's own thread, not the main one: the copy finishes
+                // when the GPU finishes with it, and the main thread's
+                // backlog is not part of that. See [FrameCopyThread].
+                copyHandler,
             )
         }
     }.getOrDefault(PixelCopy.ERROR_UNKNOWN)

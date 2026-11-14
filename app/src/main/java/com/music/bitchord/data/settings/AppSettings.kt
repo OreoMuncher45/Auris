@@ -767,13 +767,15 @@ object AppSettings {
     /**
      * Re-read a playing cover's frame often enough to follow it.
      *
-     * Off by default: the read is a copy of the clip's texture off the GPU,
-     * and thirty of those a second is a real cost on every frame the artwork
-     * plays, for a wash that only a moving cover makes visible. On, the
-     * backdrop and the mesh follow the picture; off, they still follow it,
-     * once a second.
+     * On by default, because that is how the player has always behaved: the
+     * wash behind an animated cover moves with the cover, and a listener who
+     * has seen it move does not want it to step. The read is a copy of the
+     * clip's texture off the GPU, and thirty of those a second is a real cost
+     * on every frame the artwork plays — so this is the switch for the
+     * listener who wants the cover followed and the battery kept. Off, the
+     * backdrop and the ink still follow it, once a second.
      */
-    val liveBlur = MutableStateFlow(false)
+    val liveBlur = MutableStateFlow(true)
     /**
      * Sample this process's CPU and the player's per-frame counters, and keep
      * a log that can be written out. Off by default and off in every sense:
@@ -1657,7 +1659,7 @@ object AppSettings {
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
         glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
-        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, false)
+        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, true)
         perfMonitor.value = prefs.getBoolean(KEY_PERF_MONITOR, false)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
