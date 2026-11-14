@@ -14,24 +14,41 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.41"
+        default: "3.0.42"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "148"
+        default: "149"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.41-draft"
+        default: "v3.0.42-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.41 — private preview"
+        default: "Auris 3.0.42 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.41 — private preview
+          Auris 3.0.42 — private preview
+
+          Now Playing restyle
+          - Chevron at the top left replaces the pill handle, and the "playing
+            from / played by" line sits above it as a two-line caption.
+          - Title 22sp Bold; artist 17sp Normal at 0.82 × secondary opacity.
+          - The star and the "…" menu are bare marks with no disc behind them.
+          - Cleaner SVG vectors: lyrics bubble, AirPlay arcs, plain queue, and
+            the queue with a repeat / shuffle / autoplay badge (one badge at a
+            time, repeat wins).
+          - Volume bar compacted (17dp speakers, 4/6dp bar).
+          - AirPlay turns #32D74B green only while a route is connected.
+          - Transport default smoothness 0.55 → 0.28; timestamps 13sp Medium
+            at 0.8 × secondary; fixed 32dp transport gaps.
+          - Live blur restored behind animated album art: the frame flow was
+            rebuilt on every composition and cancelled the blur each time.
+
+          Installs over 3.0.41: same package, same signing key.
 
           Podcasts stop stuttering
           - The analysis round wrote into the cache entry the player was streaming from. The entry was then discarded and fetched again, and the stream was cut in the middle of the episode. A plain stream now has an entry of its own for the analysis, so the player and the analyser never write the same bytes.
