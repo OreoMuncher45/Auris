@@ -112,6 +112,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -727,7 +728,8 @@ private fun BitChordApp(
     val context = LocalContext.current
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
-    val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
+    val podcastsEnabledState = AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
+    val podcastsEnabled by podcastsEnabledState
     val nav = rememberSaveable(saver = RootNav.Saver) { RootNav() }
     /**
      * Whether the player's sheet is up. The player is always a full-screen
@@ -780,7 +782,8 @@ private fun BitChordApp(
         }
     }
     val sheets = remember { RootSheets() }
-    var audiobookQuery by rememberSaveable { mutableStateOf("") }
+    val audiobookQueryState = rememberSaveable { mutableStateOf("") }
+    var audiobookQuery by audiobookQueryState
 
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
@@ -838,7 +841,8 @@ private fun BitChordApp(
             }
         }
     }
-    val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
+    val flowStatusState = viewModel.flowStatus.collectAsStateWithLifecycle()
+    val flowStatus by flowStatusState
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
     val playerAccentColor by AppSettings.playerAccentColor.collectAsStateWithLifecycle()
     val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
@@ -848,8 +852,10 @@ private fun BitChordApp(
     val playerLyricsColor by AppSettings.playerLyricsColor.collectAsStateWithLifecycle()
     val playerLyricsButtonsColor by AppSettings.playerLyricsButtonsColor.collectAsStateWithLifecycle()
     val playerLyricsSourceColor by AppSettings.playerLyricsSourceColor.collectAsStateWithLifecycle()
-    val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
-    val flowQueueState by viewModel.flowQueue.collectAsStateWithLifecycle()
+    val libraryReplayVisibleState = AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
+    val libraryReplayVisible by libraryReplayVisibleState
+    val flowQueueStateState = viewModel.flowQueue.collectAsStateWithLifecycle()
+    val flowQueueState by flowQueueStateState
     val flowSaveNotice by viewModel.flowSaveNotice.collectAsStateWithLifecycle()
     // Home Flow entry: synthetic shelf on top once unlocked (homeWithFlow is
     // derived below, once history/library state exist to borrow artwork
@@ -900,15 +906,20 @@ private fun BitChordApp(
             viewModel.consumeFlowSaveNotice()
         }
     }
-    val query by viewModel.query.collectAsStateWithLifecycle()
-    val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
+    val queryState = viewModel.query.collectAsStateWithLifecycle()
+    val query by queryState
+    val itunesEpisodesState = viewModel.itunesEpisodes.collectAsStateWithLifecycle()
+    val itunesEpisodes by itunesEpisodesState
     // The podcast feed is fetched once, the first time its tab is opened.
     LaunchedEffect(nav.selectedTab) {
         if (nav.selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
     }
-    val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
-    val filter by viewModel.filter.collectAsStateWithLifecycle()
-    val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
+    val selectedMoodGenreState = viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
+    val selectedMoodGenre by selectedMoodGenreState
+    val filterState = viewModel.filter.collectAsStateWithLifecycle()
+    val filter by filterState
+    val searchSourceState = viewModel.searchSource.collectAsStateWithLifecycle()
+    val searchSource by searchSourceState
     LaunchedEffect(nav.selectedTab) {
         if (nav.selectedTab == TAB_RADIO || nav.showGenres) viewModel.ensureExploreLoaded()
         if (nav.selectedTab == TAB_SEARCH) {
@@ -918,10 +929,13 @@ private fun BitChordApp(
             searchKeyboardActive = false
         }
     }
-    val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
+    val signedInState = viewModel.signedIn.collectAsStateWithLifecycle()
+    val signedIn by signedInState
     val incomingJamInvite by JamInviteLink.pending.collectAsStateWithLifecycle()
-    var activeJamInviteCode by rememberSaveable { mutableStateOf<String?>(null) }
-    var activeJamInviteServer by rememberSaveable { mutableStateOf<String?>(null) }
+    val activeJamInviteCodeState = rememberSaveable { mutableStateOf<String?>(null) }
+    var activeJamInviteCode by activeJamInviteCodeState
+    val activeJamInviteServerState = rememberSaveable { mutableStateOf<String?>(null) }
+    var activeJamInviteServer by activeJamInviteServerState
 
     // An invite is navigation and an action: reveal the Jam settings page now,
     // then let that page join once an account is available. Keeping the code
@@ -954,12 +968,14 @@ private fun BitChordApp(
             nav.showListenTogether = true
         }
     }
-    val account by viewModel.account.collectAsStateWithLifecycle()
+    val accountState = viewModel.account.collectAsStateWithLifecycle()
+    val account by accountState
     // The Flow card wears the mix's own first cover: it is literally what
     // is playing, not a borrowed album, and a blank captioned tile is what
     // reads as broken. Empty queue, empty art, same tile as before.
     val flowArt = (flowQueueState as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
-    val offlineActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+    val offlineActiveState = AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+    val offlineActive by offlineActiveState
     val offlinePicksTitle = stringResource(R.string.shelf_quick_picks)
     val flowTile: ShelfItem? = if (flowStatus.unlocked && homeFlowVisible) {
         ShelfItem(
@@ -972,7 +988,7 @@ private fun BitChordApp(
     } else {
         null
     }
-    val homeWithFlow by remember(homeState, flowTile, offlineActive, offlinePicksTitle) {
+    val homeWithFlowState = remember(homeState, flowTile, offlineActive, offlinePicksTitle) {
         derivedStateOf {
             // Offline: the home is what is on disk. The feed needs a connection
             // that is not there, so the shelf that matters is the downloads —
@@ -1008,6 +1024,7 @@ private fun BitChordApp(
             UiState.Success(base)
         }
     }
+    val homeWithFlow by homeWithFlowState
     // Radio's seed row: what was played recently, so a station can be started
     // from something the listener already chose rather than a cold suggestion.
     val radioSeeds: List<ShelfItem> = remember(homeState) {
@@ -1029,9 +1046,11 @@ private fun BitChordApp(
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
-    val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
+    val detailStackState = viewModel.detailStack.collectAsStateWithLifecycle()
+    val detailStack by detailStackState
     val detail = detailStack.lastOrNull()
-    val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
+    val likeStatusesState = viewModel.likeStatuses.collectAsStateWithLifecycle()
+    val likeStatuses by likeStatusesState
 
     // Settings has no tab of its own — it sits on top of whatever tab was
     // selected. A pushed album/artist page (from the player, search, etc.)
@@ -1053,12 +1072,14 @@ private fun BitChordApp(
     val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
-    val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+    val webdavUrlState = AppSettings.webdavUrl.collectAsStateWithLifecycle()
+    val webdavUrl by webdavUrlState
     val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
     // does when a file is.
-    val savedCollections by Downloads.collections.collectAsStateWithLifecycle()
+    val savedCollectionsState = Downloads.collections.collectAsStateWithLifecycle()
+    val savedCollections by savedCollectionsState
     // The playlists and albums among them, for the Library page's On Device
     // shelf. Read off both records: the collection record is what says a
     // release was downloaded whole, and what is on disk is what says it still
@@ -3146,12 +3167,15 @@ private fun BitChordApp(
         // and the page is a sibling of the bar rather than a child.
         val navBarScroll = rememberFloatingTabBarScrollConnection()
         // Home's "Sign in to YouTube" banner, once the user has dismissed it.
-        var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
+        val signInBannerDismissedState = rememberSaveable { mutableStateOf(false) }
+        var signInBannerDismissed by signInBannerDismissedState
         // Podcast show page: newest-first vs oldest-first episode sort.
-        var podcastSortNewest by rememberSaveable { mutableStateOf(true) }
+        val podcastSortNewestState = rememberSaveable { mutableStateOf(true) }
+        var podcastSortNewest by podcastSortNewestState
         // Set each time the search tab is tapped, which SearchScreen uses as a
         // signal to focus the input field.
-        var searchFocusRequested by remember { mutableStateOf(false) }
+        val searchFocusRequestedState = remember { mutableStateOf(false) }
+        var searchFocusRequested by searchFocusRequestedState
         val searchFieldFocus = remember { FocusRequester() }
         val flowListState = rememberLazyListState()
         val exploreListState = rememberLazyListState()
@@ -3171,7 +3195,8 @@ private fun BitChordApp(
         // playlist is opened over it, and `rememberSaveable` does not outlive
         // that: coming back from a playlist found the page on Playlists again,
         // whatever segment it had been left on.
-        var librarySegment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
+        val librarySegmentState = rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
+        var librarySegment by librarySegmentState
         // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
         // now-playing-and-tabs component is a layout, not an effect, and dropping
         // back to the two stacked bars would be answering a question about material
@@ -3185,41 +3210,8 @@ private fun BitChordApp(
         // next page.
         val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
         val partyServerStatus by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
-        val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
-        val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
-        // What the home page says above its shelves: a greeting, a row of chips
-        // and the quick-access grid. One feed has none of them, and the page
-        // does not ask for what it cannot use.
-        val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
-        val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
-        val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
-        val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
-        val flowSaved by viewModel.flowSaved.collectAsStateWithLifecycle()
-        val flowMood by com.music.bitchord.data.flow.FlowStore.mood.collectAsStateWithLifecycle()
-        val flowTuner by com.music.bitchord.data.flow.FlowStore.tuner.collectAsStateWithLifecycle()
-        val flowBanned by com.music.bitchord.data.flow.FlowStore.bannedIds.collectAsStateWithLifecycle()
-        val results by viewModel.results.collectAsStateWithLifecycle()
-        val exploreState by viewModel.explore.collectAsStateWithLifecycle()
-        val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
-        val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
-        val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
-        val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
-        val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
-        val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
-        val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
-        val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
-        val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
-        val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
-        val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
-        val libraryState by viewModel.library.collectAsStateWithLifecycle()
-        val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
-        val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
-        val historyState by viewModel.history.collectAsStateWithLifecycle()
-        val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
-        val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
-        val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
-        val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
-        val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
+        val audiobooksState = viewModel.audiobooks.collectAsStateWithLifecycle()
+        val audiobooks by audiobooksState
         // Not keyed on the browse id and not remembered here: each page's choice
         // lives in AppSettings keyed by that page — Spotify-style, one playlist's
         // order never imposes itself on another, and every page keeps its own
@@ -3230,7 +3222,8 @@ private fun BitChordApp(
         val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
         val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
         val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
-        val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+        val refreshingState = viewModel.refreshing.collectAsStateWithLifecycle()
+        val refreshing by refreshingState
 
         val clipboard = LocalClipboardManager.current
 
@@ -3267,9 +3260,7 @@ private fun BitChordApp(
             null -> null
         }
 
-        val historyLabel = stringResource(R.string.history)
 
-        val replayLabel = stringResource(R.string.replay)
 
         val tabs = visibleTabDefs.map { it.second }
 
@@ -3296,7 +3287,7 @@ private fun BitChordApp(
             enabled = detail != null && !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether &&
                 !nav.showEqualizer && !nav.showReplay,
         ) { viewModel.closeDetail() }
-        BackHandler(enabled = selectedMoodGenre != null && detail == null && !nav.showSettings && !nav.showReplay) {
+        BackHandler(enabled = selectedMoodGenreState.value != null && detail == null && !nav.showSettings && !nav.showReplay) {
             viewModel.closeMoodGenre()
         }
         BackHandler(enabled = sheets.showDiscord) {
@@ -3337,7 +3328,7 @@ private fun BitChordApp(
             nav.itunesPodcastId = null
         }
         BackHandler(enabled = nav.showGenres) {
-            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else nav.showGenres = false
+            if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
         BackHandler(enabled = nav.showSettings && !sheets.showSpotify && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay) {
             // Back closes the open category first, then Settings; it does not
@@ -3354,7 +3345,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !nav.showSettings && !nav.showAccountScrobbling && !sheets.showSpotify &&
-                !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay && selectedMoodGenre == null &&
+                !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay && selectedMoodGenreState.value == null &&
                 !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showGenres &&
                 !nav.showAudiobooks && sheets.openAudiobook == null && nav.itunesPodcastId == null &&
                 nav.selectedTab != TAB_HOME,
@@ -3522,8 +3513,8 @@ private fun BitChordApp(
             SongActionsSheet(
                 song = song,
                 presentation = presentation,
-                signedIn = signedIn,
-                likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
+                signedIn = signedInState.value,
+                likeStatus = likeStatusesState.value[song.videoId] ?: LikeStatus.INDIFFERENT,
                 onPlayNext = { playNext(song); sheets.songMenu.song = null },
                 onAddToQueue = { addToQueue(song); sheets.songMenu.song = null },
                 onStartRadio = { startRadio(song); sheets.songMenu.song = null },
@@ -3535,7 +3526,7 @@ private fun BitChordApp(
                 // server. Closed first, unlike a download — progress and
                 // the summary notice live outside the sheet.
                 onUploadToWebDav =
-                    if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                    if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrlState.value) &&
                         com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
                     ) {
                         {
@@ -3855,6 +3846,28 @@ private fun BitChordApp(
             )
         } else {
 
+        // The pages' scroll and pull-to-refresh states, remembered out here
+        // rather than in a page: a page slot leaves composition when its page
+        // does, and these outlive every visit — see [PageScrollStates].
+        val pageScroll = PageScrollStates(
+            home = homeListState,
+            explore = exploreListState,
+            moodGenre = moodGenreListState,
+            radio = radioListState,
+            podcast = podcastListState,
+            library = libraryListState,
+            search = searchListState,
+            quickPicks = quickPicksListState,
+            continueListening = continueListeningListState,
+            history = historyListState,
+            flow = flowListState,
+            replay = replayListState,
+            libraryShowAll = libraryShowAllGridState,
+            homePull = homePull,
+            explorePull = explorePull,
+            podcastPull = podcastPull,
+            libraryPull = libraryPull,
+        )
         // What the pages can do — see [PageActions].
         val pageActions = PageActions(
             playFrom = playFrom,
@@ -3878,6 +3891,61 @@ private fun BitChordApp(
             showQueueNotice = showQueueNotice,
             onSearchSourceChange = onSearchSourceChange,
             setReplayPeriod = setReplayPeriod,
+        )
+        // Everything the page needs, as one value — see [PageInputs].
+        val pageInputs = PageInputs(
+            scroll = pageScroll,
+            viewModel = viewModel,
+            scope = scope,
+            player = player,
+            nav = nav,
+            sheets = sheets,
+            podcastUi = podcastUi,
+            replay = replay,
+            pageActions = pageActions,
+            detailListStates = detailListStates,
+            downloadedReleases = downloadedReleases,
+            flowTile = flowTile,
+            folderItems = folderItems,
+            homeFlowLeading = homeFlowLeading,
+            listPadding = listPadding,
+            localPlaylistItems = localPlaylistItems,
+            quickPicksSongs = quickPicksSongs,
+            radioSeeds = radioSeeds,
+            replayCards = replayCards,
+            songSort = songSort,
+            windowWidth = windowWidth,
+            quickPicksLabel = quickPicksLabel,
+            searchLabel = searchLabel,
+            accountState = accountState,
+            audiobooksState = audiobooksState,
+            detailStackState = detailStackState,
+            filterState = filterState,
+            flowQueueStateState = flowQueueStateState,
+            flowStatusState = flowStatusState,
+            itunesEpisodesState = itunesEpisodesState,
+            libraryReplayVisibleState = libraryReplayVisibleState,
+            likeStatusesState = likeStatusesState,
+            offlineActiveState = offlineActiveState,
+            podcastsEnabledState = podcastsEnabledState,
+            queryState = queryState,
+            refreshingState = refreshingState,
+            savedCollectionsState = savedCollectionsState,
+            searchSourceState = searchSourceState,
+            selectedMoodGenreState = selectedMoodGenreState,
+            signedInState = signedInState,
+            webdavUrlState = webdavUrlState,
+            homeWithFlowState = homeWithFlowState,
+            activeJamInviteCodeState = activeJamInviteCodeState,
+            activeJamInviteServerState = activeJamInviteServerState,
+            audiobookQueryState = audiobookQueryState,
+            librarySegmentState = librarySegmentState,
+            podcastSortNewestState = podcastSortNewestState,
+            searchFocusRequestedState = searchFocusRequestedState,
+            signInBannerDismissedState = signInBannerDismissedState,
+            openByName = ::openByName,
+            smartDownloadPodcast = ::smartDownloadPodcast,
+            uploadToWebDav = ::uploadToWebDav,
         )
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
@@ -4048,1086 +4116,7 @@ private fun BitChordApp(
                         ),
                     label = "content",
                 ) { key ->
-                    // Every branch below reads `key` rather than the state that
-                    // produced it. The two are the same thing only for the page
-                    // being entered: the one on its way out is still composed,
-                    // and asking it what is selected *now* has it redraw itself
-                    // as its own replacement — which then fades out from under
-                    // the identical copy fading in behind it.
-                    val live = detailStack.lastOrNull()?.takeIf {
-                        it.browseId == key && key != "settings" && key != "account_scrobbling" &&
-                            key != "discord" && key != "replay" && key != "history" && key != "flow" &&
-                            key != "library_show_all"
-                    }
-                        // The travelling sleeve, over the page and under the bars: a
-                        // card's cover crossing the window into the page it opened.
-                        ArtworkFlightLayer()
-                    // Held for the same reason, one step further on: a popped
-                    // page is off the stack before it has finished animating
-                    // out, so `live` goes null under it and it would spend its
-                    // exit drawing whatever is underneath instead of itself.
-                    // Per slot, since each is remembered against its own key.
-                    val held = remember(key) { mutableStateOf(live) }
-                    if (live != null) held.value = live
-                    val page = held.value
-                    // This state belongs to this AnimatedContent slot, not to
-                    // whichever detail happens to be at the top of the stack
-                    // while the slot is fading out.
-                    val pageDetailListState = remember(key) {
-                        detailListStates.getOrPut(key) { LazyListState() }
-                    }
-                    if (key == "history") {
-                        HistoryScreen(
-                            state = historyState,
-                            listState = historyListState,
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            onSongClick = { songs, index ->
-                                pageActions.playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
-                            },
-                            onSongLongPress = pageActions.openSongMenu,
-                            onSongSwipe = pageActions.onSongSwipe,
-                            onRetry = viewModel::loadHistory,
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "flow") {
-                        com.music.bitchord.ui.screens.FlowScreen(
-                            tracksState = flowQueueState,
-                            mood = flowMood,
-                            tuner = flowTuner,
-                            status = flowStatus,
-                            bannedIds = flowBanned,
-                            isSaved = flowSaved,
-                            isGrowing = !flowSaved,
-                            rebuilding = flowLoading,
-                            listState = flowListState,
-                            onPlay = { pageActions.startFlow(false) },
-                            onShuffle = { pageActions.startFlow(true) },
-                            onNewMix = { viewModel.newFlowMix() },
-                            onToggleLike = {
-                                player.song?.let { viewModel.toggleLike(it) }
-                            },
-                            currentLiked = player.song?.let {
-                                likeStatuses[it.videoId] == LikeStatus.LIKE
-                            } == true,
-                            onSave = {
-                                sheets.flowSaveName = if (flowMood == com.music.bitchord.data.flow.FlowMood.FLOW) {
-                                    "My Flow"
-                                } else {
-                                    "Flow · ${flowMood.label}"
-                                }
-                                sheets.showFlowSave = true
-                            },
-                            onApply = { mood, discovery, memory, excluded, similarLiked ->
-                                viewModel.applyFlowConfig(mood, discovery, memory, excluded, similarLiked)
-                            },
-                            onUnban = { viewModel.unbanFromFlow(it) },
-                            onBan = { song ->
-                                viewModel.banFromFlow(song.videoId)
-                                viewModel.refreshFlow()
-                            },
-                            onSongClick = { songs, index ->
-                                // Skipped-over Flow tracks train the mix.
-                                val cur = player.song
-                                if (cur != null && songs.any { it.videoId == cur.videoId }) {
-                                    val curIdx = songs.indexOfFirst { it.videoId == cur.videoId }
-                                    if (curIdx in 0 until index) {
-                                        viewModel.recordFlowSkip(
-                                            cur.videoId,
-                                            player.position.positionMs,
-                                            player.durationMs,
-                                        )
-                                    }
-                                }
-                                pageActions.playFrom(songs, index, QueueSource("Flow", PlaybackSourceType.EXPLORE))
-                                if (index >= songs.size - 5) viewModel.growFlow()
-                            },
-                            onSongLongPress = pageActions.openSongMenu,
-                            onRetry = { viewModel.refreshFlow() },
-                            contentPadding = listPadding,
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                        )
-                    } else if (key == "quick_picks") {
-                        QuickPicksScreen(
-                            songs = quickPicksSongs,
-                            offline = offlineActive,
-                            onPlay = { song ->
-                                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
-                                if (offlineActive && pageActions.isOnDevice(song.videoId)) {
-                                    pageActions.playOfflineLibrary(song, source)
-                                } else {
-                                    pageActions.playRadio(song, source)
-                                }
-                            },
-                            onPlayAll = { pageActions.playQuickPicks(false) },
-                            onShuffle = { pageActions.playQuickPicks(true) },
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            onItemLongPress = { song -> pageActions.openSongMenu(song) },
-                            listState = quickPicksListState,
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "continue_listening") {
-                        ContinueListeningScreen(
-                            episodes = continueListeningEpisodes,
-                            query = podcastUi.continueQuery,
-                            onQueryChange = { podcastUi.continueQuery = it },
-                            onPlay = { episode ->
-                                pageActions.playWithResume(listOf(episode), 0)
-                            },
-                            onRemove = { episode ->
-                                viewModel.removeRecentEpisode(episode.videoId)
-                                Toast.makeText(
-                                    context,
-                                    R.string.continue_listening_removed,
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            },
-                            onMore = { episode -> podcastUi.episodeMenu = episode },
-                            listState = continueListeningListState,
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "library_show_all") {
-                        sheets.libraryShowAll?.let { shelf ->
-                            LibraryGridPage(
-                                shelf = shelf,
-                                gridState = libraryShowAllGridState,
-                                onItemClick = pageActions.onLibraryItemClick,
-                                onItemLongPress = pageActions.onBrowseLongPress,
-                                // Only the Playlists shelf can grow one — see
-                                // [PlaylistShelf].
-                                onNewPlaylist = if (shelf.title == YtMusicRepository.PLAYLISTS_SHELF) {
-                                    { sheets.creatingPlaylist = true }
-                                } else {
-                                    null
-                                },
-                                contentPadding = listPadding,
-                            )
-                        }
-                    } else if (key == "replay") {
-                        ReplayScreen(
-                            state = replay,
-                            holder = account?.name.orEmpty(),
-                            onPeriodChange = pageActions.setReplayPeriod,
-                            onOpenStory = { nav.replayStory = it },
-                            // A track tapped on a chart is one the user already
-                            // knows they like, so it starts a station off itself
-                            // rather than queueing the chart it was on — the
-                            // same reading [playRadio] makes of a search hit.
-                            onPlaySong = { song ->
-                                pageActions.playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
-                            },
-                            onOpenArtist = { id, name ->
-                                nav.showReplay = false
-                                openByName(id, name, null, BrowseType.ARTIST)
-                            },
-                            onOpenAlbum = { id, title, artist, art ->
-                                nav.showReplay = false
-                                openByName(id, title, artist, BrowseType.ALBUM, art)
-                            },
-                            onShare = {
-                                nav.replaySharePage = null
-                                nav.showReplayShare = true
-                            },
-                            contentPadding = listPadding,
-                            listState = replayListState,
-                            landingPage = nav.replayLandingPage,
-                        )
-                    } else if (key == "spotify") {
-                        SpotifyLibraryScreen(
-                            onOpenLogin = { sheets.showSpotifyLogin = true },
-                            onOpenTokenSetup = { sheets.showSpotifyCanvasAuth = true },
-                            onOpenPlaylist = { playlist ->
-                                viewModel.openDetail(
-                                    browseId = SPOTIFY_PAGE_PREFIX + playlist.id,
-                                    title = playlist.name,
-                                    subtitle = playlist.owner ?: context.getString(R.string.spotify),
-                                    thumbnailUrl = playlist.imageUrl,
-                                    type = BrowseType.PLAYLIST,
-                                )
-                            },
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "discord") {
-                        DiscordScreen(
-                            song = player.song,
-                            positionMs = player.position.positionMs,
-                            durationMs = player.durationMs,
-                            onOpenLogin = { sheets.showDiscordLogin = true },
-                            onOpenDialog = { sheets.discordDialog = it },
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "account_scrobbling") {
-                        AccountAndScrobblingScreen(
-                            signedIn = signedIn,
-                            account = account,
-                            channelName = selectedChannelName,
-                            onSignIn = {
-                                nav.showAccountScrobbling = false
-                                nav.showSettings = false
-                                sheets.webSession = WebSessionMode.SIGN_IN
-                            },
-                            onSwitchChannel = {
-                                viewModel.loadChannels()
-                                sheets.showAccountSelector = true
-                            },
-                            onSignOut = { viewModel.signOut() },
-                            onOpenListenBrainzLogin = { sheets.showListenBrainzLogin = true },
-                            onOpenLastfmLogin = { sheets.showLastfmLogin = true },
-                            onOpenDiscord = { sheets.showDiscord = true },
-                            onOpenSpotify = { sheets.showSpotify = true },
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "sources") {
-                        SourcesScreen(
-                            contentPadding = listPadding,
-                            onEditSource = { sheets.editingSource = it },
-                            onEditWebDav = { sheets.showWebDavEditor = true },
-                            onEditSmb = { sheets.showSmbEditor = true },
-                            onConfirmJioSaavn = { sheets.confirmJioSaavn = true },
-                            onInstallExtension = { sheets.installingExtension = true },
-                            onEditExtension = { id ->
-                                sheets.editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
-                            },
-                            // A tap is the extension's door, and which door
-                            // depends on the extension: one that signs its
-                            // requests gets its verification page, and one
-                            // that does not has nothing to verify — so a tap
-                            // opens its settings, which is the only thing it
-                            // has to show. Hold always opens the settings.
-                            onVerifyExtension = { id ->
-                                val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
-                                if (installed != null && SflxCatalog.host?.sessionStatus(id) != null) {
-                                    scope.launch {
-                                        val url = withContext(Dispatchers.IO) {
-                                            SflxCatalog.beginVerification(id)
-                                        }
-                                        if (url == null && sheets.editingExtension == null) {
-                                            // Nothing to open: the gateway
-                                            // already knows this install, or it
-                                            // refused. The settings sheet says
-                                            // which, and holds Verify.
-                                            sheets.editingExtension = installed
-                                        }
-                                    }
-                                } else {
-                                    sheets.editingExtension = installed
-                                }
-                            },
-                        )
-                    } else if (key == "listen_together") {
-                        ListenTogetherScreen(
-                            signedIn = signedIn,
-                            inviteCode = activeJamInviteCode,
-                            inviteServer = activeJamInviteServer,
-                            onInviteHandled = {
-                                activeJamInviteCode = null
-                                activeJamInviteServer = null
-                            },
-                            onSignIn = {
-                                nav.showListenTogether = false
-                                nav.showSettings = false
-                                sheets.webSession = WebSessionMode.SIGN_IN
-                            },
-                            contentPadding = listPadding,
-                            onEditServer = { sheets.editingPartyServer = true },
-                        )
-                    } else if (key == "equalizer") {
-                        EqualizerScreen(contentPadding = listPadding)
-                    } else if (key == "genres") {
-                        selectedMoodGenre?.let { category ->
-                            MoodGenrePlaylistsScreen(
-                                title = category.title,
-                                state = moodGenreShelves,
-                                listState = moodGenreListState,
-                                onItemClick = { item ->
-                                    item.videoId?.let { videoId ->
-                                        pageActions.playRadio(
-                                            Song(
-                                                videoId = videoId,
-                                                title = item.title,
-                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                                thumbnailUrl = item.thumbnailUrl,
-                                            ),
-                                            QueueSource(
-                                                category.title,
-                                                PlaybackSourceType.EXPLORE,
-                                                category.browseId,
-                                            ),
-                                        )
-                                    } ?: item.browseId?.let { browseId ->
-                                        viewModel.openDetail(
-                                            browseId = browseId,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        )
-                                    }
-                                },
-                                onRetry = { viewModel.openMoodGenre(category) },
-                                contentPadding = listPadding,
-                            )
-                        } ?: ExploreScreen(
-                            state = exploreState,
-                            listState = exploreListState,
-                            onCategoryClick = viewModel::openMoodGenre,
-                            onRetry = viewModel::loadExplore,
-                            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
-                            pullState = explorePull,
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "audiobook") {
-                        sheets.openAudiobook?.let { book ->
-                            AudiobookScreen(
-                                book = book,
-                                chapters = audiobookChapters,
-                                onPlayChapter = { index ->
-                                    val chapters = (audiobookChapters as? UiState.Success)?.data.orEmpty()
-                                    val songs = chapters.map { chapter -> audiobookSong(book, chapter) }
-                                    if (index in songs.indices) pageActions.playWithResume(songs, index)
-                                 },
-                                 onRetry = { viewModel.reloadAudiobookChapters(book.id) },
-                                contentPadding = listPadding,
-                                onDownloadChapter = { chapter ->
-                                    Downloads.enqueue(
-                                        context,
-                                        audiobookSong(book, chapter),
-                                        "Audiobook",
-                                    )
-                                },
-                                onDownloadBook = { chapters ->
-                                    val count = chapters.size
-                                    if (count > 0) {
-                                        Downloads.enqueueAll(
-                                            context,
-                                            chapters.map { audiobookSong(book, it) },
-                                            "Audiobook",
-                                        )
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.download_book_started, count),
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    }
-                                },
-                            )
-                        }
-                    } else if (key == "audiobooks") {
-                        AudiobooksScreen(
-                            state = audiobooks,
-                            query = audiobookQuery,
-                            onQueryChange = { audiobookQuery = it },
-                            onOpenBook = { book ->
-                                sheets.openAudiobook = book
-                                viewModel.openAudiobook(book)
-                            },
-                            onRetry = { viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() }) },
-                            contentPadding = listPadding,
-                        )
-                    } else if (key == "itunespodcast") {
-                        ItunesPodcastScreen(
-                            show = nav.itunesPodcastId?.let { viewModel.itunesShow(it) },
-                            episodes = itunesEpisodes,
-                            onPlay = { songs, index ->
-                                if (index in songs.indices) {
-                                    pageActions.playWithResume(songs, index)
-                                    val id = nav.itunesPodcastId
-                                    val sh = id?.let { viewModel.itunesShow(it) }
-                                    if (id != null && sh != null) {
-                                        viewModel.recordRecentShow(id, sh.name, sh.artworkUrl, sh.feedUrl)
-                                        viewModel.recordRecentEpisode(id, sh.name, sh.artworkUrl, sh.feedUrl, songs[index])
-                                    }
-                                }
-                            },
-                            onRetry = { viewModel.reloadItunesEpisodes() },
-                            contentPadding = listPadding,
-                            isLikedShow = nav.itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
-                            onToggleLikeShow = {
-                                val id = nav.itunesPodcastId ?: return@ItunesPodcastScreen
-                                viewModel.itunesShow(id)?.let {
-                                    viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl, it.feedUrl)
-                                }
-                            },
-                            sortNewestFirst = podcastSortNewest,
-                            onToggleSort = { podcastSortNewest = !podcastSortNewest },
-                            onDownload = { song ->
-                                Downloads.enqueue(context, song, "Podcast")
-                            },
-                            onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
-                            onSmartDownload = { smartDownloadPodcast(null) },
-                        )
-                    } else if (key == "settings") {
-                        SettingsScreen(
-                            windowWidth = windowWidth,
-                            signedIn = signedIn,
-                            account = account,
-                            onSignIn = {
-                                nav.showSettings = false
-                                sheets.webSession = WebSessionMode.SIGN_IN
-                            },
-                            onSignOut = { viewModel.signOut() },
-                            onAccountScrobbling = {
-                                nav.settingsSubScreen = "account_scrobbling"
-                                nav.showAccountScrobbling = true
-                            },
-                            onEqualizer = {
-                                nav.settingsSubScreen = "equalizer"
-                                nav.showEqualizer = true
-                            },
-                            onOpenReplay = {
-                                nav.settingsSubScreen = "replay"
-                                nav.replayLandingPage = ReplayStoryPage.INTRO
-                                nav.showReplay = true
-                            },
-                            onLyricsSources = { sheets.showLyricsSources = true },
-                            onTranslationLanguage = { sheets.showTranslationLanguage = true },
-                            onSources = {
-                                nav.settingsSubScreen = "sources"
-                                nav.showSources = true
-                            },
-                            onListenTogether = {
-                                nav.settingsSubScreen = "listen_together"
-                                nav.showListenTogether = true
-                            },
-                            onSpotifyCanvasAuth = { sheets.showSpotifyCanvasAuth = true },
-                            onAppLanguage = { sheets.showAppLanguage = true },
-                            // Bringing a Spotify playlist in is a setting of the
-                            // account, not a tile in the Library: it is done
-                            // once, not browsed.
-                            category = nav.settingsCategory,
-                            onOpenCategory = { nav.settingsCategory = it },
-                            // Every shelf the feed has brought, hidden ones
-                            // included — a hidden shelf stays in the editor
-                            // so it can be put back. Quick Picks is one of
-                            // them: it is a shelf like any other.
-                            homeShelfTitles = homeShelfTitles,
-                            contentPadding = listPadding,
-                        )
-                    } else if (page != null && page.browseId.isDeviceFolder()) {
-                        // Local Music and Downloads — both the tabbed Songs / Artists /
-                        // Albums view. Two folders of tracks already on the device, so
-                        // there is nothing to tell them apart on screen beyond what is
-                        // in them and what to say when that is nothing.
-                        //
-                        // A single downloaded playlist is not one of these: it has one
-                        // running order and nothing to tab through, so it falls to the
-                        // release page below.
-                        val localState = page.songs
-                        val localSongs = (localState as? com.music.bitchord.data.model.UiState.Success)
-                            ?.data.orEmpty()
-                        // Only the Downloads folder has releases behind it: Local
-                        // Music is files this app never asked for, so there is
-                        // nothing on record about how they were grouped. Keyed on
-                        // the record as well as the list, so downloading an album
-                        // while its folder is open adds the folder rather than
-                        // waiting for the page to be reopened.
-                        val downloadCollections = remember(localSongs, savedCollections) {
-                            if (page.browseId == "local:downloads") {
-                                Downloads.collectionsAmong(localSongs)
-                            } else {
-                                emptyList()
-                            }
-                        }
-                        LocalMusicScreen(
-                            songs = localSongs,
-                            collections = downloadCollections,
-                            isDownloads = page.browseId == "local:downloads",
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            onDeleteDownloads = { selected ->
-                                scope.launch {
-                                    selected.forEach { song -> Downloads.delete(context, song.videoId) }
-                                }
-                            },
-                            onUploadToWebDav =
-                                if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl)) {
-                                    { selected -> uploadToWebDav(selected) }
-                                } else {
-                                    null
-                                },
-                            onSongClick = { songs, index ->
-                                pageActions.playFrom(
-                                    songs,
-                                    index,
-                                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
-                                )
-                            },
-                            onSongLongPress = pageActions.openSongMenu,
-                            onSongSwipe = pageActions.onSongSwipe,
-                            onShuffle = { songs ->
-                                QueueShuffle.enableForNextQueue()
-                                pageActions.playFrom(
-                                    songs,
-                                    songs.indices.random(),
-                                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
-                                )
-                            },
-                            emptyMessage = (localState as? com.music.bitchord.data.model.UiState.Error)
-                                ?.message,
-                            // An album or artist here is a grouping of rows rather than
-                            // a page, so the menu is handed the rows themselves — there
-                            // is no id anything could be fetched with.
-                            onCollectionLongPress = { label, grouped ->
-                                // An artist grouping is never one of these — only a
-                                // release downloaded whole has a record to match,
-                                // which is exactly the distinction `asked` draws in
-                                // `albumEntries`.
-                                val downloadId = downloadCollections.firstOrNull {
-                                    it.title == label && it.songs == grouped
-                                }?.id
-                                pageActions.openBrowseMenu(
-                                    BrowseTarget(
-                                        browseId = null,
-                                        title = label,
-                                        subtitle = grouped.firstOrNull()?.artist.orEmpty()
-                                            .takeUnless { it == label }
-                                            .orEmpty(),
-                                        thumbnailUrl = grouped.firstOrNull()?.thumbnailUrl,
-                                        songs = grouped,
-                                        downloadId = downloadId,
-                                    ),
-                                )
-                            },
-                            contentPadding = listPadding,
-                        )
-                    } else if (page != null) {
-                        // An album page's rows carry no album name of their own — the
-                        // release is billed once, in the header the rows hang under — so
-                        // the page title is stamped on as they leave for the download
-                        // queue or the track menu. Without it every track saved from an
-                        // album arrives in the Downloads folder with nothing to group it
-                        // under, and its Albums tab stays empty however much is in it.
-                        val withAlbum: (Song) -> Song = { song ->
-                            if (page.type == BrowseType.ALBUM) {
-                                song.copy(albumName = song.albumName ?: page.title)
-                            } else {
-                                song
-                            }
-                        }
-                        DetailScreen(
-                            page = page,
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            listState = pageDetailListState,
-                            activeShelf = sheets.detailActiveShelf,
-                            onActiveShelfChange = { sheets.detailActiveShelf = it },
-                            // A Super Mix has no last page: it grows a page at a
-                            // time as the listener reaches the end of the list.
-                            onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
-                            onSongClick = { songs, index ->
-                                pageActions.playBrowsePage(page, songs, index)
-                            },
-                            onSongLongPress = { pageActions.openSongMenu(withAlbum(it)) },
-                            onSongSwipe = pageActions.onSongSwipe,
-                            onShuffle = { songs ->
-                                pageActions.playBrowsePageShuffled(page, songs)
-                            },
-                            onSectionItemClick = { item ->
-                                item.browseId?.let { id ->
-                                    viewModel.openDetail(
-                                        browseId = id,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                        type = BrowseType.ALBUM,
-                                    )
-                                }
-                            },
-                            onSectionItemLongPress = pageActions.onBrowseLongPress,
-                            // The page's own tracks, so the sheet has them already and
-                            // Play, Shuffle and Open are the buttons beside the one that
-                            // opened it rather than rows on it. Download is the other
-                            // way round: the header no longer carries it, so the sheet
-                            // is where a whole release is asked for — and the tracks
-                            // arrive stamped with the album they came off, which is what
-                            // the download record groups them under.
-                            onMore = { songs ->
-                                sheets.browseMenu.target = BrowseTarget(
-                                    browseId = page.browseId,
-                                    title = page.title,
-                                    subtitle = page.subtitle,
-                                    thumbnailUrl = page.thumbnailUrl,
-                                    type = page.type,
-                                    songs = songs.map(withAlbum),
-                                    fromCard = false,
-                                    downloadId = pageActions.downloadIdFor(page.browseId),
-                                )
-                            },
-                            onArtistClick = { id, name ->
-                                viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
-                            },
-                            // Hiding is a local preference, not an account
-                            // action: the page is popped so the act stops
-                            // being in front of the listener immediately,
-                            // and every filtered surface picks it up at once.
-                            onHideArtist = {
-                                AppSettings.blockArtist(page.browseId, page.title)
-                                viewModel.closeDetail()
-                            },
-                            onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
-                            // Saving is an account action, so it isn't offered to a
-                            // guest at all — same as the like and add-to-playlist rows
-                            // in the track menu.
-                            onToggleLibrary = if (signedIn) {
-                                { viewModel.toggleLibrary(page.browseId) }
-                            } else {
-                                null
-                            },
-                            // Same rule for the artist page's subscribe circle:
-                            // a channel subscription is the account's, so a
-                            // guest is never shown the button.
-                            onToggleSubscription = if (signedIn) {
-                                { viewModel.toggleSubscription(page.browseId) }
-                            } else {
-                                null
-                            },
-                            releaseLibrary = releaseLibrary,
-                            onLoadReleaseLibrary = viewModel::loadReleaseLibrary,
-                            onToggleReleaseLibrary = if (signedIn) {
-                                viewModel::toggleReleaseLibrary
-                            } else {
-                                null
-                            },
-                            songSort = songSort,
-                            contentPadding = listPadding,
-                        )
-                    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: nav.selectedTab) {
-                        TAB_HOME -> HomeScreen(
-                            state = homeWithFlow,
-                            listState = homeListState,
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            title = stringResource(R.string.home),
-                            header = homeHeader,
-                            onChipSelected = viewModel::selectHomeChip,
-                            // One feed, and it is a row of tracks: the
-                            // full-bleed hero treatment is for that. Spotify's
-                            // shelves were cards of collections, which a hero
-                            // card is not, and there are none of them here.
-                            leadHero = true,
-                            signedIn = signedIn,
-                            onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
-                            signInBannerDismissed = signInBannerDismissed,
-                            onDismissSignInBanner = { signInBannerDismissed = true },
-                            onItemClick = { item, shelfTitle ->
-                                val song = pageActions.shelfSong(item)
-                                // Hoisted because ShelfItem lives in :shared, and
-                                // Kotlin will not smart-cast a public nullable
-                                // property declared in another module.
-                                val browseId = item.browseId
-                                when {
-                                    browseId == com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID -> {
-                                        // Flow tap only opens the page — never
-                                        // rebuilds, never plays. BACK + tap
-                                        // returns to this same mix; Play and
-                                        // Shuffle inside it are what start
-                                        // playback, New mix is the only reset.
-                                        sheets.showFlow = true
-                                    }
-                                    song != null -> {
-                                        val source = QueueSource(shelfTitle, PlaybackSourceType.HOME)
-                                        // A track that is on the device plays
-                                        // from the device: the station it would
-                                        // otherwise start needs the network, and
-                                        // offline the app has none. The whole
-                                        // library goes with it, so the shelf is
-                                        // the start of a set rather than one
-                                        // track.
-                                        if (offlineActive && pageActions.isOnDevice(song.videoId)) {
-                                            pageActions.playOfflineLibrary(song, source)
-                                        } else {
-                                            pageActions.playRadio(song, source)
-                                        }
-                                    }
-                                    browseId != null -> viewModel.openDetail(
-                                        browseId = browseId,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )
-                                }
-                            },
-                            flowItem = homeFlowLeading,
-                            onFlowClick = { sheets.showFlow = true },
-                            // The arrow at the end of the Quick Picks heading:
-                            // the shelf shows what fits on a screen, this is
-                            // the set behind it.
-                            onOpenQuickPicks = { sheets.showQuickPicks = true },
-                            // The Replay card is a card, not a page: a
-                            // listener who never opens it should not have to
-                            // look at it. The switch is in Settings → Home.
-                            onOpenReplay = if (homeReplayVisible) {
-                                {
-                                    nav.replayLandingPage = ReplayStoryPage.INTRO
-                                    nav.showReplay = true
-                                }
-                            } else {
-                                null
-                            },
-                            onItemLongPress = pageActions.onShelfLongPress,
-                            onRetry = viewModel::loadHome,
-                            refreshing = MainViewModel.Feed.HOME in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },
-                            pullState = homePull,
-                            contentPadding = listPadding,
-                            onLoadMore = viewModel::loadMoreHome,
-                            loadingMore = homeLoadingMore,
-                            recentlyPlayedLoading = homeRecentlyPlayedLoading,
-                        )
-                        TAB_PODCASTS -> PodcastsScreen(
-                            state = podcastsState,
-                            listState = podcastListState,
-                            sections = podcastSections,
-                            searchQuery = itunesSearchQuery,
-                            onSearchQueryChange = viewModel::setItunesSearchQuery,
-                            searchResults = itunesSearchResults,
-                            continueShelf = podcastContinueShelf.takeIf { podcastsEnabled },
-                            likedShelf = podcastLikedShelf.takeIf { podcastsEnabled },
-                            laterShelf = podcastLaterShelf.takeIf { podcastsEnabled },
-                            // The arrow at the end of the shelf's heading opens
-                            // the whole set, the way Quick Picks' does on Home.
-                            onOpenContinueListening = { podcastUi.showContinueListening = true },
-                            // Held on an episode of one of the listener's own
-                            // shelves: the same menu an episode's own row has.
-                            onOwnShelfItemLongPress = { item ->
-                                val url = item.videoId
-                                if (url != null && url.startsWith("http")) {
-                                    podcastUi.episodeMenu = Song(
-                                        videoId = url,
-                                        title = item.title,
-                                        artist = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )
-                                }
-                            },
-                            onShowClick = { item ->
-                                val browseId = item.browseId
-                                if (browseId != null && browseId.startsWith("itunes:")) {
-                                    val collectionId = browseId.removePrefix("itunes:")
-                                    nav.itunesPodcastId = collectionId
-                                    viewModel.itunesShow(collectionId)?.let {
-                                        viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
-                                    }
-                                    viewModel.openItunesPodcast(collectionId)
-                                } else if (item.videoId?.startsWith("http") == true) {
-                                    // An "Episodes for later" / "Continue listening" row: play + resume.
-                                    pageActions.playWithResume(listOf(Song(
-                                        videoId = item.videoId!!,
-                                        title = item.title,
-                                        artist = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )), 0)
-                                } else {
-                                    browseId?.let {
-                                        viewModel.openDetail(
-                                            browseId = it,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        )
-                                    }
-                                }
-                            },
-                            onRetry = viewModel::loadPodcasts,
-                            refreshing = MainViewModel.Feed.PODCASTS in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.PODCASTS) },
-                            pullState = podcastPull,
-                            contentPadding = listPadding,
-                        )
-                        TAB_RADIO -> selectedMoodGenre?.let { category ->
-                            MoodGenrePlaylistsScreen(
-                                title = category.title,
-                                state = moodGenreShelves,
-                                listState = moodGenreListState,
-                                onItemClick = { item ->
-                                    item.videoId?.let { videoId ->
-                                        pageActions.playRadio(
-                                            Song(
-                                                videoId = videoId,
-                                                title = item.title,
-                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                                thumbnailUrl = item.thumbnailUrl,
-                                            ),
-                                            QueueSource(
-                                                category.title,
-                                                PlaybackSourceType.EXPLORE,
-                                                category.browseId,
-                                            ),
-                                        )
-                                    } ?: item.browseId?.let { browseId ->
-                                        viewModel.openDetail(
-                                            browseId = browseId,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        )
-                                    }
-                                },
-                                onRetry = { viewModel.openMoodGenre(category) },
-                                contentPadding = listPadding,
-                            )
-                        } ?: RadioScreen(
-                            state = exploreState,
-                            listState = radioListState,
-                            flowItem = flowTile,
-                            onFlowClick = { sheets.showFlow = true },
-                            seeds = radioSeeds,
-                            onSeedClick = { item ->
-                                val videoId = item.videoId
-                                if (videoId != null) {
-                                    pageActions.startRadio(
-                                        Song(
-                                            videoId = videoId,
-                                            title = item.title,
-                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        ),
-                                    )
-                                }
-                            },
-                            onStationClick = viewModel::openMoodGenre,
-                            onGenresClick = { nav.showGenres = true },
-                            onStartStation = { nav.selectedTab = TAB_SEARCH },
-                            onRetry = viewModel::loadExplore,
-                            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
-                            pullState = explorePull,
-                            contentPadding = listPadding,
-                        )
-                        TAB_SEARCH -> SearchScreen(
-                            query = query,
-                            onQueryChange = viewModel::onQueryChange,
-                            filter = filter,
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            onFilterChange = viewModel::onFilterChange,
-                            // The podcasts filter goes with podcasts: a pill
-                            // that only ever answers "nothing" is noise.
-                            availableFilters = when {
-                                // Spotify's catalogue has no videos and no
-                                // shows, so a pill for either would be a pill
-                                // that answers from somewhere else.
-                                searchSource == SearchSource.SPOTIFY ->
-                                    com.music.bitchord.data.model.SearchFilter.entries.filter {
-                                        it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
-                                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS
-                                    }
-                                podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
-                                else -> com.music.bitchord.data.model.SearchFilter.entries
-                                    .filter { it != com.music.bitchord.data.model.SearchFilter.PODCASTS }
-                            },
-                            results = results,
-                            loadingMore = searchLoadingMore,
-                            onLoadMore = viewModel::loadMoreSearchResults,
-                            listState = searchListState,
-                            scrollResetTrigger = searchScrollReset,
-                            focusRequested = searchFocusRequested,
-                            onFocusHandled = { searchFocusRequested = false },
-                            // Search hits are alternatives to each other, not a running
-                            // order — play the one tapped and build a station from it.
-                            onSongClick = { songs, index ->
-                                songs.getOrNull(index)?.let { song ->
-                                    viewModel.recordEntity(SearchHistoryEntity(
-                                        id = song.videoId,
-                                        title = song.title,
-                                        subtitle = song.artist.ifEmpty { "" },
-                                        artworkUrl = song.thumbnailUrl,
-                                        entityType = EntityType.TRACK,
-                                    ))
-                                    pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
-                                }
-                            },
-                            onSongLongPress = pageActions.openSongMenu,
-                            onSongSwipe = pageActions.onSongSwipe,
-                            onTopResultPlay = { song ->
-                                viewModel.recordEntity(SearchHistoryEntity(
-                                    id = song.videoId,
-                                    title = song.title,
-                                    subtitle = song.artist.ifEmpty { "" },
-                                    artworkUrl = song.thumbnailUrl,
-                                    entityType = EntityType.TRACK,
-                                ))
-                                pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
-                            },
-                            onTopResultPlaylist = { song ->
-                                viewModel.recordEntity(SearchHistoryEntity(
-                                    id = song.videoId,
-                                    title = song.title,
-                                    subtitle = song.artist.ifEmpty { "" },
-                                    artworkUrl = song.thumbnailUrl,
-                                    entityType = EntityType.TRACK,
-                                ))
-                                viewModel.loadPlaylists()
-                                sheets.playlistPick.songs = listOf(song)
-                                sheets.playlistPick.title = null
-                                sheets.playlistPick.artwork = null
-                            },
-                            onBrowseClick = { item ->
-                                if (item.browseId.startsWith("itunes:")) {
-                                    val collectionId = item.browseId.removePrefix("itunes:")
-                                    nav.itunesPodcastId = collectionId
-                                    viewModel.openItunesPodcast(collectionId)
-                                    return@SearchScreen
-                                }
-                                viewModel.recordEntity(SearchHistoryEntity(
-                                    id = item.browseId ?: "",
-                                    title = item.title,
-                                    subtitle = item.subtitle.ifBlank { "" },
-                                    artworkUrl = item.thumbnailUrl,
-                                    entityType = when (item.type) {
-                                        BrowseType.ALBUM -> EntityType.ALBUM
-                                        BrowseType.ARTIST -> EntityType.ARTIST
-                                        BrowseType.PLAYLIST -> EntityType.PLAYLIST
-                                        else -> EntityType.TRACK
-                                    },
-                                ))
-                                viewModel.openDetail(
-                                    browseId = item.browseId,
-                                    title = item.title,
-                                    subtitle = item.subtitle,
-                                    thumbnailUrl = item.thumbnailUrl,
-                                    type = item.type,
-                                )
-                            },
-                            onBrowseLongPress = { item ->
-                                // A search row does say what it is, so its own type is
-                                // better than what the browse id can be read to mean.
-                                if (item.type != BrowseType.ARTIST) {
-                                    pageActions.openBrowseMenu(
-                                        BrowseTarget(
-                                            browseId = item.browseId,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                            type = item.type,
-                                            downloadId = pageActions.downloadIdFor(item.browseId),
-                                        ),
-                                    )
-                                }
-                            },
-                            history = searchHistory,
-                            suggestions = searchSuggestions,
-                            typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
-                            onSubmit = viewModel::submitSearch,
-                            // Suggestions land in search history via searchFor → recordSearch.
-                            // History items (onHistoryClick) navigate/play without re-logging.
-                            onSuggestionClick = viewModel::searchFor,
-                            onHistoryClick = { entity ->
-                                // Tap a history entity: navigate to it or play it directly.
-                                // Do NOT recordEntity here — tapping an existing history item
-                                // must not update its timestamp and push it to the top.
-                                when (entity.entityType) {
-                                    EntityType.TRACK -> {
-                                        // Play the track by its video id
-                                        pageActions.playRadio(
-                                            com.music.bitchord.data.model.Song(
-                                                videoId = entity.id,
-                                                title = entity.title,
-                                                artist = entity.subtitle,
-                                                thumbnailUrl = entity.artworkUrl,
-                                            ),
-                                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
-                                        )
-                                    }
-                                    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
-                                        viewModel.openDetail(
-                                            browseId = entity.id,
-                                            title = entity.title,
-                                            subtitle = entity.subtitle,
-                                            thumbnailUrl = entity.artworkUrl,
-                                        )
-                                    }
-                                }
-                            },
-                            onHistoryRemove = viewModel::removeSearch,
-                            onHistoryClear = viewModel::clearSearchHistory,
-                            onTypeaheadLongPress = pageActions.openSongMenu,
-                            contentPadding = listPadding,
-                            topPadding = topBarContentPadding(),
-                            // The field is in the top bar; see the bar's accessory.
-                            showField = false,
-                            // The settings page's own two-state selector, so the
-                            // app has one look for "pick one of these".
-                            sourceSwitcher = {
-                                SegmentedControl(
-                                    options = listOf(
-                                        stringResource(R.string.search_source_youtube),
-                                        stringResource(R.string.search_source_spotify),
-                                        stringResource(R.string.library),
-                                    ),
-                                    selectedIndex = searchSource.ordinal,
-                                    onSelect = { index -> pageActions.onSearchSourceChange(SearchSource.entries[index]) },
-                                )
-                            },
-                            searchingLibrary = searchSource == SearchSource.LIBRARY,
-                            libraryResults = libraryResults,
-                            // The same queue opening the Local Music folder and
-                            // tapping the row there would give.
-                            onLibrarySongClick = { songs, index ->
-                                pageActions.playFrom(
-                                    songs,
-                                    index,
-                                    QueueSource(
-                                        context.getString(R.string.local_music),
-                                        PlaybackSourceType.BROWSE,
-                                        "local:all",
-                                    ),
-                                )
-                            },
-                        )
-                        else -> LibraryScreen(
-                            signedIn = signedIn,
-                            state = libraryState,
-                            listState = libraryListState,
-                            // The segment is the caller's, so opening a playlist
-                            // over this page and coming back finds it where it
-                            // was left.
-                            segment = librarySegment,
-                            onSegmentChange = { librarySegment = it },
-                            onShelfItemClick = pageActions.onLibraryItemClick,
-                            // Every shelf here has a menu behind it now — the account's
-                            // own playlists get rename and delete on top of what a saved
-                            // album or a Liked Music card gets. Holding an artist still
-                            // does nothing; see [onBrowseLongPress].
-                            onShelfItemLongPress = pageActions.onBrowseLongPress,
-                            onNewPlaylist = { sheets.creatingPlaylist = true },
-                            // The bar's "+" makes a folder of the listener's own
-                            // rather than a playlist on somebody's account: it
-                            // belongs to the device and works signed out.
-                            onNewFolder = { sheets.creatingFolder = true },
-                            folders = folderItems,
-                            onShowAll = { shelf -> sheets.libraryShowAll = shelf },
-                            replay = {
-                                if (libraryReplayVisible) {
-                                    LibraryReplayEntry(
-                                        cards = replayCards,
-                                        loading = replay.loading,
-                                        holder = account?.name.orEmpty(),
-                                        memberSince = replay.memberSince,
-                                        onOpenReplay = { page ->
-                                            nav.replayLandingPage = page
-                                            nav.showReplay = true
-                                        },
-                                    )
-                                }
-                            },
-                            onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
-                            onRetry = viewModel::loadLibrary,
-                            refreshing = MainViewModel.Feed.LIBRARY in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
-                            pullState = libraryPull,
-                            contentPadding = listPadding,
-                            links = libraryLinks(),
-                            deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
-                            podcastShelves = if (podcastsEnabled) {
-                                listOfNotNull(podcastLikedShelf, podcastLaterShelf)
-                            } else {
-                                emptyList()
-                            },
-                        )
-                    }
+                    RootPage(key = key, inputs = pageInputs)
                 }
 
                 // The top-bar footprint is transparent on every page so the
@@ -5205,7 +4194,7 @@ private fun BitChordApp(
                         nav.showReplay -> stringResource(R.string.replay)
                         detail != null && sheets.detailActiveShelf != null -> sheets.detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
-                        selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
+                        selectedMoodGenreState.value != null -> selectedMoodGenreState.value?.title.orEmpty()
                         else -> tabs[selectedTabIndex].label
                     },
                     // Every page, in either material, uses separated floating
@@ -5223,7 +4212,7 @@ private fun BitChordApp(
                             podcastUi.showContinueListening ||
                             (sheets.libraryShowAll != null && detail == null) ||
                             (detail != null && sheets.detailActiveShelf != null) ||
-                            selectedMoodGenre != null -> true
+                            selectedMoodGenreState.value != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
                         nav.showReplay -> replayScrolled
@@ -5263,21 +4252,21 @@ private fun BitChordApp(
                         nav.showAudiobooks -> ({ nav.showAudiobooks = false })
                         nav.itunesPodcastId != null -> ({ nav.itunesPodcastId = null })
                         nav.showGenres -> ({
-                            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else nav.showGenres = false
+                            if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
                         })
                         nav.settingsSubScreen != null -> ({ nav.settingsSubScreen = null })
                         nav.showSettings -> ({ nav.showSettings = false })
                         nav.showReplay -> ({ nav.showReplay = false })
                         sheets.detailActiveShelf != null -> ({ sheets.detailActiveShelf = null })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
-                        selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
+                        selectedMoodGenreState.value != null -> ({ viewModel.closeMoodGenre(); Unit })
                         else -> null
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
                     // Only on the Search tab itself, not on anything pushed over it.
                     accessory = if (
                         !useFoldingNav &&
-                        nav.selectedTab == TAB_SEARCH && detail == null && selectedMoodGenre == null &&
+                        nav.selectedTab == TAB_SEARCH && detail == null && selectedMoodGenreState.value == null &&
                         sheets.libraryShowAll == null && !nav.showSettings && !nav.showAccountScrobbling &&
                         !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !sheets.showDiscord &&
                         !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showReplay
@@ -5295,12 +4284,12 @@ private fun BitChordApp(
                                 }
                             }
                             SearchField(
-                                query = query,
+                                query = queryState.value,
                                 onQueryChange = viewModel::onQueryChange,
                                 onSubmit = viewModel::submitSearch,
                                 focusRequester = searchFieldFocus,
                                 placeholder = org.jetbrains.compose.resources.stringResource(
-                                    if (searchSource == SearchSource.LIBRARY) {
+                                    if (searchSourceState.value == SearchSource.LIBRARY) {
                                         SharedRes.string.search_library_hint
                                     } else {
                                         SharedRes.string.search_hint
@@ -5491,9 +4480,9 @@ private fun BitChordApp(
                             // itself rather than being told.
                             TopBarDownloadButton(onClick = { sheets.showDownloadManager = true })
                             TopBarAccountButton(
-                                account = account,
+                                account = accountState.value,
                                 onClick = {
-                                    if (signedIn) {
+                                    if (signedInState.value) {
                                         viewModel.loadChannels()
                                         sheets.showAccountSelector = true
                                     } else nav.showSettings = true
@@ -5608,7 +4597,7 @@ private fun BitChordApp(
                             scrollConnection = navBarScroll,
                             search = navSearchState,
                             placeholder = org.jetbrains.compose.resources.stringResource(
-                                if (searchSource == SearchSource.LIBRARY) {
+                                if (searchSourceState.value == SearchSource.LIBRARY) {
                                     SharedRes.string.search_library_hint
                                 } else {
                                     SharedRes.string.search_hint
@@ -5744,7 +4733,7 @@ private fun BitChordApp(
                 ) {
                     ReplayShareSheet(
                         summary = summary,
-                        holder = account?.name.orEmpty(),
+                        holder = accountState.value?.name.orEmpty(),
                         memberSince = replay.memberSince,
                         page = nav.replaySharePage,
                         onDismiss = { nav.showReplayShare = false },
@@ -5767,7 +4756,7 @@ private fun BitChordApp(
             songMenuBody = songMenuBody,
             detail = detail,
             songSort = songSort,
-            signedIn = { signedIn },
+            signedIn = { signedInState.value },
             updateNotice = updateNotice,
             announcement = announcement,
             localPlaylists = localPlaylists,
@@ -6031,6 +5020,1315 @@ private fun PlayerSheetHost(
         }
     }
 }
+
+/**
+ * One of the root's pages, as AnimatedContent lays it out for `key`.
+ *
+ * Its own composable rather than the body of [BitChordApp]'s page lambda,
+ * which captured every local it mentioned (see [RootOverlays]). The flows
+ * only the pages read are collected here, per slot; anything remembered is
+ * passed in instead, because a slot leaves composition when its page does
+ * and a list state or saved flag remembered here would be reset each time.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RootPage(
+    key: String,
+    inputs: PageInputs,
+) {
+    val scroll = inputs.scroll
+    val viewModel = inputs.viewModel
+    val scope = inputs.scope
+    val player = inputs.player
+    val nav = inputs.nav
+    val sheets = inputs.sheets
+    val podcastUi = inputs.podcastUi
+    val replay = inputs.replay
+    val pageActions = inputs.pageActions
+    val detailListStates = inputs.detailListStates
+    val downloadedReleases = inputs.downloadedReleases
+    val flowTile = inputs.flowTile
+    val folderItems = inputs.folderItems
+    val homeFlowLeading = inputs.homeFlowLeading
+    val listPadding = inputs.listPadding
+    val localPlaylistItems = inputs.localPlaylistItems
+    val quickPicksSongs = inputs.quickPicksSongs
+    val radioSeeds = inputs.radioSeeds
+    val replayCards = inputs.replayCards
+    val songSort = inputs.songSort
+    val windowWidth = inputs.windowWidth
+    val quickPicksLabel = inputs.quickPicksLabel
+    val searchLabel = inputs.searchLabel
+    val openByName = inputs.openByName
+    val smartDownloadPodcast = inputs.smartDownloadPodcast
+    val uploadToWebDav = inputs.uploadToWebDav
+    val context = LocalContext.current
+    val account by inputs.accountState
+    val audiobooks by inputs.audiobooksState
+    val detailStack by inputs.detailStackState
+    val filter by inputs.filterState
+    val flowQueueState by inputs.flowQueueStateState
+    val flowStatus by inputs.flowStatusState
+    val itunesEpisodes by inputs.itunesEpisodesState
+    val libraryReplayVisible by inputs.libraryReplayVisibleState
+    val likeStatuses by inputs.likeStatusesState
+    val offlineActive by inputs.offlineActiveState
+    val podcastsEnabled by inputs.podcastsEnabledState
+    val query by inputs.queryState
+    val refreshing by inputs.refreshingState
+    val savedCollections by inputs.savedCollectionsState
+    val searchSource by inputs.searchSourceState
+    val selectedMoodGenre by inputs.selectedMoodGenreState
+    val signedIn by inputs.signedInState
+    val webdavUrl by inputs.webdavUrlState
+    val homeWithFlow by inputs.homeWithFlowState
+    var activeJamInviteCode by inputs.activeJamInviteCodeState
+    var activeJamInviteServer by inputs.activeJamInviteServerState
+    var audiobookQuery by inputs.audiobookQueryState
+    var librarySegment by inputs.librarySegmentState
+    var podcastSortNewest by inputs.podcastSortNewestState
+    var searchFocusRequested by inputs.searchFocusRequestedState
+    var signInBannerDismissed by inputs.signInBannerDismissedState
+    val homeListState = scroll.home
+    val exploreListState = scroll.explore
+    val moodGenreListState = scroll.moodGenre
+    val radioListState = scroll.radio
+    val podcastListState = scroll.podcast
+    val libraryListState = scroll.library
+    val searchListState = scroll.search
+    val quickPicksListState = scroll.quickPicks
+    val continueListeningListState = scroll.continueListening
+    val historyListState = scroll.history
+    val flowListState = scroll.flow
+    val replayListState = scroll.replay
+    val libraryShowAllGridState = scroll.libraryShowAll
+    val homePull = scroll.homePull
+    val explorePull = scroll.explorePull
+    val podcastPull = scroll.podcastPull
+    val libraryPull = scroll.libraryPull
+    // The flows only the pages read, collected per slot. A fresh
+    // collector starts from the flow's current value, so a page entering
+    // reads exactly what one already on screen reads.
+    val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
+    val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
+    // What the home page says above its shelves: a greeting, a row of chips
+    // and the quick-access grid. One feed has none of them, and the page
+    // does not ask for what it cannot use.
+    val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
+    val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
+    val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
+    val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
+    val flowSaved by viewModel.flowSaved.collectAsStateWithLifecycle()
+    val flowMood by com.music.bitchord.data.flow.FlowStore.mood.collectAsStateWithLifecycle()
+    val flowTuner by com.music.bitchord.data.flow.FlowStore.tuner.collectAsStateWithLifecycle()
+    val flowBanned by com.music.bitchord.data.flow.FlowStore.bannedIds.collectAsStateWithLifecycle()
+    val results by viewModel.results.collectAsStateWithLifecycle()
+    val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+    val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
+    val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
+    val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
+    val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
+    val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
+    val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
+    val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
+    val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
+    val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
+    val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
+    val libraryState by viewModel.library.collectAsStateWithLifecycle()
+    val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
+    val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
+    val historyState by viewModel.history.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
+    val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
+    val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
+    val historyLabel = stringResource(R.string.history)
+    val replayLabel = stringResource(R.string.replay)
+    // Every branch below reads `key` rather than the state that
+    // produced it. The two are the same thing only for the page
+    // being entered: the one on its way out is still composed,
+    // and asking it what is selected *now* has it redraw itself
+    // as its own replacement — which then fades out from under
+    // the identical copy fading in behind it.
+    val live = detailStack.lastOrNull()?.takeIf {
+        it.browseId == key && key != "settings" && key != "account_scrobbling" &&
+            key != "discord" && key != "replay" && key != "history" && key != "flow" &&
+            key != "library_show_all"
+    }
+        // The travelling sleeve, over the page and under the bars: a
+        // card's cover crossing the window into the page it opened.
+        ArtworkFlightLayer()
+    // Held for the same reason, one step further on: a popped
+    // page is off the stack before it has finished animating
+    // out, so `live` goes null under it and it would spend its
+    // exit drawing whatever is underneath instead of itself.
+    // Per slot, since each is remembered against its own key.
+    val held = remember(key) { mutableStateOf(live) }
+    if (live != null) held.value = live
+    val page = held.value
+    // This state belongs to this AnimatedContent slot, not to
+    // whichever detail happens to be at the top of the stack
+    // while the slot is fading out.
+    val pageDetailListState = remember(key) {
+        detailListStates.getOrPut(key) { LazyListState() }
+    }
+    if (key == "history") {
+        HistoryScreen(
+            state = historyState,
+            listState = historyListState,
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            onSongClick = { songs, index ->
+                pageActions.playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
+            },
+            onSongLongPress = pageActions.openSongMenu,
+            onSongSwipe = pageActions.onSongSwipe,
+            onRetry = viewModel::loadHistory,
+            contentPadding = listPadding,
+        )
+    } else if (key == "flow") {
+        com.music.bitchord.ui.screens.FlowScreen(
+            tracksState = flowQueueState,
+            mood = flowMood,
+            tuner = flowTuner,
+            status = flowStatus,
+            bannedIds = flowBanned,
+            isSaved = flowSaved,
+            isGrowing = !flowSaved,
+            rebuilding = flowLoading,
+            listState = flowListState,
+            onPlay = { pageActions.startFlow(false) },
+            onShuffle = { pageActions.startFlow(true) },
+            onNewMix = { viewModel.newFlowMix() },
+            onToggleLike = {
+                player.song?.let { viewModel.toggleLike(it) }
+            },
+            currentLiked = player.song?.let {
+                likeStatuses[it.videoId] == LikeStatus.LIKE
+            } == true,
+            onSave = {
+                sheets.flowSaveName = if (flowMood == com.music.bitchord.data.flow.FlowMood.FLOW) {
+                    "My Flow"
+                } else {
+                    "Flow · ${flowMood.label}"
+                }
+                sheets.showFlowSave = true
+            },
+            onApply = { mood, discovery, memory, excluded, similarLiked ->
+                viewModel.applyFlowConfig(mood, discovery, memory, excluded, similarLiked)
+            },
+            onUnban = { viewModel.unbanFromFlow(it) },
+            onBan = { song ->
+                viewModel.banFromFlow(song.videoId)
+                viewModel.refreshFlow()
+            },
+            onSongClick = { songs, index ->
+                // Skipped-over Flow tracks train the mix.
+                val cur = player.song
+                if (cur != null && songs.any { it.videoId == cur.videoId }) {
+                    val curIdx = songs.indexOfFirst { it.videoId == cur.videoId }
+                    if (curIdx in 0 until index) {
+                        viewModel.recordFlowSkip(
+                            cur.videoId,
+                            player.position.positionMs,
+                            player.durationMs,
+                        )
+                    }
+                }
+                pageActions.playFrom(songs, index, QueueSource("Flow", PlaybackSourceType.EXPLORE))
+                if (index >= songs.size - 5) viewModel.growFlow()
+            },
+            onSongLongPress = pageActions.openSongMenu,
+            onRetry = { viewModel.refreshFlow() },
+            contentPadding = listPadding,
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+        )
+    } else if (key == "quick_picks") {
+        QuickPicksScreen(
+            songs = quickPicksSongs,
+            offline = offlineActive,
+            onPlay = { song ->
+                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
+                if (offlineActive && pageActions.isOnDevice(song.videoId)) {
+                    pageActions.playOfflineLibrary(song, source)
+                } else {
+                    pageActions.playRadio(song, source)
+                }
+            },
+            onPlayAll = { pageActions.playQuickPicks(false) },
+            onShuffle = { pageActions.playQuickPicks(true) },
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            onItemLongPress = { song -> pageActions.openSongMenu(song) },
+            listState = quickPicksListState,
+            contentPadding = listPadding,
+        )
+    } else if (key == "continue_listening") {
+        ContinueListeningScreen(
+            episodes = continueListeningEpisodes,
+            query = podcastUi.continueQuery,
+            onQueryChange = { podcastUi.continueQuery = it },
+            onPlay = { episode ->
+                pageActions.playWithResume(listOf(episode), 0)
+            },
+            onRemove = { episode ->
+                viewModel.removeRecentEpisode(episode.videoId)
+                Toast.makeText(
+                    context,
+                    R.string.continue_listening_removed,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onMore = { episode -> podcastUi.episodeMenu = episode },
+            listState = continueListeningListState,
+            contentPadding = listPadding,
+        )
+    } else if (key == "library_show_all") {
+        sheets.libraryShowAll?.let { shelf ->
+            LibraryGridPage(
+                shelf = shelf,
+                gridState = libraryShowAllGridState,
+                onItemClick = pageActions.onLibraryItemClick,
+                onItemLongPress = pageActions.onBrowseLongPress,
+                // Only the Playlists shelf can grow one — see
+                // [PlaylistShelf].
+                onNewPlaylist = if (shelf.title == YtMusicRepository.PLAYLISTS_SHELF) {
+                    { sheets.creatingPlaylist = true }
+                } else {
+                    null
+                },
+                contentPadding = listPadding,
+            )
+        }
+    } else if (key == "replay") {
+        ReplayScreen(
+            state = replay,
+            holder = account?.name.orEmpty(),
+            onPeriodChange = pageActions.setReplayPeriod,
+            onOpenStory = { nav.replayStory = it },
+            // A track tapped on a chart is one the user already
+            // knows they like, so it starts a station off itself
+            // rather than queueing the chart it was on — the
+            // same reading [playRadio] makes of a search hit.
+            onPlaySong = { song ->
+                pageActions.playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
+            },
+            onOpenArtist = { id, name ->
+                nav.showReplay = false
+                openByName(id, name, null, BrowseType.ARTIST, null)
+            },
+            onOpenAlbum = { id, title, artist, art ->
+                nav.showReplay = false
+                openByName(id, title, artist, BrowseType.ALBUM, art)
+            },
+            onShare = {
+                nav.replaySharePage = null
+                nav.showReplayShare = true
+            },
+            contentPadding = listPadding,
+            listState = replayListState,
+            landingPage = nav.replayLandingPage,
+        )
+    } else if (key == "spotify") {
+        SpotifyLibraryScreen(
+            onOpenLogin = { sheets.showSpotifyLogin = true },
+            onOpenTokenSetup = { sheets.showSpotifyCanvasAuth = true },
+            onOpenPlaylist = { playlist ->
+                viewModel.openDetail(
+                    browseId = SPOTIFY_PAGE_PREFIX + playlist.id,
+                    title = playlist.name,
+                    subtitle = playlist.owner ?: context.getString(R.string.spotify),
+                    thumbnailUrl = playlist.imageUrl,
+                    type = BrowseType.PLAYLIST,
+                )
+            },
+            contentPadding = listPadding,
+        )
+    } else if (key == "discord") {
+        DiscordScreen(
+            song = player.song,
+            positionMs = player.position.positionMs,
+            durationMs = player.durationMs,
+            onOpenLogin = { sheets.showDiscordLogin = true },
+            onOpenDialog = { sheets.discordDialog = it },
+            contentPadding = listPadding,
+        )
+    } else if (key == "account_scrobbling") {
+        AccountAndScrobblingScreen(
+            signedIn = signedIn,
+            account = account,
+            channelName = selectedChannelName,
+            onSignIn = {
+                nav.showAccountScrobbling = false
+                nav.showSettings = false
+                sheets.webSession = WebSessionMode.SIGN_IN
+            },
+            onSwitchChannel = {
+                viewModel.loadChannels()
+                sheets.showAccountSelector = true
+            },
+            onSignOut = { viewModel.signOut() },
+            onOpenListenBrainzLogin = { sheets.showListenBrainzLogin = true },
+            onOpenLastfmLogin = { sheets.showLastfmLogin = true },
+            onOpenDiscord = { sheets.showDiscord = true },
+            onOpenSpotify = { sheets.showSpotify = true },
+            contentPadding = listPadding,
+        )
+    } else if (key == "sources") {
+        SourcesScreen(
+            contentPadding = listPadding,
+            onEditSource = { sheets.editingSource = it },
+            onEditWebDav = { sheets.showWebDavEditor = true },
+            onEditSmb = { sheets.showSmbEditor = true },
+            onConfirmJioSaavn = { sheets.confirmJioSaavn = true },
+            onInstallExtension = { sheets.installingExtension = true },
+            onEditExtension = { id ->
+                sheets.editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
+            },
+            // A tap is the extension's door, and which door
+            // depends on the extension: one that signs its
+            // requests gets its verification page, and one
+            // that does not has nothing to verify — so a tap
+            // opens its settings, which is the only thing it
+            // has to show. Hold always opens the settings.
+            onVerifyExtension = { id ->
+                val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                if (installed != null && SflxCatalog.host?.sessionStatus(id) != null) {
+                    scope.launch {
+                        val url = withContext(Dispatchers.IO) {
+                            SflxCatalog.beginVerification(id)
+                        }
+                        if (url == null && sheets.editingExtension == null) {
+                            // Nothing to open: the gateway
+                            // already knows this install, or it
+                            // refused. The settings sheet says
+                            // which, and holds Verify.
+                            sheets.editingExtension = installed
+                        }
+                    }
+                } else {
+                    sheets.editingExtension = installed
+                }
+            },
+        )
+    } else if (key == "listen_together") {
+        ListenTogetherScreen(
+            signedIn = signedIn,
+            inviteCode = activeJamInviteCode,
+            inviteServer = activeJamInviteServer,
+            onInviteHandled = {
+                activeJamInviteCode = null
+                activeJamInviteServer = null
+            },
+            onSignIn = {
+                nav.showListenTogether = false
+                nav.showSettings = false
+                sheets.webSession = WebSessionMode.SIGN_IN
+            },
+            contentPadding = listPadding,
+            onEditServer = { sheets.editingPartyServer = true },
+        )
+    } else if (key == "equalizer") {
+        EqualizerScreen(contentPadding = listPadding)
+    } else if (key == "genres") {
+        selectedMoodGenre?.let { category ->
+            MoodGenrePlaylistsScreen(
+                title = category.title,
+                state = moodGenreShelves,
+                listState = moodGenreListState,
+                onItemClick = { item ->
+                    item.videoId?.let { videoId ->
+                        pageActions.playRadio(
+                            Song(
+                                videoId = videoId,
+                                title = item.title,
+                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                thumbnailUrl = item.thumbnailUrl,
+                            ),
+                            QueueSource(
+                                category.title,
+                                PlaybackSourceType.EXPLORE,
+                                category.browseId,
+                            ),
+                        )
+                    } ?: item.browseId?.let { browseId ->
+                        viewModel.openDetail(
+                            browseId = browseId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            thumbnailUrl = item.thumbnailUrl,
+                        )
+                    }
+                },
+                onRetry = { viewModel.openMoodGenre(category) },
+                contentPadding = listPadding,
+            )
+        } ?: ExploreScreen(
+            state = exploreState,
+            listState = exploreListState,
+            onCategoryClick = viewModel::openMoodGenre,
+            onRetry = viewModel::loadExplore,
+            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
+            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
+            pullState = explorePull,
+            contentPadding = listPadding,
+        )
+    } else if (key == "audiobook") {
+        sheets.openAudiobook?.let { book ->
+            AudiobookScreen(
+                book = book,
+                chapters = audiobookChapters,
+                onPlayChapter = { index ->
+                    val chapters = (audiobookChapters as? UiState.Success)?.data.orEmpty()
+                    val songs = chapters.map { chapter -> audiobookSong(book, chapter) }
+                    if (index in songs.indices) pageActions.playWithResume(songs, index)
+                 },
+                 onRetry = { viewModel.reloadAudiobookChapters(book.id) },
+                contentPadding = listPadding,
+                onDownloadChapter = { chapter ->
+                    Downloads.enqueue(
+                        context,
+                        audiobookSong(book, chapter),
+                        "Audiobook",
+                    )
+                },
+                onDownloadBook = { chapters ->
+                    val count = chapters.size
+                    if (count > 0) {
+                        Downloads.enqueueAll(
+                            context,
+                            chapters.map { audiobookSong(book, it) },
+                            "Audiobook",
+                        )
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.download_book_started, count),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            )
+        }
+    } else if (key == "audiobooks") {
+        AudiobooksScreen(
+            state = audiobooks,
+            query = audiobookQuery,
+            onQueryChange = { audiobookQuery = it },
+            onOpenBook = { book ->
+                sheets.openAudiobook = book
+                viewModel.openAudiobook(book)
+            },
+            onRetry = { viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() }) },
+            contentPadding = listPadding,
+        )
+    } else if (key == "itunespodcast") {
+        ItunesPodcastScreen(
+            show = nav.itunesPodcastId?.let { viewModel.itunesShow(it) },
+            episodes = itunesEpisodes,
+            onPlay = { songs, index ->
+                if (index in songs.indices) {
+                    pageActions.playWithResume(songs, index)
+                    val id = nav.itunesPodcastId
+                    val sh = id?.let { viewModel.itunesShow(it) }
+                    if (id != null && sh != null) {
+                        viewModel.recordRecentShow(id, sh.name, sh.artworkUrl, sh.feedUrl)
+                        viewModel.recordRecentEpisode(id, sh.name, sh.artworkUrl, sh.feedUrl, songs[index])
+                    }
+                }
+            },
+            onRetry = { viewModel.reloadItunesEpisodes() },
+            contentPadding = listPadding,
+            isLikedShow = nav.itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
+            onToggleLikeShow = {
+                val id = nav.itunesPodcastId ?: return@ItunesPodcastScreen
+                viewModel.itunesShow(id)?.let {
+                    viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl, it.feedUrl)
+                }
+            },
+            sortNewestFirst = podcastSortNewest,
+            onToggleSort = { podcastSortNewest = !podcastSortNewest },
+            onDownload = { song ->
+                Downloads.enqueue(context, song, "Podcast")
+            },
+            onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
+            onSmartDownload = { smartDownloadPodcast(null) },
+        )
+    } else if (key == "settings") {
+        SettingsScreen(
+            windowWidth = windowWidth,
+            signedIn = signedIn,
+            account = account,
+            onSignIn = {
+                nav.showSettings = false
+                sheets.webSession = WebSessionMode.SIGN_IN
+            },
+            onSignOut = { viewModel.signOut() },
+            onAccountScrobbling = {
+                nav.settingsSubScreen = "account_scrobbling"
+                nav.showAccountScrobbling = true
+            },
+            onEqualizer = {
+                nav.settingsSubScreen = "equalizer"
+                nav.showEqualizer = true
+            },
+            onOpenReplay = {
+                nav.settingsSubScreen = "replay"
+                nav.replayLandingPage = ReplayStoryPage.INTRO
+                nav.showReplay = true
+            },
+            onLyricsSources = { sheets.showLyricsSources = true },
+            onTranslationLanguage = { sheets.showTranslationLanguage = true },
+            onSources = {
+                nav.settingsSubScreen = "sources"
+                nav.showSources = true
+            },
+            onListenTogether = {
+                nav.settingsSubScreen = "listen_together"
+                nav.showListenTogether = true
+            },
+            onSpotifyCanvasAuth = { sheets.showSpotifyCanvasAuth = true },
+            onAppLanguage = { sheets.showAppLanguage = true },
+            // Bringing a Spotify playlist in is a setting of the
+            // account, not a tile in the Library: it is done
+            // once, not browsed.
+            category = nav.settingsCategory,
+            onOpenCategory = { nav.settingsCategory = it },
+            // Every shelf the feed has brought, hidden ones
+            // included — a hidden shelf stays in the editor
+            // so it can be put back. Quick Picks is one of
+            // them: it is a shelf like any other.
+            homeShelfTitles = homeShelfTitles,
+            contentPadding = listPadding,
+        )
+    } else if (page != null && page.browseId.isDeviceFolder()) {
+        // Local Music and Downloads — both the tabbed Songs / Artists /
+        // Albums view. Two folders of tracks already on the device, so
+        // there is nothing to tell them apart on screen beyond what is
+        // in them and what to say when that is nothing.
+        //
+        // A single downloaded playlist is not one of these: it has one
+        // running order and nothing to tab through, so it falls to the
+        // release page below.
+        val localState = page.songs
+        val localSongs = (localState as? com.music.bitchord.data.model.UiState.Success)
+            ?.data.orEmpty()
+        // Only the Downloads folder has releases behind it: Local
+        // Music is files this app never asked for, so there is
+        // nothing on record about how they were grouped. Keyed on
+        // the record as well as the list, so downloading an album
+        // while its folder is open adds the folder rather than
+        // waiting for the page to be reopened.
+        val downloadCollections = remember(localSongs, savedCollections) {
+            if (page.browseId == "local:downloads") {
+                Downloads.collectionsAmong(localSongs)
+            } else {
+                emptyList()
+            }
+        }
+        LocalMusicScreen(
+            songs = localSongs,
+            collections = downloadCollections,
+            isDownloads = page.browseId == "local:downloads",
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            onDeleteDownloads = { selected ->
+                scope.launch {
+                    selected.forEach { song -> Downloads.delete(context, song.videoId) }
+                }
+            },
+            onUploadToWebDav =
+                if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl)) {
+                    { selected -> uploadToWebDav(selected) }
+                } else {
+                    null
+                },
+            onSongClick = { songs, index ->
+                pageActions.playFrom(
+                    songs,
+                    index,
+                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
+                )
+            },
+            onSongLongPress = pageActions.openSongMenu,
+            onSongSwipe = pageActions.onSongSwipe,
+            onShuffle = { songs ->
+                QueueShuffle.enableForNextQueue()
+                pageActions.playFrom(
+                    songs,
+                    songs.indices.random(),
+                    QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
+                )
+            },
+            emptyMessage = (localState as? com.music.bitchord.data.model.UiState.Error)
+                ?.message,
+            // An album or artist here is a grouping of rows rather than
+            // a page, so the menu is handed the rows themselves — there
+            // is no id anything could be fetched with.
+            onCollectionLongPress = { label, grouped ->
+                // An artist grouping is never one of these — only a
+                // release downloaded whole has a record to match,
+                // which is exactly the distinction `asked` draws in
+                // `albumEntries`.
+                val downloadId = downloadCollections.firstOrNull {
+                    it.title == label && it.songs == grouped
+                }?.id
+                pageActions.openBrowseMenu(
+                    BrowseTarget(
+                        browseId = null,
+                        title = label,
+                        subtitle = grouped.firstOrNull()?.artist.orEmpty()
+                            .takeUnless { it == label }
+                            .orEmpty(),
+                        thumbnailUrl = grouped.firstOrNull()?.thumbnailUrl,
+                        songs = grouped,
+                        downloadId = downloadId,
+                    ),
+                )
+            },
+            contentPadding = listPadding,
+        )
+    } else if (page != null) {
+        // An album page's rows carry no album name of their own — the
+        // release is billed once, in the header the rows hang under — so
+        // the page title is stamped on as they leave for the download
+        // queue or the track menu. Without it every track saved from an
+        // album arrives in the Downloads folder with nothing to group it
+        // under, and its Albums tab stays empty however much is in it.
+        val withAlbum: (Song) -> Song = { song ->
+            if (page.type == BrowseType.ALBUM) {
+                song.copy(albumName = song.albumName ?: page.title)
+            } else {
+                song
+            }
+        }
+        DetailScreen(
+            page = page,
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            listState = pageDetailListState,
+            activeShelf = sheets.detailActiveShelf,
+            onActiveShelfChange = { sheets.detailActiveShelf = it },
+            // A Super Mix has no last page: it grows a page at a
+            // time as the listener reaches the end of the list.
+            onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
+            onSongClick = { songs, index ->
+                pageActions.playBrowsePage(page, songs, index)
+            },
+            onSongLongPress = { pageActions.openSongMenu(withAlbum(it)) },
+            onSongSwipe = pageActions.onSongSwipe,
+            onShuffle = { songs ->
+                pageActions.playBrowsePageShuffled(page, songs)
+            },
+            onSectionItemClick = { item ->
+                item.browseId?.let { id ->
+                    viewModel.openDetail(
+                        browseId = id,
+                        title = item.title,
+                        subtitle = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                        type = BrowseType.ALBUM,
+                    )
+                }
+            },
+            onSectionItemLongPress = pageActions.onBrowseLongPress,
+            // The page's own tracks, so the sheet has them already and
+            // Play, Shuffle and Open are the buttons beside the one that
+            // opened it rather than rows on it. Download is the other
+            // way round: the header no longer carries it, so the sheet
+            // is where a whole release is asked for — and the tracks
+            // arrive stamped with the album they came off, which is what
+            // the download record groups them under.
+            onMore = { songs ->
+                sheets.browseMenu.target = BrowseTarget(
+                    browseId = page.browseId,
+                    title = page.title,
+                    subtitle = page.subtitle,
+                    thumbnailUrl = page.thumbnailUrl,
+                    type = page.type,
+                    songs = songs.map(withAlbum),
+                    fromCard = false,
+                    downloadId = pageActions.downloadIdFor(page.browseId),
+                )
+            },
+            onArtistClick = { id, name ->
+                viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
+            },
+            // Hiding is a local preference, not an account
+            // action: the page is popped so the act stops
+            // being in front of the listener immediately,
+            // and every filtered surface picks it up at once.
+            onHideArtist = {
+                AppSettings.blockArtist(page.browseId, page.title)
+                viewModel.closeDetail()
+            },
+            onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
+            // Saving is an account action, so it isn't offered to a
+            // guest at all — same as the like and add-to-playlist rows
+            // in the track menu.
+            onToggleLibrary = if (signedIn) {
+                { viewModel.toggleLibrary(page.browseId) }
+            } else {
+                null
+            },
+            // Same rule for the artist page's subscribe circle:
+            // a channel subscription is the account's, so a
+            // guest is never shown the button.
+            onToggleSubscription = if (signedIn) {
+                { viewModel.toggleSubscription(page.browseId) }
+            } else {
+                null
+            },
+            releaseLibrary = releaseLibrary,
+            onLoadReleaseLibrary = viewModel::loadReleaseLibrary,
+            onToggleReleaseLibrary = if (signedIn) {
+                viewModel::toggleReleaseLibrary
+            } else {
+                null
+            },
+            songSort = songSort,
+            contentPadding = listPadding,
+        )
+    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: nav.selectedTab) {
+        TAB_HOME -> HomeScreen(
+            state = homeWithFlow,
+            listState = homeListState,
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            title = stringResource(R.string.home),
+            header = homeHeader,
+            onChipSelected = viewModel::selectHomeChip,
+            // One feed, and it is a row of tracks: the
+            // full-bleed hero treatment is for that. Spotify's
+            // shelves were cards of collections, which a hero
+            // card is not, and there are none of them here.
+            leadHero = true,
+            signedIn = signedIn,
+            onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
+            signInBannerDismissed = signInBannerDismissed,
+            onDismissSignInBanner = { signInBannerDismissed = true },
+            onItemClick = { item, shelfTitle ->
+                val song = pageActions.shelfSong(item)
+                // Hoisted because ShelfItem lives in :shared, and
+                // Kotlin will not smart-cast a public nullable
+                // property declared in another module.
+                val browseId = item.browseId
+                when {
+                    browseId == com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID -> {
+                        // Flow tap only opens the page — never
+                        // rebuilds, never plays. BACK + tap
+                        // returns to this same mix; Play and
+                        // Shuffle inside it are what start
+                        // playback, New mix is the only reset.
+                        sheets.showFlow = true
+                    }
+                    song != null -> {
+                        val source = QueueSource(shelfTitle, PlaybackSourceType.HOME)
+                        // A track that is on the device plays
+                        // from the device: the station it would
+                        // otherwise start needs the network, and
+                        // offline the app has none. The whole
+                        // library goes with it, so the shelf is
+                        // the start of a set rather than one
+                        // track.
+                        if (offlineActive && pageActions.isOnDevice(song.videoId)) {
+                            pageActions.playOfflineLibrary(song, source)
+                        } else {
+                            pageActions.playRadio(song, source)
+                        }
+                    }
+                    browseId != null -> viewModel.openDetail(
+                        browseId = browseId,
+                        title = item.title,
+                        subtitle = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                    )
+                }
+            },
+            flowItem = homeFlowLeading,
+            onFlowClick = { sheets.showFlow = true },
+            // The arrow at the end of the Quick Picks heading:
+            // the shelf shows what fits on a screen, this is
+            // the set behind it.
+            onOpenQuickPicks = { sheets.showQuickPicks = true },
+            // The Replay card is a card, not a page: a
+            // listener who never opens it should not have to
+            // look at it. The switch is in Settings → Home.
+            onOpenReplay = if (homeReplayVisible) {
+                {
+                    nav.replayLandingPage = ReplayStoryPage.INTRO
+                    nav.showReplay = true
+                }
+            } else {
+                null
+            },
+            onItemLongPress = pageActions.onShelfLongPress,
+            onRetry = viewModel::loadHome,
+            refreshing = MainViewModel.Feed.HOME in refreshing,
+            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },
+            pullState = homePull,
+            contentPadding = listPadding,
+            onLoadMore = viewModel::loadMoreHome,
+            loadingMore = homeLoadingMore,
+            recentlyPlayedLoading = homeRecentlyPlayedLoading,
+        )
+        TAB_PODCASTS -> PodcastsScreen(
+            state = podcastsState,
+            listState = podcastListState,
+            sections = podcastSections,
+            searchQuery = itunesSearchQuery,
+            onSearchQueryChange = viewModel::setItunesSearchQuery,
+            searchResults = itunesSearchResults,
+            continueShelf = podcastContinueShelf.takeIf { podcastsEnabled },
+            likedShelf = podcastLikedShelf.takeIf { podcastsEnabled },
+            laterShelf = podcastLaterShelf.takeIf { podcastsEnabled },
+            // The arrow at the end of the shelf's heading opens
+            // the whole set, the way Quick Picks' does on Home.
+            onOpenContinueListening = { podcastUi.showContinueListening = true },
+            // Held on an episode of one of the listener's own
+            // shelves: the same menu an episode's own row has.
+            onOwnShelfItemLongPress = { item ->
+                val url = item.videoId
+                if (url != null && url.startsWith("http")) {
+                    podcastUi.episodeMenu = Song(
+                        videoId = url,
+                        title = item.title,
+                        artist = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                    )
+                }
+            },
+            onShowClick = { item ->
+                val browseId = item.browseId
+                if (browseId != null && browseId.startsWith("itunes:")) {
+                    val collectionId = browseId.removePrefix("itunes:")
+                    nav.itunesPodcastId = collectionId
+                    viewModel.itunesShow(collectionId)?.let {
+                        viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
+                    }
+                    viewModel.openItunesPodcast(collectionId)
+                } else if (item.videoId?.startsWith("http") == true) {
+                    // An "Episodes for later" / "Continue listening" row: play + resume.
+                    pageActions.playWithResume(listOf(Song(
+                        videoId = item.videoId!!,
+                        title = item.title,
+                        artist = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                    )), 0)
+                } else {
+                    browseId?.let {
+                        viewModel.openDetail(
+                            browseId = it,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            thumbnailUrl = item.thumbnailUrl,
+                        )
+                    }
+                }
+            },
+            onRetry = viewModel::loadPodcasts,
+            refreshing = MainViewModel.Feed.PODCASTS in refreshing,
+            onRefresh = { viewModel.refresh(MainViewModel.Feed.PODCASTS) },
+            pullState = podcastPull,
+            contentPadding = listPadding,
+        )
+        TAB_RADIO -> selectedMoodGenre?.let { category ->
+            MoodGenrePlaylistsScreen(
+                title = category.title,
+                state = moodGenreShelves,
+                listState = moodGenreListState,
+                onItemClick = { item ->
+                    item.videoId?.let { videoId ->
+                        pageActions.playRadio(
+                            Song(
+                                videoId = videoId,
+                                title = item.title,
+                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                thumbnailUrl = item.thumbnailUrl,
+                            ),
+                            QueueSource(
+                                category.title,
+                                PlaybackSourceType.EXPLORE,
+                                category.browseId,
+                            ),
+                        )
+                    } ?: item.browseId?.let { browseId ->
+                        viewModel.openDetail(
+                            browseId = browseId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            thumbnailUrl = item.thumbnailUrl,
+                        )
+                    }
+                },
+                onRetry = { viewModel.openMoodGenre(category) },
+                contentPadding = listPadding,
+            )
+        } ?: RadioScreen(
+            state = exploreState,
+            listState = radioListState,
+            flowItem = flowTile,
+            onFlowClick = { sheets.showFlow = true },
+            seeds = radioSeeds,
+            onSeedClick = { item ->
+                val videoId = item.videoId
+                if (videoId != null) {
+                    pageActions.startRadio(
+                        Song(
+                            videoId = videoId,
+                            title = item.title,
+                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                            thumbnailUrl = item.thumbnailUrl,
+                        ),
+                    )
+                }
+            },
+            onStationClick = viewModel::openMoodGenre,
+            onGenresClick = { nav.showGenres = true },
+            onStartStation = { nav.selectedTab = TAB_SEARCH },
+            onRetry = viewModel::loadExplore,
+            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
+            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
+            pullState = explorePull,
+            contentPadding = listPadding,
+        )
+        TAB_SEARCH -> SearchScreen(
+            query = query,
+            onQueryChange = viewModel::onQueryChange,
+            filter = filter,
+            currentSong = player.song,
+            isPlaying = player.isPlaying,
+            onFilterChange = viewModel::onFilterChange,
+            // The podcasts filter goes with podcasts: a pill
+            // that only ever answers "nothing" is noise.
+            availableFilters = when {
+                // Spotify's catalogue has no videos and no
+                // shows, so a pill for either would be a pill
+                // that answers from somewhere else.
+                searchSource == SearchSource.SPOTIFY ->
+                    com.music.bitchord.data.model.SearchFilter.entries.filter {
+                        it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
+                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS
+                    }
+                podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
+                else -> com.music.bitchord.data.model.SearchFilter.entries
+                    .filter { it != com.music.bitchord.data.model.SearchFilter.PODCASTS }
+            },
+            results = results,
+            loadingMore = searchLoadingMore,
+            onLoadMore = viewModel::loadMoreSearchResults,
+            listState = searchListState,
+            scrollResetTrigger = searchScrollReset,
+            focusRequested = searchFocusRequested,
+            onFocusHandled = { searchFocusRequested = false },
+            // Search hits are alternatives to each other, not a running
+            // order — play the one tapped and build a station from it.
+            onSongClick = { songs, index ->
+                songs.getOrNull(index)?.let { song ->
+                    viewModel.recordEntity(SearchHistoryEntity(
+                        id = song.videoId,
+                        title = song.title,
+                        subtitle = song.artist.ifEmpty { "" },
+                        artworkUrl = song.thumbnailUrl,
+                        entityType = EntityType.TRACK,
+                    ))
+                    pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                }
+            },
+            onSongLongPress = pageActions.openSongMenu,
+            onSongSwipe = pageActions.onSongSwipe,
+            onTopResultPlay = { song ->
+                viewModel.recordEntity(SearchHistoryEntity(
+                    id = song.videoId,
+                    title = song.title,
+                    subtitle = song.artist.ifEmpty { "" },
+                    artworkUrl = song.thumbnailUrl,
+                    entityType = EntityType.TRACK,
+                ))
+                pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+            },
+            onTopResultPlaylist = { song ->
+                viewModel.recordEntity(SearchHistoryEntity(
+                    id = song.videoId,
+                    title = song.title,
+                    subtitle = song.artist.ifEmpty { "" },
+                    artworkUrl = song.thumbnailUrl,
+                    entityType = EntityType.TRACK,
+                ))
+                viewModel.loadPlaylists()
+                sheets.playlistPick.songs = listOf(song)
+                sheets.playlistPick.title = null
+                sheets.playlistPick.artwork = null
+            },
+            onBrowseClick = { item ->
+                if (item.browseId.startsWith("itunes:")) {
+                    val collectionId = item.browseId.removePrefix("itunes:")
+                    nav.itunesPodcastId = collectionId
+                    viewModel.openItunesPodcast(collectionId)
+                    return@SearchScreen
+                }
+                viewModel.recordEntity(SearchHistoryEntity(
+                    id = item.browseId ?: "",
+                    title = item.title,
+                    subtitle = item.subtitle.ifBlank { "" },
+                    artworkUrl = item.thumbnailUrl,
+                    entityType = when (item.type) {
+                        BrowseType.ALBUM -> EntityType.ALBUM
+                        BrowseType.ARTIST -> EntityType.ARTIST
+                        BrowseType.PLAYLIST -> EntityType.PLAYLIST
+                        else -> EntityType.TRACK
+                    },
+                ))
+                viewModel.openDetail(
+                    browseId = item.browseId,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                    type = item.type,
+                )
+            },
+            onBrowseLongPress = { item ->
+                // A search row does say what it is, so its own type is
+                // better than what the browse id can be read to mean.
+                if (item.type != BrowseType.ARTIST) {
+                    pageActions.openBrowseMenu(
+                        BrowseTarget(
+                            browseId = item.browseId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            thumbnailUrl = item.thumbnailUrl,
+                            type = item.type,
+                            downloadId = pageActions.downloadIdFor(item.browseId),
+                        ),
+                    )
+                }
+            },
+            history = searchHistory,
+            suggestions = searchSuggestions,
+            typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
+            onSubmit = viewModel::submitSearch,
+            // Suggestions land in search history via searchFor → recordSearch.
+            // History items (onHistoryClick) navigate/play without re-logging.
+            onSuggestionClick = viewModel::searchFor,
+            onHistoryClick = { entity ->
+                // Tap a history entity: navigate to it or play it directly.
+                // Do NOT recordEntity here — tapping an existing history item
+                // must not update its timestamp and push it to the top.
+                when (entity.entityType) {
+                    EntityType.TRACK -> {
+                        // Play the track by its video id
+                        pageActions.playRadio(
+                            com.music.bitchord.data.model.Song(
+                                videoId = entity.id,
+                                title = entity.title,
+                                artist = entity.subtitle,
+                                thumbnailUrl = entity.artworkUrl,
+                            ),
+                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
+                        )
+                    }
+                    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
+                        viewModel.openDetail(
+                            browseId = entity.id,
+                            title = entity.title,
+                            subtitle = entity.subtitle,
+                            thumbnailUrl = entity.artworkUrl,
+                        )
+                    }
+                }
+            },
+            onHistoryRemove = viewModel::removeSearch,
+            onHistoryClear = viewModel::clearSearchHistory,
+            onTypeaheadLongPress = pageActions.openSongMenu,
+            contentPadding = listPadding,
+            topPadding = topBarContentPadding(),
+            // The field is in the top bar; see the bar's accessory.
+            showField = false,
+            // The settings page's own two-state selector, so the
+            // app has one look for "pick one of these".
+            sourceSwitcher = {
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.search_source_youtube),
+                        stringResource(R.string.search_source_spotify),
+                        stringResource(R.string.library),
+                    ),
+                    selectedIndex = searchSource.ordinal,
+                    onSelect = { index -> pageActions.onSearchSourceChange(SearchSource.entries[index]) },
+                )
+            },
+            searchingLibrary = searchSource == SearchSource.LIBRARY,
+            libraryResults = libraryResults,
+            // The same queue opening the Local Music folder and
+            // tapping the row there would give.
+            onLibrarySongClick = { songs, index ->
+                pageActions.playFrom(
+                    songs,
+                    index,
+                    QueueSource(
+                        context.getString(R.string.local_music),
+                        PlaybackSourceType.BROWSE,
+                        "local:all",
+                    ),
+                )
+            },
+        )
+        else -> LibraryScreen(
+            signedIn = signedIn,
+            state = libraryState,
+            listState = libraryListState,
+            // The segment is the caller's, so opening a playlist
+            // over this page and coming back finds it where it
+            // was left.
+            segment = librarySegment,
+            onSegmentChange = { librarySegment = it },
+            onShelfItemClick = pageActions.onLibraryItemClick,
+            // Every shelf here has a menu behind it now — the account's
+            // own playlists get rename and delete on top of what a saved
+            // album or a Liked Music card gets. Holding an artist still
+            // does nothing; see [onBrowseLongPress].
+            onShelfItemLongPress = pageActions.onBrowseLongPress,
+            onNewPlaylist = { sheets.creatingPlaylist = true },
+            // The bar's "+" makes a folder of the listener's own
+            // rather than a playlist on somebody's account: it
+            // belongs to the device and works signed out.
+            onNewFolder = { sheets.creatingFolder = true },
+            folders = folderItems,
+            onShowAll = { shelf -> sheets.libraryShowAll = shelf },
+            replay = {
+                if (libraryReplayVisible) {
+                    LibraryReplayEntry(
+                        cards = replayCards,
+                        loading = replay.loading,
+                        holder = account?.name.orEmpty(),
+                        memberSince = replay.memberSince,
+                        onOpenReplay = { page ->
+                            nav.replayLandingPage = page
+                            nav.showReplay = true
+                        },
+                    )
+                }
+            },
+            onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
+            onRetry = viewModel::loadLibrary,
+            refreshing = MainViewModel.Feed.LIBRARY in refreshing,
+            onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
+            pullState = libraryPull,
+            contentPadding = listPadding,
+            links = libraryLinks(),
+            deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
+            podcastShelves = if (podcastsEnabled) {
+                listOfNotNull(podcastLikedShelf, podcastLaterShelf)
+            } else {
+                emptyList()
+            },
+        )
+    }
+}
+
+/**
+ * Everything [RootPage] needs from [BitChordApp], as one value.
+ *
+ * Built where the page lambda is, and passed in whole: one capture for that
+ * lambda and one parameter for the page instead of sixty. A data class, so
+ * the compiler compares it by its fields — each a stable state holder, a
+ * remembered lambda or a plain value — and a page whose inputs are all the
+ * same instances as last time is skipped exactly as before. Marked
+ * [Stable] because a few fields (the view model, the player snapshot, the
+ * detail list-state map) are not inferred stable; without it the compiler
+ * compares the whole value by identity, and a value rebuilt on every root
+ * recomposition would recompose the page every time. Collected and
+ * saved state is carried as its [androidx.compose.runtime.State] /
+ * [androidx.compose.runtime.MutableState] rather than its value, so every
+ * read inside the page, callbacks included, is of the current value.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Stable
+private data class PageInputs(
+    val scroll: PageScrollStates,
+    val viewModel: MainViewModel,
+    val scope: kotlinx.coroutines.CoroutineScope,
+    val player: com.music.bitchord.playback.PlayerState,
+    val nav: RootNav,
+    val sheets: RootSheets,
+    val podcastUi: PodcastUiState,
+    val replay: com.music.bitchord.ui.replay.ReplayState,
+    val pageActions: PageActions,
+    val detailListStates: MutableMap<String, LazyListState>,
+    val downloadedReleases: List<com.music.bitchord.download.SavedCollection>,
+    val flowTile: ShelfItem?,
+    val folderItems: List<ShelfItem>,
+    val homeFlowLeading: ShelfItem?,
+    val listPadding: PaddingValues,
+    val localPlaylistItems: List<ShelfItem>,
+    val quickPicksSongs: List<Song>,
+    val radioSeeds: List<ShelfItem>,
+    val replayCards: List<com.music.bitchord.ui.replay.ReplayHeroCard>,
+    val songSort: SongSort,
+    val windowWidth: Dp,
+    val quickPicksLabel: String,
+    val searchLabel: String,
+    val accountState: androidx.compose.runtime.State<com.music.bitchord.data.model.Account?>,
+    val audiobooksState: androidx.compose.runtime.State<UiState<List<Audiobook>>>,
+    val detailStackState: androidx.compose.runtime.State<List<DetailPage>>,
+    val filterState: androidx.compose.runtime.State<com.music.bitchord.data.model.SearchFilter>,
+    val flowQueueStateState: androidx.compose.runtime.State<UiState<List<Song>>>,
+    val flowStatusState: androidx.compose.runtime.State<com.music.bitchord.data.flow.FlowStatus>,
+    val itunesEpisodesState: androidx.compose.runtime.State<UiState<List<Song>>>,
+    val libraryReplayVisibleState: androidx.compose.runtime.State<Boolean>,
+    val likeStatusesState: androidx.compose.runtime.State<Map<String, com.music.bitchord.data.model.LikeStatus>>,
+    val offlineActiveState: androidx.compose.runtime.State<Boolean>,
+    val podcastsEnabledState: androidx.compose.runtime.State<Boolean>,
+    val queryState: androidx.compose.runtime.State<String>,
+    val refreshingState: androidx.compose.runtime.State<Set<MainViewModel.Feed>>,
+    val savedCollectionsState: androidx.compose.runtime.State<Map<String, com.music.bitchord.download.SavedCollection>>,
+    val searchSourceState: androidx.compose.runtime.State<SearchSource>,
+    val selectedMoodGenreState: androidx.compose.runtime.State<com.music.bitchord.data.model.MoodGenre?>,
+    val signedInState: androidx.compose.runtime.State<Boolean>,
+    val webdavUrlState: androidx.compose.runtime.State<String>,
+    val homeWithFlowState: androidx.compose.runtime.State<UiState<List<HomeShelf>>>,
+    val activeJamInviteCodeState: androidx.compose.runtime.MutableState<String?>,
+    val activeJamInviteServerState: androidx.compose.runtime.MutableState<String?>,
+    val audiobookQueryState: androidx.compose.runtime.MutableState<String>,
+    val librarySegmentState: androidx.compose.runtime.MutableState<LibrarySegment>,
+    val podcastSortNewestState: androidx.compose.runtime.MutableState<Boolean>,
+    val searchFocusRequestedState: androidx.compose.runtime.MutableState<Boolean>,
+    val signInBannerDismissedState: androidx.compose.runtime.MutableState<Boolean>,
+    val openByName: (String?, String, String?, BrowseType, String?) -> Unit,
+    val smartDownloadPodcast: (Song?) -> Unit,
+    val uploadToWebDav: (List<Song>) -> Unit,
+)
+
+/**
+ * The scroll and pull-to-refresh state of every page [RootPage] draws.
+ *
+ * Remembered in [BitChordApp], not in the page: AnimatedContent composes a
+ * page per slot and drops the slot when the page is left, so a list state
+ * remembered inside one would reset its scroll on every visit. A data class
+ * of stable states, compared by identity of each, so the value rebuilt on
+ * each recomposition is equal to the last.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+private data class PageScrollStates(
+    val home: LazyListState,
+    val explore: LazyListState,
+    val moodGenre: LazyListState,
+    val radio: LazyListState,
+    val podcast: LazyListState,
+    val library: LazyListState,
+    val search: LazyListState,
+    val quickPicks: LazyListState,
+    val continueListening: LazyListState,
+    val history: LazyListState,
+    val flow: LazyListState,
+    val replay: LazyListState,
+    val libraryShowAll: androidx.compose.foundation.lazy.grid.LazyGridState,
+    val homePull: androidx.compose.material3.pulltorefresh.PullToRefreshState,
+    val explorePull: androidx.compose.material3.pulltorefresh.PullToRefreshState,
+    val podcastPull: androidx.compose.material3.pulltorefresh.PullToRefreshState,
+    val libraryPull: androidx.compose.material3.pulltorefresh.PullToRefreshState,
+)
 
 /**
  * What the root's pages can do: play, queue and start radio from what
