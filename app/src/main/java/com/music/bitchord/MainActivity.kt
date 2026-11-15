@@ -858,8 +858,8 @@ private fun BitChordApp(
     val playerLyricsSourceColor by AppSettings.playerLyricsSourceColor.collectAsStateWithLifecycle()
     val libraryReplayVisibleState = AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val libraryReplayVisible by libraryReplayVisibleState
-    val flowQueueStateState = viewModel.flowQueue.collectAsStateWithLifecycle()
-    val flowQueueState by flowQueueStateState
+    val flowQueueState = viewModel.flowQueue.collectAsStateWithLifecycle()
+    val flowQueue by flowQueueState
     val flowSaveNotice by viewModel.flowSaveNotice.collectAsStateWithLifecycle()
     // Home Flow entry: synthetic shelf on top once unlocked (homeWithFlow is
     // derived below, once history/library state exist to borrow artwork
@@ -977,7 +977,7 @@ private fun BitChordApp(
     // The Flow card wears the mix's own first cover: it is literally what
     // is playing, not a borrowed album, and a blank captioned tile is what
     // reads as broken. Empty queue, empty art, same tile as before.
-    val flowArt = (flowQueueState as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
+    val flowArt = (flowQueue as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
     val offlineActiveState = AppSettings.effectiveOffline.collectAsStateWithLifecycle()
     val offlineActive by offlineActiveState
     val offlinePicksTitle = stringResource(R.string.shelf_quick_picks)
@@ -3956,7 +3956,7 @@ private fun BitChordApp(
             audiobooksState = audiobooksState,
             detailStackState = detailStackState,
             filterState = filterState,
-            flowQueueStateState = flowQueueStateState,
+            flowQueueState = flowQueueState,
             flowStatusState = flowStatusState,
             itunesEpisodesState = itunesEpisodesState,
             libraryReplayVisibleState = libraryReplayVisibleState,
@@ -5098,7 +5098,7 @@ private fun RootPage(
     val audiobooks by inputs.audiobooksState
     val detailStack by inputs.detailStackState
     val filter by inputs.filterState
-    val flowQueueState by inputs.flowQueueStateState
+    val flowQueue by inputs.flowQueueState
     val flowStatus by inputs.flowStatusState
     val itunesEpisodes by inputs.itunesEpisodesState
     val libraryReplayVisible by inputs.libraryReplayVisibleState
@@ -5120,23 +5120,6 @@ private fun RootPage(
     var podcastSortNewest by inputs.podcastSortNewestState
     var searchFocusRequested by inputs.searchFocusRequestedState
     var signInBannerDismissed by inputs.signInBannerDismissedState
-    val homeListState = scroll.home
-    val exploreListState = scroll.explore
-    val moodGenreListState = scroll.moodGenre
-    val radioListState = scroll.radio
-    val podcastListState = scroll.podcast
-    val libraryListState = scroll.library
-    val searchListState = scroll.search
-    val quickPicksListState = scroll.quickPicks
-    val continueListeningListState = scroll.continueListening
-    val historyListState = scroll.history
-    val flowListState = scroll.flow
-    val replayListState = scroll.replay
-    val libraryShowAllGridState = scroll.libraryShowAll
-    val homePull = scroll.homePull
-    val explorePull = scroll.explorePull
-    val podcastPull = scroll.podcastPull
-    val libraryPull = scroll.libraryPull
     // The flows only the pages read, collected per slot. A fresh
     // collector starts from the flow's current value, so a page entering
     // reads exactly what one already on screen reads.
@@ -5207,7 +5190,7 @@ private fun RootPage(
     if (key == "history") {
         HistoryScreen(
             state = historyState,
-            listState = historyListState,
+            listState = scroll.history,
             currentSong = player.song,
             isPlaying = player.isPlaying,
             onSongClick = { songs, index ->
@@ -5220,7 +5203,7 @@ private fun RootPage(
         )
     } else if (key == "flow") {
         com.music.bitchord.ui.screens.FlowScreen(
-            tracksState = flowQueueState,
+            tracksState = flowQueue,
             mood = flowMood,
             tuner = flowTuner,
             status = flowStatus,
@@ -5228,7 +5211,7 @@ private fun RootPage(
             isSaved = flowSaved,
             isGrowing = !flowSaved,
             rebuilding = flowLoading,
-            listState = flowListState,
+            listState = scroll.flow,
             onPlay = { pageActions.startFlow(false) },
             onShuffle = { pageActions.startFlow(true) },
             onNewMix = { viewModel.newFlowMix() },
@@ -5293,7 +5276,7 @@ private fun RootPage(
             currentSong = player.song,
             isPlaying = player.isPlaying,
             onItemLongPress = { song -> pageActions.openSongMenu(song) },
-            listState = quickPicksListState,
+            listState = scroll.quickPicks,
             contentPadding = listPadding,
         )
     } else if (key == "continue_listening") {
@@ -5313,14 +5296,14 @@ private fun RootPage(
                 ).show()
             },
             onMore = { episode -> podcastUi.episodeMenu = episode },
-            listState = continueListeningListState,
+            listState = scroll.continueListening,
             contentPadding = listPadding,
         )
     } else if (key == "library_show_all") {
         sheets.libraryShowAll?.let { shelf ->
             LibraryGridPage(
                 shelf = shelf,
-                gridState = libraryShowAllGridState,
+                gridState = scroll.libraryShowAll,
                 onItemClick = pageActions.onLibraryItemClick,
                 onItemLongPress = pageActions.onBrowseLongPress,
                 // Only the Playlists shelf can grow one — see
@@ -5359,7 +5342,7 @@ private fun RootPage(
                 nav.showReplayShare = true
             },
             contentPadding = listPadding,
-            listState = replayListState,
+            listState = scroll.replay,
             landingPage = nav.replayLandingPage,
         )
     } else if (key == "spotify") {
@@ -5468,7 +5451,7 @@ private fun RootPage(
             MoodGenrePlaylistsScreen(
                 title = category.title,
                 state = moodGenreShelves,
-                listState = moodGenreListState,
+                listState = scroll.moodGenre,
                 onItemClick = { item ->
                     item.videoId?.let { videoId ->
                         pageActions.playRadio(
@@ -5498,12 +5481,12 @@ private fun RootPage(
             )
         } ?: ExploreScreen(
             state = exploreState,
-            listState = exploreListState,
+            listState = scroll.explore,
             onCategoryClick = viewModel::openMoodGenre,
             onRetry = viewModel::loadExplore,
             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
-            pullState = explorePull,
+            pullState = scroll.explorePull,
             contentPadding = listPadding,
         )
     } else if (key == "audiobook") {
@@ -5824,7 +5807,7 @@ private fun RootPage(
     } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: nav.selectedTab) {
         TAB_HOME -> HomeScreen(
             state = homeWithFlow,
-            listState = homeListState,
+            listState = scroll.home,
             currentSong = player.song,
             isPlaying = player.isPlaying,
             title = stringResource(R.string.home),
@@ -5898,7 +5881,7 @@ private fun RootPage(
             onRetry = viewModel::loadHome,
             refreshing = MainViewModel.Feed.HOME in refreshing,
             onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },
-            pullState = homePull,
+            pullState = scroll.homePull,
             contentPadding = listPadding,
             onLoadMore = viewModel::loadMoreHome,
             loadingMore = homeLoadingMore,
@@ -5906,7 +5889,7 @@ private fun RootPage(
         )
         TAB_PODCASTS -> PodcastsScreen(
             state = podcastsState,
-            listState = podcastListState,
+            listState = scroll.podcast,
             sections = podcastSections,
             searchQuery = itunesSearchQuery,
             onSearchQueryChange = viewModel::setItunesSearchQuery,
@@ -5961,14 +5944,14 @@ private fun RootPage(
             onRetry = viewModel::loadPodcasts,
             refreshing = MainViewModel.Feed.PODCASTS in refreshing,
             onRefresh = { viewModel.refresh(MainViewModel.Feed.PODCASTS) },
-            pullState = podcastPull,
+            pullState = scroll.podcastPull,
             contentPadding = listPadding,
         )
         TAB_RADIO -> selectedMoodGenre?.let { category ->
             MoodGenrePlaylistsScreen(
                 title = category.title,
                 state = moodGenreShelves,
-                listState = moodGenreListState,
+                listState = scroll.moodGenre,
                 onItemClick = { item ->
                     item.videoId?.let { videoId ->
                         pageActions.playRadio(
@@ -5998,7 +5981,7 @@ private fun RootPage(
             )
         } ?: RadioScreen(
             state = exploreState,
-            listState = radioListState,
+            listState = scroll.radio,
             flowItem = flowTile,
             onFlowClick = { sheets.showFlow = true },
             seeds = radioSeeds,
@@ -6021,7 +6004,7 @@ private fun RootPage(
             onRetry = viewModel::loadExplore,
             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
-            pullState = explorePull,
+            pullState = scroll.explorePull,
             contentPadding = listPadding,
         )
         TAB_SEARCH -> SearchScreen(
@@ -6049,7 +6032,7 @@ private fun RootPage(
             results = results,
             loadingMore = searchLoadingMore,
             onLoadMore = viewModel::loadMoreSearchResults,
-            listState = searchListState,
+            listState = scroll.search,
             scrollResetTrigger = searchScrollReset,
             focusRequested = searchFocusRequested,
             onFocusHandled = { searchFocusRequested = false },
@@ -6208,7 +6191,7 @@ private fun RootPage(
         else -> LibraryScreen(
             signedIn = signedIn,
             state = libraryState,
-            listState = libraryListState,
+            listState = scroll.library,
             // The segment is the caller's, so opening a playlist
             // over this page and coming back finds it where it
             // was left.
@@ -6245,7 +6228,7 @@ private fun RootPage(
             onRetry = viewModel::loadLibrary,
             refreshing = MainViewModel.Feed.LIBRARY in refreshing,
             onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
-            pullState = libraryPull,
+            pullState = scroll.libraryPull,
             contentPadding = listPadding,
             links = libraryLinks(),
             // Each list remembered against what it is built from, so an
@@ -6336,7 +6319,7 @@ private data class PageInputs(
     val audiobooksState: androidx.compose.runtime.State<UiState<List<Audiobook>>>,
     val detailStackState: androidx.compose.runtime.State<List<DetailPage>>,
     val filterState: androidx.compose.runtime.State<com.music.bitchord.data.model.SearchFilter>,
-    val flowQueueStateState: androidx.compose.runtime.State<UiState<List<Song>>>,
+    val flowQueueState: androidx.compose.runtime.State<UiState<List<Song>>>,
     val flowStatusState: androidx.compose.runtime.State<com.music.bitchord.data.flow.FlowStatus>,
     val itunesEpisodesState: androidx.compose.runtime.State<UiState<List<Song>>>,
     val libraryReplayVisibleState: androidx.compose.runtime.State<Boolean>,

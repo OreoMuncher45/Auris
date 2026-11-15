@@ -394,7 +394,7 @@ fun rememberPlayerView(controller: MediaController?): PlayerView {
     val position = remember { PlaybackPosition() }
     val stateHolder = remember { mutableStateOf(PlayerState(position = position)) }
     var state by stateHolder
-    val view = remember(stateHolder, position) { PlayerView(stateHolder, position) }
+    val view = remember { PlayerView(stateHolder, position) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
