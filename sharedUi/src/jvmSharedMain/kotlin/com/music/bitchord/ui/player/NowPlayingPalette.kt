@@ -287,10 +287,13 @@ private const val LIGHT_INK_LIFT = 0.42f
  * own colour. Carried too far it turns into a pale wash with a hue nobody
  * could name — which is not the same thing as being bright.
  *
- * The brightness the reference player has is not taken from the ink but from
- * the primary marks: the title and the transport are the ink lifted toward
- * white, so they can be as light as it wants without the ink itself losing
- * its colour. See [LocalPlayerPrimary].
+ * One ink for the whole screen. The title and the transport used to wear a
+ * second one — the same colour lifted toward white — so that they could be as
+ * light as the reference player without the ink itself losing its colour. It
+ * read as two colour systems on one screen: a pale title and a tinted lyric
+ * line, a white transport and a coloured volume bar, and the cover's own hue
+ * appearing in some marks and not others. The strength of a mark is carried
+ * by how much of the ink it wears, not by a different colour.
  */
 private const val LIGHT_INK_MIN_L = 0.78f
 private const val LIGHT_INK_MAX_L = 0.86f

@@ -576,18 +576,9 @@ private fun PlayerColors(
     alphas: NowPlayingAlphas,
     content: @Composable () -> Unit,
 ) {
-    // The title and the transport wear the ink lifted toward white — see
-    // [LocalPlayerPrimary]. Derived from the ink rather than given on its own,
-    // so it follows a playing clip with everything else.
-    val primary = remember(ink) {
-        derivedStateOf {
-            lerp(Color.White, ink.value, PRIMARY_INK_KEEP)
-        }
-    }
     CompositionLocalProvider(
         LocalPlayerInk provides ink,
         LocalPlayerInkGlow provides if (textGlow) glow else glowOff,
-        LocalPlayerPrimary provides primary,
         LocalPlayerAccent provides colors.accent,
         LocalPlayerSeekbar provides colors.seekbar,
         LocalPlayerText provides colors.text,
@@ -4382,12 +4373,12 @@ fun NowPlayingScreen(
                             label = "playerCredits",
                         ) {
                             val scrolling = scrolls()
-                            // The title is a primary mark: the ink lifted toward
-                            // white, unless the listener pinned a colour for
-                            // the text. The artist below it keeps the ink
-                            // itself — the second line of the block is not the
+                            // The title wears the ink, like everything else on
+                            // the screen — unless the listener pinned a colour
+                            // for the text. The artist below it keeps the ink
+                            // itself: the second line of the block is not the
                             // loudest thing on the screen.
-                            val ink = LocalPlayerText.current ?: LocalPlayerPrimary.current.value
+                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current.value
                             val artistInk = LocalPlayerText.current ?: LocalPlayerInk.current.value
                             val alphas = LocalPlayerAlphas.current
                             // The glow the text wears, read here rather than

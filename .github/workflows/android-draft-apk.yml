@@ -14,24 +14,24 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.47"
+        default: "3.1"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "154"
+        default: "155"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.47-draft"
+        default: "v3.1"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.47 — private preview"
+        default: "Auris 3.1 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.47 — private preview
+          Auris 3.1 — private preview
 
           Dolby Atmos
           - A phone with no hardware Dolby decoder no longer gets the spatial
@@ -116,10 +116,16 @@ on:
             little to spare it moves by as much as the gap has, down to 6dp.
           - The item strengths were measured against the reference player and
             matched: the seek bar and the volume bar are dimmer and thinner,
-            the timestamps are quieter, the quality badge is quieter, the
-            star and the menu beside the title are quieter, and the title and
-            the transport are carried closer to white so they read as light
-            rather than as grey paint.
+            the timestamps are quieter, the quality badge is quieter, and the
+            star and the menu beside the title are quieter.
+          - The title and the transport wear the player's ink again, like every
+            other mark on the screen. They used to wear a second colour — the
+            same ink lifted toward white — so that they could be as light as
+            the reference player without the ink itself losing the record's
+            colour. It read as two colour systems on one screen: a pale title
+            over a tinted lyric line, a white transport over a coloured volume
+            bar, and the cover's own hue in some marks and not others. One
+            ink now, and a mark's strength is how much of it the mark wears.
 
           Installs over 3.0.43: same package, same signing key.
 permissions:

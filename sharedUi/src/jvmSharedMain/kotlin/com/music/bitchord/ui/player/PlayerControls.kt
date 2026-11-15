@@ -780,7 +780,7 @@ internal fun TransportRow(
     //
     // Everything else about the row is untouched: the skips at 53dp, the
     // SpaceAround spacing and the touch boxes.
-    val ink = LocalPlayerAccent.current ?: LocalPlayerPrimary.current.value
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     // The reference player's own geometry, measured off its pause: an 87px
     // bar pair on the same 1080px-wide screen the skip pair sits 125px across
     // on. On this grid that is a 30dp play box — the pause spans 23.4 of the
@@ -1186,9 +1186,9 @@ private fun TransportGlyph(
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
     val haptics = rememberHaptics()
-    // A primary mark: the ink lifted toward white, unless the listener pinned
-    // an accent colour for the transport. See [LocalPlayerPrimary].
-    val ink = LocalPlayerAccent.current ?: LocalPlayerPrimary.current.value
+    // The ink, like every other mark on the screen, unless the listener pinned
+    // an accent colour for the transport.
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
