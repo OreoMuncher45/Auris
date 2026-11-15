@@ -5771,7 +5771,7 @@ private fun BitChordApp(
             playSongsNext = playSongsNext,
             startDownload = startDownload,
             withBrowseSongs = withBrowseSongs,
-            smartDownloadPodcast = { smartDownloadPodcast(it) },
+            smartDownloadPodcast = ::smartDownloadPodcast,
         )
     }
 }
