@@ -109,6 +109,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -726,7 +728,7 @@ private fun BitChordApp(
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
     val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val nav = rememberSaveable(saver = RootNav.Saver) { RootNav() }
     /**
      * Whether the player's sheet is up. The player is always a full-screen
      * take-over raised over the page, on every window size — the library
@@ -778,33 +780,7 @@ private fun BitChordApp(
         }
     }
     val sheets = remember { RootSheets() }
-    var showSettings by rememberSaveable { mutableStateOf(false) }
-    // Moods and genres used to have a tab of their own. The podcasts took
-    // that slot, so they live on a page now, opened from the radio tab.
-    var showGenres by rememberSaveable { mutableStateOf(false) }
-    // LibriVox's books: the list, and whichever one is open.
-    var showAudiobooks by rememberSaveable { mutableStateOf(false) }
     var audiobookQuery by rememberSaveable { mutableStateOf("") }
-    // An Apple-catalogue podcast opened from the podcasts page (collectionId).
-    var itunesPodcastId by rememberSaveable { mutableStateOf<String?>(null) }
-    // Replay: the page, the stories over it, and the share sheet over those.
-    // Three states rather than one enum because they stack — the stories are
-    // opened from the page and the share sheet from either, and closing one
-    // has to reveal what it was opened from.
-    var showReplay by rememberSaveable { mutableStateOf(false) }
-    // Library cards use the same Replay page as every other entry point, but
-    // category cards ask it to start at their matching ranked section.
-    var replayLandingPage by rememberSaveable { mutableStateOf(ReplayStoryPage.INTRO) }
-    var replayStory by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
-    var showReplayShare by rememberSaveable { mutableStateOf(false) }
-    // Track which sub-screen was opened from Settings so AnimatedContent keeps
-    // SettingsSheet mounted underneath and back navigation restores scroll.
-    // null = no sub-screen overlay; non-null = that key is rendered as overlay.
-    var settingsSubScreen by rememberSaveable { mutableStateOf<String?>(null) }
-    var showAccountScrobbling by rememberSaveable { mutableStateOf(false) }
-    var showSources by rememberSaveable { mutableStateOf(false) }
-    var showListenTogether by rememberSaveable { mutableStateOf(false) }
-    var showEqualizer by rememberSaveable { mutableStateOf(false) }
 
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
@@ -829,7 +805,6 @@ private fun BitChordApp(
     val autoplayEnabled = autoplayEnabledFor(partyState, autoplay)
     var searchVisualActive by rememberSaveable { mutableStateOf(false) }
     var searchKeyboardActive by rememberSaveable { mutableStateOf(false) }
-    var lastSearchTab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
     val searchNavFocus = remember { FocusRequester() }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
@@ -841,7 +816,7 @@ private fun BitChordApp(
     // The modal player owns light status glyphs and its own contrast scrim.
     // Every other surface follows the theme; Replay's page and stories remain
     // dark artwork either way.
-    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !showReplay && replayStory == null)
+    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !nav.showReplay && nav.replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     // The podcast pages that sit over the feed — see [PodcastUiState].
@@ -851,8 +826,8 @@ private fun BitChordApp(
     // that cannot be reached is not a tab anybody can stay on.
     LaunchedEffect(podcastsEnabled) {
         if (!podcastsEnabled) {
-            if (selectedTab == TAB_PODCASTS) {
-                selectedTab = TAB_HOME
+            if (nav.selectedTab == TAB_PODCASTS) {
+                nav.selectedTab = TAB_HOME
                 podcastUi.showContinueListening = false
                 podcastUi.episodeMenu = null
             }
@@ -928,15 +903,15 @@ private fun BitChordApp(
     val query by viewModel.query.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
     // The podcast feed is fetched once, the first time its tab is opened.
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
+    LaunchedEffect(nav.selectedTab) {
+        if (nav.selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
     }
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == TAB_RADIO || showGenres) viewModel.ensureExploreLoaded()
-        if (selectedTab == TAB_SEARCH) {
+    LaunchedEffect(nav.selectedTab) {
+        if (nav.selectedTab == TAB_RADIO || nav.showGenres) viewModel.ensureExploreLoaded()
+        if (nav.selectedTab == TAB_SEARCH) {
             searchVisualActive = true
         } else {
             searchVisualActive = false
@@ -956,12 +931,12 @@ private fun BitChordApp(
         activeJamInviteCode = invite.code
         activeJamInviteServer = invite.serverUrl
         dismissPlayer()
-        showReplay = false
-        replayStory = null
-        showReplayShare = false
-        showAccountScrobbling = false
-        showSources = false
-        showEqualizer = false
+        nav.showReplay = false
+        nav.replayStory = null
+        nav.showReplayShare = false
+        nav.showAccountScrobbling = false
+        nav.showSources = false
+        nav.showEqualizer = false
         sheets.showHistory = false
         sheets.showFlow = false
         sheets.showDiscord = false
@@ -969,14 +944,14 @@ private fun BitChordApp(
         sheets.libraryShowAll = null
         viewModel.clearDetail()
         sheets.webSession = null
-        showSettings = true
-        showListenTogether = true
+        nav.showSettings = true
+        nav.showListenTogether = true
         JamInviteLink.handled()
     }
     LaunchedEffect(signedIn, activeJamInviteCode) {
         if (signedIn && activeJamInviteCode != null) {
-            showSettings = true
-            showListenTogether = true
+            nav.showSettings = true
+            nav.showListenTogether = true
         }
     }
     val account by viewModel.account.collectAsStateWithLifecycle()
@@ -1061,11 +1036,11 @@ private fun BitChordApp(
     // Settings has no tab of its own — it sits on top of whatever tab was
     // selected. A pushed album/artist page (from the player, search, etc.)
     // should surface above it rather than being hidden behind it.
-    LaunchedEffect(detail) { if (detail != null) showSettings = false }
+    LaunchedEffect(detail) { if (detail != null) nav.showSettings = false }
     LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
-    LaunchedEffect(showSettings) {
-        if (!showSettings) {
-            showAccountScrobbling = false
+    LaunchedEffect(nav.showSettings) {
+        if (!nav.showSettings) {
+            nav.showAccountScrobbling = false
             sheets.showSpotify = false
         }
     }
@@ -1260,7 +1235,7 @@ private fun BitChordApp(
     val podcastListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val searchListState = rememberLazyListState()
-    val currentListState = when (selectedTab) {
+    val currentListState = when (nav.selectedTab) {
         TAB_HOME -> homeListState
         TAB_PODCASTS -> podcastListState
         TAB_RADIO -> if (selectedMoodGenre == null) radioListState else moodGenreListState
@@ -1269,10 +1244,10 @@ private fun BitChordApp(
     }
 
     val currentFeed = when {
-        showSettings || showAccountScrobbling || detail != null -> null
-        selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
-        selectedTab == TAB_PODCASTS -> MainViewModel.Feed.PODCASTS
-        selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
+        nav.showSettings || nav.showAccountScrobbling || detail != null -> null
+        nav.selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
+        nav.selectedTab == TAB_PODCASTS -> MainViewModel.Feed.PODCASTS
+        nav.selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
         else -> null
     }
     // The lead shelf is listening history, so opening Home after playing
@@ -1300,7 +1275,7 @@ private fun BitChordApp(
     // As [detailListState], for Replay: its own large heading owns the title
     // until it is scrolled away, and the bar lives out here rather than on the
     // page. Rebuilt per opening so reopening starts at the top.
-    val replayListState = remember(showReplay, replayLandingPage) { LazyListState() }
+    val replayListState = remember(nav.showReplay, nav.replayLandingPage) { LazyListState() }
     val replayScrolled by remember(replayListState) {
         derivedStateOf {
             replayListState.firstVisibleItemIndex > 0 ||
@@ -2213,7 +2188,7 @@ private fun BitChordApp(
                     // found nothing to start — and the results are a better
                     // answer to a spoken request than silence is.
                     dismissPlayer()
-                    selectedTab = TAB_SEARCH
+                    nav.selectedTab = TAB_SEARCH
                     viewModel.searchFor(request.query)
                 }
             }
@@ -2344,7 +2319,7 @@ private fun BitChordApp(
      */
     fun smartDownloadPodcast(anchor: Song?) {
         val feed = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
-        val showId = itunesPodcastId
+        val showId = nav.itunesPodcastId
         val played = showId?.let { viewModel.playedEpisodes(it) }.orEmpty()
         val seed = if (anchor != null) listOf(anchor) + played else played
         val picked = com.music.bitchord.data.podcast.PodcastSmartDownload.select(feed, seed)
@@ -2523,20 +2498,20 @@ private fun BitChordApp(
             )
         },
         onTapSearchIcon = {
-            if (selectedTab != TAB_SEARCH) lastSearchTab = selectedTab
+            if (nav.selectedTab != TAB_SEARCH) nav.lastSearchTab = nav.selectedTab
             viewModel.clearDetail()
             viewModel.closeMoodGenre()
-            showSettings = false
-            showAccountScrobbling = false
-            showSources = false
-            showListenTogether = false
-            showEqualizer = false
-            showReplay = false
-            settingsSubScreen = null
+            nav.showSettings = false
+            nav.showAccountScrobbling = false
+            nav.showSources = false
+            nav.showListenTogether = false
+            nav.showEqualizer = false
+            nav.showReplay = false
+            nav.settingsSubScreen = null
             sheets.showHistory = false
             sheets.showFlow = false
             sheets.libraryShowAll = null
-            selectedTab = TAB_SEARCH
+            nav.selectedTab = TAB_SEARCH
             searchVisualActive = true
             searchKeyboardActive = false
         },
@@ -2544,7 +2519,7 @@ private fun BitChordApp(
         onExit = {
             searchKeyboardActive = false
             searchVisualActive = false
-            selectedTab = lastSearchTab.takeIf { it != TAB_SEARCH } ?: TAB_HOME
+            nav.selectedTab = nav.lastSearchTab.takeIf { it != TAB_SEARCH } ?: TAB_HOME
         },
         onCloseKeyboard = { searchKeyboardActive = false },
         focusRequester = searchNavFocus,
@@ -2557,7 +2532,7 @@ private fun BitChordApp(
         val podcastId = item.browseId?.takeIf { it.startsWith("itunes:") }?.removePrefix("itunes:")
         when {
             podcastId != null -> {
-                itunesPodcastId = podcastId
+                nav.itunesPodcastId = podcastId
                 viewModel.itunesShow(podcastId)?.let {
                     viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
                 }
@@ -2579,7 +2554,7 @@ private fun BitChordApp(
             // The books are not a YouTube release: their pages are our own,
             // because a chapter is a file rather than a track.
             if (id == com.music.bitchord.ui.screens.AUDIOBOOKS_BROWSE_ID) {
-                showAudiobooks = true
+                nav.showAudiobooks = true
                 viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() })
                 return@let
             }
@@ -2784,8 +2759,8 @@ private fun BitChordApp(
     // picture, so they cannot disagree. Read while any of them is on screen —
     // which includes the Library tab, since the cards live at the top of it.
     // See [rememberReplayState].
-    val replayOpen = showReplay || replayStory != null || showReplayShare ||
-        (libraryReplayVisible && selectedTab == TAB_LIBRARY && detail == null && !showSettings)
+    val replayOpen = nav.showReplay || nav.replayStory != null || nav.showReplayShare ||
+        (libraryReplayVisible && nav.selectedTab == TAB_LIBRARY && detail == null && !nav.showSettings)
     val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
     val replayCards = remember(replay.summary) {
         replay.summary?.takeUnless { it.isEmpty }?.cards(context).orEmpty()
@@ -3073,13 +3048,13 @@ private fun BitChordApp(
                 // Now Playing. Clear the current route before restoring it.
                 dismissPlayer()
                 viewModel.clearDetail()
-                showSettings = false
-                showAccountScrobbling = false
-                showSources = false
-                showListenTogether = false
-                showEqualizer = false
-                showReplay = false
-                settingsSubScreen = null
+                nav.showSettings = false
+                nav.showAccountScrobbling = false
+                nav.showSources = false
+                nav.showListenTogether = false
+                nav.showEqualizer = false
+                nav.showReplay = false
+                nav.settingsSubScreen = null
                 sheets.showHistory = false
                 sheets.showFlow = false
                 sheets.showDiscord = false
@@ -3094,21 +3069,21 @@ private fun BitChordApp(
                     }
                     PlaybackSourceType.HOME -> {
                         viewModel.closeMoodGenre()
-                        selectedTab = TAB_HOME
+                        nav.selectedTab = TAB_HOME
                     }
                     PlaybackSourceType.SEARCH -> {
                         viewModel.closeMoodGenre()
-                        selectedTab = TAB_SEARCH
+                        nav.selectedTab = TAB_SEARCH
                     }
                     PlaybackSourceType.HISTORY -> sheets.showHistory = true
                     PlaybackSourceType.REPLAY -> {
-                        replayLandingPage = ReplayStoryPage.INTRO
-                        showReplay = true
+                        nav.replayLandingPage = ReplayStoryPage.INTRO
+                        nav.showReplay = true
                     }
                     PlaybackSourceType.EXPLORE -> if (sourceId == com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID) {
                         sheets.showFlow = true
                     } else {
-                        showGenres = true
+                        nav.showGenres = true
                     }
                     PlaybackSourceType.SHARED_LINK -> {
                         val id = sourceId ?: return@openSource
@@ -3140,8 +3115,8 @@ private fun BitChordApp(
                 // The player is a sheet over the page, so it has to come down
                 // for the page to be read at all.
                 dismissPlayer()
-                showSettings = true
-                showListenTogether = true
+                nav.showSettings = true
+                nav.showListenTogether = true
             },
             onClearQueue = {
                 // Keep what's playing and context/autoplay; drop user-queued tracks.
@@ -3170,19 +3145,10 @@ private fun BitChordApp(
         // rather than inside the bar because the page's scroll is what drives it,
         // and the page is a sibling of the bar rather than a child.
         val navBarScroll = rememberFloatingTabBarScrollConnection()
-        // Which Settings category is open, or null for the category index. Held
-        // here rather than inside SettingsScreen so the top bar's back button can
-        // close the category before it closes Settings itself.
-        var settingsCategory by rememberSaveable { mutableStateOf<String?>(null) }
         // Home's "Sign in to YouTube" banner, once the user has dismissed it.
         var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
         // Podcast show page: newest-first vs oldest-first episode sort.
         var podcastSortNewest by rememberSaveable { mutableStateOf(true) }
-        /** Which story card the share sheet is for, or null for the whole Replay. */
-        var replaySharePage by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
-        // The player's member drawer, reachable from the track menu as well once
-        // there is a party.
-        var showListenTogetherMembers by rememberSaveable { mutableStateOf(false) }
         // Set each time the search tab is tapped, which SearchScreen uses as a
         // signal to focus the input field.
         var searchFocusRequested by remember { mutableStateOf(false) }
@@ -3307,30 +3273,30 @@ private fun BitChordApp(
 
         val tabs = visibleTabDefs.map { it.second }
 
-        val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
+        val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == nav.selectedTab }.coerceAtLeast(0)
 
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         // Replay's three layers unwind in the order they were opened. Ahead of
         // every other handler because they are drawn over everything else.
-        BackHandler(enabled = showReplayShare) { showReplayShare = false }
-        BackHandler(enabled = replayStory != null && !showReplayShare) { replayStory = null }
+        BackHandler(enabled = nav.showReplayShare) { nav.showReplayShare = false }
+        BackHandler(enabled = nav.replayStory != null && !nav.showReplayShare) { nav.replayStory = null }
         BackHandler(
-            enabled = showReplay && replayStory == null && !showReplayShare,
+            enabled = nav.showReplay && nav.replayStory == null && !nav.showReplayShare,
         ) {
-            if (settingsSubScreen == "replay") {
+            if (nav.settingsSubScreen == "replay") {
                 // Dismiss Replay overlay and return to SettingsSheet beneath.
-                showReplay = false
-                settingsSubScreen = null
+                nav.showReplay = false
+                nav.settingsSubScreen = null
             } else {
-                showReplay = false
+                nav.showReplay = false
             }
         }
         BackHandler(
-            enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources && !showListenTogether &&
-                !showEqualizer && !showReplay,
+            enabled = detail != null && !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether &&
+                !nav.showEqualizer && !nav.showReplay,
         ) { viewModel.closeDetail() }
-        BackHandler(enabled = selectedMoodGenre != null && detail == null && !showSettings && !showReplay) {
+        BackHandler(enabled = selectedMoodGenre != null && detail == null && !nav.showSettings && !nav.showReplay) {
             viewModel.closeMoodGenre()
         }
         BackHandler(enabled = sheets.showDiscord) {
@@ -3339,24 +3305,24 @@ private fun BitChordApp(
         BackHandler(enabled = sheets.showSpotify && detail == null) {
             sheets.showSpotify = false
         }
-        BackHandler(enabled = showAccountScrobbling && !sheets.showDiscord && !sheets.showSpotify) {
-            showAccountScrobbling = false
-            if (settingsSubScreen == "account_scrobbling") settingsSubScreen = null
+        BackHandler(enabled = nav.showAccountScrobbling && !sheets.showDiscord && !sheets.showSpotify) {
+            nav.showAccountScrobbling = false
+            if (nav.settingsSubScreen == "account_scrobbling") nav.settingsSubScreen = null
         }
-        BackHandler(enabled = showSources) {
-            showSources = false
-            if (settingsSubScreen == "sources") settingsSubScreen = null
+        BackHandler(enabled = nav.showSources) {
+            nav.showSources = false
+            if (nav.settingsSubScreen == "sources") nav.settingsSubScreen = null
         }
-        BackHandler(enabled = showListenTogetherMembers) {
-            showListenTogetherMembers = false
+        BackHandler(enabled = nav.showListenTogetherMembers) {
+            nav.showListenTogetherMembers = false
         }
-        BackHandler(enabled = showListenTogether) {
-            showListenTogether = false
-            if (settingsSubScreen == "listen_together") settingsSubScreen = null
+        BackHandler(enabled = nav.showListenTogether) {
+            nav.showListenTogether = false
+            if (nav.settingsSubScreen == "listen_together") nav.settingsSubScreen = null
         }
-        BackHandler(enabled = showEqualizer) {
-            showEqualizer = false
-            if (settingsSubScreen == "equalizer") settingsSubScreen = null
+        BackHandler(enabled = nav.showEqualizer) {
+            nav.showEqualizer = false
+            if (nav.settingsSubScreen == "equalizer") nav.settingsSubScreen = null
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
@@ -3364,36 +3330,36 @@ private fun BitChordApp(
         BackHandler(enabled = sheets.openAudiobook != null) {
             sheets.openAudiobook = null
         }
-        BackHandler(enabled = showAudiobooks) {
-            showAudiobooks = false
+        BackHandler(enabled = nav.showAudiobooks) {
+            nav.showAudiobooks = false
         }
-        BackHandler(enabled = itunesPodcastId != null) {
-            itunesPodcastId = null
+        BackHandler(enabled = nav.itunesPodcastId != null) {
+            nav.itunesPodcastId = null
         }
-        BackHandler(enabled = showGenres) {
-            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else showGenres = false
+        BackHandler(enabled = nav.showGenres) {
+            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
-        BackHandler(enabled = showSettings && !sheets.showSpotify && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay) {
+        BackHandler(enabled = nav.showSettings && !sheets.showSpotify && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay) {
             // Back closes the open category first, then Settings; it does not
             // throw away both at once.
-            if (settingsCategory != null) {
-                settingsCategory = null
+            if (nav.settingsCategory != null) {
+                nav.settingsCategory = null
             } else {
-                showSettings = false
+                nav.showSettings = false
                 // Only when Settings was the whole of what was on screen.
                 // Opened over Replay or over a release page, closing it reveals
                 // that again rather than throwing both away.
-                if (detail == null && !showReplay) selectedTab = TAB_HOME
+                if (detail == null && !nav.showReplay) nav.selectedTab = TAB_HOME
             }
         }
         BackHandler(
-            enabled = detail == null && !showSettings && !showAccountScrobbling && !sheets.showSpotify &&
-                !showSources && !showListenTogether && !showEqualizer && !showReplay && selectedMoodGenre == null &&
-                !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !showGenres &&
-                !showAudiobooks && sheets.openAudiobook == null && itunesPodcastId == null &&
-                selectedTab != TAB_HOME,
+            enabled = detail == null && !nav.showSettings && !nav.showAccountScrobbling && !sheets.showSpotify &&
+                !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay && selectedMoodGenre == null &&
+                !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showGenres &&
+                !nav.showAudiobooks && sheets.openAudiobook == null && nav.itunesPodcastId == null &&
+                nav.selectedTab != TAB_HOME,
         ) {
-            selectedTab = TAB_HOME
+            nav.selectedTab = TAB_HOME
         }
         BackHandler(enabled = sheets.showUpdateDialog) { sheets.showUpdateDialog = false }
         BackHandler(enabled = sheets.showListenBrainzLogin) { sheets.showListenBrainzLogin = false }
@@ -3815,7 +3781,7 @@ private fun BitChordApp(
                 onOpenReplay = if (fromPlayer) {
                     {
                         sheets.songMenu.song = null
-                        showReplay = true
+                        nav.showReplay = true
                     }
                 } else {
                     null
@@ -3834,11 +3800,11 @@ private fun BitChordApp(
                     {
                         sheets.songMenu.song = null
                         if (partyState.inParty) {
-                            showListenTogetherMembers = true
+                            nav.showListenTogetherMembers = true
                         } else {
                             dismissPlayer()
-                            showSettings = true
-                            showListenTogether = true
+                            nav.showSettings = true
+                            nav.showListenTogether = true
                         }
                     }
                 } else {
@@ -3874,15 +3840,15 @@ private fun BitChordApp(
                 onQueueSongs = addSongsToQueue,
                 onPlayNext = playSongsNext,
                 onDownloadSong = downloadSong,
-                onOpenAccount = { showAccountScrobbling = true },
+                onOpenAccount = { nav.showAccountScrobbling = true },
                 onOpenDiscord = { sheets.showDiscord = true },
                 onOpenDiscordLogin = { sheets.showDiscordLogin = true },
-                onOpenEqualizer = { showEqualizer = true },
+                onOpenEqualizer = { nav.showEqualizer = true },
                 onOpenLyricsSources = { sheets.showLyricsSources = true },
                 onOpenTranslationLanguage = { sheets.showTranslationLanguage = true },
                 onOpenAppLanguage = { sheets.showAppLanguage = true },
-                onOpenReplay = { showReplay = true },
-                onOpenListenTogether = { showListenTogether = true },
+                onOpenReplay = { nav.showReplay = true },
+                onOpenListenTogether = { nav.showListenTogether = true },
                 onOpenDownloads = { sheets.showDownloadManager = true },
                 queueNotice = queueNotice,
                 modifier = Modifier.fillMaxSize(),
@@ -3930,22 +3896,22 @@ private fun BitChordApp(
                     // give way to the `detail != null` branch below it
                     // rather than keep showing the grid underneath.
                     sheets.libraryShowAll != null && detail == null -> "library_show_all"
-                    showAccountScrobbling -> "account_scrobbling"
-                    showSources -> "sources"
-                    showListenTogether -> "listen_together"
-                    showEqualizer -> "equalizer"
+                    nav.showAccountScrobbling -> "account_scrobbling"
+                    nav.showSources -> "sources"
+                    nav.showListenTogether -> "listen_together"
+                    nav.showEqualizer -> "equalizer"
                     // Above Replay, not below it. The top bar's account
                     // button sets `showSettings` from every page including
                     // this one, so with Replay winning the tie the button
                     // was live, hit, and changed nothing on screen.
-                    showSettings -> "settings"
-                    showGenres -> "genres"
+                    nav.showSettings -> "settings"
+                    nav.showGenres -> "genres"
                     sheets.openAudiobook != null -> "audiobook"
-                    showAudiobooks -> "audiobooks"
-                    itunesPodcastId != null -> "itunespodcast"
-                    showReplay -> "replay"
+                    nav.showAudiobooks -> "audiobooks"
+                    nav.itunesPodcastId != null -> "itunespodcast"
+                    nav.showReplay -> "replay"
                     detail != null -> detail.browseId
-                    else -> "$TAB_KEY$selectedTab"
+                    else -> "$TAB_KEY${nav.selectedTab}"
                 }
                 // A page change moves the content the glass samples. The
                 // clock tells every glass surface to hold its capture for the
@@ -4220,7 +4186,7 @@ private fun BitChordApp(
                             state = replay,
                             holder = account?.name.orEmpty(),
                             onPeriodChange = setReplayPeriod,
-                            onOpenStory = { replayStory = it },
+                            onOpenStory = { nav.replayStory = it },
                             // A track tapped on a chart is one the user already
                             // knows they like, so it starts a station off itself
                             // rather than queueing the chart it was on — the
@@ -4229,20 +4195,20 @@ private fun BitChordApp(
                                 playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
                             },
                             onOpenArtist = { id, name ->
-                                showReplay = false
+                                nav.showReplay = false
                                 openByName(id, name, null, BrowseType.ARTIST)
                             },
                             onOpenAlbum = { id, title, artist, art ->
-                                showReplay = false
+                                nav.showReplay = false
                                 openByName(id, title, artist, BrowseType.ALBUM, art)
                             },
                             onShare = {
-                                replaySharePage = null
-                                showReplayShare = true
+                                nav.replaySharePage = null
+                                nav.showReplayShare = true
                             },
                             contentPadding = listPadding,
                             listState = replayListState,
-                            landingPage = replayLandingPage,
+                            landingPage = nav.replayLandingPage,
                         )
                     } else if (key == "spotify") {
                         SpotifyLibraryScreen(
@@ -4274,8 +4240,8 @@ private fun BitChordApp(
                             account = account,
                             channelName = selectedChannelName,
                             onSignIn = {
-                                showAccountScrobbling = false
-                                showSettings = false
+                                nav.showAccountScrobbling = false
+                                nav.showSettings = false
                                 sheets.webSession = WebSessionMode.SIGN_IN
                             },
                             onSwitchChannel = {
@@ -4336,8 +4302,8 @@ private fun BitChordApp(
                                 activeJamInviteServer = null
                             },
                             onSignIn = {
-                                showListenTogether = false
-                                showSettings = false
+                                nav.showListenTogether = false
+                                nav.showSettings = false
                                 sheets.webSession = WebSessionMode.SIGN_IN
                             },
                             contentPadding = listPadding,
@@ -4438,12 +4404,12 @@ private fun BitChordApp(
                         )
                     } else if (key == "itunespodcast") {
                         ItunesPodcastScreen(
-                            show = itunesPodcastId?.let { viewModel.itunesShow(it) },
+                            show = nav.itunesPodcastId?.let { viewModel.itunesShow(it) },
                             episodes = itunesEpisodes,
                             onPlay = { songs, index ->
                                 if (index in songs.indices) {
                                     playWithResume(songs, index)
-                                    val id = itunesPodcastId
+                                    val id = nav.itunesPodcastId
                                     val sh = id?.let { viewModel.itunesShow(it) }
                                     if (id != null && sh != null) {
                                         viewModel.recordRecentShow(id, sh.name, sh.artworkUrl, sh.feedUrl)
@@ -4453,9 +4419,9 @@ private fun BitChordApp(
                             },
                             onRetry = { viewModel.reloadItunesEpisodes() },
                             contentPadding = listPadding,
-                            isLikedShow = itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
+                            isLikedShow = nav.itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
                             onToggleLikeShow = {
-                                val id = itunesPodcastId ?: return@ItunesPodcastScreen
+                                val id = nav.itunesPodcastId ?: return@ItunesPodcastScreen
                                 viewModel.itunesShow(id)?.let {
                                     viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl, it.feedUrl)
                                 }
@@ -4474,40 +4440,40 @@ private fun BitChordApp(
                             signedIn = signedIn,
                             account = account,
                             onSignIn = {
-                                showSettings = false
+                                nav.showSettings = false
                                 sheets.webSession = WebSessionMode.SIGN_IN
                             },
                             onSignOut = { viewModel.signOut() },
                             onAccountScrobbling = {
-                                settingsSubScreen = "account_scrobbling"
-                                showAccountScrobbling = true
+                                nav.settingsSubScreen = "account_scrobbling"
+                                nav.showAccountScrobbling = true
                             },
                             onEqualizer = {
-                                settingsSubScreen = "equalizer"
-                                showEqualizer = true
+                                nav.settingsSubScreen = "equalizer"
+                                nav.showEqualizer = true
                             },
                             onOpenReplay = {
-                                settingsSubScreen = "replay"
-                                replayLandingPage = ReplayStoryPage.INTRO
-                                showReplay = true
+                                nav.settingsSubScreen = "replay"
+                                nav.replayLandingPage = ReplayStoryPage.INTRO
+                                nav.showReplay = true
                             },
                             onLyricsSources = { sheets.showLyricsSources = true },
                             onTranslationLanguage = { sheets.showTranslationLanguage = true },
                             onSources = {
-                                settingsSubScreen = "sources"
-                                showSources = true
+                                nav.settingsSubScreen = "sources"
+                                nav.showSources = true
                             },
                             onListenTogether = {
-                                settingsSubScreen = "listen_together"
-                                showListenTogether = true
+                                nav.settingsSubScreen = "listen_together"
+                                nav.showListenTogether = true
                             },
                             onSpotifyCanvasAuth = { sheets.showSpotifyCanvasAuth = true },
                             onAppLanguage = { sheets.showAppLanguage = true },
                             // Bringing a Spotify playlist in is a setting of the
                             // account, not a tile in the Library: it is done
                             // once, not browsed.
-                            category = settingsCategory,
-                            onOpenCategory = { settingsCategory = it },
+                            category = nav.settingsCategory,
+                            onOpenCategory = { nav.settingsCategory = it },
                             // Every shelf the feed has brought, hidden ones
                             // included — a hidden shelf stays in the editor
                             // so it can be put back. Quick Picks is one of
@@ -4703,7 +4669,7 @@ private fun BitChordApp(
                             songSort = songSort,
                             contentPadding = listPadding,
                         )
-                    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: selectedTab) {
+                    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: nav.selectedTab) {
                         TAB_HOME -> HomeScreen(
                             state = homeWithFlow,
                             listState = homeListState,
@@ -4770,8 +4736,8 @@ private fun BitChordApp(
                             // look at it. The switch is in Settings → Home.
                             onOpenReplay = if (homeReplayVisible) {
                                 {
-                                    replayLandingPage = ReplayStoryPage.INTRO
-                                    showReplay = true
+                                    nav.replayLandingPage = ReplayStoryPage.INTRO
+                                    nav.showReplay = true
                                 }
                             } else {
                                 null
@@ -4816,7 +4782,7 @@ private fun BitChordApp(
                                 val browseId = item.browseId
                                 if (browseId != null && browseId.startsWith("itunes:")) {
                                     val collectionId = browseId.removePrefix("itunes:")
-                                    itunesPodcastId = collectionId
+                                    nav.itunesPodcastId = collectionId
                                     viewModel.itunesShow(collectionId)?.let {
                                         viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
                                     }
@@ -4898,8 +4864,8 @@ private fun BitChordApp(
                                 }
                             },
                             onStationClick = viewModel::openMoodGenre,
-                            onGenresClick = { showGenres = true },
-                            onStartStation = { selectedTab = TAB_SEARCH },
+                            onGenresClick = { nav.showGenres = true },
+                            onStartStation = { nav.selectedTab = TAB_SEARCH },
                             onRetry = viewModel::loadExplore,
                             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
@@ -4977,7 +4943,7 @@ private fun BitChordApp(
                             onBrowseClick = { item ->
                                 if (item.browseId.startsWith("itunes:")) {
                                     val collectionId = item.browseId.removePrefix("itunes:")
-                                    itunesPodcastId = collectionId
+                                    nav.itunesPodcastId = collectionId
                                     viewModel.openItunesPodcast(collectionId)
                                     return@SearchScreen
                                 }
@@ -5117,8 +5083,8 @@ private fun BitChordApp(
                                         holder = account?.name.orEmpty(),
                                         memberSince = replay.memberSince,
                                         onOpenReplay = { page ->
-                                            replayLandingPage = page
-                                            showReplay = true
+                                            nav.replayLandingPage = page
+                                            nav.showReplay = true
                                         },
                                     )
                                 }
@@ -5147,8 +5113,8 @@ private fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !showSettings &&
-                    !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay
+                    !isLocalDetail && !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !nav.showSettings &&
+                    !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
                 } else {
@@ -5201,18 +5167,18 @@ private fun BitChordApp(
                         sheets.showQuickPicks -> quickPicksLabel
                         podcastUi.showContinueListening -> stringResource(R.string.continue_listening)
                         sheets.libraryShowAll != null && detail == null -> sheets.libraryShowAll?.title.orEmpty()
-                        showAccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        showSources -> stringResource(R.string.sources)
-                        showListenTogether -> stringResource(R.string.listen_together)
-                        showEqualizer -> stringResource(R.string.equalizer)
-                        showSettings -> settingsCategory
+                        nav.showAccountScrobbling -> stringResource(R.string.account_scrobbling)
+                        nav.showSources -> stringResource(R.string.sources)
+                        nav.showListenTogether -> stringResource(R.string.listen_together)
+                        nav.showEqualizer -> stringResource(R.string.equalizer)
+                        nav.showSettings -> nav.settingsCategory
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
                             ?: stringResource(R.string.settings)
-                        showGenres -> stringResource(R.string.explore)
+                        nav.showGenres -> stringResource(R.string.explore)
                         sheets.openAudiobook != null -> sheets.openAudiobook?.title.orEmpty()
-                        showAudiobooks -> stringResource(R.string.audiobooks)
-                        showReplay -> stringResource(R.string.replay)
+                        nav.showAudiobooks -> stringResource(R.string.audiobooks)
+                        nav.showReplay -> stringResource(R.string.replay)
                         detail != null && sheets.detailActiveShelf != null -> sheets.detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
                         selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
@@ -5227,8 +5193,8 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showSources || showListenTogether ||
-                            showEqualizer ||
+                        nav.showSettings || nav.showAccountScrobbling || nav.showSources || nav.showListenTogether ||
+                            nav.showEqualizer ||
                             sheets.showDiscord || sheets.showHistory || sheets.showFlow || sheets.showQuickPicks ||
                             podcastUi.showContinueListening ||
                             (sheets.libraryShowAll != null && detail == null) ||
@@ -5236,9 +5202,9 @@ private fun BitChordApp(
                             selectedMoodGenre != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
-                        showReplay -> replayScrolled
+                        nav.showReplay -> replayScrolled
                         detail != null -> detailScrolled
-                        else -> scrolled || selectedTab == TAB_SEARCH
+                        else -> scrolled || nav.selectedTab == TAB_SEARCH
                     },
                     refreshing = currentFeed != null && currentFeed in refreshing,
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
@@ -5250,34 +5216,34 @@ private fun BitChordApp(
                         sheets.showQuickPicks -> ({ sheets.showQuickPicks = false })
                         podcastUi.showContinueListening -> ({ podcastUi.showContinueListening = false })
                         sheets.libraryShowAll != null && detail == null -> ({ sheets.libraryShowAll = null })
-                        showAccountScrobbling -> ({
-                            showAccountScrobbling = false
-                            settingsSubScreen = null
+                        nav.showAccountScrobbling -> ({
+                            nav.showAccountScrobbling = false
+                            nav.settingsSubScreen = null
                         })
-                        showSources -> ({
-                            showSources = false
-                            settingsSubScreen = null
+                        nav.showSources -> ({
+                            nav.showSources = false
+                            nav.settingsSubScreen = null
                         })
-                        showListenTogether -> ({
-                            showListenTogether = false
-                            settingsSubScreen = null
+                        nav.showListenTogether -> ({
+                            nav.showListenTogether = false
+                            nav.settingsSubScreen = null
                         })
-                        showEqualizer -> ({
-                            showEqualizer = false
-                            settingsSubScreen = null
+                        nav.showEqualizer -> ({
+                            nav.showEqualizer = false
+                            nav.settingsSubScreen = null
                         })
-                        showSettings && settingsCategory != null -> ({
-                            settingsCategory = null
+                        nav.showSettings && nav.settingsCategory != null -> ({
+                            nav.settingsCategory = null
                         })
                         sheets.openAudiobook != null -> ({ sheets.openAudiobook = null })
-                        showAudiobooks -> ({ showAudiobooks = false })
-                        itunesPodcastId != null -> ({ itunesPodcastId = null })
-                        showGenres -> ({
-                            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else showGenres = false
+                        nav.showAudiobooks -> ({ nav.showAudiobooks = false })
+                        nav.itunesPodcastId != null -> ({ nav.itunesPodcastId = null })
+                        nav.showGenres -> ({
+                            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else nav.showGenres = false
                         })
-                        settingsSubScreen != null -> ({ settingsSubScreen = null })
-                        showSettings -> ({ showSettings = false })
-                        showReplay -> ({ showReplay = false })
+                        nav.settingsSubScreen != null -> ({ nav.settingsSubScreen = null })
+                        nav.showSettings -> ({ nav.showSettings = false })
+                        nav.showReplay -> ({ nav.showReplay = false })
                         sheets.detailActiveShelf != null -> ({ sheets.detailActiveShelf = null })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
                         selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
@@ -5287,10 +5253,10 @@ private fun BitChordApp(
                     // Only on the Search tab itself, not on anything pushed over it.
                     accessory = if (
                         !useFoldingNav &&
-                        selectedTab == TAB_SEARCH && detail == null && selectedMoodGenre == null &&
-                        sheets.libraryShowAll == null && !showSettings && !showAccountScrobbling &&
-                        !showSources && !showListenTogether && !showEqualizer && !sheets.showDiscord &&
-                        !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !showReplay
+                        nav.selectedTab == TAB_SEARCH && detail == null && selectedMoodGenre == null &&
+                        sheets.libraryShowAll == null && !nav.showSettings && !nav.showAccountScrobbling &&
+                        !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !sheets.showDiscord &&
+                        !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showReplay
                     ) {
                         {
                             // The search field lives up here in the bar, beside the
@@ -5323,7 +5289,7 @@ private fun BitChordApp(
                         // This is intentionally scoped to Listen together: the
                         // round-trip time is meaningful while coordinating a
                         // party, but would be noise in the rest of the app.
-                        if (showListenTogether) {
+                        if (nav.showListenTogether) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -5381,8 +5347,8 @@ private fun BitChordApp(
                         }
                         // Only worth surfacing where there's room for it and it won't
                         // be mistaken for a per-page action — Home, at rest.
-                        if (!showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer &&
-                            detail == null && selectedTab == TAB_HOME
+                        if (!nav.showSettings && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer &&
+                            detail == null && nav.selectedTab == TAB_HOME
                         ) {
                             updateNotice?.let { update ->
                                 IconButton(onClick = { sheets.showUpdateDialog = true }) {
@@ -5399,12 +5365,12 @@ private fun BitChordApp(
                                 }
                             }
                         }
-                        if (!showSettings && !showAccountScrobbling) {
+                        if (!nav.showSettings && !nav.showAccountScrobbling) {
                             // Left of the account photo, and only on Library itself:
                             // a history is a record of what was played, which reads
                             // as that tab's business rather than every tab's.
-                            if (!sheets.showHistory && !showReplay && !sheets.showDiscord && sheets.libraryShowAll == null &&
-                                detail == null && selectedTab == TAB_LIBRARY
+                            if (!sheets.showHistory && !nav.showReplay && !sheets.showDiscord && sheets.libraryShowAll == null &&
+                                detail == null && nav.selectedTab == TAB_LIBRARY
                             ) {
                                 IconButton(
                                     onClick = {
@@ -5506,7 +5472,7 @@ private fun BitChordApp(
                                     if (signedIn) {
                                         viewModel.loadChannels()
                                         sheets.showAccountSelector = true
-                                    } else showSettings = true
+                                    } else nav.showSettings = true
                                 },
                                 onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
                             )
@@ -5547,43 +5513,43 @@ private fun BitChordApp(
                     val tab = visibleTabDefs.getOrNull(index)?.first ?: TAB_HOME
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
-                    showSettings = false
-                    showAccountScrobbling = false
-                    showSources = false
-                    showListenTogether = false
-                    showEqualizer = false
-                    showReplay = false
-                    settingsCategory = null
-                    showAudiobooks = false
+                    nav.showSettings = false
+                    nav.showAccountScrobbling = false
+                    nav.showSources = false
+                    nav.showListenTogether = false
+                    nav.showEqualizer = false
+                    nav.showReplay = false
+                    nav.settingsCategory = null
+                    nav.showAudiobooks = false
                     sheets.openAudiobook = null
-                    itunesPodcastId = null
-                    showGenres = false
+                    nav.itunesPodcastId = null
+                    nav.showGenres = false
                     sheets.showDiscord = false
                     sheets.showSpotify = false
-                    settingsSubScreen = null
+                    nav.settingsSubScreen = null
                     sheets.showHistory = false
                     sheets.showFlow = false
                     sheets.libraryShowAll = null
 
                     if (tab == TAB_SEARCH) {
                         if (useFoldingNav) {
-                            if (selectedTab != TAB_SEARCH) {
-                                lastSearchTab = selectedTab
-                                selectedTab = TAB_SEARCH
+                            if (nav.selectedTab != TAB_SEARCH) {
+                                nav.lastSearchTab = nav.selectedTab
+                                nav.selectedTab = TAB_SEARCH
                                 searchVisualActive = true
                                 searchKeyboardActive = false
                             } else {
                                 searchKeyboardActive = true
                             }
                         } else {
-                            selectedTab = TAB_SEARCH
+                            nav.selectedTab = TAB_SEARCH
                             viewModel.onQueryChange("")
                             searchFocusRequested = true
                         }
                     } else {
                         searchVisualActive = false
                         searchKeyboardActive = false
-                        selectedTab = tab
+                        nav.selectedTab = tab
                     }
                 }
 
@@ -5725,26 +5691,26 @@ private fun BitChordApp(
         // covers the window: on a tablet the page is only the left half of the
         // row, and a story laid out inside it would run alongside the player
         // instead of over it.
-        replayStory?.let { start ->
+        nav.replayStory?.let { start ->
             replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
                 ReplayStories(
                     summary = summary,
                     start = start,
-                    onClose = { replayStory = null },
+                    onClose = { nav.replayStory = null },
                     onShare = { card ->
-                        replaySharePage = card
-                        showReplayShare = true
+                        nav.replaySharePage = card
+                        nav.showReplayShare = true
                     },
-                    paused = showReplayShare,
+                    paused = nav.showReplayShare,
                 )
             }
         }
 
         // ---- Share the Replay ----
-        if (showReplayShare) {
+        if (nav.showReplayShare) {
             replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
                 ModalBottomSheet(
-                    onDismissRequest = { showReplayShare = false },
+                    onDismissRequest = { nav.showReplayShare = false },
                     // Straight to full height. The sheet is a picture and two
                     // buttons, and half-open it showed the picture with both
                     // buttons below the fold — a sheet whose only two controls
@@ -5756,8 +5722,8 @@ private fun BitChordApp(
                         summary = summary,
                         holder = account?.name.orEmpty(),
                         memberSince = replay.memberSince,
-                        page = replaySharePage,
-                        onDismiss = { showReplayShare = false },
+                        page = nav.replaySharePage,
+                        onDismiss = { nav.showReplayShare = false },
                     )
                 }
             }
@@ -5781,16 +5747,16 @@ private fun BitChordApp(
             updateNotice = updateNotice,
             announcement = announcement,
             localPlaylists = localPlaylists,
-            showListenTogetherMembers = showListenTogetherMembers,
-            onDismissListenTogetherMembers = { showListenTogetherMembers = false },
+            showListenTogetherMembers = nav.showListenTogetherMembers,
+            onDismissListenTogetherMembers = { nav.showListenTogetherMembers = false },
             onManageListenTogether = {
-                showListenTogetherMembers = false
+                nav.showListenTogetherMembers = false
                 dismissPlayer()
-                showSettings = true
-                showListenTogether = true
+                nav.showSettings = true
+                nav.showListenTogether = true
             },
-            onSignedIn = { selectedTab = TAB_LIBRARY },
-            onOpenSettings = { showSettings = true },
+            onSignedIn = { nav.selectedTab = TAB_LIBRARY },
+            onOpenSettings = { nav.showSettings = true },
             showQueueNotice = showQueueNotice,
             tracks = TrackListActions(
                 play = play,
@@ -7275,6 +7241,108 @@ private class PodcastUiState {
     var episodeMenu by mutableStateOf<Song?>(null)
     /** What the page's search is looking for. */
     var continueQuery by mutableStateOf("")
+}
+
+/**
+ * Where the app root is: the selected tab, and which of the pages that open
+ * over it (Settings and its categories and sub-screens, Sources, Listen
+ * Together, the equalizer, Replay and its stories, genres, audiobooks, an
+ * Apple podcast) is up.
+ *
+ * Every field was a `rememberSaveable` of its own in [BitChordApp], so a
+ * page that was open comes back open after process death. [Saver] keeps
+ * that: it saves every field into one list, in declaration order, and
+ * restores them from it — the same values Bundle-saved the same way the
+ * separate `rememberSaveable`s saved them. One holder is one capture for the
+ * root's lambdas instead of eighteen (see [RootSheets]).
+ */
+private class RootNav {
+    var selectedTab by mutableIntStateOf(0)
+    var showSettings by mutableStateOf(false)
+    // Moods and genres used to have a tab of their own. The podcasts took
+    // that slot, so they live on a page now, opened from the radio tab.
+    var showGenres by mutableStateOf(false)
+    // LibriVox's books: the list, and whichever one is open.
+    var showAudiobooks by mutableStateOf(false)
+    // An Apple-catalogue podcast opened from the podcasts page (collectionId).
+    var itunesPodcastId by mutableStateOf<String?>(null)
+    // Replay: the page, the stories over it, and the share sheet over those.
+    // Three states rather than one enum because they stack — the stories are
+    // opened from the page and the share sheet from either, and closing one
+    // has to reveal what it was opened from.
+    var showReplay by mutableStateOf(false)
+    // Library cards use the same Replay page as every other entry point, but
+    // category cards ask it to start at their matching ranked section.
+    var replayLandingPage by mutableStateOf(ReplayStoryPage.INTRO)
+    var replayStory by mutableStateOf<ReplayStoryPage?>(null)
+    var showReplayShare by mutableStateOf(false)
+    // Track which sub-screen was opened from Settings so AnimatedContent keeps
+    // SettingsSheet mounted underneath and back navigation restores scroll.
+    // null = no sub-screen overlay; non-null = that key is rendered as overlay.
+    var settingsSubScreen by mutableStateOf<String?>(null)
+    var showAccountScrobbling by mutableStateOf(false)
+    var showSources by mutableStateOf(false)
+    var showListenTogether by mutableStateOf(false)
+    var showEqualizer by mutableStateOf(false)
+    var lastSearchTab by mutableIntStateOf(TAB_HOME)
+    // Which Settings category is open, or null for the category index. Held
+    // here rather than inside SettingsScreen so the top bar's back button can
+    // close the category before it closes Settings itself.
+    var settingsCategory by mutableStateOf<String?>(null)
+    /** Which story card the share sheet is for, or null for the whole Replay. */
+    var replaySharePage by mutableStateOf<ReplayStoryPage?>(null)
+    // The player's member drawer, reachable from the track menu as well once
+    // there is a party.
+    var showListenTogetherMembers by mutableStateOf(false)
+
+    companion object {
+        val Saver: Saver<RootNav, Any> = listSaver(
+            save = {
+                listOf(
+                    it.selectedTab,
+                    it.showSettings,
+                    it.showGenres,
+                    it.showAudiobooks,
+                    it.itunesPodcastId,
+                    it.showReplay,
+                    it.replayLandingPage,
+                    it.replayStory,
+                    it.showReplayShare,
+                    it.settingsSubScreen,
+                    it.showAccountScrobbling,
+                    it.showSources,
+                    it.showListenTogether,
+                    it.showEqualizer,
+                    it.lastSearchTab,
+                    it.settingsCategory,
+                    it.replaySharePage,
+                    it.showListenTogetherMembers,
+                )
+            },
+            restore = { values ->
+                RootNav().apply {
+                    selectedTab = values[0] as Int
+                    showSettings = values[1] as Boolean
+                    showGenres = values[2] as Boolean
+                    showAudiobooks = values[3] as Boolean
+                    itunesPodcastId = values[4] as String?
+                    showReplay = values[5] as Boolean
+                    replayLandingPage = values[6] as ReplayStoryPage
+                    replayStory = values[7] as ReplayStoryPage?
+                    showReplayShare = values[8] as Boolean
+                    settingsSubScreen = values[9] as String?
+                    showAccountScrobbling = values[10] as Boolean
+                    showSources = values[11] as Boolean
+                    showListenTogether = values[12] as Boolean
+                    showEqualizer = values[13] as Boolean
+                    lastSearchTab = values[14] as Int
+                    settingsCategory = values[15] as String?
+                    replaySharePage = values[16] as ReplayStoryPage?
+                    showListenTogetherMembers = values[17] as Boolean
+                }
+            },
+        )
+    }
 }
 
 /**
