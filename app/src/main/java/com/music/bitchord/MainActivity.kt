@@ -7252,8 +7252,14 @@ private class PodcastUiState {
 }
 
 /**
- * Which of the app root's sheets, dialogs, menus and pages-over-the-feed is
- * open, and what it is open on.
+ * The app root's UI flags: which of its sheets, dialogs, menus and
+ * pages-over-the-feed is open and what it is open on, plus the bits of
+ * transient UI state that belong to them — a lookup still in flight
+ * ([linksLoading]), a save under way ([Reorder.saving]), the text of a
+ * form ([flowSaveName]), where the player's menu button sits
+ * ([playerMenuAnchor]).
+ *
+ * Named for the sheets because most of it is sheets; it is not only them.
  *
  * A holder rather than one `remember { mutableStateOf(...) }` per flag in
  * [BitChordApp], for the reason [PodcastUiState] gives: that composable's
