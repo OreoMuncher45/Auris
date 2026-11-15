@@ -71,10 +71,10 @@ class ExclusiveUsbOutput(
     private var dacBaseKnown = false
 
     /** The level the app last wrote to the DAC, in dB. */
-    private var lastWrittenDb: Double? = null
+    @Volatile private var lastWrittenDb: Double? = null
 
     /** What the DAC last read back, in dB. */
-    private var dacCurrentDb: Double? = null
+    @Volatile private var dacCurrentDb: Double? = null
 
     /**
      * Set when the listener's level has changed and has not been applied to
@@ -232,6 +232,22 @@ class ExclusiveUsbOutput(
      * carries the level; otherwise the listener's level as a sample gain.
      */
     fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
+
+    /**
+     * The absolute level the DAC's own volume control is at, in dB.
+     *
+     * What the app last wrote to it — the knob's own level plus the phone's
+     * slider offset — or what the DAC reads back when nothing has been
+     * written yet. Null when the DAC has no volume control of its own, or
+     * when its level cannot be read: then there is no absolute level to
+     * name, and the app is scaling the samples instead.
+     */
+    fun hardwareOutputLevelDb(): Double? {
+        if (!active || !hardwareVolume || forceSoftwareVolume) return null
+        val written = lastWrittenDb
+        if (written != null) return written
+        return dacCurrentDb
+    }
 
     fun currentRateHz(): Int = if (active) configuredRateHz else 0
 

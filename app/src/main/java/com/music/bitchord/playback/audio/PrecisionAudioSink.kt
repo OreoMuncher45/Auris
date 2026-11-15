@@ -160,6 +160,8 @@ class PrecisionAudioSink(
     /** The volume application point last published, for the pipeline readout. */
     @Volatile private var publishedVolumeApplication: VolumeApplication? = null
     @Volatile private var publishedVolumeGain: Float = -1f
+    @Volatile private var publishedVolumeOffsetDb: Double? = null
+    @Volatile private var publishedVolumeOutputDb: Double? = null
 
     private var audioBlock: AudioBlock = AudioBlock(
         channelCount = AudioBlock.DEFAULT_CHANNELS,
@@ -532,11 +534,11 @@ class PrecisionAudioSink(
         // DAC's own volume control where it has one, and as a sample gain
         // where it does not. The samples stay bit-exact either way, and the
         // sound still gets quieter.
+        val exclusiveLevel = AppSettings.playerVolume.value.coerceIn(0f, 1f)
         if (AppSettings.bitPerfect.value) {
-            val level = AppSettings.playerVolume.value.coerceIn(0f, 1f)
-            if (level != exclusiveLevelApplied) {
-                exclusiveLevelApplied = level
-                runCatching { session.setListenerLevel(level) }
+            if (exclusiveLevel != exclusiveLevelApplied) {
+                exclusiveLevelApplied = exclusiveLevel
+                runCatching { session.setListenerLevel(exclusiveLevel) }
             }
         }
         // The session applies the level either in the DAC's own control or
@@ -548,6 +550,8 @@ class PrecisionAudioSink(
                 VolumeApplication.APP_SOFTWARE
             },
             session.softwareGain(),
+            ListenerVolumePolicy.offsetDb(exclusiveLevel),
+            session.hardwareOutputLevelDb(),
         )
         val encoding = inputPcmEncoding ?: return ExclusiveOutcome.FALL_THROUGH
         if (session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)) {
@@ -654,6 +658,11 @@ class PrecisionAudioSink(
                 VolumeApplication.SYSTEM_MIXER
             },
             userGain,
+            if (mixerOutOfPath) {
+                ListenerVolumePolicy.offsetDb(AppSettings.playerVolume.value)
+            } else {
+                null
+            },
         )
         if (skipDsp != dspBypassLatched) {
             if (!skipDsp) dspChain.reset()
@@ -1170,16 +1179,33 @@ class PrecisionAudioSink(
      * Published only when it changes: this is called from the audio thread,
      * and a state flow write per decoder buffer would cost more than the
      * answer is worth.
+     *
+     * [offsetDb] is the attenuation the slider asks for, and [outputDb] the
+     * absolute level the output ended up at where anything can name one.
      */
-    private fun publishVolumeApplication(application: VolumeApplication, gain: Float) {
+    private fun publishVolumeApplication(
+        application: VolumeApplication,
+        gain: Float,
+        offsetDb: Double? = null,
+        outputDb: Double? = null,
+    ) {
         // The spare half of a crossfade must not publish: it is not the
         // sound the listener is hearing, and the latch is per sink — a spare
         // that latched the value would leave the audible one silent.
         if (!isAudible()) return
-        if (publishedVolumeApplication == application && publishedVolumeGain == gain) return
+        if (
+            publishedVolumeApplication == application &&
+            publishedVolumeGain == gain &&
+            publishedVolumeOffsetDb == offsetDb &&
+            publishedVolumeOutputDb == outputDb
+        ) {
+            return
+        }
         publishedVolumeApplication = application
         publishedVolumeGain = gain
-        AudioOutputStatus.publishVolumeApplication(application, gain)
+        publishedVolumeOffsetDb = offsetDb
+        publishedVolumeOutputDb = outputDb
+        AudioOutputStatus.publishVolumeApplication(application, gain, offsetDb, outputDb)
     }
 
     private fun publishOutputExactness(source: PcmEncoding, target: PcmEncoding) {

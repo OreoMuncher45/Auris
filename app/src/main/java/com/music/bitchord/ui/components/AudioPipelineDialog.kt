@@ -163,17 +163,41 @@ private fun bitExactVerdict(
  * the phone's own slider can work at all: with the mixer out of the path,
  * the app applies the level itself — on the samples, or in the DAC after
  * them.
+ *
+ * The numbers are the ones the listener is asking about: how far the level
+ * has been turned down, and — where a DAC has a control of its own — where
+ * that leaves the output in absolute terms.
  */
 private fun volumeApplicationText(
     application: VolumeApplication,
     gain: Float,
-): String = when (application) {
-    VolumeApplication.SYSTEM_MIXER -> "System mixer (Android attenuates)"
-    VolumeApplication.APP_SOFTWARE -> {
-        val db = if (gain > 0f) 20.0 * kotlin.math.log10(gain.toDouble()) else -120.0
-        "App software gain (%+.1f dB)".format(Locale.ROOT, db)
+    offsetDb: Double?,
+    outputDb: Double?,
+): String {
+    val offset = offsetDb ?: if (application == VolumeApplication.APP_SOFTWARE) {
+        if (gain > 0f) 20.0 * kotlin.math.log10(gain.toDouble()) else -120.0
+    } else {
+        null
     }
-    VolumeApplication.DAC_HARDWARE -> "DAC hardware volume (the PCM is untouched)"
+    val gainText = if (application == VolumeApplication.APP_SOFTWARE) {
+        val percent = (gain.coerceIn(0f, 1f) * 100f).toInt()
+        " · ${percent}%"
+    } else {
+        ""
+    }
+    val outputText = outputDb?.let { " · output %+.1f dB".format(Locale.ROOT, it) } ?: ""
+    return when (application) {
+        VolumeApplication.SYSTEM_MIXER -> "System mixer (Android attenuates)"
+        VolumeApplication.APP_SOFTWARE -> {
+            val db = offset ?: -120.0
+            "App software gain (%+.1f dB%s%s)".format(Locale.ROOT, db, gainText, outputText)
+        }
+        VolumeApplication.DAC_HARDWARE -> {
+            val db = offset
+            val offsetText = db?.let { " %+.1f dB".format(Locale.ROOT, it) }.orEmpty()
+            "DAC hardware volume (the PCM is untouched$offsetText$outputText)"
+        }
+    }
 }
 
 /**
@@ -565,6 +589,8 @@ fun AudioPipelineDialog(
                     volumeApplicationText(
                         outputStatus.volumeApplication,
                         outputStatus.volumeGain,
+                        outputStatus.volumeOffsetDb,
+                        outputStatus.volumeOutputDb,
                     ),
                 )
 

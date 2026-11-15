@@ -160,6 +160,24 @@ object AudioOutputStatus {
          * [VolumeApplication.APP_SOFTWARE].
          */
         val volumeGain: Float = 1f,
+        /**
+         * The attenuation the listener's own slider is asking for, in dB.
+         *
+         * Zero at full volume and negative below it — the same curve on every
+         * path, so this is the number the slider means wherever the level is
+         * applied.
+         */
+        val volumeOffsetDb: Double? = null,
+        /**
+         * The absolute level the output is at, in dB, when something knows it.
+         *
+         * A DAC's own volume control has one: the level the app last wrote to
+         * it, which is the knob's own level plus the slider's offset. Null
+         * where nothing can name an absolute level — the system mixer, whose
+         * gain is relative to whatever the source was, and a software gain,
+         * which is the same thing.
+         */
+        val volumeOutputDb: Double? = null,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -207,7 +225,9 @@ object AudioOutputStatus {
                 loudnessGainDb == other.loudnessGainDb &&
                 loudnessLufs == other.loudnessLufs &&
                 volumeApplication == other.volumeApplication &&
-                volumeGain == other.volumeGain
+                volumeGain == other.volumeGain &&
+                volumeOffsetDb == other.volumeOffsetDb &&
+                volumeOutputDb == other.volumeOutputDb
         }
 
         override fun hashCode(): Int {
@@ -255,6 +275,8 @@ object AudioOutputStatus {
             result = 31 * result + (loudnessLufs?.hashCode() ?: 0)
             result = 31 * result + volumeApplication.hashCode()
             result = 31 * result + volumeGain.hashCode()
+            result = 31 * result + (volumeOffsetDb?.hashCode() ?: 0)
+            result = 31 * result + (volumeOutputDb?.hashCode() ?: 0)
             return result
         }
     }
@@ -497,11 +519,31 @@ object AudioOutputStatus {
      * Written by the sink the listener can hear: the system mixer when it is
      * in the path, the app's own gain when it is not, and the DAC's own
      * control when the audio is going straight to one.
+     *
+     * [offsetDb] is the attenuation the slider is asking for and [outputDb]
+     * the absolute level the output ended up at, where anything can name one.
      */
-    fun publishVolumeApplication(application: VolumeApplication, gain: Float = 1f) {
+    fun publishVolumeApplication(
+        application: VolumeApplication,
+        gain: Float = 1f,
+        offsetDb: Double? = null,
+        outputDb: Double? = null,
+    ) {
         val snapshot = current.value
-        if (snapshot.volumeApplication == application && snapshot.volumeGain == gain) return
-        current.value = snapshot.copy(volumeApplication = application, volumeGain = gain)
+        if (
+            snapshot.volumeApplication == application &&
+            snapshot.volumeGain == gain &&
+            snapshot.volumeOffsetDb == offsetDb &&
+            snapshot.volumeOutputDb == outputDb
+        ) {
+            return
+        }
+        current.value = snapshot.copy(
+            volumeApplication = application,
+            volumeGain = gain,
+            volumeOffsetDb = offsetDb,
+            volumeOutputDb = outputDb,
+        )
     }
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
