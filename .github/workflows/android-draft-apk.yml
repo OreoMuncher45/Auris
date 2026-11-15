@@ -62,6 +62,9 @@ on:
             is bigger and lower when full-screen art is off. The lyric line, the
             scrubber, the timestamps and the quality badge drop as one block, so
             nothing collides on a small screen.
+          - In landscape the transport sits centred under the scrubber and the three
+            buttons are spread apart, instead of being crammed together in the middle
+            of the screen.
           - One ink. The title and the transport wear the player's own colour again,
             like every other mark on the screen, so there is no second colour system to
             fight with.
@@ -123,6 +126,14 @@ on:
             on phones whose Android build has no ALAC decoder.
           - The Atmos switch is gone, and Lossless no longer serves an Atmos stream by
             accident.
+          - The volume slider works again on a bit-perfect route. Bypassing Android's
+            mixer gives up the mixer's gain, so the phone's slider stopped controlling
+            anything, and a USB DAC was left at full volume. The slider is now an
+            offset from the level the output already has: the DAC's own knob stays
+            where you put it, and the phone's slider moves the sound down from there.
+            The audio pipeline says where the level is applied, and says so plainly
+            when the app is scaling the samples, because a gain on the samples is not
+            bit-exact.
           
           Spotify
           - The home can be Spotify's own, with or without a sign-in, and the
@@ -132,6 +143,9 @@ on:
             findable from the search field too.
           - Spotify rows now play the recording the row names — never another artist's
             recording — and artist pages keep their own artists and releases.
+          - A track that came from Spotify can now be liked. The row is rated through
+            the recording behind it, so the like lands on the track you are actually
+            listening to.
           - Podcasts and audiobooks have left the Spotify catalogue and live in their
             own tab.
           - The importer pages show the live operation table, and an upgrade actually
