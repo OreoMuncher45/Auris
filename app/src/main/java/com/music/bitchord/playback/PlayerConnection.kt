@@ -505,19 +505,32 @@ fun rememberPlayerView(controller: MediaController?): PlayerView {
     // way — the running loop is cancelled when playback stops or starts.
     LaunchedEffect(controller, foreground) {
         if (controller == null || !foreground) return@LaunchedEffect
-        snapshotFlow { state.isPlaying }.collectLatest { playing ->
-            while (playing && state.isPlaying) {
-                position.report(controller.currentPosition.coerceAtLeast(0L))
-                val duration = playbackDurationMs(
-                    controller.duration,
-                    controller.currentMediaItem?.claimedDurationMs() ?: 0L,
-                )
-                if (duration != state.durationMs) state = state.copy(durationMs = duration)
-                delay(500)
-            }
+        pollWhilePlaying(isPlaying = { state.isPlaying }, intervalMs = 500) {
+            position.report(controller.currentPosition.coerceAtLeast(0L))
+            val duration = playbackDurationMs(
+                controller.duration,
+                controller.currentMediaItem?.claimedDurationMs() ?: 0L,
+            )
+            if (duration != state.durationMs) state = state.copy(durationMs = duration)
         }
     }
     return view
+}
+
+/**
+ * Runs [tick] every [intervalMs] for as long as [isPlaying] reads true, and
+ * starts again when it next turns true. [isPlaying] is read as snapshot
+ * state: a change cancels the running loop (collectLatest) and starts or
+ * stops it, the same as a LaunchedEffect keyed on it — without the read
+ * landing in a composable's scope. Never returns; cancel its coroutine.
+ */
+internal suspend fun pollWhilePlaying(isPlaying: () -> Boolean, intervalMs: Long, tick: () -> Unit) {
+    snapshotFlow(isPlaying).collectLatest { playing ->
+        while (playing && isPlaying()) {
+            tick()
+            delay(intervalMs)
+        }
+    }
 }
 
 /**
