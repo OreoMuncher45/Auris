@@ -319,8 +319,10 @@ import com.music.bitchord.ui.components.FieldConfig
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
@@ -421,6 +423,39 @@ internal fun shouldSkipAfterDislike(
 
 
 class MainActivity : AppCompatActivity() {
+    /**
+     * The volume keys, when the app is the thing holding the level.
+     *
+     * Android's keys move the system media stream, and on a bit-perfect
+     * route the system mixer is out of the way: the level is the app's own
+     * gain, or the DAC's own control, and neither of them is anything the
+     * system's stream volume can reach. Android pins that stream at maximum
+     * when a USB DAC attaches, so the keys do nothing at all there.
+     *
+     * So they are read here and answered by whoever holds the level — see
+     * [HardwareVolume]. Everywhere else they are left to Android, which
+     * knows how to move the system mixer.
+     */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            val up = when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> true
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> false
+                else -> null
+            }
+            if (up != null) {
+                val level = HardwareVolume.levelForKey(up)
+                if (level != null) {
+                    // Through the same door the slider uses, so the bar in the
+                    // player and the level on the wire are one level.
+                    PlayerPlatform.host.volume.set(level)
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

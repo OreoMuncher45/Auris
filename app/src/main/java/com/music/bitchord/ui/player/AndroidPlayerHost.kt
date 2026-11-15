@@ -453,6 +453,12 @@ private class MusicStreamVolume(private val context: Context) : SystemVolume {
         // volume cuts nothing, and the app has to cut the sound itself.
         AppSettings.setPlayerVolume(target)
         manager?.setStreamVolume(AudioManager.STREAM_MUSIC, (target * max()).roundToInt(), 0)
+        // Published here as well, because not every change to this level
+        // comes from the system: the hardware keys are answered by the app
+        // itself on a bit-perfect route — see [HardwareVolume] — and on a USB
+        // route the system does not report its own change back (Android pins
+        // the media stream at maximum there), so the bar would not move.
+        _level.value = target
     }
 
     override fun refresh() {
