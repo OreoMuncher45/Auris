@@ -645,11 +645,19 @@ private fun LegacyMeshBackdrop(
 /**
  * How often a playing cover is read with "live blur" on.
  *
- * Thirty a second: as often as the screen itself is drawn, which is what makes
- * the wash behind an animated cover *move* rather than step. It is also the
- * expensive setting, so it is a switch the listener owns — see [liveBlur].
+ * Eight a second. It used to be thirty, which is as often as the screen
+ * itself is drawn — and every one of those reads was a copy of the clip's
+ * texture off the GPU, a pixel average of it, and a redraw of the backdrop
+ * behind it. Thirty of those a second is a hundred and twenty redraws a
+ * minute of a screen-sized blur for a wash that is blurred past the point
+ * where a step between two of them shows.
+ *
+ * The wash moves at eight a second now, and it moves *with* the picture:
+ * every read is the picture as it is at that moment, and the mesh is eased
+ * from one to the next, so what the listener sees is a colour that drifts
+ * rather than one that jumps.
  */
-private const val LIVE_REFRESH_LIVE_MS = 33L
+private const val LIVE_REFRESH_LIVE_MS = 125L
 
 /**
  * How often a playing clip is read for its own colours with live blur off.
@@ -1984,11 +1992,13 @@ fun NowPlayingScreen(
     LaunchedEffect(spotifyCanvasPresentation, mixing) {
         if (spotifyCanvasPresentation && mixing) spotifyCanvasControlsOpen = true
     }
-    // Portrait clips always use the existing artwork mesh, even if the user
-    // selected the legacy backdrop for ordinary artwork.
     // The mesh follows the clip only while the mesh is the backdrop. When
     // Spotify's Canvas owns the screen there is no mesh behind it, and
     // averaging one that nobody can see is work for nothing.
+    //
+    // Which backdrop that is depends on what is open, so the routing is
+    // settled further down — see [meshLiveFrames] below, where the landscape
+    // and tablet answers are known.
     //
     // The mesh itself is remembered in a scope of its own — see
     // [PlayerMeshBackdrop] — because a playing clip re-reads it, and a mesh
@@ -1996,7 +2006,6 @@ fun NowPlayingScreen(
     // changed. The frames arrive as a flow, and the mesh is read from them in
     // the mesh's own effect: a frame that reached this composition would
     // recompose the whole player every time the clip produced one.
-    val meshLiveFrames = if (spotifyCanvasPresentation) null else canvasFrameHolder.frames
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this:
     // the sleeve goes from banner to thumbnail as one movement, rather than the
@@ -2316,6 +2325,24 @@ fun NowPlayingScreen(
     // phone only the lyrics and queue replace the main player's seam-aware,
     // reflected mesh; the main player deliberately keeps its existing look.
     val tabletArtworkBackdrop = tabletSizedPlayer(windowWidth)
+    // Which backdrop is actually on screen decides which live-frame path is
+    // worth paying for. There are two of them, and every frame used to go to
+    // both: the mesh behind the sleeve, and the full-cover blur behind the
+    // lyrics and the queue. Only one of them is ever visible — the other is
+    // drawn at zero alpha — and a frame read for a backdrop nobody can see is
+    // a readback, a pixel average and a redraw paid for nothing.
+    //
+    // Portrait, main player: the mesh is the backdrop.
+    // Portrait, lyrics or queue open: the full-cover blur is.
+    // Landscape and tablet: the full-cover blur is.
+    // The legacy backdrop is the mesh's own older cousin and keeps the frames.
+    val legacyMeshBackdrop = !tabletArtworkBackdrop && !spotifyCanvasPresentation &&
+        legacyMesh && !canvasFirstPortrait
+    val fullCoverBackdropVisible = landscape ||
+        (!legacyMeshBackdrop && (tabletArtworkBackdrop || lyricsOpen || queueOpen))
+    val meshLiveFrames = if (
+        spotifyCanvasPresentation || fullCoverBackdropVisible
+    ) null else canvasFrameHolder.frames
     // Owned by the song-level player composition, not by any one screen state.
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
@@ -2336,7 +2363,13 @@ fun NowPlayingScreen(
     //
     // A flow rather than a value: the frames are read by the backdrop's own
     // effect, so a captured frame never reaches this composition.
-    val currentLiveBlurFrames = rememberUpdatedState(canvasFrameHolder.frames)
+    //
+    // Only while that backdrop is the one on screen: a frame read for a
+    // backdrop drawn at zero alpha is a readback and a blur paid for a wash
+    // nobody can see.
+    val currentLiveBlurFrames = rememberUpdatedState(
+        if (fullCoverBackdropVisible) canvasFrameHolder.frames else null,
+    )
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
             FullArtworkBlurBackdrop(
@@ -2921,8 +2954,8 @@ fun NowPlayingScreen(
         // The tablet has no mirrored main-player treatment to crossfade from.
         // Legacy mesh is the whole backdrop on every page, so the lyrics and
         // queue panels must not crossfade the blurred artwork over it.
-        val legacyMeshBackdrop = !tabletArtworkBackdrop && !spotifyCanvasPresentation &&
-            legacyMesh && !canvasFirstPortrait
+        // The legacy backdrop is the mesh's own older cousin — settled above,
+        // where the landscape and tablet answers were known.
         val fullArtworkBackdropAlpha by animateFloatAsState(
             targetValue = if (
                 !legacyMeshBackdrop &&
@@ -2951,17 +2984,27 @@ fun NowPlayingScreen(
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
         } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
-            PlayerMeshBackdrop(
-                trackKey = song.videoId,
-                imageUrl = remoteArt,
-                liveFrames = meshLiveFrames,
-                seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight + MESH_SEAM_NUDGE else 0.dp,
-                modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+            // Not drawn once the full-cover blur has taken the screen: a
+            // backdrop at zero alpha is still a full-screen draw — a stretched
+            // texture, a gradient and, on a still cover, a full-screen
+            // `RenderEffect` — paid for on every frame the screen redraws.
+            if (fullArtworkBackdropAlpha < 0.999f) {
+                PlayerMeshBackdrop(
+                    trackKey = song.videoId,
+                    imageUrl = remoteArt,
+                    liveFrames = meshLiveFrames,
+                    seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight + MESH_SEAM_NUDGE else 0.dp,
+                    modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+                )
+            }
+        }
+        // The same, the other way round: the full-cover blur is only drawn
+        // while it is on the screen.
+        if (fullArtworkBackdropAlpha > 0.001f) {
+            fullArtworkBlurContent(
+                Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
             )
         }
-        fullArtworkBlurContent(
-            Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
-        )
 
         // The wash the controls stand on, from the art's bottom edge down.
         //

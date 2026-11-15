@@ -227,14 +227,17 @@ private const val PALETTE_MIN_GAP_MS = 400L
 /**
  * The same read, with live blur on.
  *
- * The picture's own rate: a frame is read every thirty-three milliseconds, so
- * the ink is read at the same rate and lands on the picture's colour rather
- * than on the colour it had half a second ago. What stops this from costing
- * the same as the old per-frame ink is not this clock but the publish — see
- * [inkMoved] — so the texts and glyphs wearing the ink are still only redrawn
- * when the tint has really changed.
+ * Four times a second. It used to be the picture's own rate — a read every
+ * thirty-three milliseconds, nineteen reads a second, each one a copy of the
+ * whole frame and a clustering of a thousand of its pixels. What it bought
+ * was an ink that landed on the picture's colour rather than on the colour it
+ * had half a second ago, and the picture's colour does not move that fast:
+ * a clip's average drifts over seconds, not over frames.
+ *
+ * A quarter of a second behind a drifting average is a difference nobody can
+ * see, and it is a quarter of the reads.
  */
-private const val PALETTE_MIN_GAP_LIVE_MS = 33L
+private const val PALETTE_MIN_GAP_LIVE_MS = 250L
 
 /** How far the ink has to move before it is published. See [inkMoved]. */
 private const val INK_MOVE_EPSILON = 0.01f

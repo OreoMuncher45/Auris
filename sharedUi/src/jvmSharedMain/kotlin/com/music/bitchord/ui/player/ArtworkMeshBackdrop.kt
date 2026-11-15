@@ -274,6 +274,10 @@ fun rememberArtworkMesh(
     // Live blur on: the wash follows the clip frame by frame. Off: it follows
     // it at the slow rate the frames arrive at anyway.
     val liveBlur by PlayerSettings.liveBlur.collectAsStateWithLifecycle()
+    // Whether the wash is blurred at all. A moving wash is blurred on the CPU
+    // — see [ArtworkMeshBackdrop] — and this is the switch that turns that
+    // off as well as the GPU's.
+    val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     // Seeded from the cache so a cover that has been seen before is on colour
     // in its first frame, with nothing to fade in from — and from
     // [heldMesh] otherwise, carried over for the reason above.
@@ -324,42 +328,38 @@ fun rememberArtworkMesh(
         }
     }
 
-    LaunchedEffect(liveFrames, cacheKey, liveBlur) {
+    LaunchedEffect(liveFrames, cacheKey, liveBlur, reduceDynamicBlur) {
         var lastReadAt = 0L
-        // Live blur on: every frame the clip produces is read, so the wash
-        // behind it moves with the picture rather than a tenth of a second
-        // behind it. That is what the old live blur did, and what the switch
-        // promises; the bill is a mesh read and a backdrop redraw per frame,
-        // which is the battery cost the switch exists to offer.
+        // Held to one read every [LIVE_READ_GAP_MS] however fast the frames
+        // arrive. The frames themselves are captured at their own rate — see
+        // `LIVE_REFRESH_LIVE_MS` in `NowPlayingScreen` — and a burst of them
+        // is not a reason to rebuild the wash for every one: the wash is
+        // blurred past the point where a step between two reads shows, so a
+        // read that lands less than a tenth of a second after the last one is
+        // a read nobody can see.
         //
-        // Live blur off: the frames arrive once a second anyway, so this gate
-        // is not what limits the wash — it only stops a burst of frames from
-        // turning into a burst of full-screen redraws.
-        val gapMs = if (liveBlur) 0L else LIVE_READ_GAP_MS
+        // Read with `collect` rather than `collectLatest`: a new frame must
+        // not cancel a read that is already running, or a clip producing
+        // frames faster than a read takes would never finish one.
+        val gapMs = LIVE_READ_GAP_MS
         liveFrames?.collect { frame ->
             if (frame == null) return@collect
-            // Reject frames that are too dark or uniform — they are almost always
-            // the first read after a surface recreation, before ExoPlayer has
-            // decoded real content.  A frame whose mean luminance is below this
-            // threshold is discarded; the last valid mesh is kept instead.
-            if (isLikelyBlackFrame(frame)) return@collect
-            // Every read is a mesh built on the CPU and a redraw of the whole
-            // backdrop behind it, which carries a full-screen blur. Held to one
-            // every [LIVE_READ_GAP_MS] however fast the frames arrive, so
-            // turning live blur up to thirty frames a second buys a wash that
-            // moves, not thirty backdrop redraws a second. Frames slower than
-            // that gap all get read, so the slow setting is untouched.
-            //
-            // Read with `collect` rather than `collectLatest`: a new frame must
-            // not cancel a read that is already running, or a clip producing
-            // frames faster than a read takes would never finish one.
             val now = System.nanoTime()
             if (gapMs > 0L && lastReadAt != 0L && now - lastReadAt < gapMs * 1_000_000L) {
                 return@collect
             }
             lastReadAt = now
+            // The frame is judged and averaged in one read of it — see
+            // [meshOf] — and the texture comes back softened, because a moving
+            // wash is blurred on the CPU rather than by the GPU. See
+            // [ArtworkMeshBackdrop].
             mesh = withContext(Dispatchers.Default) {
-                meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
+                meshOf(
+                    frame,
+                    cacheKey?.hashCode() ?: 0,
+                    live = true,
+                    soften = !reduceDynamicBlur,
+                )
             } ?: mesh
             com.music.bitchord.data.PerfCounters.bump(
                 com.music.bitchord.data.PerfCounters.Counter.MESH_READ,
@@ -431,7 +431,6 @@ fun ArtworkMeshBackdrop(
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     // RenderEffect only; below API 31 `blur` is a no-op. It is not missed here —
     // the CPU-side interpolation is what carries the smoothness.
-    val canBlur = !reduceDynamicBlur && renderEffectBlurSupported
 
     // The mesh on screen, and the one fading in over it. Two states rather than
     // one animated value because what crossfades here is a pair of bitmaps, not
@@ -440,6 +439,23 @@ fun ArtworkMeshBackdrop(
     var shown by remember { mutableStateOf(mesh) }
     var incoming by remember { mutableStateOf<ArtworkMesh?>(null) }
     val fade = remember { Animatable(0f) }
+
+    // A moving wash does not get the GPU's blur at all.
+    //
+    // The GPU's blur is a full-screen `RenderEffect`: every redraw of this
+    // canvas re-applies it to every pixel on the screen, and a moving picture
+    // redraws this canvas the whole time it is moving — the mesh is eased from
+    // one read to the next. So on a clip the effect is paid for at the
+    // display's own rate, and on a phone whose graphics are drawn in software
+    // that is the whole battery.
+    //
+    // A moving mesh is softened on the CPU instead, in the texture itself:
+    // sixty-four texels across, blurred once before it is uploaded, and then
+    // stretched by the sampler like any other. The wash on screen is the same
+    // wash of the same colours, and the GPU is left to do the one thing it is
+    // good at, which is putting a texture on a screen.
+    val liveOnScreen = shown?.live == true || incoming?.live == true
+    val canBlur = !reduceDynamicBlur && renderEffectBlurSupported && !liveOnScreen
 
     LaunchedEffect(mesh) {
         val next = mesh ?: return@LaunchedEffect
@@ -585,6 +601,25 @@ private fun ImageBitmap.boxBlurred(passes: Int): ImageBitmap {
     return imageBitmapOf(source, width, height)
 }
 
+/**
+ * A box blur over a square texture — the CPU's stand-in for the GPU's
+ * full-screen one on a moving wash.
+ *
+ * The texture is [MESH_TEX] texels across, so this is a few thousand pixels
+ * of work: a rounding error next to a full-screen `RenderEffect` that has to
+ * be paid for again on every redraw of the screen behind the music.
+ */
+private fun IntArray.boxBlurred(size: Int, radius: Int): IntArray {
+    if (size < 2 || radius < 1) return this
+    var source = this
+    var target = IntArray(source.size)
+    repeat(MESH_TEX_BLUR_PASSES) {
+        boxBlurPass(source, target, size, size, radius, horizontal = true)
+        boxBlurPass(target, source, size, size, radius, horizontal = false)
+    }
+    return source
+}
+
 private fun boxBlurPass(
     source: IntArray,
     target: IntArray,
@@ -683,8 +718,38 @@ private const val MESH_GRID = 6
  * is what makes following a clip affordable. It costs about a thousand lerps,
  * off the main thread, and the control points come through untouched, so the
  * artwork's proportions are exactly what they were.
+ *
+ * Sixty-four, not thirty-two: on a moving picture this texture is stretched
+ * across the screen without the GPU's help (see [ArtworkMeshBackdrop]), and
+ * twice the texels is half the size of the step the sampler takes across the
+ * screen. The texture is sixteen kilobytes either way of being uploaded once
+ * a read.
  */
-private const val MESH_TEX = 32
+private const val MESH_TEX = 64
+
+/**
+ * How far the moving picture's texture is blurred before it is uploaded.
+ *
+ * This is the whole of the blur on a moving wash: two texels of it, on a
+ * sixty-four texel texture, which is a wide blur by the time the texture is
+ * stretched over a screen. The GPU's version of the same thing is a
+ * full-screen `RenderEffect` paid for on every redraw of the screen, which is
+ * the reason this exists.
+ */
+private const val MESH_TEX_BLUR_RADIUS = 2
+
+/** Two passes: one is a box, and a box has corners. */
+private const val MESH_TEX_BLUR_PASSES = 2
+
+/**
+ * How dark a frame has to be before it is thrown away.
+ *
+ * Mean luminance on a 0-255 scale, below about five percent. A genuine dark
+ * cover clears it easily — even black sleeves carry noise and compression
+ * artefacts — while the first read after a surface recreation, taken before
+ * the decoder has put anything there, does not.
+ */
+private const val BLACK_FRAME_LUMA = 12L
 
 /**
  * How long the backdrop takes to change colour, whether that is a track skip or
@@ -735,11 +800,15 @@ private const val MESH_SAMPLE = 128
  * A mean per cell, not a quantised swatch: what should sit under the artwork is
  * what a blur of the artwork would leave there, and a blur has no opinion about
  * which colour in the frame was the interesting one.
+ *
+ * [soften] blurs the finished texture on the CPU, which is what stands in for
+ * the GPU's full-screen blur on a moving picture — see [ArtworkMeshBackdrop].
  */
 private fun meshOf(
     source: ImageBitmap,
     seed: Int,
     live: Boolean = false,
+    soften: Boolean = false,
 ): ArtworkMesh? {
     val width = source.width
     val height = source.height
@@ -752,32 +821,56 @@ private fun meshOf(
     val rowStep = (height / MESH_SAMPLE).coerceAtLeast(1)
     val colStep = (width / MESH_SAMPLE).coerceAtLeast(1)
 
+    // One read of the whole picture, and everything below is worked out of it.
+    //
+    // It used to be read a row at a time — a hundred and twenty-eight separate
+    // calls into the platform for a frame that is a hundred and twenty-eight
+    // pixels tall — each one crossing into the bitmap and copying a row back.
+    // One call for the whole frame is one crossing.
+    val pixels = IntArray(width * height)
+    source.readPixels(pixels, startX = 0, startY = 0, width = width, height = height)
+
     val cells = rows * cols
     val red = LongArray(cells)
     val green = LongArray(cells)
     val blue = LongArray(cells)
     val count = IntArray(cells)
 
-    // One row at a time, so the scratch buffer is the width of the artwork
-    // rather than the whole of it. A clip frame read whole is megabytes.
-    val line = IntArray(width)
+    var luma = 0L
+    var sampled = 0
     var y = 0
     while (y < height) {
-        source.readPixels(line, startX = 0, startY = y, width = width, height = 1)
         // Flipped as it is read — see the note above.
         val rowBase = ((height - 1 - y) * rows / height) * cols
+        val line = y * width
         var x = 0
         while (x < width) {
             val cell = rowBase + x * cols / width
-            val pixel = line[x]
-            red[cell] += (pixel shr 16) and 0xFF
-            green[cell] += (pixel shr 8) and 0xFF
-            blue[cell] += pixel and 0xFF
+            val pixel = pixels[line + x]
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            red[cell] += r
+            green[cell] += g
+            blue[cell] += b
             count[cell]++
+            // BT.601 luma, carried along with the averages so that the frame
+            // can be judged from the pixels that were read for it.
+            luma += (r * 30 + g * 59 + b * 11) / 100
+            sampled++
             x += colStep
         }
         y += rowStep
     }
+
+    // A frame that is nearly black is nearly always the first read after a
+    // surface recreation, before the decoder has put anything on the surface.
+    //
+    // It is judged here, from the pixels the averages were made of, rather
+    // than by a second read of the same picture: one read of a frame is
+    // already the expensive half of this function, and reading it twice to
+    // answer two questions about it was half the bill.
+    if (live && sampled > 0 && luma / sampled < BLACK_FRAME_LUMA) return null
 
     val grid = IntArray(cells) { cell ->
         val n = count[cell].coerceAtLeast(1)
@@ -785,7 +878,8 @@ private fun meshOf(
             .lifted()
     }
     val texels = grid.rotatedBelowSeam(cols, rows, seed).resampled(cols, rows, MESH_TEX)
-    return ArtworkMesh(imageBitmapOf(texels, MESH_TEX, MESH_TEX), live)
+    val finished = if (soften) texels.boxBlurred(MESH_TEX, MESH_TEX_BLUR_RADIUS) else texels
+    return ArtworkMesh(imageBitmapOf(finished, MESH_TEX, MESH_TEX), live)
 }
 
 /**
