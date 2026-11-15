@@ -774,15 +774,15 @@ private fun BitChordApp(
 
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
-        sheets.menuFromPlayer = false
-        sheets.songMenuOrigin = LongPressOrigin.consume()
-        sheets.songActions = song
+        sheets.songMenu.fromPlayer = false
+        sheets.songMenu.origin = LongPressOrigin.consume()
+        sheets.songMenu.song = song
     }
     /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
-        sheets.browseMenuOrigin = LongPressOrigin.consume()
-        sheets.browseRenameInSheet = false
-        sheets.browseActions = target
+        sheets.browseMenu.origin = LongPressOrigin.consume()
+        sheets.browseMenu.renameInSheet = false
+        sheets.browseMenu.target = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
@@ -2793,13 +2793,13 @@ private fun BitChordApp(
     LaunchedEffect(player.song?.videoId) {
         player.song?.let { viewModel.prepareRatingTarget(it) }
     }
-    // The three-dot menu snapshots the track into songActions when it's opened,
+    // The three-dot menu snapshots the track into sheets.songMenu.song when it's opened,
     // so a menu opened before the lookup above resolves would otherwise be
     // stuck without album/artist rows even after the ids come in. Keep it in
     // sync while it's showing this track.
     LaunchedEffect(playerSong) {
-        if (playerSong != null && sheets.songActions?.videoId == playerSong.videoId) {
-            sheets.songActions = playerSong
+        if (playerSong != null && sheets.songMenu.song?.videoId == playerSong.videoId) {
+            sheets.songMenu.song = playerSong
         }
     }
 
@@ -2975,9 +2975,9 @@ private fun BitChordApp(
             // hides the album and artist rows even once their browse
             // ids have been resolved.
             onOpenMenu = {
-                sheets.menuFromPlayer = true
-                sheets.songMenuOrigin = null
-                sheets.songActions = song
+                sheets.songMenu.fromPlayer = true
+                sheets.songMenu.origin = null
+                sheets.songMenu.song = song
             },
             // Where the three-dot button is, so the menu can hang off it
             // rather than rise from the bottom of the screen.
@@ -3395,24 +3395,24 @@ private fun BitChordApp(
         // because the player's menu is drawn in the player sheet's own
         // window — a different scope from the one it is written in.
         val songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit = { song, presentation ->
-            // Set by whoever opened it — see [menuFromPlayer]. It cannot be
+            // Set by whoever opened it — see [RootSheets.SongMenu.fromPlayer]. It cannot be
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
-            val fromPlayer = sheets.menuFromPlayer
+            val fromPlayer = sheets.songMenu.fromPlayer
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
                 }
                 context.startActivity(Intent.createChooser(sendIntent, song.title))
-                sheets.songActions = null
+                sheets.songMenu.song = null
             }
             // Navigating has to take the player down with the sheet, or the
             // page it opens lands behind a still-covering player.
             // The track's cover stands in for an album's, but never for an
             // artist's picture — that page loads its own.
             val openPage: (String, String, String, BrowseType) -> Unit = { id, title, sub, type ->
-                sheets.songActions = null
+                sheets.songMenu.song = null
                 dismissPlayer()
                 val art = song.thumbnailUrl.takeUnless { type == BrowseType.ARTIST }
                 viewModel.openDetail(id, title, sub, art, type)
@@ -3446,7 +3446,7 @@ private fun BitChordApp(
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
                 {
-                    sheets.songActions = null
+                    sheets.songMenu.song = null
                     val c = controller
                     val original = versions.convertedFromVideo
                     val originalAudio = versions.convertedFromAudio
@@ -3531,9 +3531,9 @@ private fun BitChordApp(
                 presentation = presentation,
                 signedIn = signedIn,
                 likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
-                onPlayNext = { playNext(song); sheets.songActions = null },
-                onAddToQueue = { addToQueue(song); sheets.songActions = null },
-                onStartRadio = { startRadio(song); sheets.songActions = null },
+                onPlayNext = { playNext(song); sheets.songMenu.song = null },
+                onAddToQueue = { addToQueue(song); sheets.songMenu.song = null },
+                onStartRadio = { startRadio(song); sheets.songMenu.song = null },
                 // Stays open: the row it replaces itself with is the
                 // progress, and closing the sheet would hide the only
                 // answer to "did that work?".
@@ -3546,7 +3546,7 @@ private fun BitChordApp(
                         com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
                     ) {
                         {
-                            sheets.songActions = null
+                            sheets.songMenu.song = null
                             uploadToWebDav(listOf(song))
                         }
                     } else {
@@ -3569,15 +3569,15 @@ private fun BitChordApp(
                     }
                 },
                 onAddToPlaylist = {
-                    sheets.songActions = null
+                    sheets.songMenu.song = null
                     viewModel.loadPlaylists()
-                    sheets.playlistTarget = listOf(song)
-                    sheets.playlistTargetTitle = null
-                    sheets.playlistTargetArtwork = null
+                    sheets.playlistPick.songs = listOf(song)
+                    sheets.playlistPick.title = null
+                    sheets.playlistPick.artwork = null
                 },
                 onRemoveFromPlaylist = editable?.let {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         viewModel.removeFromPlaylist(it.browseId, song)
                     }
                 },
@@ -3585,12 +3585,12 @@ private fun BitChordApp(
                 // whether or not anyone is signed in — a folder is the answer
                 // when there is no account to have a playlist on.
                 onAddToFolder = {
-                    sheets.songActions = null
+                    sheets.songMenu.song = null
                     sheets.folderTarget = song
                 },
                 onRemoveFromFolder = openFolder?.let { folder ->
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         com.music.bitchord.data.spotify.LocalPlaylistStore.removeFromFolder(folder.id, song)
                         viewModel.reloadLocalDetail(folder.browseId)
                     }
@@ -3638,7 +3638,7 @@ private fun BitChordApp(
                 ) {
                     {
                         controller?.revertToOriginal()
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                     }
                 } else {
                     null
@@ -3684,7 +3684,7 @@ private fun BitChordApp(
                         )
                 ) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         val c = controller
                         scope.launch {
                             // The answer is said out loud. A button that
@@ -3712,7 +3712,7 @@ private fun BitChordApp(
                 // the rest.
                 onShare = share.takeIf { song.videoId.isNotBlank() },
                 onSaveArtwork = {
-                    sheets.songActions = null
+                    sheets.songMenu.song = null
                     scope.launch {
                         com.music.bitchord.data.artwork.ArtworkDownload.save(context, song).fold(
                             onSuccess = { name ->
@@ -3734,7 +3734,7 @@ private fun BitChordApp(
                 },
                 onCopyLog = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         scope.launch {
                             val text = TrackLog.forTrack(
                                 song,
@@ -3771,7 +3771,7 @@ private fun BitChordApp(
                 },
                 onLyricsOffset = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         sheets.showLyricsOffset = true
                     }
                 } else {
@@ -3779,7 +3779,7 @@ private fun BitChordApp(
                 },
                 onOpenSing = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         sheets.showSing = true
                     }
                 } else {
@@ -3787,7 +3787,7 @@ private fun BitChordApp(
                 },
                 onOpenReplay = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         showReplay = true
                     }
                 } else {
@@ -3805,7 +3805,7 @@ private fun BitChordApp(
                 },
                 onOpenListenTogether = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         if (partyState.inParty) {
                             showListenTogetherMembers = true
                         } else {
@@ -3828,7 +3828,7 @@ private fun BitChordApp(
                 // away behind it rather than over it.
                 onOpenAutomix = if (fromPlayer) {
                     {
-                        sheets.songActions = null
+                        sheets.songMenu.song = null
                         sheets.automixPanelOpen = true
                     }
                 } else {
@@ -4627,7 +4627,7 @@ private fun BitChordApp(
                             // arrive stamped with the album they came off, which is what
                             // the download record groups them under.
                             onMore = { songs ->
-                                sheets.browseActions = BrowseTarget(
+                                sheets.browseMenu.target = BrowseTarget(
                                     browseId = page.browseId,
                                     title = page.title,
                                     subtitle = page.subtitle,
@@ -4944,9 +4944,9 @@ private fun BitChordApp(
                                     entityType = EntityType.TRACK,
                                 ))
                                 viewModel.loadPlaylists()
-                                sheets.playlistTarget = listOf(song)
-                                sheets.playlistTargetTitle = null
-                                sheets.playlistTargetArtwork = null
+                                sheets.playlistPick.songs = listOf(song)
+                                sheets.playlistPick.title = null
+                                sheets.playlistPick.artwork = null
                             },
                             onBrowseClick = { item ->
                                 if (item.browseId.startsWith("itunes:")) {
@@ -5929,7 +5929,7 @@ private fun PlayerSheetHost(
         // cheap to record — its artwork is animated — while nothing
         // samples the layer at all while the menu is closed.
         val sheetBackdrop = rememberLayerBackdrop()
-        val playerMenuSong = sheets.songActions?.takeIf { sheets.menuFromPlayer }
+        val playerMenuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer }
         Box(
             Modifier
                 // Where the app is holding the player, if it is — see
@@ -6003,7 +6003,7 @@ private fun PlayerSheetHost(
                     CompositionLocalProvider(LocalAppBackdrop provides sheetBackdrop) {
                         GlassActionMenu(
                             anchor = local,
-                            onDismiss = { sheets.songActions = null },
+                            onDismiss = { sheets.songMenu.song = null },
                         ) {
                             songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
                         }
@@ -6069,9 +6069,9 @@ private fun RootOverlays(
     // popup is the held item lifting into, and the ⋮ on a row is this.
     // The player's own three-dot menu is not here: it hangs off the
     // button, in the sheet's window, so it is drawn with the player.
-    sheets.songActions?.takeIf { sheets.songMenuOrigin == null && !sheets.menuFromPlayer }?.let { song ->
+    sheets.songMenu.song?.takeIf { sheets.songMenu.origin == null && !sheets.songMenu.fromPlayer }?.let { song ->
         ModalBottomSheet(
-            onDismissRequest = { sheets.songActions = null },
+            onDismissRequest = { sheets.songMenu.song = null },
             // The sheet paints itself in the track's own colours, corners
             // and drag handle included — see SongActionsSheet.
             containerColor = Color.Transparent,
@@ -6081,16 +6081,16 @@ private fun RootOverlays(
         }
     }
     // Drawn over everything, tab bar and mini player included, and kept
-    // composed through its own exit — so it is not gated on songActions.
+    // composed through its own exit — so it is not gated on songMenu.song.
     HeldContextMenu(
-        item = sheets.songActions,
-        held = sheets.songMenuOrigin,
+        item = sheets.songMenu.song,
+        held = sheets.songMenu.origin,
         hazeState = hazeState,
-        onDismiss = { sheets.songActions = null },
+        onDismiss = { sheets.songMenu.song = null },
         // Tapping the lifted track opens its album, as Apple Music's does.
         onPreviewClick = { song ->
             song.albumId?.let { id ->
-                sheets.songActions = null
+                sheets.songMenu.song = null
                 viewModel.openDetail(id, song.albumName ?: song.title, song.artist, song.thumbnailUrl, BrowseType.ALBUM)
             }
         },
@@ -6106,8 +6106,8 @@ private fun RootOverlays(
     }
     // A closed menu forgets where it was held, so whatever opens it next
     // — the ⋮, the player — starts from the sheet.
-    LaunchedEffect(sheets.songActions == null) {
-        if (sheets.songActions == null) sheets.songMenuOrigin = null
+    LaunchedEffect(sheets.songMenu.song == null) {
+        if (sheets.songMenu.song == null) sheets.songMenu.origin = null
     }
     // Flow save asks for a name instead of stamping "Flow — Flow".
     if (sheets.showFlowSave) {
@@ -6188,12 +6188,12 @@ private fun RootOverlays(
     // One sheet for both, because they are one decision: the list of
     // playlists with a way to make another. `creatingPlaylist` opens it
     // straight onto the form, which is what the Library tile means.
-    if (sheets.playlistTarget != null || sheets.creatingPlaylist) {
-        val target = sheets.playlistTarget.orEmpty()
+    if (sheets.playlistPick.songs != null || sheets.creatingPlaylist) {
+        val target = sheets.playlistPick.songs.orEmpty()
         val dismiss = {
-            sheets.playlistTarget = null
-            sheets.playlistTargetTitle = null
-            sheets.playlistTargetArtwork = null
+            sheets.playlistPick.songs = null
+            sheets.playlistPick.title = null
+            sheets.playlistPick.artwork = null
             sheets.creatingPlaylist = false
         }
         ModalBottomSheet(
@@ -6204,8 +6204,8 @@ private fun RootOverlays(
                 playlists = playlists,
                 loading = playlistsLoading,
                 tracks = target,
-                collectionTitle = sheets.playlistTargetTitle,
-                collectionThumbnailUrl = sheets.playlistTargetArtwork,
+                collectionTitle = sheets.playlistPick.title,
+                collectionThumbnailUrl = sheets.playlistPick.artwork,
                 startCreating = target.isEmpty(),
                 onAdd = { picked ->
                     when (target.size) {
@@ -6354,7 +6354,7 @@ private fun RootOverlays(
         // reports on reads as a tap that didn't land.
         val act: ((List<Song>) -> Unit) -> () -> Unit = { action ->
             {
-                sheets.browseActions = null
+                sheets.browseMenu.target = null
                 withBrowseSongs(target, action)
             }
         }
@@ -6396,23 +6396,23 @@ private fun RootOverlays(
                 com.music.bitchord.ui.components.LocalCollectionActions(
                     title = folder.title,
                     onRename = { name ->
-                        sheets.browseActions = null
+                        sheets.browseMenu.target = null
                         com.music.bitchord.data.spotify.LocalPlaylistStore.renamePlaylist(folder.id, name)
                         // The open page carries the old name in its header.
                         viewModel.renameLocalCollection(folder.browseId, name)
                     },
                     onDelete = {
-                        sheets.browseActions = null
+                        sheets.browseMenu.target = null
                         com.music.bitchord.data.spotify.LocalPlaylistStore.deletePlaylist(folder.id)
                         viewModel.closeLocalCollection(folder.browseId)
                     },
                 )
             },
             onRenameInSheet = {
-                sheets.browseRenameInSheet = true
-                sheets.browseMenuOrigin = null
+                sheets.browseMenu.renameInSheet = true
+                sheets.browseMenu.origin = null
             },
-            startRenaming = sheets.browseRenameInSheet,
+            startRenaming = sheets.browseMenu.renameInSheet,
             onPlayNext = act(playSongsNext),
             onAddToQueue = act(addSongsToQueue),
             onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
@@ -6429,9 +6429,9 @@ private fun RootOverlays(
             // menu, which is the same sheet either way.
             onAddToPlaylist = act { songs ->
                 viewModel.loadPlaylists()
-                sheets.playlistTarget = songs
-                sheets.playlistTargetTitle = target.title
-                sheets.playlistTargetArtwork = target.thumbnailUrl
+                sheets.playlistPick.songs = songs
+                sheets.playlistPick.title = target.title
+                sheets.playlistPick.artwork = target.thumbnailUrl
             }.takeIf {
                 signedIn() && remote &&
                     (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST)
@@ -6440,7 +6440,7 @@ private fun RootOverlays(
                 ?.takeIf { target.fromCard }
                 ?.let { id ->
                     {
-                        sheets.browseActions = null
+                        sheets.browseMenu.target = null
                         viewModel.openDetail(
                             browseId = id,
                             title = target.title,
@@ -6493,7 +6493,7 @@ private fun RootOverlays(
                             putExtra(Intent.EXTRA_TEXT, url)
                         }
                         context.startActivity(Intent.createChooser(sendIntent, target.title))
-                        sheets.browseActions = null
+                        sheets.browseMenu.target = null
                     }
                 },
             isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
@@ -6510,24 +6510,24 @@ private fun RootOverlays(
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                    sheets.browseActions = null
+                    sheets.browseMenu.target = null
                 }
             },
             onRename = playlist?.let { p ->
                 { name: String ->
-                    sheets.browseActions = null
+                    sheets.browseMenu.target = null
                     viewModel.renamePlaylist(p, name)
                 }
             },
             onReorder = playlist?.let { p ->
                 {
-                    sheets.browseActions = null
-                    sheets.reorderTarget = p
-                    sheets.reorderEntries = UiState.Loading
-                    sheets.reorderSaving = false
+                    sheets.browseMenu.target = null
+                    sheets.reorder.playlist = p
+                    sheets.reorder.entries = UiState.Loading
+                    sheets.reorder.saving = false
                     viewModel.loadPlaylistEntries(p) { result ->
-                        if (sheets.reorderTarget != p) return@loadPlaylistEntries
-                        sheets.reorderEntries = result.fold(
+                        if (sheets.reorder.playlist != p) return@loadPlaylistEntries
+                        sheets.reorder.entries = result.fold(
                             onSuccess = { UiState.Success(it) },
                             onFailure = { UiState.Error(context.getString(R.string.failed)) },
                         )
@@ -6536,36 +6536,36 @@ private fun RootOverlays(
             },
             onDelete = playlist?.let { p ->
                 {
-                    sheets.browseActions = null
+                    sheets.browseMenu.target = null
                     viewModel.deletePlaylist(p)
                 }
             },
             onDeleteDownload = target.downloadId?.let { id ->
                 {
-                    sheets.browseActions = null
+                    sheets.browseMenu.target = null
                     scope.launch { Downloads.deleteCollection(context, id) }
                 }
             },
         )
     }
-    sheets.browseActions?.takeIf { sheets.browseMenuOrigin == null }?.let { target ->
+    sheets.browseMenu.target?.takeIf { sheets.browseMenu.origin == null }?.let { target ->
         ModalBottomSheet(
-            onDismissRequest = { sheets.browseActions = null },
+            onDismissRequest = { sheets.browseMenu.target = null },
             containerColor = MaterialTheme.colorScheme.background,
         ) {
             browseMenuBody(target, SongActionsPresentation.Sheet)
         }
     }
     HeldContextMenu(
-        item = sheets.browseActions,
-        held = sheets.browseMenuOrigin,
+        item = sheets.browseMenu.target,
+        held = sheets.browseMenu.origin,
         hazeState = hazeState,
-        onDismiss = { sheets.browseActions = null },
+        onDismiss = { sheets.browseMenu.target = null },
         // Tapping the lifted card opens it, as a tap on it in the list
         // would have. Not for a Local Music grouping, which has no page.
         onPreviewClick = { target ->
             target.browseId?.let { id ->
-                sheets.browseActions = null
+                sheets.browseMenu.target = null
                 viewModel.openDetail(
                     browseId = id,
                     title = target.title,
@@ -6578,10 +6578,10 @@ private fun RootOverlays(
     ) { target ->
         browseMenuBody(target, SongActionsPresentation.Menu)
     }
-    LaunchedEffect(sheets.browseActions == null) {
-        if (sheets.browseActions == null) {
-            sheets.browseMenuOrigin = null
-            sheets.browseRenameInSheet = false
+    LaunchedEffect(sheets.browseMenu.target == null) {
+        if (sheets.browseMenu.target == null) {
+            sheets.browseMenu.origin = null
+            sheets.browseMenu.renameInSheet = false
         }
     }
 
@@ -6591,8 +6591,8 @@ private fun RootOverlays(
     // and one that pulled the sheet down instead would throw the new order
     // away. (Material3 1.3 has no sheetGesturesEnabled; the row drags
     // consume their own events, so the list's overscroll is the only path.)
-    sheets.reorderTarget?.let { target ->
-        val close = { sheets.reorderTarget = null }
+    sheets.reorder.playlist?.let { target ->
+        val close = { sheets.reorder.playlist = null }
         val keepSheetStill = remember {
             object : NestedScrollConnection {
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
@@ -6607,18 +6607,18 @@ private fun RootOverlays(
             ReorderPlaylistSheet(
                 modifier = Modifier.nestedScroll(keepSheetStill),
                 playlist = target,
-                entries = sheets.reorderEntries,
-                saving = sheets.reorderSaving,
+                entries = sheets.reorder.entries,
+                saving = sheets.reorder.saving,
                 onClose = close,
                 onSave = { reordered ->
-                    val original = (sheets.reorderEntries as? UiState.Success)?.data.orEmpty()
-                    sheets.reorderSaving = true
+                    val original = (sheets.reorder.entries as? UiState.Success)?.data.orEmpty()
+                    sheets.reorder.saving = true
                     viewModel.reorderPlaylist(target, original, reordered) { saved ->
-                        sheets.reorderSaving = false
+                        sheets.reorder.saving = false
                         showQueueNotice(
                             context.getString(if (saved) R.string.playlist_reordered else R.string.reorder_failed),
                         )
-                        if (saved && sheets.reorderTarget == target) sheets.reorderTarget = null
+                        if (saved && sheets.reorder.playlist == target) sheets.reorder.playlist = null
                     }
                 },
             )
@@ -7305,7 +7305,8 @@ private class RootSheets {
     var showSpotify by mutableStateOf(false)
     var showDiscordLogin by mutableStateOf(false)
     var discordDialog by mutableStateOf<DiscordDialog?>(null)
-    var songActions by mutableStateOf<Song?>(null)
+    /** The track menu — see [SongMenu]. */
+    val songMenu = SongMenu()
     var showLyricsOffset by mutableStateOf(false)
     /**
      * Whether the Automix panel is up over the player.
@@ -7317,24 +7318,6 @@ private class RootSheets {
      */
     var automixPanelOpen by mutableStateOf(false)
     var showSing by mutableStateOf(false)
-    /**
-     * Whether the track menu that is up was opened from the player.
-     *
-     * Its copy of the menu carries rows nothing else offers — a sleep timer,
-     * the track log, share — and until now "opened from the player" and "the
-     * player is on screen" were the same sentence, because the player was a
-     * sheet and nothing else could be up behind it. On a tablet the player is
-     * never *the* thing on screen: it is always beside whatever is, so the
-     * question has to be answered by whoever opened the menu.
-     */
-    var menuFromPlayer by mutableStateOf(false)
-    /**
-     * The row or card that was held to open the track menu, or null when it
-     * was opened any other way. Non-null lifts that item into
-     * [HeldContextMenu]; null keeps the bottom sheet — which is what the ⋮ on
-     * the very same row still opens.
-     */
-    var songMenuOrigin by mutableStateOf<HeldItem?>(null)
     /**
      * Where the player's three-dot button sits, in the sheet window's own
      * coordinates.
@@ -7350,38 +7333,23 @@ private class RootSheets {
     // is still in flight — read by the long-press sheet so it can show a
     // loading row instead of the two just being absent while it waits.
     var linksLoading by mutableStateOf(false)
-    // What the playlist picker is adding, or null when it's closed: the
-    // tracks, and the release's own name when the flow started from one.
-    // Separate from [songActions] so the menu can close behind it — the picker
-    // is the next step, not a second sheet stacked on the first.
-    var playlistTarget by mutableStateOf<List<Song>?>(null)
-    var playlistTargetTitle by mutableStateOf<String?>(null)
-    var playlistTargetArtwork by mutableStateOf<String?>(null)
+    /** What the playlist picker is adding — see [PlaylistPick]. */
+    val playlistPick = PlaylistPick()
     // The picker opened from the Library tab, where there is no track and
     // creating the playlist is the whole errand.
     var creatingPlaylist by mutableStateOf(false)
     // Which track is being put into a folder, or null when the folder picker is
-    // shut. Separate from [songActions] for the same reason as [playlistTarget]:
+    // shut. Separate from [SongMenu.song] for the same reason as [PlaylistPick.songs]:
     // the menu closes behind it rather than two sheets stacking.
     var folderTarget by mutableStateOf<Song?>(null)
     // The picker opened from the Library's "+" tile, where there is no track
     // and making the folder is the whole errand.
     var creatingFolder by mutableStateOf(false)
     var showSpotifyImportDialog by mutableStateOf(false)
-    // Which album or playlist the collection menu is open on, or null when it
-    // is shut. One slot for every surface that can open it — the shelves on
-    // three tabs, the search rows, the artist page's carousels, the release
-    // page's own overflow — because only one of them can be held at a time.
-    var browseActions by mutableStateOf<BrowseTarget?>(null)
-    /** The card held to open [browseActions] — see [songMenuOrigin]. */
-    var browseMenuOrigin by mutableStateOf<HeldItem?>(null)
-    /** Rename asked for from the popup, which hands it on to the sheet's form. */
-    var browseRenameInSheet by mutableStateOf(false)
-    /** The playlist being rearranged, or null when the reorder sheet is shut. */
-    var reorderTarget by mutableStateOf<UserPlaylist?>(null)
-    /** Its entries as YouTube has them now — fetched fresh when the sheet opens. */
-    var reorderEntries by mutableStateOf<UiState<List<Song>>>(UiState.Loading)
-    var reorderSaving by mutableStateOf(false)
+    /** The album / playlist menu — see [BrowseMenu]. */
+    val browseMenu = BrowseMenu()
+    /** The reorder sheet — see [Reorder]. */
+    val reorder = Reorder()
     // Flow: unlock gate + temp playlist + tuner.
     var showFlow by mutableStateOf(false)
     // The whole Quick Picks set, opened from the arrow at the end of its
@@ -7394,6 +7362,67 @@ private class RootSheets {
     var showSupportPopup by mutableStateOf(false)
     var showAnnouncementDialog by mutableStateOf(false)
     var songSortMenuOpen by mutableStateOf(false)
+
+    /** The track menu: which track it is open on, and how it was opened. */
+    class SongMenu {
+        /** The track whose menu is open, or null when it is shut. */
+        var song by mutableStateOf<Song?>(null)
+        /**
+         * Whether the track menu that is up was opened from the player.
+         *
+         * Its copy of the menu carries rows nothing else offers — a sleep timer,
+         * the track log, share — and until now "opened from the player" and "the
+         * player is on screen" were the same sentence, because the player was a
+         * sheet and nothing else could be up behind it. On a tablet the player is
+         * never *the* thing on screen: it is always beside whatever is, so the
+         * question has to be answered by whoever opened the menu.
+         */
+        var fromPlayer by mutableStateOf(false)
+        /**
+         * The row or card that was held to open the track menu, or null when it
+         * was opened any other way. Non-null lifts that item into
+         * [HeldContextMenu]; null keeps the bottom sheet — which is what the ⋮ on
+         * the very same row still opens.
+         */
+        var origin by mutableStateOf<HeldItem?>(null)
+    }
+
+    /**
+     * What the playlist picker is adding, or [songs] null when it's closed:
+     * the tracks, and the release's own name and artwork when the flow
+     * started from one. Separate from [SongMenu.song] so the menu can close
+     * behind it — the picker is the next step, not a second sheet stacked
+     * on the first.
+     */
+    class PlaylistPick {
+        var songs by mutableStateOf<List<Song>?>(null)
+        var title by mutableStateOf<String?>(null)
+        var artwork by mutableStateOf<String?>(null)
+    }
+
+    /**
+     * The album / playlist menu. One slot for every surface that can open
+     * it — the shelves on three tabs, the search rows, the artist page's
+     * carousels, the release page's own overflow — because only one of them
+     * can be held at a time.
+     */
+    class BrowseMenu {
+        /** Which album or playlist the menu is open on, or null when it is shut. */
+        var target by mutableStateOf<BrowseTarget?>(null)
+        /** The card held to open it — see [SongMenu.origin]. */
+        var origin by mutableStateOf<HeldItem?>(null)
+        /** Rename asked for from the popup, which hands it on to the sheet's form. */
+        var renameInSheet by mutableStateOf(false)
+    }
+
+    /** The playlist reorder sheet. */
+    class Reorder {
+        /** The playlist being rearranged, or null when the sheet is shut. */
+        var playlist by mutableStateOf<UserPlaylist?>(null)
+        /** Its entries as YouTube has them now — fetched fresh when the sheet opens. */
+        var entries by mutableStateOf<UiState<List<Song>>>(UiState.Loading)
+        var saving by mutableStateOf(false)
+    }
 }
 
 /**
