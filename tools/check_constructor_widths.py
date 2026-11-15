@@ -21,7 +21,6 @@ wider than 254 arguments fails the build.
 
     python3 tools/check_constructor_widths.py app/build/tmp/kotlin-classes/devRelease
 """
-import glob
 import os
 import sys
 

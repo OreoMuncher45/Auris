@@ -16,30 +16,39 @@ composable, not to raise the limit.
 The class-file walk is tools/classfile.py, shared with
 check_constructor_widths.py.
 """
-import glob
 import os
 import sys
 
 sys.dont_write_bytecode = True  # importing classfile must not leave a __pycache__ in tools/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from classfile import ClassFileError, methods  # noqa: E402
+from classfile import ClassFileError, class_files, methods  # noqa: E402
 
 LIMIT = 32000
 
 
 def main(roots):
     bad = []
+    unreadable = []
     for root in roots:
-        for path in glob.glob(os.path.join(root, "**", "*.class"), recursive=True):
-            data = open(path, "rb").read()
-            if data[:4] != b"\xca\xfe\xba\xbe":
-                continue
+        # Fails rather than passes when there is nothing to check: see
+        # check_constructor_widths.py.
+        try:
+            paths = class_files(root)
+        except ClassFileError as e:
+            unreadable.append(str(e))
+            continue
+        for path in paths:
             try:
-                for name, _, size in methods(data):
+                for name, _, size in methods(open(path, "rb").read()):
                     if size is not None and size > LIMIT:
                         bad.append((size, os.path.relpath(path, root), name))
-            except ClassFileError:
-                continue
+            except ClassFileError as e:
+                unreadable.append("%s: %s" % (path, e))
+    for message in unreadable:
+        print("could not check %s" % message)
+    if unreadable and not bad:
+        print("\n%d unreadable input(s): failing rather than passing unchecked." % len(unreadable))
+        return 1
     for size, path, name in sorted(bad, reverse=True):
         print("%s: %s is %d bytes of bytecode" % (path, name, size))
     if bad:
@@ -48,6 +57,8 @@ def main(roots):
             "65,535; split the composable (or function) before it gets "
             "there rather than raising this limit." % (len(bad), LIMIT)
         )
+        return 1
+    if unreadable:
         return 1
     print("methods: all within %d bytes" % LIMIT)
     return 0
