@@ -65,6 +65,18 @@ on:
           - In landscape the transport sits centred under the scrubber and the three
             buttons are spread apart, instead of being crammed together in the middle
             of the screen.
+          - The bottom row is lifted off the system bar: the volume, AirPlay, lyrics
+            and queue buttons now sit inside the player, with air under them, instead
+            of against the phone's own furniture.
+          - The wash under the sleeve is lifted with them, so the brightest band of
+            the picture rides up behind the art and the controls stand on a calmer
+            band of colour.
+          - Tapping the album art switches between the card and the full-screen
+            picture, in the player's own movement rather than a jump. The tap takes
+            nothing, so the drag on the artwork still opens the queue.
+          - A new switch draws the album art a little smaller inside its card, with a
+            thin edge of the card's own colour around it, for a cover that is cropped
+            too tightly. It is off by default.
           - One ink. The title and the transport wear the player's own colour again,
             like every other mark on the screen, so there is no second colour system to
             fight with.
