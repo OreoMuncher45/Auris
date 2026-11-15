@@ -689,29 +689,9 @@ private fun BitChordApp(
     viewModel: MainViewModel = viewModel(),
 ) {
     val context = LocalContext.current
-    val hazeState = remember { HazeState() }
-    // Recording the backdrop layer costs a draw pass, so it only runs when a
-    // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
-    // [isGlassAllowed] also rules out low-RAM devices. Without that term the
-    // nav bar asked for glass and the per-surface gate refused it, so the
-    // expensive part — recording the whole backdrop into a layer every frame —
-    // ran anyway on the hardware least able to afford it.
-    val glassActive = LocalLiquidGlassEnabled.current && isGlassAllowed()
-    // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
-    // now-playing-and-tabs component is a layout, not an effect, and dropping
-    // back to the two stacked bars would be answering a question about material
-    // with a different screen. What it drops is the sampling: the surfaces fill
-    // solid (see [Modifier.liquidGlass]) and the whole-page layer recording
-    // below goes with them, which is the part that costs a draw pass.
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
     val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
-    // What folds [GlassNavBar] between its expanded and inline shapes. Held here
-    // rather than inside the bar because the page's scroll is what drives it,
-    // and the page is a sibling of the bar rather than a child.
-    val navBarScroll = rememberFloatingTabBarScrollConnection()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     /**
      * Whether the player's sheet is up. The player is always a full-screen
@@ -743,10 +723,6 @@ private fun BitChordApp(
     // takes part in the docking asks for [activeDock] / this, never for the
     // dock or the motion directly.
     val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    // The same switch, read for the page transitions: with every animation
-    // off there is no motion between pages either — the page is simply the
-    // next page.
-    val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
     // How the app takes the player down, whatever for: a back press, or a page
     // opened from inside it. Set straight to false, the sheet left in one frame
@@ -769,10 +745,6 @@ private fun BitChordApp(
     }
     val sheets = remember { RootSheets() }
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    // Which Settings category is open, or null for the category index. Held
-    // here rather than inside SettingsScreen so the top bar's back button can
-    // close the category before it closes Settings itself.
-    var settingsCategory by rememberSaveable { mutableStateOf<String?>(null) }
     // Moods and genres used to have a tab of their own. The podcasts took
     // that slot, so they live on a page now, opened from the radio tab.
     var showGenres by rememberSaveable { mutableStateOf(false) }
@@ -781,10 +753,6 @@ private fun BitChordApp(
     var audiobookQuery by rememberSaveable { mutableStateOf("") }
     // An Apple-catalogue podcast opened from the podcasts page (collectionId).
     var itunesPodcastId by rememberSaveable { mutableStateOf<String?>(null) }
-    // Home's "Sign in to YouTube" banner, once the user has dismissed it.
-    var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
-    // Podcast show page: newest-first vs oldest-first episode sort.
-    var podcastSortNewest by rememberSaveable { mutableStateOf(true) }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
@@ -795,8 +763,6 @@ private fun BitChordApp(
     var replayLandingPage by rememberSaveable { mutableStateOf(ReplayStoryPage.INTRO) }
     var replayStory by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
     var showReplayShare by rememberSaveable { mutableStateOf(false) }
-    /** Which story card the share sheet is for, or null for the whole Replay. */
-    var replaySharePage by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
     // Track which sub-screen was opened from Settings so AnimatedContent keeps
     // SettingsSheet mounted underneath and back navigation restores scroll.
     // null = no sub-screen overlay; non-null = that key is rendered as overlay.
@@ -804,9 +770,6 @@ private fun BitChordApp(
     var showAccountScrobbling by rememberSaveable { mutableStateOf(false) }
     var showSources by rememberSaveable { mutableStateOf(false) }
     var showListenTogether by rememberSaveable { mutableStateOf(false) }
-    // The player's member drawer, reachable from the track menu as well once
-    // there is a party.
-    var showListenTogetherMembers by rememberSaveable { mutableStateOf(false) }
     var showEqualizer by rememberSaveable { mutableStateOf(false) }
 
     /** Holding a row anywhere but the player — the menu without the player's rows. */
@@ -830,11 +793,6 @@ private fun BitChordApp(
     // suggestions, and pressing the button appeared to do nothing, because it
     // turned the party's setting on while the label already said so.
     val autoplayEnabled = autoplayEnabledFor(partyState, autoplay)
-    val partyServerStatus by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
-    // Set each time the search tab is tapped, which SearchScreen uses as a
-    // signal to focus the input field.
-    var searchFocusRequested by remember { mutableStateOf(false) }
-    val searchFieldFocus = remember { FocusRequester() }
     var searchVisualActive by rememberSaveable { mutableStateOf(false) }
     var searchKeyboardActive by rememberSaveable { mutableStateOf(false) }
     var lastSearchTab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
@@ -852,15 +810,6 @@ private fun BitChordApp(
     SystemBarIcons(dark = !darkTheme && !showNowPlaying && !showReplay && replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
-    val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
-    val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
-    // What the home page says above its shelves: a greeting, a row of chips
-    // and the quick-access grid. Spotify's home has all three; YouTube's has
-    // none of them.
-    val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
-    // Which provider is drawing the page. Spotify's shelves are cards of
-    // collections, and the full-bleed hero treatment is for a row of tracks.
-    val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
     // The podcast pages that sit over the feed — see [PodcastUiState].
     val podcastUi = remember { PodcastUiState() }
     // Podcasts switched off while their page is open: the tab is gone, so the
@@ -882,8 +831,6 @@ private fun BitChordApp(
     }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
-    val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
-    val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
     val playerAccentColor by AppSettings.playerAccentColor.collectAsStateWithLifecycle()
     val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
     val aiArtists by AppSettings.aiArtists.collectAsStateWithLifecycle()
@@ -894,13 +841,7 @@ private fun BitChordApp(
     val playerLyricsSourceColor by AppSettings.playerLyricsSourceColor.collectAsStateWithLifecycle()
     val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val flowQueueState by viewModel.flowQueue.collectAsStateWithLifecycle()
-    val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
-    val flowSaved by viewModel.flowSaved.collectAsStateWithLifecycle()
     val flowSaveNotice by viewModel.flowSaveNotice.collectAsStateWithLifecycle()
-    val flowMood by com.music.bitchord.data.flow.FlowStore.mood.collectAsStateWithLifecycle()
-    val flowTuner by com.music.bitchord.data.flow.FlowStore.tuner.collectAsStateWithLifecycle()
-    val flowBanned by com.music.bitchord.data.flow.FlowStore.bannedIds.collectAsStateWithLifecycle()
-    val flowListState = rememberLazyListState()
     // Home Flow entry: synthetic shelf on top once unlocked (homeWithFlow is
     // derived below, once history/library state exist to borrow artwork
     // from — the shelf carries no cover of its own).
@@ -951,29 +892,14 @@ private fun BitChordApp(
         }
     }
     val query by viewModel.query.collectAsStateWithLifecycle()
-    val results by viewModel.results.collectAsStateWithLifecycle()
-    val exploreState by viewModel.explore.collectAsStateWithLifecycle()
-    val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
-    val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
-    val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
-    val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
-    val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
-    val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
-    val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
-    val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
-    val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
-    val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
     // The podcast feed is fetched once, the first time its tab is opened.
     LaunchedEffect(selectedTab) {
         if (selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
     }
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
-    val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
-    val libraryState by viewModel.library.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
-    val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     LaunchedEffect(selectedTab) {
         if (selectedTab == TAB_RADIO || showGenres) viewModel.ensureExploreLoaded()
         if (selectedTab == TAB_SEARCH) {
@@ -1020,8 +946,6 @@ private fun BitChordApp(
         }
     }
     val account by viewModel.account.collectAsStateWithLifecycle()
-    val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
-    val historyState by viewModel.history.collectAsStateWithLifecycle()
     // The Flow card wears the mix's own first cover: it is literally what
     // is playing, not a borrowed album, and a blank captioned tile is what
     // reads as broken. Empty queue, empty art, same tile as before.
@@ -1096,23 +1020,9 @@ private fun BitChordApp(
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
-    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
-    val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
-    val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
-    val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
-    val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
-    // Not keyed on the browse id and not remembered here: each page's choice
-    // lives in AppSettings keyed by that page — Spotify-style, one playlist's
-    // order never imposes itself on another, and every page keeps its own
-    // across visits.
-    val detailSongSorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
-    // Which tracks are being held on YouTube's own upload, so the player's menu
-    // offers the way back out of a revert rather than the revert again.
-    val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
-    val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
 
     // Settings has no tab of its own — it sits on top of whatever tab was
     // selected. A pushed album/artist page (from the player, search, etc.)
@@ -1136,7 +1046,6 @@ private fun BitChordApp(
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
     val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
-    val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
     // does when a file is.
@@ -1329,15 +1238,10 @@ private fun BitChordApp(
     LaunchedEffect(homeShelfOrder) {
         if (homeShelfOrder.isNotEmpty()) homeListState.scrollToItem(0)
     }
-    val exploreListState = rememberLazyListState()
     val moodGenreListState = rememberLazyListState()
     val radioListState = rememberLazyListState()
     val podcastListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
-    val quickPicksListState = rememberLazyListState()
-    val continueListeningListState = rememberLazyListState()
-    val historyListState = rememberLazyListState()
-    val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
@@ -1347,13 +1251,6 @@ private fun BitChordApp(
         else -> searchListState
     }
 
-    // Pull-to-refresh: the drag lives with the feed, but the indicator is the
-    // line under the top bar, so the state has to be visible to both.
-    val homePull = rememberPullToRefreshState()
-    val explorePull = rememberPullToRefreshState()
-    val podcastPull = rememberPullToRefreshState()
-    val libraryPull = rememberPullToRefreshState()
-    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val currentFeed = when {
         showSettings || showAccountScrobbling || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
@@ -2586,13 +2483,6 @@ private fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
-    // The Library's segment — Playlists, the device's own, Artists, Albums.
-    //
-    // Held here because the Library page leaves composition entirely when a
-    // playlist is opened over it, and `rememberSaveable` does not outlive
-    // that: coming back from a playlist found the page on Playlists again,
-    // whatever segment it had been left on.
-    var librarySegment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
     val navSearchState = NavSearchState(
         visualActive = searchVisualActive,
         keyboardActive = searchKeyboardActive,
@@ -3250,6 +3140,121 @@ private fun BitChordApp(
     }
 
     AppRootBox {
+        // State that only this lambda reads is collected and remembered here,
+        // not in BitChordApp's own body: declared out there, each one is one
+        // more value the lambda captures, and dex can only call a constructor
+        // 254 arguments wide (see tools/check_constructor_widths.py). The same
+        // composition, so the same lifetime — this box never leaves it.
+        val hazeState = remember { HazeState() }
+        // Recording the backdrop layer costs a draw pass, so it only runs when a
+        // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
+        // [isGlassAllowed] also rules out low-RAM devices. Without that term the
+        // nav bar asked for glass and the per-surface gate refused it, so the
+        // expensive part — recording the whole backdrop into a layer every frame —
+        // ran anyway on the hardware least able to afford it.
+        val glassActive = LocalLiquidGlassEnabled.current && isGlassAllowed()
+        // What folds [GlassNavBar] between its expanded and inline shapes. Held here
+        // rather than inside the bar because the page's scroll is what drives it,
+        // and the page is a sibling of the bar rather than a child.
+        val navBarScroll = rememberFloatingTabBarScrollConnection()
+        // Which Settings category is open, or null for the category index. Held
+        // here rather than inside SettingsScreen so the top bar's back button can
+        // close the category before it closes Settings itself.
+        var settingsCategory by rememberSaveable { mutableStateOf<String?>(null) }
+        // Home's "Sign in to YouTube" banner, once the user has dismissed it.
+        var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
+        // Podcast show page: newest-first vs oldest-first episode sort.
+        var podcastSortNewest by rememberSaveable { mutableStateOf(true) }
+        /** Which story card the share sheet is for, or null for the whole Replay. */
+        var replaySharePage by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
+        // The player's member drawer, reachable from the track menu as well once
+        // there is a party.
+        var showListenTogetherMembers by rememberSaveable { mutableStateOf(false) }
+        // Set each time the search tab is tapped, which SearchScreen uses as a
+        // signal to focus the input field.
+        var searchFocusRequested by remember { mutableStateOf(false) }
+        val searchFieldFocus = remember { FocusRequester() }
+        val flowListState = rememberLazyListState()
+        val exploreListState = rememberLazyListState()
+        val quickPicksListState = rememberLazyListState()
+        val continueListeningListState = rememberLazyListState()
+        val historyListState = rememberLazyListState()
+        val libraryShowAllGridState = rememberLazyGridState()
+        // Pull-to-refresh: the drag lives with the feed, but the indicator is the
+        // line under the top bar, so the state has to be visible to both.
+        val homePull = rememberPullToRefreshState()
+        val explorePull = rememberPullToRefreshState()
+        val podcastPull = rememberPullToRefreshState()
+        val libraryPull = rememberPullToRefreshState()
+        // The Library's segment — Playlists, the device's own, Artists, Albums.
+        //
+        // Held here because the Library page leaves composition entirely when a
+        // playlist is opened over it, and `rememberSaveable` does not outlive
+        // that: coming back from a playlist found the page on Playlists again,
+        // whatever segment it had been left on.
+        var librarySegment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
+        // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
+        // now-playing-and-tabs component is a layout, not an effect, and dropping
+        // back to the two stacked bars would be answering a question about material
+        // with a different screen. What it drops is the sampling: the surfaces fill
+        // solid (see [Modifier.liquidGlass]) and the whole-page layer recording
+        // below goes with them, which is the part that costs a draw pass.
+        val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+        val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+        // The same switch, read for the page transitions: with every animation
+        // off there is no motion between pages either — the page is simply the
+        // next page.
+        val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+        val partyServerStatus by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
+        val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
+        val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
+        // What the home page says above its shelves: a greeting, a row of chips
+        // and the quick-access grid. Spotify's home has all three; YouTube's has
+        // none of them.
+        val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
+        // Which provider is drawing the page. Spotify's shelves are cards of
+        // collections, and the full-bleed hero treatment is for a row of tracks.
+        val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
+        val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
+        val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
+        val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
+        val flowSaved by viewModel.flowSaved.collectAsStateWithLifecycle()
+        val flowMood by com.music.bitchord.data.flow.FlowStore.mood.collectAsStateWithLifecycle()
+        val flowTuner by com.music.bitchord.data.flow.FlowStore.tuner.collectAsStateWithLifecycle()
+        val flowBanned by com.music.bitchord.data.flow.FlowStore.bannedIds.collectAsStateWithLifecycle()
+        val results by viewModel.results.collectAsStateWithLifecycle()
+        val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+        val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
+        val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
+        val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
+        val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
+        val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
+        val continueListeningEpisodes by viewModel.continueListeningEpisodes.collectAsStateWithLifecycle()
+        val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
+        val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
+        val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
+        val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
+        val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
+        val libraryState by viewModel.library.collectAsStateWithLifecycle()
+        val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
+        val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
+        val historyState by viewModel.history.collectAsStateWithLifecycle()
+        val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+        val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+        val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
+        val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
+        val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
+        // Not keyed on the browse id and not remembered here: each page's choice
+        // lives in AppSettings keyed by that page — Spotify-style, one playlist's
+        // order never imposes itself on another, and every page keeps its own
+        // across visits.
+        val detailSongSorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
+        // Which tracks are being held on YouTube's own upload, so the player's menu
+        // offers the way back out of a revert rather than the revert again.
+        val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
+        val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
+        val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
+        val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
 
         val clipboard = LocalClipboardManager.current
 
