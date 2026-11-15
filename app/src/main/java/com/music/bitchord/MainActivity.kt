@@ -266,7 +266,7 @@ import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.rememberMediaController
-import com.music.bitchord.playback.rememberPlayerState
+import com.music.bitchord.playback.rememberPlayerView
 import com.music.bitchord.playback.setQueueDragActive
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.SearchSource
@@ -1162,7 +1162,7 @@ private fun BitChordApp(
         }
     }
     val controller = rememberMediaController()
-    val player = rememberPlayerState(controller)
+    val player = rememberPlayerView(controller)
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -3832,7 +3832,8 @@ private fun BitChordApp(
             com.music.bitchord.ui.classipod.ClassipodHost(
                 darkTheme = darkTheme,
                 viewModel = viewModel,
-                player = player,
+                // The iPod shell takes the whole snapshot, as it always has.
+                player = player.snapshot,
                 controller = controller,
                 onPlaySongs = { songs, index, source -> playFrom(songs, index, source) },
                 onStartFlow = { startFlow(false) },
@@ -6265,7 +6266,7 @@ private data class PageInputs(
     val scroll: PageScrollStates,
     val viewModel: MainViewModel,
     val scope: kotlinx.coroutines.CoroutineScope,
-    val player: com.music.bitchord.playback.PlayerState,
+    val player: com.music.bitchord.playback.PlayerView,
     val nav: RootNav,
     val sheets: RootSheets,
     val podcastUi: PodcastUiState,
