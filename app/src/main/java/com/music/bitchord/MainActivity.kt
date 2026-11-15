@@ -1340,12 +1340,12 @@ private fun BitChordApp(
     // can leave the incoming album attached to the disappearing artist/grid
     // layout and unable to consume scroll gestures. Keep one state per page
     // while it is on the navigation stack instead.
-    val detailListStates = remember { mutableMapOf<String, LazyListState>() }
+    val detailListStates = remember { DetailListStates() }
     val detailListState = detail?.browseId?.let { browseId ->
-        detailListStates.getOrPut(browseId) { LazyListState() }
+        detailListStates.forPage(browseId)
     } ?: remember { LazyListState() }
     LaunchedEffect(detailStack.map { it.browseId }) {
-        detailListStates.keys.retainAll(detailStack.mapTo(HashSet()) { it.browseId })
+        detailListStates.keepOnly(detailStack.mapTo(HashSet()) { it.browseId })
     }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
@@ -3916,6 +3916,16 @@ private fun BitChordApp(
             showQueueNotice = showQueueNotice,
             onSearchSourceChange = onSearchSourceChange,
             setReplayPeriod = setReplayPeriod,
+            // Lambdas, not `::openByName` and the like. These are local
+            // functions that capture BitChordApp's locals, and a reference to
+            // one equals any other reference to it whatever the two captured —
+            // so a PageActions holding one could compare equal to the last
+            // while what it would act on had changed, and the page would skip.
+            // A lambda is compared by identity, and the compiler makes a new
+            // one when what it captures changes.
+            openByName = { id, name, subtitle, type, artwork -> openByName(id, name, subtitle, type, artwork) },
+            smartDownloadPodcast = { anchor -> smartDownloadPodcast(anchor) },
+            uploadToWebDav = { songs -> uploadToWebDav(songs) },
         )
         // Everything the page needs, as one value — see [PageInputs].
         val pageInputs = PageInputs(
@@ -3968,9 +3978,6 @@ private fun BitChordApp(
             podcastSortNewestState = podcastSortNewestState,
             searchFocusRequestedState = searchFocusRequestedState,
             signInBannerDismissedState = signInBannerDismissedState,
-            openByName = ::openByName,
-            smartDownloadPodcast = ::smartDownloadPodcast,
-            uploadToWebDav = ::uploadToWebDav,
         )
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
@@ -4171,7 +4178,7 @@ private fun BitChordApp(
                 // under the bar and needs the cover.
                 val artistListState = detail
                     ?.takeIf { isDetailVisible && it.type == BrowseType.ARTIST }
-                    ?.let { detailListStates.getOrPut(it.browseId) { LazyListState() } }
+                    ?.let { detailListStates.forPage(it.browseId) }
                 val topFadeAlpha by remember(artistListState) {
                     derivedStateOf {
                         val list = artistListState ?: return@derivedStateOf 1f
@@ -5086,9 +5093,6 @@ private fun RootPage(
     val windowWidth = inputs.windowWidth
     val quickPicksLabel = inputs.quickPicksLabel
     val searchLabel = inputs.searchLabel
-    val openByName = inputs.openByName
-    val smartDownloadPodcast = inputs.smartDownloadPodcast
-    val uploadToWebDav = inputs.uploadToWebDav
     val context = LocalContext.current
     val account by inputs.accountState
     val audiobooks by inputs.audiobooksState
@@ -5198,7 +5202,7 @@ private fun RootPage(
     // whichever detail happens to be at the top of the stack
     // while the slot is fading out.
     val pageDetailListState = remember(key) {
-        detailListStates.getOrPut(key) { LazyListState() }
+        detailListStates.forPage(key)
     }
     if (key == "history") {
         HistoryScreen(
@@ -5344,11 +5348,11 @@ private fun RootPage(
             },
             onOpenArtist = { id, name ->
                 nav.showReplay = false
-                openByName(id, name, null, BrowseType.ARTIST, null)
+                pageActions.openByName(id, name, null, BrowseType.ARTIST, null)
             },
             onOpenAlbum = { id, title, artist, art ->
                 nav.showReplay = false
-                openByName(id, title, artist, BrowseType.ALBUM, art)
+                pageActions.openByName(id, title, artist, BrowseType.ALBUM, art)
             },
             onShare = {
                 nav.replaySharePage = null
@@ -5580,7 +5584,7 @@ private fun RootPage(
                 Downloads.enqueue(context, song, "Podcast")
             },
             onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
-            onSmartDownload = { smartDownloadPodcast(null) },
+            onSmartDownload = { pageActions.smartDownloadPodcast(null) },
         )
     } else if (key == "settings") {
         SettingsScreen(
@@ -5667,7 +5671,7 @@ private fun RootPage(
             },
             onUploadToWebDav =
                 if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl)) {
-                    { selected -> uploadToWebDav(selected) }
+                    { selected -> pageActions.uploadToWebDav(selected) }
                 } else {
                     null
                 },
@@ -6261,6 +6265,26 @@ private fun RootPage(
 }
 
 /**
+ * One [LazyListState] per detail page on the navigation stack — see where
+ * [BitChordApp] makes it for why one state cannot be shared.
+ *
+ * A class rather than the bare MutableMap it was so that [PageInputs]' [Stable]
+ * is honest: nothing here is a public mutable property composition could read
+ * and miss a change to. [forPage] hands out the same state for a page for as
+ * long as it stays on the stack, and that is all a reader can ask of it.
+ */
+private class DetailListStates {
+    private val states = mutableMapOf<String, LazyListState>()
+
+    fun forPage(browseId: String): LazyListState = states.getOrPut(browseId) { LazyListState() }
+
+    /** Forgets the pages no longer on the stack. */
+    fun keepOnly(browseIds: Set<String>) {
+        states.keys.retainAll(browseIds)
+    }
+}
+
+/**
  * Everything [RootPage] needs from [BitChordApp], as one value.
  *
  * Built where the page lambda is, and passed in whole: one capture for that
@@ -6268,10 +6292,16 @@ private fun RootPage(
  * the compiler compares it by its fields — each a stable state holder, a
  * remembered lambda or a plain value — and a page whose inputs are all the
  * same instances as last time is skipped exactly as before. Marked
- * [Stable] because a few fields (the view model, the player snapshot, the
- * detail list-state map) are not inferred stable; without it the compiler
- * compares the whole value by identity, and a value rebuilt on every root
- * recomposition would recompose the page every time. Collected and
+ * [Stable] because some fields (the view model, the List-typed values, the
+ * holders) are not inferred stable; without it the compiler compares the
+ * whole value by identity, and a value rebuilt on every root recomposition
+ * would recompose the page every time. The contract holds field by field:
+ * every field is a val; the holders ([RootNav], [RootSheets], [PlayerView],
+ * [DetailListStates], ...) are the same instances for the root's lifetime
+ * and expose only snapshot state or nothing readable; the lists are
+ * remembered against what they are built from; and there are no function
+ * references (see [PageActions]), whose equality ignores what they capture.
+ * Collected and
  * saved state is carried as its [androidx.compose.runtime.State] /
  * [androidx.compose.runtime.MutableState] rather than its value, so every
  * read inside the page, callbacks included, is of the current value.
@@ -6288,7 +6318,7 @@ private data class PageInputs(
     val podcastUi: PodcastUiState,
     val replay: com.music.bitchord.ui.replay.ReplayState,
     val pageActions: PageActions,
-    val detailListStates: MutableMap<String, LazyListState>,
+    val detailListStates: DetailListStates,
     val downloadedReleases: List<com.music.bitchord.download.SavedCollection>,
     val flowTile: ShelfItem?,
     val folderItems: List<ShelfItem>,
@@ -6328,9 +6358,6 @@ private data class PageInputs(
     val podcastSortNewestState: androidx.compose.runtime.MutableState<Boolean>,
     val searchFocusRequestedState: androidx.compose.runtime.MutableState<Boolean>,
     val signInBannerDismissedState: androidx.compose.runtime.MutableState<Boolean>,
-    val openByName: (String?, String, String?, BrowseType, String?) -> Unit,
-    val smartDownloadPodcast: (Song?) -> Unit,
-    val uploadToWebDav: (List<Song>) -> Unit,
 )
 
 /**
@@ -6397,6 +6424,9 @@ private data class PageActions(
     val showQueueNotice: (String) -> Unit,
     val onSearchSourceChange: (SearchSource) -> Unit,
     val setReplayPeriod: (com.music.bitchord.data.stats.ReplayPeriod) -> Unit,
+    val openByName: (browseId: String?, name: String, subtitle: String?, type: BrowseType, artwork: String?) -> Unit,
+    val smartDownloadPodcast: (anchor: Song?) -> Unit,
+    val uploadToWebDav: (songs: List<Song>) -> Unit,
 )
 
 /**
