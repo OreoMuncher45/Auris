@@ -1058,6 +1058,26 @@ object AudioCache {
      */
     private val preparations = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
 
+    /**
+     * Answers already given, and when they were given.
+     *
+     * The map above dedupes a preparation while it is *running*. A queue
+     * that changes several times a minute — a flow top-up, an Automix plan, a
+     * reorder — changed it again after the answer had landed, and the patient
+     * search started from scratch: three searches for one track in seven
+     * seconds, each one asking every source and waiting for all of them, each
+     * one holding a player, a decoder, a dozen source calls and a hundred-odd
+     * threads of its own.
+     *
+     * So the answer is kept for a moment and handed out again. The key
+     * carries the quality the question was asked at, so a changed setting is
+     * a changed question and is asked afresh.
+     */
+    private val preparationAnswers = ConcurrentHashMap<String, PreparationAnswer>()
+
+    /** One answered preparation: what it found, and when. */
+    private class PreparationAnswer(val at: Long, val stream: SourceStream?)
+
     /** The map's own lock; the map itself is concurrent, but a claim is two steps. */
     private val preparationLock = Any()
 
@@ -1072,6 +1092,19 @@ object AudioCache {
         if (existing != null) {
             return@synchronized existing to false
         }
+        // An answer given a moment ago is an answer, and asking the same
+        // question again is what the queue's own changes used to do.
+        val answered = preparationAnswers[key]
+        if (answered != null) {
+            val age = SystemClock.elapsedRealtime() - answered.at
+            val ttl = if (answered.stream != null) PREPARATION_ANSWER_TTL_MS else EMPTY_ANSWER_TTL_MS
+            if (age <= ttl) {
+                val done = CompletableDeferred<SourceStream?>()
+                done.complete(answered.stream)
+                return@synchronized done to false
+            }
+            preparationAnswers.remove(key, answered)
+        }
         val deferred = CompletableDeferred<SourceStream?>()
         preparations[key] = deferred
         deferred to true
@@ -1081,6 +1114,7 @@ object AudioCache {
     private fun completePreparation(key: String, deferred: CompletableDeferred<SourceStream?>, prepared: SourceStream?) {
         synchronized(preparationLock) {
             preparations.remove(key, deferred)
+            preparationAnswers[key] = PreparationAnswer(SystemClock.elapsedRealtime(), prepared)
         }
         deferred.complete(prepared)
     }
@@ -1088,11 +1122,26 @@ object AudioCache {
     /**
      * The identity of a preparation.
      *
-     * The track, and the source it is being prepared *for*: the same track
-     * asked for on behalf of a substitute and on behalf of its own server are
-     * two different questions, and neither should wait for the other.
+     * The track, the source it is being prepared *for*: the same track asked
+     * for on behalf of a substitute and on behalf of its own server are two
+     * different questions, and neither should wait for the other — and the
+     * quality the question is being asked at, because the same track at
+     * another rung is another answer.
      */
-    private fun preparationKey(mediaId: String, servedBy: String?): String = "$mediaId|${servedBy ?: ""}"
+    private fun preparationKey(mediaId: String, servedBy: String?): String =
+        "$mediaId|${servedBy ?: ""}|${AppSettings.effectiveAudioQuality.name}"
+
+    /** How long an answer with a stream in it is good for. */
+    private const val PREPARATION_ANSWER_TTL_MS = 60_000L
+
+    /**
+     * How long an answer with *nothing* in it is good for.
+     *
+     * Shorter than the other: "no better copy" is true for a moment, and a
+     * source that has just come up should not be shut out for a minute
+     * because it was asked before it was there.
+     */
+    private const val EMPTY_ANSWER_TTL_MS = 15_000L
 
     /**
      * The preparation of the next track when that track is a download.
@@ -1276,7 +1325,7 @@ object AudioCache {
                             if (!owner) {
                                 // The same question is already being asked. Wait
                                 // for that answer rather than asking again.
-                                TrackLog.d(TAG, "preparation for $next is already running; waiting for it", about = next)
+                                TrackLog.d(TAG, "preparation for $next is already answered or running; waiting for it", about = next)
                                 deferred.await()?.also {
                                     StreamChoice.remember(next, it, substituted = true)
                                 }
@@ -1497,7 +1546,7 @@ object AudioCache {
             val key = preparationKey(head.mediaId, serving)
             val (deferred, owner) = claimPreparation(key)
             if (!owner) {
-                TrackLog.d(TAG, "local preparation for ${head.mediaId} is already running; waiting for it", about = head.mediaId)
+                TrackLog.d(TAG, "local preparation for ${head.mediaId} is already answered or running; waiting for it", about = head.mediaId)
                 deferred.await()
                 return@launch
             }
