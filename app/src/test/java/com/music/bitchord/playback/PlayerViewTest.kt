@@ -1,8 +1,10 @@
 package com.music.bitchord.playback
 
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshots.SnapshotStateObserver
+import androidx.compose.runtime.structuralEqualityPolicy
 import com.music.bitchord.data.model.Song
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -104,5 +106,46 @@ class PlayerViewTest {
         update { copy(song = track.copy(videoId = "b"), isPlaying = false) }
         assertEquals("b", view.song?.videoId)
         assertEquals(false, view.isPlaying)
+    }
+
+    /**
+     * What BitChordApp's own body reads from the player once the busy flag and
+     * the lyrics' duration are derived / watched elsewhere: only the track,
+     * for its effect keys and the raised player's song. Buffering and the
+     * duration settling must not reach it.
+     */
+    @Test fun `root body reads are not invalidated by buffering or duration`() {
+        update { copy(song = track) }
+        val count = invalidations(read = { view.song?.videoId }) {
+            update { copy(isLoading = true) }
+            update { copy(durationMs = 180_000L) }
+            update { copy(isLoading = false) }
+            update { copy(durationMs = 181_000L) }
+        }
+        assertEquals(0, count)
+        val trackChange = invalidations(read = { view.song?.videoId }) {
+            update { copy(song = track.copy(videoId = "b")) }
+        }
+        assertEquals(1, trackChange)
+    }
+
+    /**
+     * The shape of BitChordApp's playPauseBusy: buffering or waiting for a
+     * party's scheduled start. Its readers are invalidated when the combined
+     * answer changes, not on every flip of either half.
+     */
+    @Test fun `play-pause busy is invalidated only when the combined answer changes`() {
+        val awaitingStart = mutableStateOf(false)
+        val busy = derivedStateOf(structuralEqualityPolicy()) { view.isLoading || awaitingStart.value }
+        val count = invalidations(read = { busy.value }) {
+            update { copy(isLoading = true) } // false -> true: 1
+            Snapshot.withMutableSnapshot { awaitingStart.value = true } // still true
+            Snapshot.sendApplyNotifications()
+            update { copy(isLoading = false) } // still true (awaiting)
+            update { copy(durationMs = 1L) } // unrelated
+            Snapshot.withMutableSnapshot { awaitingStart.value = false } // true -> false: 2
+            Snapshot.sendApplyNotifications()
+        }
+        assertEquals(2, count)
     }
 }

@@ -108,6 +108,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.structuralEqualityPolicy
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
@@ -1169,7 +1172,13 @@ private fun BitChordApp(
     // Folded into the buffering flag every play button already answers to, since
     // to a listener the two are the same fact: it is coming, wait.
     val awaitingPartyStart by ListenTogether.awaitingStart.collectAsStateWithLifecycle()
-    val playPauseBusy = player.isLoading || awaitingPartyStart
+    // Derived rather than computed here: BitChordApp's body reading
+    // player.isLoading would recompose the whole root on every buffering flip.
+    // Each reader (the player, the mini player, the glass bar) reads this
+    // instead, and is invalidated only when the combined answer changes.
+    val playPauseBusy by remember {
+        derivedStateOf(structuralEqualityPolicy()) { player.isLoading || awaitingPartyStart }
+    }
     // Listening in a party whose host has taken the controls. Read once here
     // and handed to every surface, so the player, the mini player and the glass
     // bar can never disagree about whether this device may drive the music.
@@ -1237,21 +1246,28 @@ private fun BitChordApp(
     // the track already playing rather than only the next one.
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    LaunchedEffect(player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources) {
-        player.song?.let {
-            viewModel.loadLyrics(
-                it.videoId,
-                it.title,
-                it.artist,
-                // The player's own length, and the catalogue's where it has
-                // none yet. Paused, ExoPlayer never finishes preparing the
-                // track it was skipped to, so it reports no duration at all —
-                // and a lookup that waits for one waits for ever, which left
-                // the lyrics of a paused track loading until it was played.
-                player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
-                it.albumName,
-                it.localUri,
-            )
+    //
+    // The duration is watched inside the effect rather than read as a key: a
+    // key is read in BitChordApp's body, which would then recompose on every
+    // duration the player settles on. collectLatest asks again for each
+    // distinct duration, exactly as restarting the effect on that key did.
+    LaunchedEffect(player.song?.videoId, syncedLyricsEnabled, lyricsSources) {
+        snapshotFlow { player.durationMs }.collectLatest { durationMs ->
+            player.song?.let {
+                viewModel.loadLyrics(
+                    it.videoId,
+                    it.title,
+                    it.artist,
+                    // The player's own length, and the catalogue's where it has
+                    // none yet. Paused, ExoPlayer never finishes preparing the
+                    // track it was skipped to, so it reports no duration at all —
+                    // and a lookup that waits for one waits for ever, which left
+                    // the lyrics of a paused track loading until it was played.
+                    durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
+                    it.albumName,
+                    it.localUri,
+                )
+            }
         }
     }
 
