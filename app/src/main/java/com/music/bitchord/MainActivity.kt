@@ -3855,6 +3855,30 @@ private fun BitChordApp(
             )
         } else {
 
+        // What the pages can do — see [PageActions].
+        val pageActions = PageActions(
+            playFrom = playFrom,
+            playRadio = playRadio,
+            startRadio = startRadio,
+            startFlow = startFlow,
+            playQuickPicks = playQuickPicks,
+            playWithResume = playWithResume,
+            playBrowsePage = playBrowsePage,
+            playBrowsePageShuffled = playBrowsePageShuffled,
+            playOfflineLibrary = playOfflineLibrary,
+            onSongSwipe = onSongSwipe,
+            openSongMenu = openSongMenu,
+            openBrowseMenu = openBrowseMenu,
+            onBrowseLongPress = onBrowseLongPress,
+            onShelfLongPress = onShelfLongPress,
+            onLibraryItemClick = onLibraryItemClick,
+            isOnDevice = isOnDevice,
+            shelfSong = shelfSong,
+            downloadIdFor = downloadIdFor,
+            showQueueNotice = showQueueNotice,
+            onSearchSourceChange = onSearchSourceChange,
+            setReplayPeriod = setReplayPeriod,
+        )
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
         // the feed, the frosted bars, the tab row — becomes the left half of
@@ -4059,10 +4083,10 @@ private fun BitChordApp(
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
                             onSongClick = { songs, index ->
-                                playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
+                                pageActions.playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
                             },
-                            onSongLongPress = openSongMenu,
-                            onSongSwipe = onSongSwipe,
+                            onSongLongPress = pageActions.openSongMenu,
+                            onSongSwipe = pageActions.onSongSwipe,
                             onRetry = viewModel::loadHistory,
                             contentPadding = listPadding,
                         )
@@ -4077,8 +4101,8 @@ private fun BitChordApp(
                             isGrowing = !flowSaved,
                             rebuilding = flowLoading,
                             listState = flowListState,
-                            onPlay = { startFlow(false) },
-                            onShuffle = { startFlow(true) },
+                            onPlay = { pageActions.startFlow(false) },
+                            onShuffle = { pageActions.startFlow(true) },
                             onNewMix = { viewModel.newFlowMix() },
                             onToggleLike = {
                                 player.song?.let { viewModel.toggleLike(it) }
@@ -4115,10 +4139,10 @@ private fun BitChordApp(
                                         )
                                     }
                                 }
-                                playFrom(songs, index, QueueSource("Flow", PlaybackSourceType.EXPLORE))
+                                pageActions.playFrom(songs, index, QueueSource("Flow", PlaybackSourceType.EXPLORE))
                                 if (index >= songs.size - 5) viewModel.growFlow()
                             },
-                            onSongLongPress = openSongMenu,
+                            onSongLongPress = pageActions.openSongMenu,
                             onRetry = { viewModel.refreshFlow() },
                             contentPadding = listPadding,
                             currentSong = player.song,
@@ -4130,17 +4154,17 @@ private fun BitChordApp(
                             offline = offlineActive,
                             onPlay = { song ->
                                 val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
-                                if (offlineActive && isOnDevice(song.videoId)) {
-                                    playOfflineLibrary(song, source)
+                                if (offlineActive && pageActions.isOnDevice(song.videoId)) {
+                                    pageActions.playOfflineLibrary(song, source)
                                 } else {
-                                    playRadio(song, source)
+                                    pageActions.playRadio(song, source)
                                 }
                             },
-                            onPlayAll = { playQuickPicks(false) },
-                            onShuffle = { playQuickPicks(true) },
+                            onPlayAll = { pageActions.playQuickPicks(false) },
+                            onShuffle = { pageActions.playQuickPicks(true) },
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
-                            onItemLongPress = { song -> openSongMenu(song) },
+                            onItemLongPress = { song -> pageActions.openSongMenu(song) },
                             listState = quickPicksListState,
                             contentPadding = listPadding,
                         )
@@ -4150,7 +4174,7 @@ private fun BitChordApp(
                             query = podcastUi.continueQuery,
                             onQueryChange = { podcastUi.continueQuery = it },
                             onPlay = { episode ->
-                                playWithResume(listOf(episode), 0)
+                                pageActions.playWithResume(listOf(episode), 0)
                             },
                             onRemove = { episode ->
                                 viewModel.removeRecentEpisode(episode.videoId)
@@ -4169,8 +4193,8 @@ private fun BitChordApp(
                             LibraryGridPage(
                                 shelf = shelf,
                                 gridState = libraryShowAllGridState,
-                                onItemClick = onLibraryItemClick,
-                                onItemLongPress = onBrowseLongPress,
+                                onItemClick = pageActions.onLibraryItemClick,
+                                onItemLongPress = pageActions.onBrowseLongPress,
                                 // Only the Playlists shelf can grow one — see
                                 // [PlaylistShelf].
                                 onNewPlaylist = if (shelf.title == YtMusicRepository.PLAYLISTS_SHELF) {
@@ -4185,14 +4209,14 @@ private fun BitChordApp(
                         ReplayScreen(
                             state = replay,
                             holder = account?.name.orEmpty(),
-                            onPeriodChange = setReplayPeriod,
+                            onPeriodChange = pageActions.setReplayPeriod,
                             onOpenStory = { nav.replayStory = it },
                             // A track tapped on a chart is one the user already
                             // knows they like, so it starts a station off itself
                             // rather than queueing the chart it was on — the
                             // same reading [playRadio] makes of a search hit.
                             onPlaySong = { song ->
-                                playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
+                                pageActions.playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
                             },
                             onOpenArtist = { id, name ->
                                 nav.showReplay = false
@@ -4319,7 +4343,7 @@ private fun BitChordApp(
                                 listState = moodGenreListState,
                                 onItemClick = { item ->
                                     item.videoId?.let { videoId ->
-                                        playRadio(
+                                        pageActions.playRadio(
                                             Song(
                                                 videoId = videoId,
                                                 title = item.title,
@@ -4362,7 +4386,7 @@ private fun BitChordApp(
                                 onPlayChapter = { index ->
                                     val chapters = (audiobookChapters as? UiState.Success)?.data.orEmpty()
                                     val songs = chapters.map { chapter -> audiobookSong(book, chapter) }
-                                    if (index in songs.indices) playWithResume(songs, index)
+                                    if (index in songs.indices) pageActions.playWithResume(songs, index)
                                  },
                                  onRetry = { viewModel.reloadAudiobookChapters(book.id) },
                                 contentPadding = listPadding,
@@ -4408,7 +4432,7 @@ private fun BitChordApp(
                             episodes = itunesEpisodes,
                             onPlay = { songs, index ->
                                 if (index in songs.indices) {
-                                    playWithResume(songs, index)
+                                    pageActions.playWithResume(songs, index)
                                     val id = nav.itunesPodcastId
                                     val sh = id?.let { viewModel.itunesShow(it) }
                                     if (id != null && sh != null) {
@@ -4524,17 +4548,17 @@ private fun BitChordApp(
                                     null
                                 },
                             onSongClick = { songs, index ->
-                                playFrom(
+                                pageActions.playFrom(
                                     songs,
                                     index,
                                     QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
                                 )
                             },
-                            onSongLongPress = openSongMenu,
-                            onSongSwipe = onSongSwipe,
+                            onSongLongPress = pageActions.openSongMenu,
+                            onSongSwipe = pageActions.onSongSwipe,
                             onShuffle = { songs ->
                                 QueueShuffle.enableForNextQueue()
-                                playFrom(
+                                pageActions.playFrom(
                                     songs,
                                     songs.indices.random(),
                                     QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
@@ -4553,7 +4577,7 @@ private fun BitChordApp(
                                 val downloadId = downloadCollections.firstOrNull {
                                     it.title == label && it.songs == grouped
                                 }?.id
-                                openBrowseMenu(
+                                pageActions.openBrowseMenu(
                                     BrowseTarget(
                                         browseId = null,
                                         title = label,
@@ -4593,12 +4617,12 @@ private fun BitChordApp(
                             // time as the listener reaches the end of the list.
                             onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
                             onSongClick = { songs, index ->
-                                playBrowsePage(page, songs, index)
+                                pageActions.playBrowsePage(page, songs, index)
                             },
-                            onSongLongPress = { openSongMenu(withAlbum(it)) },
-                            onSongSwipe = onSongSwipe,
+                            onSongLongPress = { pageActions.openSongMenu(withAlbum(it)) },
+                            onSongSwipe = pageActions.onSongSwipe,
                             onShuffle = { songs ->
-                                playBrowsePageShuffled(page, songs)
+                                pageActions.playBrowsePageShuffled(page, songs)
                             },
                             onSectionItemClick = { item ->
                                 item.browseId?.let { id ->
@@ -4611,7 +4635,7 @@ private fun BitChordApp(
                                     )
                                 }
                             },
-                            onSectionItemLongPress = onBrowseLongPress,
+                            onSectionItemLongPress = pageActions.onBrowseLongPress,
                             // The page's own tracks, so the sheet has them already and
                             // Play, Shuffle and Open are the buttons beside the one that
                             // opened it rather than rows on it. Download is the other
@@ -4628,7 +4652,7 @@ private fun BitChordApp(
                                     type = page.type,
                                     songs = songs.map(withAlbum),
                                     fromCard = false,
-                                    downloadId = downloadIdFor(page.browseId),
+                                    downloadId = pageActions.downloadIdFor(page.browseId),
                                 )
                             },
                             onArtistClick = { id, name ->
@@ -4688,7 +4712,7 @@ private fun BitChordApp(
                             signInBannerDismissed = signInBannerDismissed,
                             onDismissSignInBanner = { signInBannerDismissed = true },
                             onItemClick = { item, shelfTitle ->
-                                val song = shelfSong(item)
+                                val song = pageActions.shelfSong(item)
                                 // Hoisted because ShelfItem lives in :shared, and
                                 // Kotlin will not smart-cast a public nullable
                                 // property declared in another module.
@@ -4711,10 +4735,10 @@ private fun BitChordApp(
                                         // library goes with it, so the shelf is
                                         // the start of a set rather than one
                                         // track.
-                                        if (offlineActive && isOnDevice(song.videoId)) {
-                                            playOfflineLibrary(song, source)
+                                        if (offlineActive && pageActions.isOnDevice(song.videoId)) {
+                                            pageActions.playOfflineLibrary(song, source)
                                         } else {
-                                            playRadio(song, source)
+                                            pageActions.playRadio(song, source)
                                         }
                                     }
                                     browseId != null -> viewModel.openDetail(
@@ -4742,7 +4766,7 @@ private fun BitChordApp(
                             } else {
                                 null
                             },
-                            onItemLongPress = onShelfLongPress,
+                            onItemLongPress = pageActions.onShelfLongPress,
                             onRetry = viewModel::loadHome,
                             refreshing = MainViewModel.Feed.HOME in refreshing,
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },
@@ -4789,7 +4813,7 @@ private fun BitChordApp(
                                     viewModel.openItunesPodcast(collectionId)
                                 } else if (item.videoId?.startsWith("http") == true) {
                                     // An "Episodes for later" / "Continue listening" row: play + resume.
-                                    playWithResume(listOf(Song(
+                                    pageActions.playWithResume(listOf(Song(
                                         videoId = item.videoId!!,
                                         title = item.title,
                                         artist = item.subtitle,
@@ -4819,7 +4843,7 @@ private fun BitChordApp(
                                 listState = moodGenreListState,
                                 onItemClick = { item ->
                                     item.videoId?.let { videoId ->
-                                        playRadio(
+                                        pageActions.playRadio(
                                             Song(
                                                 videoId = videoId,
                                                 title = item.title,
@@ -4853,7 +4877,7 @@ private fun BitChordApp(
                             onSeedClick = { item ->
                                 val videoId = item.videoId
                                 if (videoId != null) {
-                                    startRadio(
+                                    pageActions.startRadio(
                                         Song(
                                             videoId = videoId,
                                             title = item.title,
@@ -4912,11 +4936,11 @@ private fun BitChordApp(
                                         artworkUrl = song.thumbnailUrl,
                                         entityType = EntityType.TRACK,
                                     ))
-                                    playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                                    pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                 }
                             },
-                            onSongLongPress = openSongMenu,
-                            onSongSwipe = onSongSwipe,
+                            onSongLongPress = pageActions.openSongMenu,
+                            onSongSwipe = pageActions.onSongSwipe,
                             onTopResultPlay = { song ->
                                 viewModel.recordEntity(SearchHistoryEntity(
                                     id = song.videoId,
@@ -4925,7 +4949,7 @@ private fun BitChordApp(
                                     artworkUrl = song.thumbnailUrl,
                                     entityType = EntityType.TRACK,
                                 ))
-                                playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                                pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                             },
                             onTopResultPlaylist = { song ->
                                 viewModel.recordEntity(SearchHistoryEntity(
@@ -4971,14 +4995,14 @@ private fun BitChordApp(
                                 // A search row does say what it is, so its own type is
                                 // better than what the browse id can be read to mean.
                                 if (item.type != BrowseType.ARTIST) {
-                                    openBrowseMenu(
+                                    pageActions.openBrowseMenu(
                                         BrowseTarget(
                                             browseId = item.browseId,
                                             title = item.title,
                                             subtitle = item.subtitle,
                                             thumbnailUrl = item.thumbnailUrl,
                                             type = item.type,
-                                            downloadId = downloadIdFor(item.browseId),
+                                            downloadId = pageActions.downloadIdFor(item.browseId),
                                         ),
                                     )
                                 }
@@ -4997,7 +5021,7 @@ private fun BitChordApp(
                                 when (entity.entityType) {
                                     EntityType.TRACK -> {
                                         // Play the track by its video id
-                                        playRadio(
+                                        pageActions.playRadio(
                                             com.music.bitchord.data.model.Song(
                                                 videoId = entity.id,
                                                 title = entity.title,
@@ -5019,7 +5043,7 @@ private fun BitChordApp(
                             },
                             onHistoryRemove = viewModel::removeSearch,
                             onHistoryClear = viewModel::clearSearchHistory,
-                            onTypeaheadLongPress = openSongMenu,
+                            onTypeaheadLongPress = pageActions.openSongMenu,
                             contentPadding = listPadding,
                             topPadding = topBarContentPadding(),
                             // The field is in the top bar; see the bar's accessory.
@@ -5034,7 +5058,7 @@ private fun BitChordApp(
                                         stringResource(R.string.library),
                                     ),
                                     selectedIndex = searchSource.ordinal,
-                                    onSelect = { index -> onSearchSourceChange(SearchSource.entries[index]) },
+                                    onSelect = { index -> pageActions.onSearchSourceChange(SearchSource.entries[index]) },
                                 )
                             },
                             searchingLibrary = searchSource == SearchSource.LIBRARY,
@@ -5042,7 +5066,7 @@ private fun BitChordApp(
                             // The same queue opening the Local Music folder and
                             // tapping the row there would give.
                             onLibrarySongClick = { songs, index ->
-                                playFrom(
+                                pageActions.playFrom(
                                     songs,
                                     index,
                                     QueueSource(
@@ -5062,12 +5086,12 @@ private fun BitChordApp(
                             // was left.
                             segment = librarySegment,
                             onSegmentChange = { librarySegment = it },
-                            onShelfItemClick = onLibraryItemClick,
+                            onShelfItemClick = pageActions.onLibraryItemClick,
                             // Every shelf here has a menu behind it now — the account's
                             // own playlists get rename and delete on top of what a saved
                             // album or a Liked Music card gets. Holding an artist still
                             // does nothing; see [onBrowseLongPress].
-                            onShelfItemLongPress = onBrowseLongPress,
+                            onShelfItemLongPress = pageActions.onBrowseLongPress,
                             onNewPlaylist = { sheets.creatingPlaylist = true },
                             // The bar's "+" makes a folder of the listener's own
                             // rather than a playlist on somebody's account: it
@@ -6007,6 +6031,42 @@ private fun PlayerSheetHost(
         }
     }
 }
+
+/**
+ * What the root's pages can do: play, queue and start radio from what
+ * they show, open the track and collection menus, and answer the small
+ * questions a row asks (is this on the device, what song is this card).
+ * [BitChordApp] owns every one of them; they travel to the page as one
+ * value instead of twenty-one captures.
+ *
+ * A data class of function values, so it is stable and compared by its
+ * fields: rebuilt on each recomposition, it is still equal to the last one
+ * while the root hands over the same remembered lambdas (see
+ * [TrackListActions]).
+ */
+private data class PageActions(
+    val playFrom: (List<Song>, Int, QueueSource) -> Unit,
+    val playRadio: (Song, QueueSource) -> Unit,
+    val startRadio: (Song) -> Unit,
+    val startFlow: (shuffled: Boolean) -> Unit,
+    val playQuickPicks: (Boolean) -> Unit,
+    val playWithResume: (List<Song>, Int) -> Unit,
+    val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit,
+    val playBrowsePageShuffled: (DetailPage, List<Song>) -> Unit,
+    val playOfflineLibrary: (Song, QueueSource) -> Unit,
+    val onSongSwipe: (Song) -> Unit,
+    val openSongMenu: (Song) -> Unit,
+    val openBrowseMenu: (BrowseTarget) -> Unit,
+    val onBrowseLongPress: (ShelfItem) -> Unit,
+    val onShelfLongPress: (ShelfItem) -> Unit,
+    val onLibraryItemClick: (ShelfItem) -> Unit,
+    val isOnDevice: (String) -> Boolean,
+    val shelfSong: (ShelfItem) -> Song?,
+    val downloadIdFor: (String?) -> String?,
+    val showQueueNotice: (String) -> Unit,
+    val onSearchSourceChange: (SearchSource) -> Unit,
+    val setReplayPeriod: (com.music.bitchord.data.stats.ReplayPeriod) -> Unit,
+)
 
 /**
  * What [RootOverlays]' menus can do with a list of tracks: play it, queue it
