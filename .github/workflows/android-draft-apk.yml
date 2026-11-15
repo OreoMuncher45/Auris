@@ -31,103 +31,130 @@ on:
         description: "Release notes for the draft"
         required: false
         default: |
+          🔥Auris 3.1 — Extensions, a new Now Playing, a much lighter app & more
+          
           Auris 3.1 — private preview
-
-          Dolby Atmos
-          - A phone with no hardware Dolby decoder no longer gets the spatial
-            mix. Dolby's own decoder ships with the maker's Android build, not
-            with Android, so plenty of phones have none at all — and E-AC-3 in
-            six channels, decoded in software by the copy of FFmpeg inside the
-            app, costs whole cores for as long as it plays. That is the one
-            thing in the app that burns CPU while the screen is off and nothing
-            is happening. The Dolby rung now falls back to the lossless copy,
-            which is the rung's own fallback anyway, and the quality badge
-            says "Lossless" because that is what is playing. The reason is
-            written once to the log, and the performance report now carries a
-            line saying which of the three it is: a hardware decoder, a
-            software-only one, or none at all.
-          - A phone that does have one is untouched: the mix is asked for and
-            played as before. The question is asked once, off the main thread,
-            and the answer is kept.
-
-          Performance
-          - Live blur stays ON by default and now tracks the picture properly:
-            the colour behind the player is read every 33ms (thirty times a
-            second), and the backdrop's mesh is redrawn on every one of those
-            frames instead of ten times a second. The colour is only published
-            when it has actually moved far enough to see, so the text and the
-            buttons are not redrawn thirty times a second for a wash nobody
-            could see changing.
-          - The player's ink no longer fights itself: a frame no longer
-            cancels the colour read already in flight, so the wash settles
-            instead of chasing itself.
-          - The frame capture callback now runs on its own thread instead of
-            waiting for the main thread, and the capture loop no longer spins
-            when there is no picture to copy. That spin was the app's own
-            heartbeat, and it is gone.
-          - The next track's source search is now single-flight: one search per
-            track at a time, and a second request waits for the first answer
-            instead of starting another one. The queue changes several times a
-            minute, and each change used to start the same patient search
-            again — five searches for one track in one minute, each asking
-            every source and waiting for all of them. That was the addon
-            traffic, the hundred-odd threads and the two hundred percent of
-            CPU.
-          - The PO-token WebView — the browser page the app loads to prove it
-            is not a bot — is released after three minutes of doing nothing.
-            A browser inside the app costs tens of megabytes and a few dozen
-            threads.
-          - The performance monitor now reports the system CPU and this app's
-            share of it, and counts the three things that cost the most:
-            source searches (RESOLVE), next-track preparations (PREPARE) and
-            WebView starts (WEBVIEW). "Copy log" now includes the whole
-            performance report, so a copied log answers the CPU questions
-            without another run.
-          - The Automix's memory is now bounded. Each track it measures leaves
-            behind a quarter of a megabyte of numbers — three envelope curves
-            and a waveform of up to four thousand points — and they were kept
-            for ever. The waveform is now dropped from every track but the few
-            the panel is drawing, and the oldest results are let go of once
-            there are more than two dozen. Nothing the mixer reads is lost: the
-            tempo, the beat grid and the mix points stay, and a track that
-            comes round again is read back from the app's own store rather
-            than measured a second time.
-
-          Player
-          - The title and the artist sit lower, under the artwork, and the
-            whole control deck sits a little lower with them.
-          - With the full-screen album art turned off, the album art is bigger
-            and lower. The card now reaches past the player's own margins — the
-            controls keep them, the artwork does not — and ends up sixteen dp
-            from the screen's edge instead of thirty. It is also pushed down
-            into the gap it used to leave above the title, and the title and
-            the artist stay exactly where they were: the card's growth and its
-            new lower position are paid for out of the gap between the card
-            and the title, not out of the title's own place.
-          - The line of lyrics, the scrubber, the timestamps and the quality
-            badge now sit lower again, as one block, and the gap they take
-            comes out of the scrubber's own gap to the transport. The
-            reference player has no lyric line, so its title is followed by
-            the scrubber and nothing else; this one has both, and after the
-            credits moved down the lyric line came up with them and sat
-            almost against the artist's name. The sleeve, the title, the
-            artist, the transport, the volume and the action row stay exactly
-            where they were — only that one block moved, and on a screen with
-            little to spare it moves by as much as the gap has, down to 6dp.
-          - The item strengths were measured against the reference player and
-            matched: the seek bar and the volume bar are dimmer and thinner,
-            the timestamps are quieter, the quality badge is quieter, and the
-            star and the menu beside the title are quieter.
-          - The title and the transport wear the player's ink again, like every
-            other mark on the screen. They used to wear a second colour — the
-            same ink lifted toward white — so that they could be as light as
-            the reference player without the ink itself losing the record's
-            colour. It read as two colour systems on one screen: a pale title
-            over a tinted lyric line, a white transport over a coloured volume
-            bar, and the cover's own hue in some marks and not others. One
-            ink now, and a mark's strength is how much of it the mark wears.
-
-          Installs over 3.0.43: same package, same signing key.
+          
+          Everything that landed since 3.0, in one place.
+          
+          Extensions
+          - Auris now runs extension packages from the Mornye store. An extension can
+            answer a search with the real track, stream the audio, hand back lyrics and
+            serve its own quality tiers — lossless, hi-res, Atmos — so new sources are
+            packages now, not new builds of the app.
+          - A signed session and a verification page: an extension that needs to prove
+            who you are opens its own page inside the app, and the answer comes back as
+            a session instead of a guess.
+          - Upgrades land. When a track moves to a better tier, the download is prepared
+            ahead of time and the switch happens without stopping the music.
+          - An extension that refuses a track — or a tier, like Atmos — is no longer the
+            end of the song: the next rung down plays instead, and the app says why.
+          - The store opens with nothing filtered out, there is no default store baked
+            into the app, extensions stay switched off across a restart unless you switch
+            them on, and a backoff inside an extension no longer holds a worker thread
+            while it waits.
+          
+          A new Now Playing
+          - The player is restyled after Apple Music: the transport, the volume bar, the
+            bottom row and the sleeve all sit where the reference sits, and the whole
+            deck is drawn to one grid.
+          - The title and the artist sit lower under the sleeve, and the sleeve itself
+            is bigger and lower when full-screen art is off. The lyric line, the
+            scrubber, the timestamps and the quality badge drop as one block, so
+            nothing collides on a small screen.
+          - One ink. The title and the transport wear the player's own colour again,
+            like every other mark on the screen, so there is no second colour system to
+            fight with.
+          - Live blur is ON by default and now follows the picture: the colour behind
+            the player is read thirty times a second and the backdrop is redrawn on each
+            of those frames, so the wash moves with the art instead of lagging behind
+            it.
+          - The frosted-glass mode is back, and the transport is Auris's own rather than
+            a copy of somebody else's.
+          - The cover flies to the player, artwork arrives with a fade instead of
+            popping, the play and pause glyphs hand over to each other, and the title
+            travels into the mini player instead of vanishing.
+          - The lyrics panel takes its colour from the artwork, with its own overrides,
+            and when lyrics are missing the app now says what is missing instead of
+            "no lyrics found".
+          - Spotify Canvas can be switched off on its own.
+          - Automix's panel is a real editor now: the waveform is drawn from what the
+            analyser actually measured, the grid is a ruler, the snap is a magnet, the
+            edges resize, and a lane with a tempo always has a waveform. A beat-matched
+            pair is planned instead of refused.
+          
+          Lighter, cooler, longer-lived
+          - A performance monitor with a saveable log: the app's own share of the CPU,
+            the thread count, the memory, and counters for the three things that cost
+            the most — source searches, next-track preparations and WebView starts.
+            "Copy log" now carries the whole report.
+          - The next track's source search is single-flight: one search per track at a
+            time, and a second request waits for the answer instead of starting the same
+            patient search again. The queue changes several times a minute, and each
+            change used to restart that search from scratch.
+          - The PO-token WebView — the browser page the app loads to prove it is not a
+            bot — is released after three minutes of doing nothing.
+          - Live blur no longer makes the screen redraw thirty times a second for a
+            wash nobody could see changing: the colour is published only when it has
+            actually moved far enough to see.
+          - The frame capture callback runs on its own thread instead of waiting for the
+            main thread, and the capture loop no longer spins when there is no picture
+            to copy.
+          - The Sing vocal remover only runs while Sing is switched on, and the
+            analyser stops when nothing is looking at it.
+          - The Automix's memory is bounded: the heavy waveform is dropped from every
+            track but the few the panel is drawing, and the oldest results are let go
+            once there are more than two dozen. Tempo, beat grid and mix points stay.
+          - The onboarding flow, the slide and the scroll stopped dropping frames. A
+            long track no longer takes the process down with it, and background work
+            can no longer take the app down with it.
+          
+          Audio
+          - Dolby Atmos is now a rung for downloads on devices that can actually decode
+            it.
+          - A phone with no hardware Dolby decoder no longer gets the spatial mix.
+            Dolby's decoder ships with the maker's Android build, not with Android, and
+            E-AC-3 in six channels decoded in software costs whole cores for as long as
+            it plays. The Atmos rung now falls back to the lossless copy — the rung's
+            own fallback anyway — and the badge says "Lossless" because that is what is
+            playing. The performance report says which of the three it is: hardware,
+            software only, or none at all.
+          - ALAC is decoded by the bundled FFmpeg rather than the platform, so it plays
+            on phones whose Android build has no ALAC decoder.
+          - The Atmos switch is gone, and Lossless no longer serves an Atmos stream by
+            accident.
+          
+          Spotify
+          - The home can be Spotify's own, with or without a sign-in, and the
+            content-source switch decides which provider builds the homepage; Flow and
+            Autoplay follow the switch.
+          - The Auris Pass replaces the old listener card in Settings, and it is
+            findable from the search field too.
+          - Spotify rows now play the recording the row names — never another artist's
+            recording — and artist pages keep their own artists and releases.
+          - Podcasts and audiobooks have left the Spotify catalogue and live in their
+            own tab.
+          - The importer pages show the live operation table, and an upgrade actually
+            lands.
+          
+          Downloads and library
+          - A whole release can be put into a playlist: album to playlist, playlist to
+            playlist.
+          - Podcasts and audiobooks can be downloaded, kept and tidied up.
+          - The playlists shelf can be read as a list, and Spotify comes in from
+            Settings.
+          - The next download is prepared ahead of the next track.
+          
+          First run
+          - A first-run flow, with a row to see it again, and the real Spotify mark in
+            the source selection.
+          
+          Fixes
+          - An empty search now says which kind of empty it is.
+          - The Automix measures a streamed track's ending, not just its opening.
+          - Our own Episodes are in, with a switch that turns podcasts off.
+          
+          - Removed Herobrine
 permissions:
   contents: write
 
