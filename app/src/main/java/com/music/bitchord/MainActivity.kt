@@ -5750,7 +5750,7 @@ private fun BitChordApp(
             songMenuBody = songMenuBody,
             detail = detail,
             songSort = songSort,
-            signedIn = signedIn,
+            signedIn = { signedIn },
             updateNotice = updateNotice,
             announcement = announcement,
             localPlaylists = localPlaylists,
@@ -6034,7 +6034,7 @@ private fun RootOverlays(
     songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit,
     detail: DetailPage?,
     songSort: SongSort,
-    signedIn: Boolean,
+    signedIn: () -> Boolean,
     updateNotice: AppUpdateChecker.UpdateInfo?,
     announcement: com.music.bitchord.data.AppAnnouncements.Announcement?,
     localPlaylists: List<com.music.bitchord.data.spotify.LocalPlaylist>,
@@ -6317,7 +6317,7 @@ private fun RootOverlays(
         BackHandler { sheets.showSpotifyImportDialog = false }
         SpotifyImportAlert(
             hazeState = hazeState,
-            signedIn = signedIn,
+            signedIn = signedIn(),
             onImported = { title, privacy, songs ->
                 viewModel.createPlaylistWithVideoIds(
                     title,
@@ -6327,7 +6327,7 @@ private fun RootOverlays(
                 ) { browseId, pTitle, savedLocally ->
                     showQueueNotice(
                         context.getString(
-                            if (savedLocally && signedIn) R.string.spotify_import_local_fallback
+                            if (savedLocally && signedIn()) R.string.spotify_import_local_fallback
                             else R.string.spotify_import_done,
                             pTitle,
                         ),
@@ -6376,7 +6376,7 @@ private fun RootOverlays(
         // recomposes when the answer arrives.
         val ownedPlaylists by viewModel.playlistOwned.collectAsStateWithLifecycle()
         val playlist = target.browseId
-            ?.takeIf { signedIn && ownedPlaylists[it] == true }
+            ?.takeIf { signedIn() && ownedPlaylists[it] == true }
             ?.let { id -> playlists.firstOrNull { it.browseId == id } }
         val remote = target.browseId?.startsWith("local:") == false
         val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
@@ -6431,7 +6431,7 @@ private fun RootOverlays(
                 sheets.playlistTargetTitle = target.title
                 sheets.playlistTargetArtwork = target.thumbnailUrl
             }.takeIf {
-                signedIn && remote &&
+                signedIn() && remote &&
                     (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST)
             },
             onOpen = target.browseId
