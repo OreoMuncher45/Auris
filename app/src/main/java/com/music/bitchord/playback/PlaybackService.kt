@@ -52,6 +52,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererCapabilities
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
@@ -1596,7 +1597,11 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             val startupRepeat = StartupRepeat { controlsInputsAtStartup }
             QueueShuffle.enabled
-                .collectLatest {
+                .collectLatest { enabled ->
+                    // Controllers never hear the app's shuffle from ExoPlayer,
+                    // whose own flag stays off; told before the startup skip,
+                    // which is about the layouts only.
+                    (mediaSession?.player as? SessionPlayer)?.onShuffleChanged(enabled)
                     if (startupRepeat.skip(currentControlsInputs())) return@collectLatest
                     refreshCustomLayouts()
                     publishWidgetState()
@@ -7967,6 +7972,11 @@ class PlaybackService : MediaLibraryService() {
         // ExoPlayer's own shuffle stays off: the app shuffles by reordering the
         // queue, and this mode would play that queue in a hidden random order.
         player.shuffleModeEnabled = false
+        // The session reports the app's shuffle to controllers (see
+        // SessionPlayer.getShuffleModeEnabled), and a controller predicting
+        // Next walks the timeline's shuffle order. Unshuffled, that order is
+        // the queue itself, which is what the app's shuffle plays.
+        player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(player.mediaItemCount))
         player.repeatMode = AppSettings.repeatMode.value
     }
 
@@ -9724,6 +9734,21 @@ class PlaybackService : MediaLibraryService() {
          */
         override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) {
             if (shuffleModeEnabled != QueueShuffle.enabled.value) onShuffleRequest()
+        }
+
+        /**
+         * The app's shuffle, not ExoPlayer's (always off): what an outside
+         * controller draws its button from. Reporting ExoPlayer's left a car
+         * showing shuffle off, so its next tap asked for "on" again and shuffle
+         * could be turned on from the car but never off.
+         */
+        override fun getShuffleModeEnabled(): Boolean = QueueShuffle.enabled.value
+
+        /** [QueueShuffle] changed; tell the controllers, which never hear it from ExoPlayer. */
+        fun onShuffleChanged(enabled: Boolean) {
+            listeners.forEach { it.onShuffleModeEnabledChanged(enabled) }
+            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED).build())
+            listeners.forEach { it.onEvents(this, events) }
         }
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
