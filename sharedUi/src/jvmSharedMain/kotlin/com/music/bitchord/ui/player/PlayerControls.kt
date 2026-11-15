@@ -770,6 +770,16 @@ internal fun TransportRow(
     compact: Boolean = false,
     /** Rounds the transport polygons; see [DEFAULT_TRANSPORT_SMOOTHNESS]. */
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
+    /**
+     * The gap between the three buttons.
+     *
+     * The portrait player's own gap is the reference one, and the portrait
+     * screen is narrow enough for it. A landscape phone is twice as wide and
+     * the same gap leaves the three buttons bunched at one edge of the column,
+     * so the caller widens it there.
+     */
+    spacing: Dp = TRANSPORT_SPACING,
+    modifier: Modifier = Modifier,
 ) {
     // The play glyph is back at the size it had before the transport was
     // copied out at 74dp: 38dp, with the 92dp touch box it always had. The
@@ -795,8 +805,8 @@ internal fun TransportRow(
         // 1080px screen, as the reference does: the boxes are 53dp and 92dp,
         // so 15dp between them lands the skips either side of the play button
         // rather than out at the edges the way SpaceAround spread them.
-        modifier = Modifier.wrapContentWidth(),
-        horizontalArrangement = Arrangement.spacedBy(15.dp),
+        modifier = modifier.wrapContentWidth(),
+        horizontalArrangement = Arrangement.spacedBy(spacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportGlyph(
@@ -1294,6 +1304,16 @@ private fun TransportGlyph(
 private val PLAYER_SKIP_ICON_SIZE = 51.dp
 private val PLAYER_SKIP_TOUCH_SIZE = 53.dp
 private const val PLAYER_SKIP_HEIGHT_SCALE = 0.80f
+
+/**
+ * The gap between the transport buttons in the portrait player.
+ *
+ * Measured off the reference player: its three buttons' centres sit 263px
+ * apart on a 1080px-wide screen, and the touch boxes are 53dp and 92dp, so
+ * 15dp of gap lands the skips either side of the play button rather than out
+ * at the edges the way SpaceAround spreads them.
+ */
+internal val TRANSPORT_SPACING = 15.dp
 
 private val BOTTOM_ACTION_SIZE = 44.dp
 

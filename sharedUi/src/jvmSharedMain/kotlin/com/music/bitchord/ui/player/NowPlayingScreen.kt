@@ -2767,7 +2767,7 @@ fun NowPlayingScreen(
                                 )
                             }
                         },
-                        transport = {
+                        transport = { spacing ->
                             TransportRow(
                                 isPlaying = isPlaying,
                                 isLoading = isLoading || audioVersionSwitching,
@@ -2779,6 +2779,7 @@ fun NowPlayingScreen(
                                 onNext = onNext,
                                 compact = compact,
                                 smoothness = transportSmoothness,
+                                spacing = spacing,
                             )
                         },
                         volume = if (hideVolumeBar) {
