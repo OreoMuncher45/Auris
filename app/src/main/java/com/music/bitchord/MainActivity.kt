@@ -124,6 +124,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
@@ -1092,24 +1093,36 @@ private fun BitChordApp(
     val localPlaylists by com.music.bitchord.data.spotify.LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
     // A folder is a local playlist with a flag on it, so it must not also sit
     // on the On Device shelf — it has a shelf of its own.
-    val localPlaylistItems = localPlaylists.filter { !it.isFolder }.map { playlist ->
-        ShelfItem(
-            title = playlist.title,
-            subtitle = stringResource(R.string.local_playlist_subtitle, playlist.songs.size),
-            thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
-            videoId = null,
-            browseId = playlist.browseId,
-        )
+    //
+    // Both lists are remembered against the store's list and the
+    // configuration: rebuilt on every recomposition they were new instances
+    // each time, and a list is compared by identity, so the Library they feed
+    // could never skip. `resources.getString` after reading the configuration
+    // is what `stringResource` does, so a locale change still reformats them.
+    val localPlaylistConfiguration = LocalConfiguration.current
+    val localPlaylistResources = LocalContext.current.resources
+    val localPlaylistItems = remember(localPlaylists, localPlaylistConfiguration) {
+        localPlaylists.filter { !it.isFolder }.map { playlist ->
+            ShelfItem(
+                title = playlist.title,
+                subtitle = localPlaylistResources.getString(R.string.local_playlist_subtitle, playlist.songs.size),
+                thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+                videoId = null,
+                browseId = playlist.browseId,
+            )
+        }
     }
     // The listener's own folders, as cards on their own shelf.
-    val folderItems = localPlaylists.filter { it.isFolder }.map { folder ->
-        ShelfItem(
-            title = folder.title,
-            subtitle = stringResource(R.string.local_playlist_subtitle, folder.songs.size),
-            thumbnailUrl = folder.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
-            videoId = null,
-            browseId = folder.browseId,
-        )
+    val folderItems = remember(localPlaylists, localPlaylistConfiguration) {
+        localPlaylists.filter { it.isFolder }.map { folder ->
+            ShelfItem(
+                title = folder.title,
+                subtitle = localPlaylistResources.getString(R.string.local_playlist_subtitle, folder.songs.size),
+                thumbnailUrl = folder.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+                videoId = null,
+                browseId = folder.browseId,
+            )
+        }
     }
     // What a browse id is recorded under in Downloads.collections, when it names
     // a release downloaded whole — see BrowseTarget.downloadId. A downloaded
@@ -6214,11 +6227,17 @@ private fun RootPage(
             pullState = libraryPull,
             contentPadding = listPadding,
             links = libraryLinks(),
-            deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
-            podcastShelves = if (podcastsEnabled) {
-                listOfNotNull(podcastLikedShelf, podcastLaterShelf)
-            } else {
-                emptyList()
+            // Each list remembered against what it is built from, so an
+            // unchanged Library is handed the same instances and can skip.
+            deviceItems = libraryDeviceItems(downloadedReleases).let { downloaded ->
+                remember(downloaded, localPlaylistItems) { downloaded + localPlaylistItems }
+            },
+            podcastShelves = remember(podcastsEnabled, podcastLikedShelf, podcastLaterShelf) {
+                if (podcastsEnabled) {
+                    listOfNotNull(podcastLikedShelf, podcastLaterShelf)
+                } else {
+                    emptyList()
+                }
             },
         )
     }
