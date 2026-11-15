@@ -274,6 +274,8 @@
     <string name="light">Sáng</string>
     <string name="dark">Tối</string>
     <string name="full_screen_cover_art_subtitle">Mở rộng ảnh bìa ra các cạnh của trình phát thay vì khung vuông</string>
+    <string name="zoom_out_album_art">Thu nhỏ ảnh bìa album</string>
+    <string name="zoom_out_album_art_subtitle">Vẽ hình nhỏ hơn một chút trong thẻ, để thấy được nhiều hơn một chút</string>
     <string name="animated_cover_art_subtitle">Phát video vòng lặp mà một số bản phát hành cung cấp thay vì ảnh tĩnh</string>
     <string name="miscellaneous_footer">Khi bật, việc đóng ứng dụng khỏi màn hình ứng dụng gần đây cũng sẽ dừng phát nhạc.</string>
     <string name="dont_repeat_songs_subtitle">Tự động phát sẽ không gợi ý bài hát đã phát hoặc đã được gợi ý trong phiên này</string>

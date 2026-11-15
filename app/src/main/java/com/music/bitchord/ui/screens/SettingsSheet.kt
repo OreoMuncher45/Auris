@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
+import androidx.compose.material.icons.rounded.ZoomOut
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
@@ -255,6 +256,7 @@ fun SettingsScreen(
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val zoomOutAlbumArt by AppSettings.zoomOutAlbumArt.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
@@ -1365,6 +1367,29 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
+                    )
+                }
+                // The picture inside the card, rather than the card itself: the
+                // other way of looking at a cover that is cropped too tightly.
+                // A row of its own, because it is a choice about the picture
+                // and not about the treatment the picture sits in.
+                val zoomOutAlbumArtTitle = stringResource(R.string.zoom_out_album_art)
+                row(zoomOutAlbumArtTitle, "artwork", "player", "zoom") {
+                    SettingsRow(
+                        icon = Icons.Rounded.ZoomOut,
+                        title = zoomOutAlbumArtTitle,
+                        subtitle = stringResource(R.string.zoom_out_album_art_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = zoomOutAlbumArt,
+                                onCheckedChange = AppSettings::setZoomOutAlbumArt,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setZoomOutAlbumArt(!zoomOutAlbumArt) },
                     )
                 }
             }

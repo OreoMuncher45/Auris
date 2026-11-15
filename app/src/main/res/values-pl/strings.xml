@@ -239,6 +239,8 @@
     <string name="light">Jasny</string>
     <string name="dark">Ciemny</string>
     <string name="full_screen_cover_art_subtitle">Wyświetla okładkę na całym ekranie odtwarzacza zamiast kwadratowej okładki</string>
+    <string name="zoom_out_album_art">Pomniejsz okładkę</string>
+    <string name="zoom_out_album_art_subtitle">Rysuje obraz trochę mniejszy w karcie, dzięki czemu widać go nieco więcej</string>
     <string name="animated_cover_art_subtitle">Odtwarza animowaną okładkę dostępną w niektórych wydaniach zamiast statycznej</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay nie zaproponuje utworu, który został już odtworzony lub zaproponowany w tej sesji</string>
     <string name="download_quality_subtitle">%1$s na utwór, niezależnie od połączenia</string>

@@ -241,6 +241,8 @@
     <string name="light">लाइट</string>
     <string name="dark">डार्क</string>
     <string name="full_screen_cover_art_subtitle">चौकोर स्लीव के बजाय कवर को प्लेयर के किनारों तक ले जाता है</string>
+    <string name="zoom_out_album_art">आल्बम आर्ट ज़ूम आउट करें</string>
+    <string name="zoom_out_album_art_subtitle">तस्वीर को उसके कार्ड में थोड़ा छोटा बनाता है, ताकि उसमें थोड़ा अधिक दिखे</string>
     <string name="animated_cover_art_subtitle">स्थिर स्लीव के बजाय कुछ रिलीज़ में मौजूद लूपिंग वीडियो चलाता है</string>
     <string name="dont_repeat_songs_subtitle">ऑटोप्ले इस सेशन में पहले से चलाया या सुझाया गया गाना दोबारा सुझाव नहीं देगा</string>
     <string name="download_quality_subtitle">%1$s प्रति ट्रैक, कनेक्शन चाहे जो भी हो</string>

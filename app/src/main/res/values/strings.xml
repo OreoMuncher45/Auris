@@ -426,6 +426,8 @@
     <string name="light">Light</string>
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
+    <string name="zoom_out_album_art">Zoom out album art</string>
+    <string name="zoom_out_album_art_subtitle">Draws the picture a little smaller inside its card, so a little more of it shows</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>

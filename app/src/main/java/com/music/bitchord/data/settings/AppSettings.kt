@@ -906,6 +906,21 @@ object AppSettings {
     val fullBleedArtwork = MutableStateFlow(true)
 
     /**
+     * Draws the album art a little smaller inside its card, so a little more of
+     * the picture shows.
+     *
+     * Off by default: the picture fills the card and the card fills the
+     * player's width. On, the picture keeps its proportions and sits inside the
+     * card with a thin edge of the card's own colour around it — the way a
+     * record sleeve looks with the print a little smaller than the paper.
+     *
+     * The card's own treatment is untouched by it: the rounded corners, the
+     * shadow and the shrink while paused all stay, and the picture is simply
+     * drawn smaller inside them.
+     */
+    val zoomOutAlbumArt = MutableStateFlow(false)
+
+    /**
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
      * behind the whole screen, rather than the artwork's own colours hung off
      * the sleeve's bottom edge.
@@ -1705,6 +1720,7 @@ object AppSettings {
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         spotifyCanvasEnabled.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_ENABLED, true)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
+        zoomOutAlbumArt.value = prefs.getBoolean(KEY_ZOOM_OUT_ALBUM_ART, false)
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
@@ -2624,6 +2640,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
     }
 
+    fun setZoomOutAlbumArt(value: Boolean) {
+        zoomOutAlbumArt.value = value
+        prefs.edit().putBoolean(KEY_ZOOM_OUT_ALBUM_ART, value).apply()
+    }
+
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
@@ -3331,6 +3352,7 @@ object AppSettings {
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_SPOTIFY_CANVAS_ENABLED = "spotify_canvas_enabled"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
+    private const val KEY_ZOOM_OUT_ALBUM_ART = "zoom_out_album_art"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"

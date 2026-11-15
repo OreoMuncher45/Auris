@@ -70,6 +70,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val audioQualityWifi get() = AppSettings.audioQualityWifi
         override val canvasOverCellular get() = AppSettings.canvasOverCellular
         override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
+        override val zoomOutAlbumArt get() = AppSettings.zoomOutAlbumArt
         override val hideSongStatus get() = AppSettings.hideSongStatus
         override val hideStatusBar get() = AppSettings.hideStatusBarInPlayer
         override val hideVolumeBar get() = AppSettings.hideVolumeBar
@@ -105,6 +106,8 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
         override fun setLastPlayerScreen(value: LastPlayerScreen) = AppSettings.setLastPlayerScreen(value)
         override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
+        override fun setFullBleedArtwork(value: Boolean) = AppSettings.setFullBleedArtwork(value)
+        override fun setZoomOutAlbumArt(value: Boolean) = AppSettings.setZoomOutAlbumArt(value)
 
         // The listener's own choice, kept with the song. The store is the
         // one place it lives, so the panel and the planner cannot disagree

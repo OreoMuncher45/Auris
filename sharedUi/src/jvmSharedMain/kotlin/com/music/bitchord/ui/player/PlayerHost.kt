@@ -201,6 +201,8 @@ interface PlayerSettingsSource {
     val audioQualityWifi: StateFlow<AudioQuality>
     val canvasOverCellular: StateFlow<Boolean>
     val fullBleedArtwork: StateFlow<Boolean>
+    /** Whether the album art is drawn a little smaller inside its card. */
+    val zoomOutAlbumArt: StateFlow<Boolean>
     val hideSongStatus: StateFlow<Boolean>
     /** Hide the device status bar while the player is up. Always false where there is none. */
     val hideStatusBar: StateFlow<Boolean>
@@ -252,6 +254,18 @@ interface PlayerSettingsSource {
 
     fun setLastPlayerScreen(value: LastPlayerScreen)
     fun setLyricsOffsetMs(value: Int)
+
+    /**
+     * Turns the full-bleed artwork on or off.
+     *
+     * The player's own fullscreen switch: tapping the album art in the player
+     * calls this, so the answer has to be written wherever the preference
+     * lives rather than kept in the composition that asked for it.
+     */
+    fun setFullBleedArtwork(value: Boolean)
+
+    /** Draws the album art a little smaller inside its card, or not. */
+    fun setZoomOutAlbumArt(value: Boolean)
 
     /**
      * Stores the listener's own Automix choice for a track.

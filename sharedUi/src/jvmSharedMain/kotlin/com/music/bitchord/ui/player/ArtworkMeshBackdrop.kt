@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
@@ -411,8 +412,12 @@ fun ArtworkMeshBackdrop(
     /**
      * How far down the surface the artwork's bottom edge sits. Zero for a
      * surface with no artwork over it, which puts the whole mesh on screen.
+     *
+     * Asked for at draw time rather than given as a value: the line moves
+     * while the player is opening and closing, and a value read in
+     * composition would recompose the whole player with it.
      */
-    seam: Dp = 0.dp,
+    seam: () -> Dp = { 0.dp },
     /** What the surface is before any artwork has been read. */
     fallback: Color = FallbackBackdrop,
     /**
@@ -426,6 +431,29 @@ fun ArtworkMeshBackdrop(
      * several times a second.
      */
     blurRadius: Dp = 32.dp,
+    /**
+     * How far the wash below [liftFrom] is lifted.
+     *
+     * The wash is the artwork's own colours stretched down the screen, and the
+     * brightest of it sat directly under the picture — which is where the
+     * transport and the buttons are, and the one band of the screen where the
+     * colour competes with the controls.
+     *
+     * Lifting it puts that colour back up behind the artwork, where it is part
+     * of the picture, and leaves the controls standing on a calmer band.
+     *
+     * Only the part below [liftFrom] moves. The wash above it is behind the
+     * picture, and the picture does not move.
+     */
+    lift: () -> Dp = { 0.dp },
+    /**
+     * Where the lifted part begins: the artwork's own bottom edge.
+     *
+     * Zero lifts nothing — there is no line below the artwork to lift from,
+     * and a lift from the top of the screen would take the wash behind the
+     * picture with it.
+     */
+    liftFrom: () -> Dp = { 0.dp },
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -504,11 +532,25 @@ fun ArtworkMeshBackdrop(
             .background(fallback)
             .then(if (canBlur) Modifier.blur(blurRadius) else Modifier),
     ) {
-        val seamY = seam.toPx().coerceIn(0f, size.height)
+        val seamY = seam().toPx().coerceIn(0f, size.height)
         shown?.let { drawMesh(it, seamY, alpha = 1f) }
         // Read here rather than in composition: an Animatable read inside a
         // draw lambda invalidates the drawing and leaves composition out of it.
         incoming?.let { drawMesh(it, seamY, alpha = fade.value) }
+
+        // The wash below the artwork, lifted — see [lift].
+        //
+        // Drawn over the wash already on screen rather than instead of it, so
+        // the part above the artwork's own bottom edge is left exactly as it
+        // was: that part is behind the picture, and the picture does not move.
+        val liftFromPx = liftFrom().toPx()
+        val liftPx = lift().toPx()
+        if (liftPx > 0.5f && liftFromPx > 0f && liftFromPx < size.height) {
+            clipRect(top = liftFromPx) {
+                shown?.let { drawMeshLifted(it, seamY, liftPx, alpha = 1f) }
+                incoming?.let { drawMeshLifted(it, seamY, liftPx, alpha = fade.value) }
+            }
+        }
 
         // Enough of a scrim to keep white text off a bright sleeve, and no
         // more. The mesh keeps the sleeve's own lightness now, so a bright
@@ -556,6 +598,45 @@ private fun DrawScope.drawMesh(mesh: ArtworkMesh, seamY: Float, alpha: Float) {
         srcSize = IntSize(image.width, image.height),
         dstOffset = IntOffset(0, seamY.roundToInt()),
         dstSize = IntSize(width, (size.height - seamY).roundToInt()),
+        alpha = alpha,
+        filterQuality = FilterQuality.Low,
+    )
+}
+
+/**
+ * The mesh, drawn [shift] pixels higher than it sits.
+ *
+ * The same picture at the same scale: the strip the lift uncovers at the foot
+ * is the texture's own last row, held the way the row above the seam is held,
+ * so nothing is stretched and the wash keeps the artwork's own proportions.
+ */
+private fun DrawScope.drawMeshLifted(
+    mesh: ArtworkMesh,
+    seamY: Float,
+    shift: Float,
+    alpha: Float,
+) {
+    if (alpha <= 0.001f || shift <= 0.5f) return
+    val image = mesh.image
+    val width = size.width.roundToInt()
+    // The mesh itself, from the seam up by the lift.
+    drawImage(
+        image = image,
+        srcOffset = IntOffset.Zero,
+        srcSize = IntSize(image.width, image.height),
+        dstOffset = IntOffset(0, (seamY - shift).roundToInt()),
+        dstSize = IntSize(width, (size.height - seamY).roundToInt()),
+        alpha = alpha,
+        filterQuality = FilterQuality.Low,
+    )
+    // The strip the lift uncovered at the foot: the texture's own last row,
+    // held.
+    drawImage(
+        image = image,
+        srcOffset = IntOffset(0, image.height - 1),
+        srcSize = IntSize(image.width, 1),
+        dstOffset = IntOffset(0, (size.height - shift).roundToInt()),
+        dstSize = IntSize(width, shift.roundToInt()),
         alpha = alpha,
         filterQuality = FilterQuality.Low,
     )

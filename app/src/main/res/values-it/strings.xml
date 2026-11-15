@@ -286,6 +286,8 @@
     <string name="light">Chiaro</string>
     <string name="dark">Scuro</string>
     <string name="full_screen_cover_art_subtitle">Estende la copertina fino ai bordi del player invece di un quadrato</string>
+    <string name="zoom_out_album_art">Riduci la copertina</string>
+    <string name="zoom_out_album_art_subtitle">Disegna l’immagine un po’ più piccola nella sua scheda, così se ne vede un po’ di più</string>
     <string name="animated_cover_art_subtitle">Riproduce il video in loop fornito da alcune release invece di una copertina statica</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay non suggerirà un brano già riprodotto o suggerito in questa sessione</string>
     <string name="download_quality_subtitle">%1$s per brano, indipendentemente dalla connessione</string>

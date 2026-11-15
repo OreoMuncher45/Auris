@@ -115,6 +115,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.util.lerp as lerpFloat
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
@@ -388,6 +389,51 @@ private val SCRUBBER_DROP = 16.dp
 private val SCRUBBER_MIN_GAP = 6.dp
 
 /**
+ * How far the volume row and the button row are lifted off the player's foot.
+ *
+ * Those two rows sat six dp above the bottom of the player, which is itself
+ * sitting on the navigation bar: the lyric button, the AirPlay button and the
+ * queue button were glued to the system bar, with no air under them at all.
+ *
+ * Ten dp is enough to read as a row that belongs to the player rather than to
+ * the phone's own furniture, and small enough that the row still looks like
+ * the foot of the deck.
+ *
+ * It is lifted rather than the whole deck dropped: the space comes out of the
+ * gap between the transport and the volume row, so the scrubber, the times and
+ * the transport stay exactly where they are and only the two bottom rows ride
+ * up.
+ */
+private val DECK_ROWS_LIFT = 10.dp
+
+/**
+ * How much smaller the picture is drawn inside its card when the listener asks
+ * for the album art to be zoomed out.
+ *
+ * Six per cent: enough that the picture has stopped filling the card and a
+ * thin edge of the card's own colour shows around it, and small enough that
+ * the card still reads as a card with a picture in it rather than as a frame
+ * with a small print in it.
+ */
+private const val ALBUM_ART_ZOOM_OUT = 0.94f
+
+/**
+ * How far the wash below the artwork is lifted.
+ *
+ * The wash under the sleeve is the artwork's own colours, stretched down the
+ * screen. What sat directly under the picture was the brightest of it, and it
+ * was the brightest exactly where the transport and the buttons are — the one
+ * band of the screen where the colour competes with the controls.
+ *
+ * Lifting it puts that colour back up behind the artwork, where it is part of
+ * the picture, and leaves the controls standing on a calmer band.
+ *
+ * Only the wash below the artwork moves: the part above it is behind the
+ * picture, and the picture does not move.
+ */
+private val BACKDROP_LIFT = 48.dp
+
+/**
  * The drop the deck can actually take.
  *
  * [spread] is the extra gap the tall screen hands to the controls, and the
@@ -607,13 +653,21 @@ private fun PlayerMeshBackdrop(
     trackKey: String,
     imageUrl: String?,
     liveFrames: Flow<ImageBitmap?>?,
-    seam: Dp,
+    seam: () -> Dp,
     modifier: Modifier = Modifier,
+    lift: () -> Dp = { 0.dp },
+    liftFrom: () -> Dp = { 0.dp },
 ) {
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = ART_PX, liveFrames = liveFrames)
     }
-    ArtworkMeshBackdrop(mesh = mesh, seam = seam, modifier = modifier)
+    ArtworkMeshBackdrop(
+        mesh = mesh,
+        seam = seam,
+        modifier = modifier,
+        lift = lift,
+        liftFrom = liftFrom,
+    )
 }
 
 /**
@@ -1807,6 +1861,13 @@ fun NowPlayingScreen(
         }
     }
     val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    // Whether the picture is drawn a little smaller inside its card — the
+    // listener's own answer to a cover that is cropped too tightly.
+    val zoomOutAlbumArt by PlayerSettings.zoomOutAlbumArt.collectAsStateWithLifecycle()
+    // The tap reads the switch when the finger is lifted, not when the gesture
+    // started: the picture's own tap changes the switch, and a gesture that
+    // read the value it was started with would set the same answer twice.
+    val fullBleedArtNow = rememberUpdatedState(fullBleedArt)
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
     // meaning "a picture, and separately some controls" rather than "the
@@ -2046,6 +2107,12 @@ fun NowPlayingScreen(
     // own geometry is known. Zero until the first measure, which is fine: there
     // is nothing to show that early either.
     var heroHeight by remember { mutableStateOf(0.dp) }
+    // The card's own bottom edge, in the player's pixels.
+    //
+    // Published out of the layout that measures it, because the backdrop is
+    // drawn in another scope: this is the line the wash below the artwork is
+    // lifted from, and the two have to be given the same line.
+    var cardBottom by remember { mutableStateOf(0.dp) }
     var playerBounds by remember { mutableStateOf(IntSize.Zero) }
     // The bottom of a top-aligned, contained clip in the full-player view.
     // Use measured pixels and the decoded display aspect, never screen constants.
@@ -2993,7 +3060,23 @@ fun NowPlayingScreen(
                     trackKey = song.videoId,
                     imageUrl = remoteArt,
                     liveFrames = meshLiveFrames,
-                    seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight + MESH_SEAM_NUDGE else 0.dp,
+                    // Asked for at draw time: the line the wash hangs from moves
+                    // while the picture grows into its banner and comes back
+                    // out of it, and a value read in composition would take the
+                    // whole player with it on every frame of that.
+                    seam = {
+                        if (canvasFirstPortrait) {
+                            renderedCanvasBottom
+                        } else {
+                            lerp(0.dp, heroHeight + MESH_SEAM_NUDGE, heroT.value)
+                        }
+                    },
+                    // The wash under a card is lifted, so the colour that sat
+                    // right under the picture rides up behind it and the
+                    // controls stand on a calmer band. A banner has its own
+                    // wash under it and is not lifted.
+                    lift = { BACKDROP_LIFT * (1f - heroT.value) },
+                    liftFrom = { cardBottom },
                     modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
                 )
             }
@@ -3016,23 +3099,32 @@ fun NowPlayingScreen(
         //
         // The gradient is drawn from the stage's bottom edge, not the screen's
         // top, so it moves with the art.
-        if (heroMode && heroHeight > 0.dp) {
+        //
+        // Faded by the picture's own journey rather than switched on and off
+        // with it: the artwork grows into its banner and comes back out of it
+        // when the listener taps it, and a wash that appeared all at once at
+        // the end of that movement would be the one thing on screen that did
+        // not move with the picture.
+        if (heroHeight > 0.dp) {
             Box(
                 Modifier
                     .matchParentSize()
                     .drawWithContent {
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colorStops = arrayOf(
-                                    0f to Color.Transparent,
-                                    0.38f to Color.Transparent,
-                                    0.68f to Color.Black.copy(alpha = 0.04f),
-                                    1f to Color.Black.copy(alpha = 0.12f),
+                        val wash = heroT.value
+                        if (wash > 0.001f) {
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0f to Color.Transparent,
+                                        0.38f to Color.Transparent,
+                                        0.68f to Color.Black.copy(alpha = 0.04f * wash),
+                                        1f to Color.Black.copy(alpha = 0.12f * wash),
+                                    ),
+                                    startY = heroHeight.toPx(),
+                                    endY = size.height,
                                 ),
-                                startY = heroHeight.toPx(),
-                                endY = size.height,
-                            ),
-                        )
+                            )
+                        }
                     },
             )
         }
@@ -3759,6 +3851,18 @@ fun NowPlayingScreen(
                     SideEffect { heroHeight = bannerBottom }
                 }
 
+                // The card's own bottom edge, in the player's pixels — the line
+                // the wash below the artwork is lifted from.
+                //
+                // The same sum the banner's height is worked out from, without
+                // the zoom and without the title's half gap: the card's edge is
+                // the picture's edge, and the wash hangs from the picture.
+                val cardBottomPx = statusBarTop + topStrip + ART_BOX_TOP_PAD +
+                    groupTop + fullArt
+                if (cardBottomPx != cardBottom) {
+                    SideEffect { cardBottom = cardBottomPx }
+                }
+
                 // Where the sleeve is drawn, as a function of the collapse — see
                 // [p] — in this box's own pixels. Called at measure, placement
                 // and draw; composition never reads it.
@@ -4114,52 +4218,146 @@ fun NowPlayingScreen(
                             // occupies the same pixels and only its bottom, which
                             // the credits now stand on, is uncovered. The sleeve
                             // keeps its fitted card; the crop is a banner idea.
-                            .then(
-                                if (heroMode) Modifier.graphicsLayer {
-                                    // The stage is taller by [HERO_ART_ZOOM],
-                                    // so in portrait Crop already supplies the
-                                    // scale the removed layer did. Where the
-                                    // stage is still width-bound — the banner
-                                    // shorter than the player is wide — Crop
-                                    // cannot, and the zoom is put back.
-                                    val oldBottom = size.height / HERO_ART_ZOOM
-                                    val zoom = maxOf(size.width, oldBottom) * HERO_ART_ZOOM /
-                                        maxOf(size.width, size.height)
-                                    // Uncrop: lyrics ask for the whole image,
-                                    // and docking onto the mini player blends
-                                    // into it as the sheet closes. Shrinking
-                                    // the cropped draw to the fit ratio within
-                                    // the same box is exactly "the same
-                                    // picture, zoomed out": the stage shows
-                                    // around it and nothing is re-laid out.
-                                    val dockUncrop = dock?.let { d ->
-                                        if (d.attached && d.offset() != null) {
-                                            (1f - d.openFraction()).coerceIn(0f, 1f)
-                                        } else {
-                                            0f
+                            //
+                            // The layer is always on rather than only in the
+                            // banner, because the two crops are one picture's
+                            // two zoom levels and the listener can move between
+                            // them: the crop is blended with the journey, so
+                            // the picture grows into the banner and comes back
+                            // out of it instead of jumping into it and out of
+                            // it. A layer with no scale on it costs a transform
+                            // and nothing else.
+                            .graphicsLayer {
+                                // The stage is taller by [HERO_ART_ZOOM],
+                                // so in portrait Crop already supplies the
+                                // scale the removed layer did. Where the
+                                // stage is still width-bound — the banner
+                                // shorter than the player is wide — Crop
+                                // cannot, and the zoom is put back.
+                                val oldBottom = size.height / HERO_ART_ZOOM
+                                val zoom = maxOf(size.width, oldBottom) * HERO_ART_ZOOM /
+                                    maxOf(size.width, size.height)
+                                // Uncrop: lyrics ask for the whole image,
+                                // and docking onto the mini player blends
+                                // into it as the sheet closes. Shrinking
+                                // the cropped draw to the fit ratio within
+                                // the same box is exactly "the same
+                                // picture, zoomed out": the stage shows
+                                // around it and nothing is re-laid out.
+                                val dockUncrop = dock?.let { d ->
+                                    if (d.attached && d.offset() != null) {
+                                        (1f - d.openFraction()).coerceIn(0f, 1f)
+                                    } else {
+                                        0f
+                                    }
+                                } ?: 0f
+                                val uncrop = maxOf(headerUncrop, dockUncrop)
+                                val fit = artworkFitScale(size.width, size.height, art.aspect)
+                                val bannerScale = zoom + (fit - zoom) * uncrop
+                                // How far the picture is on its way to being a
+                                // banner: zero is the card's own crop, one is
+                                // the banner's.
+                                val banner = heroT.value
+                                // The picture a little smaller inside its card,
+                                // when the listener asks for that — and only in
+                                // the card: a banner is the picture, edge to
+                                // edge, and there is nothing to sit inside.
+                                // Nor in the header's thumbnail, which is the
+                                // cover itself and has no edge of its own.
+                                val cardZoom = if (zoomOutAlbumArt) {
+                                    ALBUM_ART_ZOOM_OUT * (1f - p()) * (1f - dockT())
+                                } else {
+                                    1f
+                                }
+                                val scale = lerpFloat(1f, bannerScale, banner) *
+                                    lerpFloat(cardZoom, 1f, banner)
+                                scaleX = scale
+                                scaleY = scale
+                                // The card's own corners on the picture, so a
+                                // zoomed-out picture keeps the card's shape
+                                // instead of showing square corners inside it.
+                                //
+                                // The radius is divided by the picture's scale,
+                                // so it comes out the same size as the card's
+                                // own corner however far the picture is
+                                // shrunk, and it is the card's radius — zero in
+                                // the banner, where the picture is edge to edge
+                                // and there are no corners to keep.
+                                val radius = sleeveCorner()
+                                if (cardZoom < 0.999f && radius > 0.dp) {
+                                    shape = RoundedCornerShape(radius / scale)
+                                    clip = true
+                                }
+                                // Cropped, the crop grows at the bottom rather
+                                // than lifting the art off the status bar; once
+                                // uncropped the whole picture should sit in the
+                                // middle of the stage, so the anchor slides from
+                                // the top edge to the centre with it.
+                                //
+                                // No translation here: the banner's box is already
+                                // pinned to the screen's own top edge, and a
+                                // downward nudge on top of that showed a band of
+                                // the mesh backdrop above the artwork — the gap
+                                // reported as the safe area cutting the image.
+                                // The zoom alone grows it downwards.
+                                transformOrigin = TransformOrigin(0.5f, 0.5f * uncrop)
+                            }
+                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() }
+                            // Tapping the picture switches between the card and
+                            // the full-bleed banner.
+                            //
+                            // The switch is the preference itself, so the
+                            // picture on screen and the switch in Settings
+                            // cannot disagree, and the movement between the
+                            // two is the player's own: the banner grows out of
+                            // the card and the card grows back out of it.
+                            //
+                            // Not offered where there is nothing to switch
+                            // between: a window the player does not fill has no
+                            // full-bleed treatment, a tablet's picture is
+                            // already edge to edge, and Spotify's Canvas owns
+                            // the whole screen while it is playing. Nor on the
+                            // header's thumbnail, which is the way back out of
+                            // the queue or the lyrics.
+                            //
+                            // Watched rather than consumed: the artwork is
+                            // also where a drag starts — up for the queue,
+                            // down for the sheet — and a tap detector that
+                            // took the press would take that gesture with it.
+                            // This one takes nothing and only counts a press
+                            // that never travelled, so the two can share the
+                            // picture.
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val start = down.position
+                                    var travelled = false
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes
+                                            .firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            if (!travelled) {
+                                                if (p() <= 0.5f &&
+                                                    !spotifyCanvasPresentation &&
+                                                    playerFillsWindow(windowWidth)
+                                                ) {
+                                                    haptics.play(Haptic.Tap)
+                                                    PlayerSettings.setFullBleedArtwork(
+                                                        !fullBleedArtNow.value,
+                                                    )
+                                                }
+                                            }
+                                            break
                                         }
-                                    } ?: 0f
-                                    val uncrop = maxOf(headerUncrop, dockUncrop)
-                                    val fit = artworkFitScale(size.width, size.height, art.aspect)
-                                    val scale = zoom + (fit - zoom) * uncrop
-                                    scaleX = scale
-                                    scaleY = scale
-                                    // Cropped, the crop grows at the bottom rather
-                                    // than lifting the art off the status bar; once
-                                    // uncropped the whole picture should sit in the
-                                    // middle of the stage, so the anchor slides from
-                                    // the top edge to the centre with it.
-                                    //
-                                    // No translation here: the banner's box is already
-                                    // pinned to the screen's own top edge, and a
-                                    // downward nudge on top of that showed a band of
-                                    // the mesh backdrop above the artwork — the gap
-                                    // reported as the safe area cutting the image.
-                                    // The zoom alone grows it downwards.
-                                    transformOrigin = TransformOrigin(0.5f, 0.5f * uncrop)
-                                } else Modifier,
-                            )
-                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
+                                        if ((change.position - start).getDistance() >
+                                            viewConfiguration.touchSlop
+                                        ) {
+                                            travelled = true
+                                        }
+                                    }
+                                }
+                            },
                     )
 
                     // Where the clip plays when it can't have the banner:
@@ -4872,7 +5070,7 @@ fun NowPlayingScreen(
                 smoothness = transportSmoothness,
             )
 
-            Spacer(Modifier.height(12.dp + controlSpread / 2))
+            Spacer(Modifier.height(12.dp - DECK_ROWS_LIFT + controlSpread / 2))
 
             // Hidden means gone: no placeholder slot. The deck is anchored to
             // the foot of the player, so the rows above it close down into the
@@ -4902,7 +5100,11 @@ fun NowPlayingScreen(
             // eighty, where this one had them three per cent higher. It is
             // the smallest move on the screen and the one that makes the
             // bottom of it line up with the reference's.
-            Spacer(Modifier.height(6.dp))
+            //
+            // The lift comes out of the gap above the volume row and not out of
+            // here, so the row has air under it while the rows above it stay
+            // put — see [DECK_ROWS_LIFT].
+            Spacer(Modifier.height(6.dp + DECK_ROWS_LIFT))
             }
             }
             }

@@ -262,6 +262,8 @@
     <string name="light">สว่าง</string>
     <string name="dark">มืด</string>
     <string name="full_screen_cover_art_subtitle">ขยายปกอัลบั้มเต็มขอบเครื่องเล่นแทนปกสี่เหลี่ยมจัตุรัส</string>
+    <string name="zoom_out_album_art">ซูมออกภาพปกอัลบั้ม</string>
+    <string name="zoom_out_album_art_subtitle">วาดรูปให้เล็กลงเล็กน้อยในการ์ด เพื่อให้เห็นรูปมากขึ้นเล็กน้อย</string>
     <string name="animated_cover_art_subtitle">เล่นวิดีโอวนซ้ำที่บางผลงานมีให้แทนปกนิ่ง</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay จะไม่แนะนำเพลงที่เล่นหรือแนะนำไปแล้วในเซสชันนี้</string>
     <string name="download_quality_subtitle">%1$s ต่อแทร็ก ไม่ว่าการเชื่อมต่อจะเป็นแบบใด</string>

@@ -187,6 +187,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
+    override val zoomOutAlbumArt = MutableStateFlow(false)
     override val hideSongStatus = MutableStateFlow(false)
     // A desktop window has no status bar to hide.
     override val hideStatusBar = MutableStateFlow(false)
@@ -237,6 +238,18 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         val clamped = value.coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         lyricsOffsetMs.value = clamped
         persistence.saveInt(KEY_LYRICS_OFFSET, clamped)
+    }
+
+    // The player's own fullscreen switch. A desktop window keeps its own copy
+    // of the preference and writes it here every frame, so this is a no-op
+    // there — which is why the artwork's tap does nothing on a desktop: the
+    // full-bleed treatment is a phone's idiom and the tap is not offered.
+    override fun setFullBleedArtwork(value: Boolean) {
+        fullBleedArtwork.value = value
+    }
+
+    override fun setZoomOutAlbumArt(value: Boolean) {
+        zoomOutAlbumArt.value = value
     }
 
     // The listener's own Automix choices, kept with the songs — the same
