@@ -69,9 +69,9 @@ on:
             like every other mark on the screen, so there is no second colour system to
             fight with.
           - Live blur is ON by default and now follows the picture: the colour behind
-            the player is read thirty times a second and the backdrop is redrawn on each
-            of those frames, so the wash moves with the art instead of lagging behind
-            it.
+            the player is read about eight times a second and the backdrop is redrawn
+            only when that wash has actually moved, so the colour moves with the art
+            instead of lagging behind it.
           - The frosted-glass mode is back, and the transport is Auris's own rather than
             a copy of somebody else's.
           - The cover flies to the player, artwork arrives with a fade instead of
@@ -91,15 +91,34 @@ on:
             the thread count, the memory, and counters for the three things that cost
             the most — source searches, next-track preparations and WebView starts.
             "Copy log" now carries the whole report.
+          - The monitor now names the threads that cost the most: the top eight, each
+            with its share of one core over the last window. The whole-phone CPU
+            columns are gone — Android has not let an app read them since Android 10,
+            so they only ever showed a flat zero.
           - The next track's source search is single-flight: one search per track at a
             time, and a second request waits for the answer instead of starting the same
             patient search again. The queue changes several times a minute, and each
-            change used to restart that search from scratch.
+            change used to restart that search from scratch. The answer itself is now
+            kept for a minute and handed out again, so a queue that changes three times
+            in seven seconds runs one search instead of three.
           - The PO-token WebView — the browser page the app loads to prove it is not a
             bot — is released after three minutes of doing nothing.
           - Live blur no longer makes the screen redraw thirty times a second for a
             wash nobody could see changing: the colour is published only when it has
             actually moved far enough to see.
+          - The live wash is paid for once instead of three times over. Every captured
+            frame used to be read three ways — the mesh, the blur and the ink — and
+            then blurred again on the GPU on every backdrop redraw, which on a phone
+            rendering in software costs whole cores. Now one read serves them all, the
+            mesh is blurred on the CPU into its own texture, and the GPU blur is not
+            used for live meshes at all.
+          - The live picture is captured about eight times a second instead of thirty,
+            the ink is read four times a second instead of thirty, and a frame is only
+            handed to the backdrop that is actually on screen.
+          - The Automix planner used to rebuild a whole track's beat grid and score
+            every beat against the low-band curve four times a second, for a pair of
+            tracks whose analysis does not move. The score is now kept, and recomputed
+            only when the analysis it was made from has changed.
           - The frame capture callback runs on its own thread instead of waiting for the
             main thread, and the capture loop no longer spins when there is no picture
             to copy.
@@ -134,6 +153,16 @@ on:
             The audio pipeline says where the level is applied, and says so plainly
             when the app is scaling the samples, because a gain on the samples is not
             bit-exact.
+          - The phone's volume buttons now work on a bit-perfect route. Android's
+            buttons move the system media stream, and on that route the system mixer
+            is out of the way — and Android pins that stream at maximum when a USB DAC
+            attaches, so the buttons did nothing at all. Auris now reads the buttons
+            and hands them to whoever is holding the level: the DAC's own control or
+            the app's gain. Everywhere else Android still answers them as it always
+            did.
+          - The audio pipeline now shows the output volume: how far the slider has
+            turned the sound down, the gain that reaches the samples, and — where a
+            DAC has a control of its own — the absolute level the output ended up at.
           
           Spotify
           - The home can be Spotify's own, with or without a sign-in, and the
