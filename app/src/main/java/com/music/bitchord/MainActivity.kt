@@ -2279,9 +2279,8 @@ private fun BitChordApp(
      * Offline the list is the whole library, not the twenty the Home row
      * shows: the row is what fits on a screen, the page is the set.
      */
-    val downloadedSongs by Downloads.saved.collectAsStateWithLifecycle()
     val homeQuickPicksItems by viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
-    val quickPicksSongs: List<Song> = remember(homeQuickPicksItems, offlineActive, downloadedSongs) {
+    val quickPicksSongs: List<Song> = remember(homeQuickPicksItems, offlineActive, savedDownloads) {
         if (offlineActive) {
             Downloads.snapshotSongs()
                 .filter { it.videoId.isNotBlank() }
@@ -3205,10 +3204,6 @@ private fun BitChordApp(
         // below goes with them, which is the part that costs a draw pass.
         val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
         val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
-        // The same switch, read for the page transitions: with every animation
-        // off there is no motion between pages either — the page is simply the
-        // next page.
-        val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
         val partyServerStatus by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
         val audiobooksState = viewModel.audiobooks.collectAsStateWithLifecycle()
         val audiobooks by audiobooksState
@@ -4046,7 +4041,10 @@ private fun BitChordApp(
                             (targetState == "library_show_all" && initialState == libraryTabKey)
                         when {
                             // No motion at all: the listener asked for none.
-                            animationsOff -> EnterTransition.None togetherWith ExitTransition.None
+                            // "Reduce animation" read for the page transitions too: with
+                            // every animation off there is no motion between pages either —
+                            // the page is simply the next page.
+                            reducePlayerMotion -> EnterTransition.None togetherWith ExitTransition.None
                             // A tab swap slides a little, the way a phone's
                             // own tabs do. It used to cut: the page vanished
                             // and the next one was simply there, which reads
@@ -4163,9 +4161,8 @@ private fun BitChordApp(
                         .graphicsLayer { alpha = topFadeAlpha },
                 )
 
-                val offlineBannerActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
                 com.music.bitchord.ui.components.OfflineBanner(
-                    visible = offlineBannerActive,
+                    visible = offlineActiveState.value,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = com.music.bitchord.ui.components.topBarHeight()),
