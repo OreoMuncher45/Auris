@@ -5766,11 +5766,13 @@ private fun BitChordApp(
             onSignedIn = { selectedTab = TAB_LIBRARY },
             onOpenSettings = { showSettings = true },
             showQueueNotice = showQueueNotice,
-            play = play,
-            addSongsToQueue = addSongsToQueue,
-            playSongsNext = playSongsNext,
-            startDownload = startDownload,
-            withBrowseSongs = withBrowseSongs,
+            tracks = TrackListActions(
+                play = play,
+                addToQueue = addSongsToQueue,
+                playNext = playSongsNext,
+                download = startDownload,
+                withBrowseSongs = withBrowseSongs,
+            ),
             smartDownloadPodcast = ::smartDownloadPodcast,
         )
     }
@@ -6015,6 +6017,25 @@ private fun PlayerSheetHost(
 }
 
 /**
+ * What [RootOverlays]' menus can do with a list of tracks: play it, queue it
+ * next or last, download it, or first fetch the tracks behind an album or
+ * playlist. They travel together from [BitChordApp], which owns them.
+ *
+ * A data class of function values, so it is stable and compared by its
+ * fields: built afresh at the call site on each recomposition, it is still
+ * equal to the last one while the root hands over the same (remembered)
+ * lambdas, and RootOverlays can skip exactly as it did when they were five
+ * separate parameters.
+ */
+private data class TrackListActions(
+    val play: (List<Song>, Int) -> Unit,
+    val addToQueue: (List<Song>) -> Unit,
+    val playNext: (List<Song>) -> Unit,
+    val download: (List<Song>, DownloadTarget?) -> Unit,
+    val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
+)
+
+/**
  * Everything [BitChordApp] draws over both shells: the track and collection
  * menus, the pickers, the notices, the sign-in pages and the alerts.
  *
@@ -6046,11 +6067,7 @@ private fun RootOverlays(
     onSignedIn: () -> Unit,
     onOpenSettings: () -> Unit,
     showQueueNotice: (String) -> Unit,
-    play: (List<Song>, Int) -> Unit,
-    addSongsToQueue: (List<Song>) -> Unit,
-    playSongsNext: (List<Song>) -> Unit,
-    startDownload: (List<Song>, DownloadTarget?) -> Unit,
-    withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
+    tracks: TrackListActions,
     smartDownloadPodcast: (Song?) -> Unit,
 ) {
     val context = LocalContext.current
@@ -6355,7 +6372,7 @@ private fun RootOverlays(
         val act: ((List<Song>) -> Unit) -> () -> Unit = { action ->
             {
                 sheets.browseMenu.target = null
-                withBrowseSongs(target, action)
+                tracks.withBrowseSongs(target, action)
             }
         }
         // Whose playlist this is, asked here rather than carried in by
@@ -6413,15 +6430,15 @@ private fun RootOverlays(
                 sheets.browseMenu.origin = null
             },
             startRenaming = sheets.browseMenu.renameInSheet,
-            onPlayNext = act(playSongsNext),
-            onAddToQueue = act(addSongsToQueue),
-            onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
+            onPlayNext = act(tracks.playNext),
+            onAddToQueue = act(tracks.addToQueue),
+            onPlay = act { songs -> tracks.play(songs, 0) }.takeIf { target.fromCard },
             onShuffle = act { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played
                 // out of order.
                 QueueShuffle.enableForNextQueue()
-                play(songs, songs.indices.random())
+                tracks.play(songs, songs.indices.random())
             }.takeIf { target.fromCard },
             // The whole release into one of the account's playlists — an
             // album filed, a playlist copied into another one. Offered on
@@ -6458,7 +6475,7 @@ private fun RootOverlays(
             // release's own name and cover, which is exactly what the
             // record wants.
             onDownloadAll = act { songs ->
-                startDownload(
+                tracks.download(
                     songs,
                     target.browseId
                         ?.takeIf { target.type != BrowseType.ARTIST }
