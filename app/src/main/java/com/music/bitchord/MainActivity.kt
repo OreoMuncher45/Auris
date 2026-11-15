@@ -5686,6 +5686,7 @@ private fun BitChordApp(
                 playerSheetMotion = playerSheetMotion,
                 playerDock = playerDock,
                 activeDock = activeDock,
+                reducePlayerMotion = { reducePlayerMotion },
                 reduceDynamicBlur = reduceDynamicBlur,
                 nowPlaying = nowPlaying,
                 songMenuBody = songMenuBody,
@@ -5783,9 +5784,10 @@ private fun BitChordApp(
  * Its own composable rather than a branch of [BitChordApp]'s content lambda,
  * which is already as wide as dex can comfortably call (see [RootOverlays]).
  *
- * "Reduce animation" is collected here rather than passed in: the sheet
- * state keeps the `confirmValueChange` it was built with, and that has to
- * read the setting when the sheet asks, not when the sheet was made.
+ * "Reduce animation" comes in as `() -> Boolean`, reading the root's own
+ * collected State, rather than as a Boolean: the sheet state keeps the
+ * `confirmValueChange` it was built with, and that has to read the setting
+ * when the sheet asks, not when the sheet was made.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -5795,12 +5797,12 @@ private fun PlayerSheetHost(
     playerSheetMotion: PlayerSheetMotion,
     playerDock: PlayerDock,
     activeDock: PlayerDock?,
+    reducePlayerMotion: () -> Boolean,
     reduceDynamicBlur: Boolean,
     nowPlaying: @Composable (Song) -> Unit,
     songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     // What rememberModalBottomSheetState builds, but able to start open,
     // and with every hide routed through [playerSheetMotion] — a drag
@@ -5811,7 +5813,7 @@ private fun PlayerSheetHost(
     val confirmSheetValue: (SheetValue) -> Boolean = { value ->
         // Read when asked, not when the sheet was made: the setting
         // can change while the player is up.
-        if (value == SheetValue.Hidden && !reducePlayerMotion) {
+        if (value == SheetValue.Hidden && !reducePlayerMotion()) {
             playerSheetMotion.close()
             false
         } else {
@@ -5849,7 +5851,7 @@ private fun PlayerSheetHost(
         // None of M3's: it follows the sheet's own animation, which is
         // no longer what moves the player. The player draws its own,
         // off where the player actually is — see the content below.
-        scrimColor = if (reducePlayerMotion) BottomSheetDefaults.ScrimColor else Color.Transparent,
+        scrimColor = if (reducePlayerMotion()) BottomSheetDefaults.ScrimColor else Color.Transparent,
         // The player fills the screen and paints its own background to
         // the very top, so the sheet's default 28.dp top corners would
         // only cut two notches out of the artwork behind the status bar.
@@ -5872,19 +5874,19 @@ private fun PlayerSheetHost(
         // that never asks `confirmValueChange`: the sheet hides itself
         // straight away on its own curve, then the window leaves on its
         // exit animation with the artwork still drawn in it.
-        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = reducePlayerMotion),
+        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = reducePlayerMotion()),
     ) {
         // With M3's own back off, the dialog's dispatcher ends here.
         // Composed ahead of the player, so the player's own handlers —
         // the lyrics and the queue putting themselves away first — are
         // newer and are asked before this one.
-        BackHandler(enabled = !reducePlayerMotion) { playerSheetMotion.close() }
+        BackHandler(enabled = !reducePlayerMotion()) { playerSheetMotion.close() }
         // Keeps a sheet still "settling" after a lyrics or queue
         // scroll from taking the next touch meant for that list.
         // See [PlayerSheetMotion.attachWindow].
         val sheetWindow = dialogWindowOf(LocalView.current)
-        DisposableEffect(sheetWindow, reducePlayerMotion) {
-            if (!reducePlayerMotion) playerSheetMotion.attachWindow(sheetWindow)
+        DisposableEffect(sheetWindow, reducePlayerMotion()) {
+            if (!reducePlayerMotion()) playerSheetMotion.attachWindow(sheetWindow)
             // The sheet is a dialog window of its own, and it does not
             // inherit the activity's edge-to-edge setup: left alone it
             // is letterboxed around the cutout, which on a phone with a
@@ -5942,7 +5944,7 @@ private fun PlayerSheetHost(
                     // its own background is opaque, and a full-screen
                     // blend behind it is paid on every frame the window
                     // draws for nothing anyone can see.
-                    if (!reducePlayerMotion && open > 0f && !(open >= 1f && playerDock.attached)) {
+                    if (!reducePlayerMotion() && open > 0f && !(open >= 1f && playerDock.attached)) {
                         val top = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
                         drawRect(
                             color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * open),
