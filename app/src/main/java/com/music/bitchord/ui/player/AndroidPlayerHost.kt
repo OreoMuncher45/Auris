@@ -30,6 +30,8 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.audio.ListenerVolumePolicy
+import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.AutomixAnalysisDemand
 import com.music.bitchord.playback.AutomixPreview
 import com.music.bitchord.playback.AutomixProfiles
@@ -388,10 +390,17 @@ private class CastAwareVolume(
 /**
  * The music stream's volume. Hardware keys and the system panel change it
  * behind the app's back, so Settings is watched and the level follows.
+ *
+ * The system's reading is only taken as the truth when it *is* the truth.
+ * Android pins the media stream at maximum when a USB DAC attaches — the
+ * DAC is expected to do the attenuating — and adopting that pinned reading
+ * is what slammed the level to full on every attach. While a USB output is
+ * attached the app's own level stands instead; see
+ * [ListenerVolumePolicy.systemReadIsPinned].
  */
 private class MusicStreamVolume(private val context: Context) : SystemVolume {
     private val manager = context.getSystemService(AudioManager::class.java)
-    private val _level = MutableStateFlow(read())
+    private val _level = MutableStateFlow(initialLevel())
     override val level: StateFlow<Float> = _level.asStateFlow()
 
     init {
@@ -406,21 +415,62 @@ private class MusicStreamVolume(private val context: Context) : SystemVolume {
 
     private fun max(): Int = manager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: 15
 
-    private fun read(): Float =
-        (manager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0).toFloat() / max()
+    private fun read(): Float = MediaVolumeProbe.levelOf(manager)
+
+    /**
+     * The level to start with: the system's, unless the system is pinning
+     * it, in which case the app's own remembered level is the one the
+     * listener chose.
+     */
+    private fun initialLevel(): Float {
+        val system = read()
+        val pinned = ListenerVolumePolicy.systemReadIsPinned(
+            systemGain = system,
+            usbAttached = MediaVolumeProbe.usbOutputAttached(manager),
+            appLevel = AppSettings.playerVolume.value,
+        )
+        if (pinned) {
+            // Android is holding the media stream at maximum, so the level
+            // the app remembers is the one the listener chose. Writing it
+            // back keeps the two as close together as Android lets them:
+            // where the route takes the stream volume, the mixer will then
+            // cut by the level the bar is showing.
+            val level = AppSettings.playerVolume.value
+            manager?.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                (level * max()).roundToInt(),
+                0,
+            )
+            return level
+        }
+        AppSettings.setPlayerVolume(system)
+        return system
+    }
 
     override fun set(level: Float) {
         val target = level.coerceIn(0f, 1f)
         // The audio path reads this: with the mixer bypassed the system
         // volume cuts nothing, and the app has to cut the sound itself.
-        AppSettings.playerVolume.value = target
+        AppSettings.setPlayerVolume(target)
         manager?.setStreamVolume(AudioManager.STREAM_MUSIC, (target * max()).roundToInt(), 0)
     }
 
     override fun refresh() {
         // A hardware key or the system panel moved the level: the audio path
         // has to hear about it too.
-        AppSettings.playerVolume.value = read()
-        _level.value = read()
+        val system = read()
+        val pinned = ListenerVolumePolicy.systemReadIsPinned(
+            systemGain = system,
+            usbAttached = MediaVolumeProbe.usbOutputAttached(manager),
+            appLevel = AppSettings.playerVolume.value,
+        )
+        if (pinned) {
+            // Android's own pin, not the listener's choice: the app's level
+            // stands, and the bar keeps showing it.
+            _level.value = AppSettings.playerVolume.value
+            return
+        }
+        AppSettings.setPlayerVolume(system)
+        _level.value = system
     }
 }

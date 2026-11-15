@@ -20,6 +20,7 @@ import com.music.bitchord.playback.audio.FallbackReason
 import com.music.bitchord.playback.audio.OutputNegotiationResult
 import com.music.bitchord.playback.audio.PcmEncoding
 import com.music.bitchord.playback.audio.TransportType
+import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,6 +144,22 @@ object AudioOutputStatus {
         val loudnessGainDb: Float? = null,
         /** YouTube's own normalization figure for the playing track, in dB, when known. */
         val loudnessLufs: Float? = null,
+        /**
+         * Where the listener's volume is applied on the path that is playing.
+         *
+         * The answer decides what "bit-perfect" can mean: a gain on the
+         * samples is a change to the samples, and a gain in the DAC after
+         * the PCM is not. See
+         * [com.music.bitchord.playback.audio.VolumeApplication].
+         */
+        val volumeApplication: VolumeApplication = VolumeApplication.SYSTEM_MIXER,
+        /**
+         * The gain the app applies to the samples, 1 when it applies none.
+         *
+         * Only meaningful with [volumeApplication] of
+         * [VolumeApplication.APP_SOFTWARE].
+         */
+        val volumeGain: Float = 1f,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -188,7 +205,9 @@ object AudioOutputStatus {
                 outputExact == other.outputExact &&
                 outputExactDetail == other.outputExactDetail &&
                 loudnessGainDb == other.loudnessGainDb &&
-                loudnessLufs == other.loudnessLufs
+                loudnessLufs == other.loudnessLufs &&
+                volumeApplication == other.volumeApplication &&
+                volumeGain == other.volumeGain
         }
 
         override fun hashCode(): Int {
@@ -234,6 +253,8 @@ object AudioOutputStatus {
             result = 31 * result + (outputExactDetail?.hashCode() ?: 0)
             result = 31 * result + (loudnessGainDb?.hashCode() ?: 0)
             result = 31 * result + (loudnessLufs?.hashCode() ?: 0)
+            result = 31 * result + volumeApplication.hashCode()
+            result = 31 * result + volumeGain.hashCode()
             return result
         }
     }
@@ -468,6 +489,19 @@ object AudioOutputStatus {
         val snapshot = current.value
         if (snapshot.loudnessGainDb == gainDb && snapshot.loudnessLufs == lufs) return
         current.value = snapshot.copy(loudnessGainDb = gainDb, loudnessLufs = lufs)
+    }
+
+    /**
+     * Where the listener's volume is applied on the path that is playing.
+     *
+     * Written by the sink the listener can hear: the system mixer when it is
+     * in the path, the app's own gain when it is not, and the DAC's own
+     * control when the audio is going straight to one.
+     */
+    fun publishVolumeApplication(application: VolumeApplication, gain: Float = 1f) {
+        val snapshot = current.value
+        if (snapshot.volumeApplication == application && snapshot.volumeGain == gain) return
+        current.value = snapshot.copy(volumeApplication = application, volumeGain = gain)
     }
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {

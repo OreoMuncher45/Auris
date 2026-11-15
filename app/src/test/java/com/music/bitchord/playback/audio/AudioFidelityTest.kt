@@ -140,4 +140,23 @@ class AudioFidelityTest {
         assertFalse(result.deductions.any { it.label.contains("cannot carry") })
         assertFalse(result.deductions.any { it.label.contains("Equalizer") })
     }
+
+    @Test
+    fun theListenersOwnVolumeOnTheSamplesIsDeducted() {
+        // A bit-perfect route gives up the mixer's gain, so the app puts the
+        // level back on the samples. That is a change to the samples, and
+        // the score has to say so rather than claim a bit-perfect path.
+        val result = AudioFidelity.assess(
+            AudioFidelity.Inputs(
+                routeKind = AudioRouting.Kind.USB,
+                exclusiveUsbActive = true,
+                outputExact = true,
+                dspBypassed = true,
+                volumeInSoftware = true,
+            ),
+        )
+
+        assertEquals(100 - 4, result.score)
+        assertTrue(result.deductions.any { it.label.contains("volume") })
+    }
 }

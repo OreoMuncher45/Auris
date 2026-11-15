@@ -2,7 +2,6 @@ package com.music.bitchord.playback.usb
 
 import android.hardware.usb.UsbDeviceConnection
 import android.util.Log
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -26,6 +25,14 @@ class UacFeatureVolume(
     private var minRaw: Int = DEFAULT_MIN_RAW
     private var maxRaw: Int = DEFAULT_MAX_RAW
     private var resRaw: Int = DEFAULT_RES_RAW
+
+    /**
+     * What each channel was set to before the app wrote anything to it.
+     *
+     * The DAC's own levels belong to the listener: the app offsets them, and
+     * puts them back when it is done.
+     */
+    private val channelOriginals = mutableMapOf<Int, Int>()
 
     fun attach(): Boolean {
         available = false
@@ -55,21 +62,90 @@ class UacFeatureVolume(
         return false
     }
 
-    fun setNormalized(volume: Float): Boolean {
+    /**
+     * Writes an absolute level, in dB.
+     *
+     * The level is aligned to the DAC's own resolution, so what the DAC
+     * reports back afterwards is what was asked for as closely as the DAC
+     * can manage.
+     *
+     * The caller is responsible for what the level *means*: see
+     * [com.music.bitchord.playback.audio.ListenerVolumePolicy], whose rule
+     * is that the phone's slider is an offset from the DAC's own level
+     * rather than a level of its own.
+     */
+    fun setDb(db: Double): Boolean {
         if (!available || featureUnitId == 0) return false
-        val clamped = volume.coerceIn(0f, 1f)
-        val coded = encodedVolume(clamped, minRaw, maxRaw, resRaw)
+        val coded = encodedDb(db, minRaw, maxRaw, resRaw)
         var ok = false
         for (channel in channels) {
             if (writeVolume(featureUnitId, channel, coded)) ok = true
         }
-        writeMute(featureUnitId, clamped <= 0f)
         return ok
     }
 
+    /**
+     * The DAC's own level, in dB.
+     *
+     * Read rather than remembered, because it is the listener's: it is where
+     * the DAC's own knob is, and the phone's slider is an offset from it.
+     * Null when the control cannot be read — there is then no base to offset
+     * from, and the caller has to attenuate the samples itself.
+     */
+    fun currentDb(): Double? {
+        if (!available || featureUnitId == 0 || channels.isEmpty()) return null
+        val raw = readVolume(featureUnitId, channels.first()) ?: return null
+        // The mute sentinel is not a level.
+        if (raw == MUTE_RAW) return null
+        return raw / 256.0
+    }
+
+    /** The quietest level the DAC's control accepts, in dB. */
+    fun minDb(): Double = minRaw / 256.0
+
+    /** The loudest level the DAC's control accepts, in dB. */
+    fun maxDb(): Double = maxRaw / 256.0
+
+    /** The step the DAC's control moves in, in dB. */
+    fun resolutionDb(): Double = (resRaw / 256.0).coerceAtLeast(0.05)
+
+    /**
+     * The level the control was at before the app touched it, in dB.
+     *
+     * The verification writes test levels to the control and puts them
+     * back, and this is what "back" was: the listener's own setting, and
+     * the base the phone's slider offsets from.
+     */
+    fun originalDb(): Double? {
+        val channel = channels.firstOrNull() ?: return null
+        val raw = channelOriginals[channel] ?: return null
+        if (raw == MUTE_RAW) return null
+        return raw / 256.0
+    }
+
     private fun discoverChannels(unitId: Int): IntArray {
-        val found = CHANNELS_TO_TRY.filter { ch ->
-            readVolume(unitId, ch) != null || writeVolume(unitId, ch, maxRaw)
+        // One unit at a time: the originals belong to the unit being
+        // probed, and a failed candidate must not leave its levels behind
+        // for the next one.
+        channelOriginals.clear()
+        val found = mutableListOf<Int>()
+        for (ch in CHANNELS_TO_TRY) {
+            // Remember what the channel was set to before anything is written
+            // to it: the DAC's own levels are the listener's, and the app is
+            // here to offset them, not to replace them.
+            val original = readVolume(unitId, ch)
+            if (original != null) {
+                channelOriginals[ch] = original
+                found += ch
+                continue
+            }
+            // A channel that does not answer a read may still answer a write.
+            // There is nothing to restore afterwards — what it was before is
+            // unknown — but it is still worth knowing about.
+            if (writeVolume(unitId, ch, maxRaw)) {
+                channelOriginals[ch] = maxRaw
+                found += ch
+            }
         }
         return found.toIntArray()
     }
@@ -187,10 +263,15 @@ class UacFeatureVolume(
         // In UAC 1.0 & 2.0, Master channel controls the entire cluster globally.
         // Using Channel 0 guarantees both stereo channels stay perfectly balanced.
         if (0 in found && verifyChannelWritable(unitId, 0)) {
-            // Reset discrete channels 1 (Left) and 2 (Right) trims to unity gain (0 dB / maxRaw)
-            // to ensure no residual attenuation or channel imbalance exists from previous tests or state.
-            if (1 in found) writeVolume(unitId, 1, maxRaw)
-            if (2 in found) writeVolume(unitId, 2, maxRaw)
+            // Put the discrete channel trims back where the DAC had them. The
+            // master control is the one being used, and forcing the trims to
+            // unity would overwrite the DAC's own balance — the same kind of
+            // thing this class exists to stop doing.
+            for (ch in intArrayOf(1, 2)) {
+                if (ch in found) {
+                    channelOriginals[ch]?.let { writeVolume(unitId, ch, it) }
+                }
+            }
             return intArrayOf(0)
         }
 
@@ -359,46 +440,30 @@ class UacFeatureVolume(
         const val TIMEOUT_MS = 80
         const val VERIFY_SLEEP_MS = 8L
         const val MUTE = 0x8000
+        /** The mute sentinel as it reads back: a signed 16-bit value. */
+        private const val MUTE_RAW = -32768
         const val DEFAULT_MIN_RAW = -15872 // -62.0 dB in 1/256 dB units
         const val DEFAULT_MAX_RAW = 0      //   0.0 dB
         const val DEFAULT_RES_RAW = 256    //   1.0 dB step alignment
-        private const val PERCEPTUAL_FLOOR_DB = -62.0
         val CHANNELS_TO_TRY = intArrayOf(0, 1, 2)
         val FALLBACK_UNIT_IDS = intArrayOf(0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A)
 
         /**
-         * Maps normalized slider position [volume] in (0, 1] to a perceptual
-         * dB attenuation (-62 dB at 0+ .. 0 dB at 1.0), so step 1/15 (~6.7%)
-         * is ~ -53.8 dB instead of -23.5 dB, then aligns to [resRaw] within
-         * the DAC's hardware [minRaw]..[maxRaw] range.
+         * The raw value for an absolute level, aligned to the DAC's step.
+         *
+         * The level is the DAC's own plus whatever the listener's slider
+         * asks for; see
+         * [com.music.bitchord.playback.audio.ListenerVolumePolicy].
          */
-        fun perceptualDb(volume: Float, minDb: Double = PERCEPTUAL_FLOOR_DB, maxDb: Double = 0.0): Double {
-            val v = volume.coerceIn(0f, 1f).toDouble()
-            if (v <= 0.0) return -127.0
-            val floor = minDb.coerceIn(-72.0, -48.0)
-            val curved = v.pow(0.75)
-            return (floor + (maxDb - floor) * curved).coerceIn(minDb, maxDb)
-        }
-
-        fun perceptualLinearGain(volume: Float): Float {
-            val v = volume.coerceIn(0f, 1f)
-            if (v <= 0f) return 0f
-            if (v >= 0.999f) return 1f
-            val db = perceptualDb(v, PERCEPTUAL_FLOOR_DB, 0.0)
-            return 10.0.pow(db / 20.0).toFloat().coerceIn(0f, 1f)
-        }
-
-        fun encodedVolume(
-            volume: Float,
+        fun encodedDb(
+            db: Double,
             minRaw: Int = DEFAULT_MIN_RAW,
             maxRaw: Int = DEFAULT_MAX_RAW,
             resRaw: Int = DEFAULT_RES_RAW,
         ): Int {
-            if (volume <= 0f) return MUTE
-            val minDb = (minRaw / 256.0).coerceAtMost(-24.0)
-            val maxDb = (maxRaw / 256.0).coerceAtMost(0.0)
-            val db = perceptualDb(volume, minDb, maxDb)
-            val rawTarget = (db * 256.0).roundToInt()
+            val minDb = minRaw / 256.0
+            val maxDb = maxRaw / 256.0
+            val rawTarget = (db.coerceIn(minDb, maxDb) * 256.0).roundToInt()
             val step = resRaw.coerceAtLeast(1)
             val aligned = if (step > 1) {
                 minRaw + ((rawTarget - minRaw + step / 2) / step) * step

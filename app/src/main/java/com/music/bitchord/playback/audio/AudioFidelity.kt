@@ -52,6 +52,16 @@ object AudioFidelity {
         val simAtmosActive: Boolean = false,
         /** DSD has no native output path here, so it is always converted to PCM. */
         val dsd: Boolean = false,
+        /**
+         * Whether the app is applying the listener's own volume to the
+         * samples.
+         *
+         * A bit-perfect route gives up the mixer's gain, so the app has to
+         * put the level back itself — and a gain on the samples is a change
+         * to the samples. The score has to say so, or it would claim a
+         * bit-perfect path while the verdict below it says otherwise.
+         */
+        val volumeInSoftware: Boolean = false,
         val sourceRateHz: Int? = null,
         val outputRateHz: Int? = null,
     )
@@ -69,7 +79,6 @@ object AudioFidelity {
         val effectsBypassed: Boolean,
         val deductions: List<Deduction>,
     )
-
     private const val MIXED_PATH_POINTS = 12
     private const val DIRECT_PATH_POINTS = 6
     private const val BIT_PERFECT_MIXER_POINTS = 3
@@ -78,6 +87,7 @@ object AudioFidelity {
     private const val NARROW_ENCODING_POINTS = 12
     private const val RESAMPLE_POINTS = 8
     private const val DSD_CONVERSION_POINTS = 6
+    private const val SOFTWARE_VOLUME_POINTS = 4
 
     private const val LOUDNESS_POINTS = 4
     private const val EQUALIZER_POINTS = 8
@@ -106,6 +116,12 @@ object AudioFidelity {
         }
         if (inputs.dspAvailable && !inputs.outputExact) {
             deductions += Deduction("Output cannot carry the source encoding", NARROW_ENCODING_POINTS)
+        }
+        if (inputs.volumeInSoftware) {
+            deductions += Deduction(
+                "Listener's volume applied to the samples",
+                SOFTWARE_VOLUME_POINTS,
+            )
         }
         if (inputs.dsd) {
             deductions += Deduction("DSD converted to PCM", DSD_CONVERSION_POINTS)

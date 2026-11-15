@@ -385,10 +385,30 @@ object AppSettings {
      * sound would not. The app cuts the sound itself instead, on the samples
      * on their way out; see [com.music.bitchord.playback.audio.PrecisionAudioSink].
      *
-     * Not persisted: the system volume is the truth, and it is already stored
-     * there. This is how the audio path learns what the bar is showing.
+     * Remembered on disk, because the system volume is no longer always the
+     * truth: Android pins the media stream at maximum when a USB DAC
+     * attaches, and a level read off that is a reading of Android's doing
+     * rather than of the listener's choice.
      */
     val playerVolume = MutableStateFlow(1f)
+
+    /**
+     * Sets the listener's level and remembers it.
+     *
+     * The one way the level changes: the volume bar, the system's own volume
+     * keys, and the start of the app restoring what it left.
+     */
+    fun setPlayerVolume(level: Float) {
+        val value = level.coerceIn(0f, 1f)
+        // The system's settings observer fires on every change under
+        // Settings.System, so this is asked for far more often than the
+        // level actually moves.
+        if (playerVolume.value == value) return
+        playerVolume.value = value
+        if (::prefs.isInitialized) {
+            prefs.edit().putFloat(KEY_PLAYER_VOLUME, value).apply()
+        }
+    }
 
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
@@ -1564,6 +1584,11 @@ object AppSettings {
         }.getOrDefault(OutputPcmMode.PCM_16)
         bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
+        // The listener's own level, remembered: the system volume cannot be
+        // trusted on its own once a USB DAC is attached, because Android
+        // pins the media stream at maximum and the reading says nothing
+        // about what the listener chose.
+        playerVolume.value = prefs.getFloat(KEY_PLAYER_VOLUME, 1f).coerceIn(0f, 1f)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
         // The old `dolby_atmos` preference is deliberately not read any more.
@@ -3204,6 +3229,7 @@ object AppSettings {
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
+    private const val KEY_PLAYER_VOLUME = "player_volume"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"

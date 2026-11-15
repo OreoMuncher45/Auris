@@ -18,6 +18,9 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import com.decent.usbaudio.UsbAudioDevice
 import com.decent.usbaudio.UsbAudioStream
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.ListenerVolumePolicy
+import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,8 +31,12 @@ import java.nio.ByteOrder
  *
  * PCM goes to isochronous URBs. AudioFlinger never sees the stream.
  *
- * Listening level comes from STREAM_MUSIC (volume keys). A Feature Unit that
- * changes GET_CUR keeps PCM untouched; otherwise PCM is software-scaled.
+ * The listener's level is applied here, because nothing downstream of the
+ * phone's own mixer is left to apply it: the DAC's own control takes it as
+ * an offset from the level the DAC is already set to, and a DAC without a
+ * usable control gets the samples scaled instead. Either way the DAC's knob
+ * stays where the listener put it.
+ *
  * The gold clock check is the DAC GET_CUR rate, not a successful open.
  */
 class ExclusiveUsbOutput(
@@ -44,9 +51,43 @@ class ExclusiveUsbOutput(
     @Volatile private var hardwareVolume = false
     @Volatile private var configuredRateHz = 0
     @Volatile private var configuredChannelCount = 0
-    @Volatile private var listeningGain = 1f
     @Volatile private var softwareGainValue = 1f
     @Volatile private var lastHardwareRate = 0
+
+    /**
+     * The listener's own level, 0..1, as the app sees it.
+     *
+     * Not the system's media-stream volume: Android pins that at maximum
+     * when a USB DAC attaches, so it is not a reading of anything the
+     * listener chose. This is an *offset* from the DAC's own level, never an
+     * absolute one — see [applyVolumeLocked] and
+     * [com.music.bitchord.playback.audio.ListenerVolumePolicy].
+     */
+    @Volatile private var listenerLevel: Float =
+        AppSettings.playerVolume.value.coerceIn(0f, 1f)
+
+    /** The level the DAC is set to, in dB, before the app's offset is added. */
+    private var dacBaseDb: Double = 0.0
+    private var dacBaseKnown = false
+
+    /** The level the app last wrote to the DAC, in dB. */
+    private var lastWrittenDb: Double? = null
+
+    /** What the DAC last read back, in dB. */
+    private var dacCurrentDb: Double? = null
+
+    /**
+     * Set when the listener's level has changed and has not been applied to
+     * the DAC yet.
+     *
+     * The application is a USB control transfer, so it waits for the writer
+     * thread rather than happening on the audio thread that reports the
+     * change.
+     */
+    @Volatile private var volumeDirty = false
+
+    /** When the DAC's own level was last re-read. */
+    @Volatile private var lastDacLevelCheckMs = 0L
 
     private val usbAudio = UsbAudioDevice.getInstance(appContext)
     private var stream: UsbAudioStream? = null
@@ -66,7 +107,6 @@ class ExclusiveUsbOutput(
     @Volatile private var lastWriteElapsedMs = 0L
     @Volatile private var writingInProgress = false
     @Volatile private var paused = false
-    private var pendingVolume = 1f
     private var featureVolume: UacFeatureVolume? = null
     /** True when the DAC answered GET_CUR for its clock during this session. */
     @Volatile private var clockReadbackSupported = false
@@ -78,10 +118,7 @@ class ExclusiveUsbOutput(
         private set
     /** True when retrying the open could plausibly succeed (device/permission). */
     @Volatile private var lastFailureRetryable = false
-    @Volatile private var lastAppliedCombined = Float.NaN
     private var volumeProbed = false
-    @Volatile private var lastNonMaxListeningGain = Float.NaN
-    @Volatile private var ignoreStreamMusicMax = false
     /** Fork setting: never let the DAC's Feature Unit own the listening level. */
     @Volatile private var forceSoftwareVolume = false
 
@@ -96,8 +133,6 @@ class ExclusiveUsbOutput(
 
     init {
         clearBlockedDevices()
-        lastNonMaxListeningGain = volumePrefs.getFloat(KEY_LAST_NON_MAX_GAIN, Float.NaN)
-        rememberStreamGain(readStreamMusicGain())
     }
 
     private val volumeReceiver = object : BroadcastReceiver() {
@@ -105,7 +140,7 @@ class ExclusiveUsbOutput(
             if (intent?.action != VOLUME_CHANGED_ACTION) return
             val streamType = intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, AudioManager.STREAM_MUSIC)
             if (streamType != AudioManager.STREAM_MUSIC) return
-            syncListeningGain()
+            syncSystemVolume()
         }
     }
 
@@ -114,7 +149,7 @@ class ExclusiveUsbOutput(
             if (wanted == enabled) {
                 if (enabled) {
                     ensureVolumeObserverLocked()
-                    syncListeningGainLocked()
+                    syncSystemVolume()
                 }
                 return
             }
@@ -124,7 +159,7 @@ class ExclusiveUsbOutput(
             } else {
                 clearBlockedDevices()
                 ensureVolumeObserverLocked()
-                syncListeningGainLocked()
+                syncSystemVolume()
             }
         }
     }
@@ -150,19 +185,28 @@ class ExclusiveUsbOutput(
 
     /**
      * Software (PCM-scaled) volume instead of the DAC's hardware Feature Unit.
-     * Switching to software parks the hardware level at 0 dB first so the two
-     * attenuations never stack. Switching back takes effect at the next start.
+     *
+     * Switching to software puts the DAC's own level back first, so the two
+     * attenuations never stack — and so the DAC is not left louder than the
+     * listener's knob says. Switching back takes effect at the next start.
      */
     fun setForceSoftwareVolume(value: Boolean) {
         synchronized(lock) {
             if (forceSoftwareVolume == value) return
             forceSoftwareVolume = value
             if (value && active && hardwareVolume) {
-                runCatching { featureVolume?.setNormalized(1f) }
+                // Undo the app's own offset and leave the DAC where the
+                // listener's knob had it. Parking the control at 0 dB would
+                // raise the level above that knob, which is the opposite of
+                // what "use software instead" is meant to do.
+                val base = if (dacBaseKnown) dacBaseDb else null
+                if (base != null) {
+                    runCatching { featureVolume?.setDb(base) }
+                    lastWrittenDb = base
+                }
                 hardwareVolume = false
-                lastAppliedCombined = Float.NaN
                 applyVolumeLocked()
-                Log.i(TAG, "volume forced to software; Feature Unit parked at 0 dB")
+                Log.i(TAG, "volume forced to software; the DAC's own level left alone")
             }
         }
     }
@@ -184,10 +228,10 @@ class ExclusiveUsbOutput(
     fun usesHardwareVolume(): Boolean = active && hardwareVolume
 
     /**
-     * PCM software gain for exclusive output. 1 when a verified Feature Unit
-     * owns listening level; otherwise STREAM_MUSIC × Media3 volume.
+     * PCM software gain for exclusive output. 1 when the DAC's own control
+     * carries the level; otherwise the listener's level as a sample gain.
      */
-    fun softwareGain(): Float = if (!active || hardwareVolume) 1f else softwareGainValue
+    fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
 
     fun currentRateHz(): Int = if (active) configuredRateHz else 0
 
@@ -269,24 +313,22 @@ class ExclusiveUsbOutput(
         }
     }
 
-    fun syncListeningGain() {
-        val stream = readStreamMusicGain() ?: return
-        // While the attach-time 100% pin is held off with the remembered
-        // level, keep ignoring pinned max readings. The next real sub-max
-        // change (a volume key press) ends the hold and applies normally.
-        if (ignoreStreamMusicMax && stream >= ATTACH_MAX_PIN_GAIN) return
-        if (stream < ATTACH_MAX_PIN_GAIN) ignoreStreamMusicMax = false
-        val next = stream
-        if (lastAppliedCombined.isFinite() &&
-            kotlin.math.abs(next - listeningGain) < 1e-4f
-        ) {
-            listeningGain = next
+    /**
+     * Follows the system's own media volume, when the system is in charge.
+     *
+     * A hardware volume key moves the system's media stream, and that is the
+     * listener's level — until a USB DAC attaches, at which point Android
+     * pins the stream at maximum and the reading says nothing about what the
+     * listener chose. A pinned reading is ignored, and the app's own level
+     * stands.
+     */
+    fun syncSystemVolume() {
+        val system = MediaVolumeProbe.levelOf(audioManager)
+        val usbAttached = MediaVolumeProbe.usbOutputAttached(audioManager)
+        if (ListenerVolumePolicy.systemReadIsPinned(system, usbAttached, AppSettings.playerVolume.value)) {
             return
         }
-        synchronized(lock) {
-            listeningGain = next
-            applyVolumeLocked()
-        }
+        AppSettings.setPlayerVolume(system)
     }
 
     /**
@@ -465,8 +507,11 @@ class ExclusiveUsbOutput(
             pcmLock.notifyAll()
         }
         synchronized(lock) {
-            pendingVolume = 1f
-            applyVolumeLocked()
+            // The listener's level carries over to the next track. Resetting
+            // it to full here is what used to make every track boundary jump
+            // to maximum volume.
+            listenerLevel = AppSettings.playerVolume.value.coerceIn(0f, 1f)
+            volumeDirty = true
         }
         startMediaTimeNeedsInit = true
         startMediaTimeUs = 0L
@@ -486,11 +531,27 @@ class ExclusiveUsbOutput(
         }
     }
 
-    fun setVolume(volume: Float) {
-        val normalized = volume.coerceIn(0f, 1f)
+    /**
+     * The listener's own level, 0..1.
+     *
+     * Applied as an attenuation *from* the level the output already has: the
+     * DAC's knob stays where the listener put it, and the phone's slider
+     * moves the sound down from there. It is never written as a level of its
+     * own — that is what used to stomp the DAC's knob, and since Android
+     * pins the media stream at maximum when a DAC attaches, the level
+     * written was always "maximum".
+     *
+     * Only the level itself is set here. Writing it to the DAC is a USB
+     * control transfer, and those are slow enough to be heard as a hiccup —
+     * so they happen on the writer thread, never on the audio thread that
+     * calls this.
+     */
+    fun setListenerLevel(level: Float) {
+        val normalized = level.coerceIn(0f, 1f)
         synchronized(lock) {
-            pendingVolume = normalized
-            applyVolumeLocked()
+            if (listenerLevel == normalized && !volumeDirty) return
+            listenerLevel = normalized
+            volumeDirty = true
         }
     }
 
@@ -540,8 +601,10 @@ class ExclusiveUsbOutput(
                 mediaTimeBaseFrames = reuse.framesWritten
                 lastClockCheckMs = SystemClock.elapsedRealtime()
                 ensureVolumeObserverLocked()
-                pendingVolume = 1f
-                syncListeningGainLocked()
+                // The listener's level carries over to the next track; it is
+                // not reset to full here.
+                listenerLevel = AppSettings.playerVolume.value.coerceIn(0f, 1f)
+                volumeDirty = true
                 return true
             }
             Log.w(TAG, "reuse rejected: DAC clock is ${reported}Hz, track needs ${sampleRate}Hz")
@@ -665,7 +728,6 @@ class ExclusiveUsbOutput(
         lastFailureReason = null
         lastFailureRetryable = false
         paused = false
-        pendingVolume = 1f
         startMediaTimeNeedsInit = true
         startMediaTimeUs = 0L
         mediaTimeBaseFrames = 0L
@@ -673,6 +735,13 @@ class ExclusiveUsbOutput(
         clockMatched = clockReadback
         lastHardwareRate = if (clockReadback) reported else 0
         lastClockCheckMs = SystemClock.elapsedRealtime()
+        // The DAC's own level, before the app adds anything to it. Read once
+        // here and re-read whenever the listener moves the DAC's knob.
+        dacBaseDb = 0.0
+        dacBaseKnown = false
+        lastWrittenDb = null
+        dacCurrentDb = null
+        volumeDirty = false
         if (!forceSoftwareVolume) {
             val controlId = (0 until usbDevice.interfaceCount)
                 .map { usbDevice.getInterface(it) }
@@ -684,6 +753,17 @@ class ExclusiveUsbOutput(
             val attached = volumeControl.attach()
             featureVolumeAttached = attached
             hardwareVolume = attached
+            if (attached) {
+                // The DAC's own level, before the app touched it: the
+                // listener's knob, and the base the phone's slider offsets
+                // from. What the control reads now is the same thing unless
+                // the verification failed to put it back.
+                val base = volumeControl.originalDb() ?: volumeControl.currentDb()
+                if (base != null) {
+                    dacBaseDb = base
+                    dacBaseKnown = true
+                }
+            }
         } else {
             featureVolume = null
             featureVolumeAttached = false
@@ -697,13 +777,14 @@ class ExclusiveUsbOutput(
         )
 
         ensureVolumeObserverLocked()
-        rememberStreamGain(readStreamMusicGain())
-        listeningGain = listeningGainForDac()
-        lastAppliedCombined = Float.NaN
+        listenerLevel = AppSettings.playerVolume.value.coerceIn(0f, 1f)
+        // Applied here rather than left to the writer thread: this is the
+        // session's first level, and the writer has not started yet.
         applyVolumeLocked()
         Log.i(
             TAG,
-            "exclusive volume hardware=$hardwareVolume listening=$listeningGain softwareGain=$softwareGainValue",
+            "exclusive volume hardware=$hardwareVolume level=$listenerLevel " +
+                "dacBase=${dacBaseDb}dB softwareGain=$softwareGainValue",
         )
         sessionSummary = "started rate=${sampleRate}Hz ch=$channelCount alt=$alt wireBits=$wireBits " +
             "reported=$reported clockMatched=$clockMatched readback=$clockReadbackSupported " +
@@ -756,60 +837,90 @@ class ExclusiveUsbOutput(
         volumeReceiverRegistered = false
     }
 
-    private fun readStreamMusicGain(): Float? {
-        val manager = audioManager ?: return null
-        val max = runCatching { manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }.getOrDefault(0)
-        if (max <= 0) return null
-        val vol = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrDefault(max)
-        val gain = vol.coerceIn(0, max).toFloat() / max
-        rememberStreamGain(gain)
-        return gain
-    }
-
-    private fun rememberStreamGain(gain: Float?) {
-        if (gain != null && gain in MIN_REMEMBERED_GAIN..ATTACH_MAX_PIN_GAIN) {
-            lastNonMaxListeningGain = gain
-            runCatching { volumePrefs.edit().putFloat(KEY_LAST_NON_MAX_GAIN, gain).apply() }
-        }
-    }
-
-    private fun listeningGainForDac(): Float {
-        val stream = readStreamMusicGain() ?: return listeningGain
-        attachMaxPinFallbackGain(stream, lastNonMaxListeningGain)?.let { remembered ->
-            ignoreStreamMusicMax = true
-            Log.i(
-                TAG,
-                "STREAM_MUSIC pinned at max on attach; using remembered listening gain $remembered",
-            )
-            return remembered
-        }
-        ignoreStreamMusicMax = false
-        return stream
-    }
-
-    private fun syncListeningGainLocked() {
-        listeningGain = listeningGainForDac()
-        applyVolumeLocked()
-    }
-
+    /**
+     * Applies the listener's level.
+     *
+     * Two ways to do it, and the DAC's own control decides which:
+     *
+     *  - **The DAC's own volume control.** The level written is the DAC's
+     *    own level plus the slider's attenuation: an *offset*, never a level
+     *    of its own. The listener's knob stays where they put it, and the
+     *    phone's slider moves the sound down from there. Writing an absolute
+     *    level instead is what used to stomp the knob — and since Android
+     *    pins the media stream at maximum when a DAC attaches, the absolute
+     *    level was always "maximum", which is how a DAC ended up at full
+     *    volume with the phone's slider showing something else entirely.
+     *  - **Software.** When the DAC has no usable volume control, or its
+     *    level cannot be read, the samples are scaled instead — with the
+     *    same curve the phone's own mixer uses, so that the slider means the
+     *    same thing on every path.
+     */
     private fun applyVolumeLocked() {
-        val combined = (listeningGain * pendingVolume).coerceIn(0f, 1f)
-        val unchanged = lastAppliedCombined.isFinite() && kotlin.math.abs(combined - lastAppliedCombined) < 1e-4f
-        if (hardwareVolume) {
-            softwareGainValue = 1f
-            if (!unchanged) {
-                val applied = featureVolume?.setNormalized(combined) == true
-                if (!applied) {
-                    hardwareVolume = false
-                    softwareGainValue = UacFeatureVolume.perceptualLinearGain(combined)
+        val level = listenerLevel.coerceIn(0f, 1f)
+        if (hardwareVolume && !forceSoftwareVolume) {
+            val control = featureVolume
+            val base = if (control != null) dacBaseDbLocked(control) else null
+            if (base != null && control != null) {
+                val target = ListenerVolumePolicy.dacTargetDb(
+                    baseDb = base,
+                    level = level,
+                    minDb = control.minDb(),
+                    maxDb = control.maxDb(),
+                )
+                val current = dacCurrentDb
+                val alreadyThere = current != null && kotlin.math.abs(target - current) <= 0.05
+                val written = lastWrittenDb
+                val needsWrite = !alreadyThere &&
+                    (written == null || kotlin.math.abs(target - written) > 0.05)
+                if (needsWrite) {
+                    if (control.setDb(target)) {
+                        lastWrittenDb = target
+                        softwareGainValue = 1f
+                        return
+                    }
                     Log.w(TAG, "Feature Unit SET_CUR failed; falling back to perceptual software gain")
+                    hardwareVolume = false
+                } else {
+                    // The DAC is already where it should be — at full volume
+                    // with the knob where the listener left it, nothing is
+                    // written to it at all.
+                    lastWrittenDb = target
+                    softwareGainValue = 1f
+                    return
                 }
-                lastAppliedCombined = combined
+            } else {
+                // The DAC's own level cannot be read, so there is no base to
+                // offset from. The app scales the samples instead.
+                hardwareVolume = false
             }
-        } else {
-            softwareGainValue = UacFeatureVolume.perceptualLinearGain(combined)
-            lastAppliedCombined = combined
         }
+        softwareGainValue = ListenerVolumePolicy.perceptualGain(level)
+    }
+
+    /**
+     * The DAC's own level, which the phone's slider offsets from.
+     *
+     * Read rather than remembered, so a knob the listener turns while the
+     * app is playing is picked up: when the DAC's level is no longer what
+     * this app last wrote to it, the listener has moved it, and that is the
+     * new base.
+     */
+    private fun dacBaseDbLocked(control: UacFeatureVolume): Double? {
+        val current = control.currentDb()
+        dacCurrentDb = current
+        if (current == null) return null
+        val written = lastWrittenDb
+        val epsilon = control.resolutionDb() + 0.5
+        if (written != null && kotlin.math.abs(current - written) > epsilon) {
+            dacBaseDb = current
+            lastWrittenDb = null
+            Log.i(TAG, "DAC level moved to ${current}dB; the phone's slider offsets from there")
+        }
+        if (!dacBaseKnown) {
+            dacBaseDb = current
+            dacBaseKnown = true
+        }
+        return dacBaseDb
     }
 
     private fun startWriterLocked(target: UsbAudioStream) {
@@ -866,6 +977,8 @@ class ExclusiveUsbOutput(
                 continue
             }
             if (!clockStillMatches()) break
+            maybeApplyVolume()
+            maybeReapplyDacLevel()
             if (!target.isAlive) break
             writingInProgress = true
             lastWriteElapsedMs = SystemClock.elapsedRealtime()
@@ -877,6 +990,38 @@ class ExclusiveUsbOutput(
                 lastWriteElapsedMs = SystemClock.elapsedRealtime()
             }
         }
+    }
+
+    /**
+     * Applies a level change that has been waiting.
+     *
+     * Called from the writer thread: the transfer to the DAC is slow enough
+     * to be heard as a hiccup on the audio thread.
+     */
+    private fun maybeApplyVolume() {
+        if (!volumeDirty) return
+        synchronized(lock) {
+            if (!volumeDirty) return
+            volumeDirty = false
+            applyVolumeLocked()
+        }
+    }
+
+    /**
+     * Keeps the phone's offset on top of the DAC's own level.
+     *
+     * The listener can turn the DAC's knob while the app is playing. The
+     * knob moves the DAC's level, the app's offset would be lost with it,
+     * and the sound would jump up by whatever the offset was. Re-reading
+     * the level every couple of seconds puts the offset back on top of
+     * wherever the knob now is.
+     */
+    private fun maybeReapplyDacLevel() {
+        if (!active || !hardwareVolume || forceSoftwareVolume) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDacLevelCheckMs < DAC_LEVEL_CHECK_INTERVAL_MS) return
+        lastDacLevelCheckMs = now
+        synchronized(lock) { applyVolumeLocked() }
     }
 
     /**
@@ -933,7 +1078,6 @@ class ExclusiveUsbOutput(
         featureVolume = null
         featureVolumeAttached = false
         volumeProbed = false
-        ignoreStreamMusicMax = false
         hardwareVolume = false
         clockMatched = false
         clockReadbackSupported = false
@@ -941,7 +1085,11 @@ class ExclusiveUsbOutput(
         configuredChannelCount = 0
         active = false
         softwareGainValue = 1f
-        lastAppliedCombined = Float.NaN
+        dacBaseDb = 0.0
+        dacBaseKnown = false
+        lastWrittenDb = null
+        dacCurrentDb = null
+        volumeDirty = false
         startMediaTimeNeedsInit = true
         startMediaTimeUs = 0L
         mediaTimeBaseFrames = 0L
@@ -968,9 +1116,10 @@ class ExclusiveUsbOutput(
         const val TAG = "ExclusiveUsb"
         const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
         const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
-        const val KEY_LAST_NON_MAX_GAIN = "last_non_max_stream_gain"
         const val KEY_BLOCK_PREFIX = "blocked_dac_"
         const val CLOCK_CHECK_INTERVAL_MS = 5_000L
+        /** How often the DAC's own level is re-read while the session plays. */
+        const val DAC_LEVEL_CHECK_INTERVAL_MS = 2_000L
         const val CLOCK_SETTLE_TRIES = 10
         const val CLOCK_SETTLE_STEP_MS = 20L
         const val RAW_PCM16 = 2
@@ -1063,26 +1212,3 @@ class ExclusiveUsbOutput(
         }
     }
 }
-
-/**
- * Gain to use when a raw STREAM_MUSIC read is the attach-time 100% pin.
- *
- * Android reports the media volume pinned at max the moment a USB DAC
- * attaches, while the user's real level is still the last non-max volume-key
- * press. Applying the pinned reading at full scale is what boosted the
- * volume to 100 on every remove/re-attach. The remembered level is what the
- * user hears on their next key press, so it wins while the read is pinned.
- * Null means the raw reading is trustworthy.
- */
-internal fun attachMaxPinFallbackGain(streamGain: Float, rememberedGain: Float): Float? {
-    if (streamGain < ATTACH_MAX_PIN_GAIN) return null
-    if (!rememberedGain.isFinite()) return null
-    if (rememberedGain < MIN_REMEMBERED_GAIN || rememberedGain > ATTACH_MAX_PIN_GAIN) return null
-    return rememberedGain
-}
-
-/** Raw readings at/above this are the attach-time pin, not a chosen level. */
-private const val ATTACH_MAX_PIN_GAIN = 0.999f
-
-/** Quietest level remembered as the user's real listening gain. */
-private const val MIN_REMEMBERED_GAIN = 0.01f

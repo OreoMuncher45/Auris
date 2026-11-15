@@ -71,6 +71,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.audio.AudioFidelity
+import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
 import dev.chrisbanes.haze.HazeState
@@ -92,7 +93,7 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  * on, and because the app otherwise breaks bit-exactness whenever the
  * equaliser or spatial audio is switched on without saying so anywhere.
  *
- * There are two independent ways to lose it, and the ordering names the
+ * There are three independent ways to lose it, and the ordering names the
  * *first* one in the signal chain, which is also the first thing someone
  * would change to get it back:
  *
@@ -102,6 +103,11 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  *    that will not open a float track, or 32-bit integer PCM, which no route
  *    can carry. [outputExact] is the sink's own verdict on that; see
  *    `PrecisionAudioSink.publishOutputExactness`.
+ * 3. The app is applying the listener's volume to the samples. A bit-perfect
+ *    route gives up the mixer's gain, so the app has to put the level back
+ *    itself — and a gain on the samples is a change to the samples. It is
+ *    named here rather than left to be guessed at, because the listener's
+ *    own slider is what causes it.
  *
  * Bit-perfect mode takes the first out of the path deliberately. What remains
  * is the second, plus a third no sink can answer for: whether Android's mixer
@@ -121,11 +127,18 @@ private fun bitExactVerdict(
     simAtmosActive: Boolean,
     dspBypassed: Boolean,
     mixerBitPerfect: Boolean,
+    volumeApplication: VolumeApplication,
+    volumeGain: Float,
 ): String = when {
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
     dsd -> "No — DSD converted to PCM"
+    // The app scaling the samples is itself a change to them. The mixer's
+    // gain is what a bit-perfect route gives up, and putting it back in
+    // software is the price of the phone's own slider still working.
+    volumeApplication == VolumeApplication.APP_SOFTWARE && volumeGain < 0.999f ->
+        "No — volume applied in software"
     // Bit-perfect deliberately ignores the loudness/equaliser/spatial
     // switches, so reporting one of them would name a stage that is not
     // running. What is left to report is whether the source encoding survived
@@ -141,6 +154,26 @@ private fun bitExactVerdict(
     simAtmosActive -> "No — simulated Dolby Atmos"
     outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
     else -> "No — ${outputExactDetail ?: "converted downstream"}"
+}
+
+/**
+ * Where the listener's volume is applied on the path that is playing.
+ *
+ * Named rather than left to be inferred, because the answer decides whether
+ * the phone's own slider can work at all: with the mixer out of the path,
+ * the app applies the level itself — on the samples, or in the DAC after
+ * them.
+ */
+private fun volumeApplicationText(
+    application: VolumeApplication,
+    gain: Float,
+): String = when (application) {
+    VolumeApplication.SYSTEM_MIXER -> "System mixer (Android attenuates)"
+    VolumeApplication.APP_SOFTWARE -> {
+        val db = if (gain > 0f) 20.0 * kotlin.math.log10(gain.toDouble()) else -120.0
+        "App software gain (%+.1f dB)".format(Locale.ROOT, db)
+    }
+    VolumeApplication.DAC_HARDWARE -> "DAC hardware volume (the PCM is untouched)"
 }
 
 /**
@@ -307,6 +340,8 @@ fun AudioPipelineDialog(
                     vocalCutActive = singLevel > 0.001f,
                     jamesDspActive = jamesDspEnabled,
                     dsd = dsdRateHz != null,
+                    volumeInSoftware = outputStatus.volumeApplication ==
+                        VolumeApplication.APP_SOFTWARE && outputStatus.volumeGain < 0.999f,
                     sourceRateHz = pcmRateHz,
                     outputRateHz = outputStatus.actualSampleRateHz,
                 ),
@@ -486,6 +521,8 @@ fun AudioPipelineDialog(
                             outputStatus.directPlaybackActual ||
                             outputStatus.transportType ==
                             com.music.bitchord.playback.audio.TransportType.DIRECT_USB,
+                        volumeApplication = outputStatus.volumeApplication,
+                        volumeGain = outputStatus.volumeGain,
                     ),
                 )
             }
@@ -520,6 +557,16 @@ fun AudioPipelineDialog(
                 PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
                 PipelineRow("Route", outputStatus.routeKind.name)
                 PipelineRow("Transport", outputStatus.transportType.label)
+                // Where the phone's own slider is applied. It is the one row
+                // that says whether the slider can work at all: with the
+                // mixer out of the path, the app applies the level itself.
+                PipelineRow(
+                    "Volume",
+                    volumeApplicationText(
+                        outputStatus.volumeApplication,
+                        outputStatus.volumeGain,
+                    ),
+                )
 
                 if (outputStatus.exclusiveUsbActive || outputStatus.exclusiveUsbDetail != null) {
                     PipelineRow(

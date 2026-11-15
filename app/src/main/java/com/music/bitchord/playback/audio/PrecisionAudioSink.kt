@@ -99,7 +99,7 @@ class PrecisionAudioSink(
      */
     private val exclusiveUsb: ExclusiveUsbOutput? = null,
     /** The level last handed to the DAC, so it is only sent when it changes. */
-    @Volatile private var exclusiveGainApplied: Float = 1f,
+    @Volatile private var exclusiveLevelApplied: Float = Float.NaN,
     /**
      * Whether exclusive USB output should be attempted for the next configure.
      * Same switch as [bitPerfect]; separate so the caller decides the route.
@@ -156,6 +156,10 @@ class PrecisionAudioSink(
 
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
     private var configuredSampleRate: Int = 0
+
+    /** The volume application point last published, for the pipeline readout. */
+    @Volatile private var publishedVolumeApplication: VolumeApplication? = null
+    @Volatile private var publishedVolumeGain: Float = -1f
 
     private var audioBlock: AudioBlock = AudioBlock(
         channelCount = AudioBlock.DEFAULT_CHANNELS,
@@ -224,6 +228,10 @@ class PrecisionAudioSink(
         exclusiveEnded = false
         lastExclusiveAttemptMs = 0L
         exclusiveAdoptionSuppressed = false
+        // The level is pushed to the session again after every configure:
+        // the session may have been torn down and opened afresh, and its own
+        // level starts from the app's.
+        exclusiveLevelApplied = Float.NaN
         activeFormat = format
 
         if (shouldActivatePrecision(format)) {
@@ -520,15 +528,27 @@ class PrecisionAudioSink(
         }
         if (session.isPaused()) return ExclusiveOutcome.BACKPRESSURE
         // On the exclusive route the PCM goes to the DAC untouched, and the
-        // DAC's own volume control is what the bar drives: the samples stay
-        // bit-exact and the sound still gets quieter.
+        // listener's level is applied by the session: as an offset on the
+        // DAC's own volume control where it has one, and as a sample gain
+        // where it does not. The samples stay bit-exact either way, and the
+        // sound still gets quieter.
         if (AppSettings.bitPerfect.value) {
             val level = AppSettings.playerVolume.value.coerceIn(0f, 1f)
-            if (level != exclusiveGainApplied) {
-                exclusiveGainApplied = level
-                runCatching { session.setVolume(level) }
+            if (level != exclusiveLevelApplied) {
+                exclusiveLevelApplied = level
+                runCatching { session.setListenerLevel(level) }
             }
         }
+        // The session applies the level either in the DAC's own control or
+        // on the samples; either way the app is the one doing it.
+        publishVolumeApplication(
+            if (session.usesHardwareVolume()) {
+                VolumeApplication.DAC_HARDWARE
+            } else {
+                VolumeApplication.APP_SOFTWARE
+            },
+            session.softwareGain(),
+        )
         val encoding = inputPcmEncoding ?: return ExclusiveOutcome.FALL_THROUGH
         if (session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)) {
             exclusiveEnded = false
@@ -616,11 +636,25 @@ class PrecisionAudioSink(
         // Only where the mixer really is bypassed. Where it is not — an
         // older Android, or a route the mixer will not let go of — the system
         // still cuts, and cutting here as well would be twice.
-        val userGain = if (skipDsp && mixerBypassed()) {
-            AppSettings.playerVolume.value.coerceIn(0f, 1f)
+        //
+        // The curve is the same one the exclusive USB route and the DAC's own
+        // control use, so the slider means the same thing on every path.
+        val mixerOutOfPath = skipDsp && mixerBypassed()
+        val userGain = if (mixerOutOfPath) {
+            ListenerVolumePolicy.perceptualGain(AppSettings.playerVolume.value)
         } else {
             1f
         }
+        // The readout says where the level is applied: the system mixer when
+        // it is in the path, and the app's own gain when it is not.
+        publishVolumeApplication(
+            if (mixerOutOfPath) {
+                VolumeApplication.APP_SOFTWARE
+            } else {
+                VolumeApplication.SYSTEM_MIXER
+            },
+            userGain,
+        )
         if (skipDsp != dspBypassLatched) {
             if (!skipDsp) dspChain.reset()
             publishTelemetry(inEncoding, outEncoding)
@@ -937,20 +971,20 @@ class PrecisionAudioSink(
     }
 
     override fun setVolume(volume: Float) {
-        // While bit-perfect is on, the listener's own level is the only gain
-        // in the path: this one is the crossfade's, and the two must not
-        // stack. The platform track stays at unity and the DAC's own control
-        // takes the listener's level; see [tryExclusiveBuffer] and the
-        // software gain in [handleBuffer].
+        // This is the crossfade's gain, not the listener's level: the level
+        // lives in [AppSettings.playerVolume] and is applied by the app when
+        // the mixer is out of the path.
+        //
+        // While bit-perfect is on, the platform track stays at unity and the
+        // DAC's own control — or the app's own gain — takes the listener's
+        // level; see [tryExclusiveBuffer] and the software gain in
+        // [handleBuffer]. The two must not stack, and the crossfade's gain
+        // must never be written into the DAC: that control belongs to the
+        // listener's knob, not to a fade.
         if (AppSettings.bitPerfect.value) {
             super.setVolume(1f)
             return
         }
-        // usbdevfs never uses AudioTrack volume. A Feature Unit that changes
-        // GET_CUR keeps PCM untouched; otherwise the session scales it in
-        // software. The platform track must stay at unity so the two gains
-        // never stack.
-        if (isAudible()) runCatching { exclusiveUsb?.setVolume(volume) }
         super.setVolume(if (exclusiveActive) 1f else volume)
     }
 
@@ -1129,6 +1163,24 @@ class PrecisionAudioSink(
      */
     private fun mixerBypassed(): Boolean =
         AudioOutputStatus.current.value.bitPerfectMixer?.active == true
+
+    /**
+     * Where the listener's level is being applied, for the pipeline readout.
+     *
+     * Published only when it changes: this is called from the audio thread,
+     * and a state flow write per decoder buffer would cost more than the
+     * answer is worth.
+     */
+    private fun publishVolumeApplication(application: VolumeApplication, gain: Float) {
+        // The spare half of a crossfade must not publish: it is not the
+        // sound the listener is hearing, and the latch is per sink — a spare
+        // that latched the value would leave the audible one silent.
+        if (!isAudible()) return
+        if (publishedVolumeApplication == application && publishedVolumeGain == gain) return
+        publishedVolumeApplication = application
+        publishedVolumeGain = gain
+        AudioOutputStatus.publishVolumeApplication(application, gain)
+    }
 
     private fun publishOutputExactness(source: PcmEncoding, target: PcmEncoding) {
         val exact = when (source) {
