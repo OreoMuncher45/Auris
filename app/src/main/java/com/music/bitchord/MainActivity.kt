@@ -7647,7 +7647,7 @@ private class PodcastUiState {
  * separate `rememberSaveable`s saved them. One holder is one capture for the
  * root's lambdas instead of eighteen (see [RootSheets]).
  */
-private class RootNav {
+internal class RootNav {
     var selectedTab by mutableIntStateOf(0)
     var showSettings by mutableStateOf(false)
     // Moods and genres used to have a tab of their own. The podcasts took
