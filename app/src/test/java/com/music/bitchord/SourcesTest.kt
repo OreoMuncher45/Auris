@@ -961,6 +961,35 @@ class SourcesTest {
     }
 
     /**
+     * A phone with no hardware Dolby decoder does not get the spatial mix.
+     *
+     * E-AC-3 in six channels, decoded in software, costs whole cores for as
+     * long as it plays — and that is the one thing in the app that burns CPU
+     * while the screen is off and nothing is happening. The rung's own
+     * fallback is the lossless walk, so that is what it falls back to.
+     */
+    @Test
+    fun `the Dolby Atmos rung falls back to lossless when the decoder is software only`() {
+        DeviceCodecs.forcedHardware = false
+        val wifi = AppSettings.audioQualityWifi.value
+        val cellular = AppSettings.audioQualityCellular.value
+        val metered = AppSettings.meteredConnection.value
+        AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        try {
+            val request = SourceResolver.requestForNow()
+            assertEquals(StreamRequest.Lossless, request)
+            assertFalse(request.wantsAtmos)
+            assertTrue(request.wantsLossless)
+        } finally {
+            DeviceCodecs.forcedHardware = null
+            AppSettings.audioQualityWifi.value = wifi
+            AppSettings.audioQualityCellular.value = cellular
+            AppSettings.meteredConnection.value = metered
+        }
+    }
+
+    /**
      * The rung is a statement even with the master switch off — that switch
      * is a standing preference, the rung is what the listener picked for this
      * connection, and a rung labelled Dolby Atmos must not serve stereo while

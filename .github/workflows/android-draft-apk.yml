@@ -14,24 +14,41 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.46"
+        default: "3.0.47"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "153"
+        default: "154"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.46-draft"
+        default: "v3.0.47-draft"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.46 — private preview"
+        default: "Auris 3.0.47 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
         default: |
-          Auris 3.0.46 — private preview
+          Auris 3.0.47 — private preview
+
+          Dolby Atmos
+          - A phone with no hardware Dolby decoder no longer gets the spatial
+            mix. Dolby's own decoder ships with the maker's Android build, not
+            with Android, so plenty of phones have none at all — and E-AC-3 in
+            six channels, decoded in software by the copy of FFmpeg inside the
+            app, costs whole cores for as long as it plays. That is the one
+            thing in the app that burns CPU while the screen is off and nothing
+            is happening. The Dolby rung now falls back to the lossless copy,
+            which is the rung's own fallback anyway, and the quality badge
+            says "Lossless" because that is what is playing. The reason is
+            written once to the log, and the performance report now carries a
+            line saying which of the three it is: a hardware decoder, a
+            software-only one, or none at all.
+          - A phone that does have one is untouched: the mix is asked for and
+            played as before. The question is asked once, off the main thread,
+            and the answer is kept.
 
           Performance
           - Live blur stays ON by default and now tracks the picture properly:

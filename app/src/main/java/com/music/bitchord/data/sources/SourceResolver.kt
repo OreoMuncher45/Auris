@@ -71,11 +71,46 @@ object SourceResolver {
             // with the spatial mix by every source that holds one. The
             // fallback is the lossless walk — a track with no Atmos master must
             // still play its FLAC.
-            ceiling == AudioQuality.DOLBY -> StreamRequest.Atmos
+            //
+            // And a phone with no hardware Dolby decoder does not get the
+            // spatial mix at all: E-AC-3 in six channels, decoded in software,
+            // costs whole cores for as long as it plays, and that is the one
+            // thing in the app that burns CPU while the screen is off and
+            // nothing is happening. The rung's own fallback is the lossless
+            // walk, so that is what it falls back to.
+            ceiling == AudioQuality.DOLBY -> {
+                if (DeviceCodecs.decodesAtmosInHardware) {
+                    StreamRequest.Atmos
+                } else {
+                    warnAtmosIsSoftwareOnly()
+                    StreamRequest.Lossless
+                }
+            }
             ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
             ceiling.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
             else -> StreamRequest.Capped(ceiling.maxKbps)
         }
+    }
+
+    /**
+     * Says once that the immersive mix was passed over, and why.
+     *
+     * Asked every time a stream is resolved, which is often enough to be
+     * noise, and important enough not to be silent: the listener picked the
+     * Dolby rung and is getting the lossless file instead, and the reason is
+     * the phone rather than the app.
+     */
+    @Volatile
+    private var warnedAtmosSoftwareOnly = false
+
+    private fun warnAtmosIsSoftwareOnly() {
+        if (warnedAtmosSoftwareOnly) return
+        warnedAtmosSoftwareOnly = true
+        TrackLog.w(
+            TAG,
+            "Dolby Atmos has no hardware decoder on this device; playing the lossless copy " +
+                "instead of decoding E-AC-3 in software, which costs whole cores",
+        )
     }
 
     /**
@@ -1412,7 +1447,7 @@ object SourceResolver {
      * for the spatial mix — passes it in instead.
      */
     private fun atmosWanted(): Boolean =
-        DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
+        DeviceCodecs.decodesAtmosInHardware && AppSettings.wantsDolbyAtmos
 
     private suspend fun streamBest(
         source: MusicSource,

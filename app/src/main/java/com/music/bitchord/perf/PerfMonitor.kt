@@ -7,6 +7,7 @@ import android.system.Os
 import android.system.OsConstants
 import com.music.bitchord.data.PerfCounters
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.DeviceCodecs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -182,6 +183,7 @@ object PerfMonitor {
         lines.appendLine("app         : ${appVersion(context)}")
         lines.appendLine("live blur   : ${if (AppSettings.liveBlur.value) "on" else "off"}")
         lines.appendLine("monitor     : ${if (AppSettings.perfMonitor.value) "on" else "off"}")
+        lines.appendLine("atmos       : ${atmosVerdict()}")
         lines.appendLine("samples     : ${samples.size} every ${SAMPLE_MS / 1000}s")
         if (started != null) {
             val wall = (samples.last().atMillis - started).coerceAtLeast(0L) / 1000L
@@ -274,6 +276,25 @@ object PerfMonitor {
     private fun appVersion(context: Context): String = runCatching {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
         "${info.versionName} (${info.longVersionCode})"
+    }.getOrDefault("unknown")
+
+    /**
+     * What this phone does with the immersive mix, in one line.
+     *
+     * The question is asked once and cached — the codec list cannot change
+     * while the app runs — so it costs nothing to put in every report, and
+     * it answers a question the CPU column cannot: a phone whose Dolby
+     * decoder is software burns whole cores for as long as it plays, and
+     * that is worth being able to see rather than infer.
+     */
+    private fun atmosVerdict(): String = runCatching {
+        val hardware = DeviceCodecs.decodesAtmosInHardware
+        val playable = DeviceCodecs.playsDolbyAtmos
+        when {
+            hardware -> "hardware decoder"
+            playable -> "software only — the lossless copy is played instead"
+            else -> "no decoder — the spatial mix is never asked for"
+        }
     }.getOrDefault("unknown")
 
     /**

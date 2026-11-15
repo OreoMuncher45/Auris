@@ -114,6 +114,24 @@ object DeviceCodecs {
     private var probed: Boolean? = null
 
     /**
+     * The hardware answer, cached like the other one.
+     *
+     * The codec list cannot change while the app is running, so this is asked
+     * once per process as well.
+     */
+    @Volatile
+    private var probedHardware: Boolean? = null
+
+    /**
+     * Test seam for the hardware answer.
+     *
+     * Set by the tests that stand in for a phone with no hardware Dolby
+     * decoder; null in the app, where the platform is asked.
+     */
+    @Volatile
+    internal var forcedHardware: Boolean? = null
+
+    /**
      * Application context for the one question that needs a system service.
      *
      * Set once from [com.music.bitchord.BitChordApplication]; null in tests and
@@ -124,6 +142,18 @@ object DeviceCodecs {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // Both verdicts are asked off the main thread: the codec list walk
+        // costs tens of milliseconds, and the first caller of either answer is
+        // often a piece of UI. Asked here, in the background, so that whoever
+        // asks first finds the answer already waiting.
+        Thread {
+            playsDolbyAtmos
+            decodesAtmosInHardware
+        }.apply {
+            name = "auris-codec-probe"
+            isDaemon = true
+            start()
+        }
     }
 
     /**
@@ -144,6 +174,68 @@ object DeviceCodecs {
      */
     val playsDolbyAtmos: Boolean
         get() = forced ?: probed ?: probe().also { probed = it }
+
+    /**
+     * Whether an E-AC-3 stream would be decoded by hardware on this device.
+     *
+     * Software can decode it — the app bundles FFmpeg for exactly that — but
+     * a six channel E-AC-3 stream decoded in software costs whole cores for as
+     * long as it plays. That is the one thing in the app that burns CPU while
+     * the screen is off and nothing is happening, and the object layer it buys
+     * is not worth that on a phone with no hardware decoder for it.
+     *
+     * Hardware means the platform reports a decoder for the Dolby family that
+     * is flagged as hardware accelerated: the vendor's own (a Samsung's
+     * `c2.dolby.eac3.decoder`), or the platform's own silicon codec. A
+     * software decoder in the same list — the AOSP `c2.android.*` ones, which
+     * run on the CPU — does not count.
+     *
+     * Below Android 10 the platform cannot say, and the answer is yes: the
+     * question is only asked where it can be answered, and a device that
+     * cannot answer keeps the behaviour it has always had.
+     */
+    val decodesAtmosInHardware: Boolean
+        get() = forcedHardware ?: probedHardware ?: probeHardware().also { probedHardware = it }
+
+    /**
+     * The hardware verdict.
+     *
+     * The platform's own list is the answer: it is the list Media3 reads when
+     * it hands the renderer its decoders, and it is the only one of the two
+     * that says whether a decoder runs on the CPU or on silicon.
+     *
+     * An answer that cannot be read is a yes. The two mistakes are not
+     * symmetric: guessing "no" takes the immersive mix away from a phone that
+     * can render it, and guessing "yes" leaves one phone decoding in software
+     * for as long as it plays.
+     */
+    private fun probeHardware(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return probeHardware29()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun probeHardware29(): Boolean {
+        // The platform's list rather than Media3's: Media3's own
+        // `MediaCodecInfo` wrapper does not say whether a decoder runs on the
+        // CPU or on silicon, and this question is exactly that. The names are
+        // the same ones — Media3 reads this very list — so nothing is lost by
+        // asking the source of the truth.
+        val hardware: List<String> = try {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                .filter { info ->
+                    !info.isEncoder &&
+                        info.isHardwareAccelerated &&
+                        info.supportedTypes.any { it.lowercase(Locale.ROOT) in DOLBY_MIMES }
+                }
+                .map { it.name }
+        } catch (error: Throwable) {
+            TrackLog.w(TAG, "could not read the codec list — ${error.message}")
+            return true
+        }
+        TrackLog.d(TAG, "hardware Dolby decoders (platform): ${hardware.ifEmpty { "none" }}")
+        return hardware.isNotEmpty()
+    }
 
     /**
      * Yes on anything that cannot be established.
