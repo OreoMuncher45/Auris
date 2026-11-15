@@ -307,6 +307,29 @@ tasks.matching { it.name == "compileDevReleaseKotlin" }.configureEach {
 }
 
 /*
+ * The JVM's own limit, the other one a big composable runs into: 65,535 bytes
+ * of bytecode per method. A composable is one method however long its source
+ * is, so it creeps up on an ordinary change and then the compiler stops with
+ * a MethodTooLargeException (OVERHAUL_PLAN.md has one, in BitChordApp).
+ *
+ * So the same compiled classes are measured too, and a method over 32,000
+ * bytes — about half the limit, the target issue #5 set — fails the build
+ * while there is still room to split it calmly.
+ */
+val checkMethodSizes by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Fails if a method's bytecode is over 32,000 bytes."
+    commandLine(
+        "python3",
+        rootProject.file("tools/check_method_sizes.py").absolutePath,
+        layout.buildDirectory.dir("tmp/kotlin-classes/devRelease").get().asFile.absolutePath,
+    )
+}
+tasks.matching { it.name == "compileDevReleaseKotlin" }.configureEach {
+    finalizedBy(checkMethodSizes)
+}
+
+/*
  * NewPipeExtractor ships its own org.schabi.newpipe.extractor.utils.Utils, and
  * app/src/main/java carries a patched copy at the same package path (see that
  * file for why it exists). A debug build keeps project and library dex separate,
