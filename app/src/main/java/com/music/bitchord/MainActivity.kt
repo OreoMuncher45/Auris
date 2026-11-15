@@ -1187,24 +1187,7 @@ private fun BitChordApp(
     }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
-    // A conversion is deliberately scoped to the current listening session.
-    // Keeping the complete original row here lets Revert restore the exact
-    // video upload, including its title and playlist identity, rather than
-    // trying to reconstruct it from the catalogue match.
-    var convertedFromVideo by remember { mutableStateOf<Song?>(null) }
-    var convertedAudioId by remember { mutableStateOf<String?>(null) }
-    var switchingAudioVersion by remember { mutableStateOf(false) }
-    // Revert is an explicit choice for this occurrence of the track. Without
-    // remembering it, the automatic preference would see the restored video
-    // as a fresh item and immediately convert it again.
-    var keepVideoId by remember { mutableStateOf<String?>(null) }
-    // Track conversion from audio to video (inverse of above)
-    var convertedFromAudio by remember { mutableStateOf<Song?>(null) }
-    var convertedVideoId by remember { mutableStateOf<String?>(null) }
-    // Optimistically updated track for instant UI updates when switching versions
-    var optimisticVersionSong by remember { mutableStateOf<Song?>(null) }
-    // Track whether alternate (film/video vs release/audio) version exists for current track
-    var hasAlternateVersion by remember { mutableStateOf(false) }
+    val versions = remember { VersionSwitchState() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off applies to
@@ -1393,12 +1376,12 @@ private fun BitChordApp(
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
             c.currentMediaItem?.mediaId != song.videoId ||
-            switchingAudioVersion
+            versions.switchingAudioVersion
         ) return false
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
-        switchingAudioVersion = true
-        keepVideoId = null
+        versions.switchingAudioVersion = true
+        versions.keepVideoId = null
         val holdUntilAligned = AppSettings.smartVersionAlignment.value
         if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = true
         if (pauseWhileResolving) c.pause()
@@ -1420,8 +1403,8 @@ private fun BitChordApp(
                 return true
             }
 
-            convertedFromVideo = song
-            convertedAudioId = audio.videoId
+            versions.convertedFromVideo = song
+            versions.convertedAudioId = audio.videoId
             TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
             // The row this came from still wears the video's own thumbnail on
             // the page it was opened from. The catalogue track knows the
@@ -1442,7 +1425,7 @@ private fun BitChordApp(
                 playbackSourceId = song.playbackSourceId,
             )
             if (!holdUntilAligned || VersionAudioAligner.getCachedOffsetMs(song.videoId, target.videoId) != null) {
-                optimisticVersionSong = target
+                versions.optimisticVersionSong = target
             }
             // Let go of the bar *before* the command goes out: the service
             // raises it again the moment its own job starts, and releasing
@@ -1464,7 +1447,7 @@ private fun BitChordApp(
             return true
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            switchingAudioVersion = false
+            versions.switchingAudioVersion = false
         }
     }
 
@@ -1477,11 +1460,11 @@ private fun BitChordApp(
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
             c.currentMediaItem?.mediaId != song.videoId ||
-            switchingAudioVersion
+            versions.switchingAudioVersion
         ) return
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
-        switchingAudioVersion = true
+        versions.switchingAudioVersion = true
         // Mirrors the music-only path: the bar lights up for the resolve and
         // the service keeps it lit through the measure-and-cut, and the row
         // stays on the audio version until that swap actually commits — see
@@ -1505,8 +1488,8 @@ private fun BitChordApp(
                 return
             }
 
-            convertedFromAudio = song
-            convertedVideoId = video.videoId
+            versions.convertedFromAudio = song
+            versions.convertedVideoId = video.videoId
             TrackLog.d("Player", "video switch applying '${video.title}' (${video.videoId})", song.videoId)
             val target = video.copy(
                 queueTier = song.queueTier,
@@ -1522,7 +1505,7 @@ private fun BitChordApp(
             if (!holdUntilAligned ||
                 VersionAudioAligner.getCachedOffsetMs(song.videoId, target.videoId) != null
             ) {
-                optimisticVersionSong = target
+                versions.optimisticVersionSong = target
             }
             // Released before the handover for the same reason as the
             // music-only path above: the service owns the flag from here, and
@@ -1540,7 +1523,7 @@ private fun BitChordApp(
             if (resumeAfterResolution) c.play()
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            switchingAudioVersion = false
+            versions.switchingAudioVersion = false
         }
     }
 
@@ -1667,22 +1650,22 @@ private fun BitChordApp(
          }
      }
     LaunchedEffect(player.song?.videoId) {
-        if (optimisticVersionSong?.videoId == player.song?.videoId ||
-            (optimisticVersionSong != null && player.song?.videoId != convertedAudioId && player.song?.videoId != convertedVideoId && player.song?.videoId != keepVideoId)
+        if (versions.optimisticVersionSong?.videoId == player.song?.videoId ||
+            (versions.optimisticVersionSong != null && player.song?.videoId != versions.convertedAudioId && player.song?.videoId != versions.convertedVideoId && player.song?.videoId != versions.keepVideoId)
         ) {
-            optimisticVersionSong = null
+            versions.optimisticVersionSong = null
         }
         if (activeRadioSeed?.first != player.song?.videoId) activeRadioSeed = null
-        if (keepVideoId != player.song?.videoId) keepVideoId = null
-        if (player.song?.videoId != convertedAudioId) {
-            convertedFromVideo = null
-            convertedAudioId = null
-            switchingAudioVersion = false
+        if (versions.keepVideoId != player.song?.videoId) versions.keepVideoId = null
+        if (player.song?.videoId != versions.convertedAudioId) {
+            versions.convertedFromVideo = null
+            versions.convertedAudioId = null
+            versions.switchingAudioVersion = false
         }
-        if (player.song?.videoId != convertedVideoId) {
-            convertedFromAudio = null
-            convertedVideoId = null
-            switchingAudioVersion = false
+        if (player.song?.videoId != versions.convertedVideoId) {
+            versions.convertedFromAudio = null
+            versions.convertedVideoId = null
+            versions.switchingAudioVersion = false
         }
     }
 
@@ -1691,7 +1674,7 @@ private fun BitChordApp(
     // A failed/identical match simply resumes this untouched video.
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
-        if (!preferMusicOnly || !song.isVideo || song.videoId == keepVideoId) return@LaunchedEffect
+        if (!preferMusicOnly || !song.isVideo || song.videoId == versions.keepVideoId) return@LaunchedEffect
         // The controller can be a long way behind the state flow right after a
         // track change, and it is much further behind when the track was
         // *opened* rather than reached: a song picked on its own starts a
@@ -1723,18 +1706,18 @@ private fun BitChordApp(
     // each member on their own cut of what is supposed to be one song — see
     // [ListenTogether] and the matching guard server-side in
     // [PlaybackService.smoothSwapCurrentTrackVersion].
-    LaunchedEffect(player.song?.videoId, convertedAudioId, convertedVideoId, partyState.inParty) {
+    LaunchedEffect(player.song?.videoId, versions.convertedAudioId, versions.convertedVideoId, partyState.inParty) {
         val song = player.song
         if (song == null || partyState.inParty) {
-            hasAlternateVersion = false
+            versions.hasAlternateVersion = false
             return@LaunchedEffect
         }
-        if ((convertedFromVideo != null && convertedAudioId == song.videoId) ||
-            (convertedFromAudio != null && convertedVideoId == song.videoId)) {
-            hasAlternateVersion = true
+        if ((versions.convertedFromVideo != null && versions.convertedAudioId == song.videoId) ||
+            (versions.convertedFromAudio != null && versions.convertedVideoId == song.videoId)) {
+            versions.hasAlternateVersion = true
             return@LaunchedEffect
         }
-        hasAlternateVersion = false
+        versions.hasAlternateVersion = false
         val exists = withContext(Dispatchers.IO) {
             if (song.isVideo) {
                 runCatching {
@@ -1748,7 +1731,7 @@ private fun BitChordApp(
             }
         }
         if (player.song?.videoId == song.videoId) {
-            hasAlternateVersion = exists
+            versions.hasAlternateVersion = exists
         }
     }
 
@@ -2823,8 +2806,8 @@ private fun BitChordApp(
     // The player's whole parameter list, kept apart from the sheet that
     // mounts it so the sheet's own setup reads on its own.
     val nowPlaying: @Composable (Song) -> Unit = { song ->
-        val effectiveSong = optimisticVersionSong?.takeIf {
-            it.videoId == convertedAudioId || it.videoId == convertedVideoId || it.videoId == keepVideoId ||
+        val effectiveSong = versions.optimisticVersionSong?.takeIf {
+            it.videoId == versions.convertedAudioId || it.videoId == versions.convertedVideoId || it.videoId == versions.keepVideoId ||
             it.videoId == YtMusicRepository.cachedAudioVersion(song.videoId)?.videoId ||
             it.videoId == YtMusicRepository.cachedVideoVersion(song.videoId)?.videoId
         } ?: song
@@ -2879,7 +2862,7 @@ private fun BitChordApp(
             isLoading = playPauseBusy,
             position = player.position,
             durationMs = player.durationMs,
-            audioVersionSwitching = switchingAudioVersion,
+            audioVersionSwitching = versions.switchingAudioVersion,
             qualityUpgraded = player.isQualityUpgraded,
             onPlayPause = {
                 togglePlayPause()
@@ -3444,50 +3427,50 @@ private fun BitChordApp(
             // in-flight optimistic swap is still read off [optimisticVersionSong]
             // so a menu opened mid-switch describes the version actually
             // becoming current, not the one about to be left.
-            val versionEffectiveSong = optimisticVersionSong?.takeIf {
-                it.videoId == convertedAudioId || it.videoId == convertedVideoId || it.videoId == keepVideoId ||
+            val versionEffectiveSong = versions.optimisticVersionSong?.takeIf {
+                it.videoId == versions.convertedAudioId || it.videoId == versions.convertedVideoId || it.videoId == versions.keepVideoId ||
                     it.videoId == YtMusicRepository.cachedAudioVersion(song.videoId)?.videoId ||
                     it.videoId == YtMusicRepository.cachedVideoVersion(song.videoId)?.videoId
             } ?: song
             fun versionAlignmentPending(targetId: String): Boolean =
                 AppSettings.smartVersionAlignment.value &&
                     VersionAudioAligner.getCachedOffsetMs(song.videoId, targetId) == null
-            val menuIsAudioVersion = if (optimisticVersionSong != null) {
-                !optimisticVersionSong!!.isVideo
+            val menuIsAudioVersion = if (versions.optimisticVersionSong != null) {
+                !versions.optimisticVersionSong!!.isVideo
             } else {
-                !song.isVideo && convertedVideoId != song.videoId
+                !song.isVideo && versions.convertedVideoId != song.videoId
             }
             val onToggleVersion: (() -> Unit)? = if (fromPlayer &&
-                hasAlternateVersion &&
-                !switchingAudioVersion &&
+                versions.hasAlternateVersion &&
+                !versions.switchingAudioVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
                 {
                     sheets.songActions = null
                     val c = controller
-                    val original = convertedFromVideo
-                    val originalAudio = convertedFromAudio
+                    val original = versions.convertedFromVideo
+                    val originalAudio = versions.convertedFromAudio
                     when {
                         c == null -> Unit
                         original != null && (
-                            convertedAudioId == song.videoId ||
-                                convertedAudioId == versionEffectiveSong.videoId ||
-                                convertedAudioId == optimisticVersionSong?.videoId
+                            versions.convertedAudioId == song.videoId ||
+                                versions.convertedAudioId == versionEffectiveSong.videoId ||
+                                versions.convertedAudioId == versions.optimisticVersionSong?.videoId
                             ) -> {
-                            keepVideoId = original.videoId
-                            convertedFromVideo = null
-                            convertedAudioId = null
-                            if (!versionAlignmentPending(original.videoId)) optimisticVersionSong = original
+                            versions.keepVideoId = original.videoId
+                            versions.convertedFromVideo = null
+                            versions.convertedAudioId = null
+                            if (!versionAlignmentPending(original.videoId)) versions.optimisticVersionSong = original
                             c.swapToVersion(original)
                         }
                         originalAudio != null && (
-                            convertedVideoId == song.videoId ||
-                                convertedVideoId == versionEffectiveSong.videoId ||
-                                convertedVideoId == optimisticVersionSong?.videoId
+                            versions.convertedVideoId == song.videoId ||
+                                versions.convertedVideoId == versionEffectiveSong.videoId ||
+                                versions.convertedVideoId == versions.optimisticVersionSong?.videoId
                             ) -> {
-                            convertedFromAudio = null
-                            convertedVideoId = null
-                            if (!versionAlignmentPending(originalAudio.videoId)) optimisticVersionSong = originalAudio
+                            versions.convertedFromAudio = null
+                            versions.convertedVideoId = null
+                            if (!versionAlignmentPending(originalAudio.videoId)) versions.optimisticVersionSong = originalAudio
                             c.swapToVersion(originalAudio)
                         }
                         versionEffectiveSong.isVideo || song.isVideo -> {
@@ -3496,7 +3479,7 @@ private fun BitChordApp(
                             if (cached != null && cached.videoId != song.videoId &&
                                 !versionAlignmentPending(cached.videoId)
                             ) {
-                                optimisticVersionSong = cached.copy(
+                                versions.optimisticVersionSong = cached.copy(
                                     queueTier = song.queueTier,
                                     queueEntryId = song.queueEntryId,
                                     radioName = song.radioName,
@@ -3513,7 +3496,7 @@ private fun BitChordApp(
                             if (cached != null && cached.videoId != song.videoId &&
                                 !versionAlignmentPending(cached.videoId)
                             ) {
-                                optimisticVersionSong = cached.copy(
+                                versions.optimisticVersionSong = cached.copy(
                                     queueTier = song.queueTier,
                                     queueEntryId = song.queueEntryId,
                                     radioName = song.radioName,
