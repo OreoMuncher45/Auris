@@ -32,6 +32,7 @@ import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.RatingTarget
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.playback.QueueTimeline
@@ -989,8 +990,17 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         persistence.saveLikedIds(likedIds)
         persistence.saveDislikedIds(dislikedIds)
         scope.launch {
-            DesktopSearchClient.rate(song.videoId, status)
-                .onFailure { DesktopTrackLog.log("youtube: rating ${song.videoId} failed: ${it.message}") }
+            // A row out of Spotify's catalogue carries a synthetic id that the
+            // rating API refuses, so it is rated through the recording behind
+            // it. A YouTube row rates itself, and nothing is asked of the
+            // network to find that out.
+            val target = RatingTarget.resolve(song)
+            if (target == null) {
+                DesktopTrackLog.log("youtube: no recording behind ${song.videoId} to rate")
+                return@launch
+            }
+            DesktopSearchClient.rate(target, status)
+                .onFailure { DesktopTrackLog.log("youtube: rating $target failed: ${it.message}") }
         }
     }
 

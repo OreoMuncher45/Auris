@@ -3063,6 +3063,13 @@ private fun BitChordApp(
             albumName = current.albumName ?: extra.albumName,
         )
     }
+    // A row out of Spotify's catalogue has no YouTube id of its own, and the
+    // rating is written against the recording behind it. Resolving the row
+    // while it plays is what lets the heart show the rating of a recording
+    // that was liked earlier, and what lets a tap on it cost nothing.
+    LaunchedEffect(player.song?.videoId) {
+        player.song?.let { viewModel.prepareRatingTarget(it) }
+    }
     // The three-dot menu snapshots the track into songActions when it's opened,
     // so a menu opened before the lookup above resolves would otherwise be
     // stuck without album/artist rows even after the ids come in. Keep it in
@@ -3201,7 +3208,7 @@ private fun BitChordApp(
             autoplayEnabled = autoplayEnabled,
             signedIn = signedIn,
             likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
-            onToggleLike = { viewModel.toggleLike(song.videoId) },
+            onToggleLike = { viewModel.toggleLike(song) },
             // The service owns both the queue and the Shuffle state. Keeping
             // the toggle on that side prevents the UI from changing the icon
             // before its asynchronous reorder command has actually landed.
@@ -3709,9 +3716,9 @@ private fun BitChordApp(
                     },
                 // The sheet stays up for a rating: it shows the new state
                 // in place, and people often thumb a song and then queue it.
-                onToggleLike = { viewModel.toggleLike(song.videoId) },
+                onToggleLike = { viewModel.toggleLike(song) },
                 onToggleDislike = {
-                    val previousStatus = viewModel.toggleDislike(song.videoId)
+                    val previousStatus = viewModel.toggleDislike(song)
                     if (
                         previousStatus != null &&
                         shouldSkipAfterDislike(
@@ -4243,7 +4250,7 @@ private fun BitChordApp(
                             onShuffle = { startFlow(true) },
                             onNewMix = { viewModel.newFlowMix() },
                             onToggleLike = {
-                                player.song?.let { viewModel.toggleLike(it.videoId) }
+                                player.song?.let { viewModel.toggleLike(it) }
                             },
                             currentLiked = player.song?.let {
                                 likeStatuses[it.videoId] == LikeStatus.LIKE

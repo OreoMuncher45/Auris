@@ -14,6 +14,7 @@ import com.music.bitchord.data.AppAnnouncements
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.RatingTarget
 import com.music.bitchord.data.presence.AndroidPresence
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.isUnresolvedSpotify
@@ -965,15 +966,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     /** Every rating known for this account: the library's, then this session's. */
     val likeStatuses: StateFlow<Map<String, LikeStatus>> =
-        combine(_library, LikeState.overrides) { library, overrides ->
+        combine(_library, LikeState.overrides, RatingTarget.resolved) { library, overrides, resolved ->
             val liked = (library as? UiState.Success)?.data?.likedSongs
                 ?.associate { it.videoId to LikeStatus.LIKE }
                 .orEmpty()
-            liked + overrides
+            val statuses = liked + overrides
+            if (resolved.isEmpty()) return@combine statuses
+            // A resolved row shows the rating of the recording it points at:
+            // the row has no rating of its own, and the recording is what the
+            // heart writes. A row this session has rated keeps its own
+            // answer, because that is the newer of the two.
+            val next = statuses.toMutableMap()
+            resolved.forEach { (rowId, videoId) ->
+                val status = statuses[videoId] ?: return@forEach
+                if (overrides[rowId] == null) next[rowId] = status
+            }
+            next
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     fun likeStatusOf(videoId: String): LikeStatus =
         likeStatuses.value[videoId] ?: LikeStatus.INDIFFERENT
+
+    /**
+     * The rating of [song], for a row that may not be a YouTube row.
+     *
+     * A Spotify row carries a synthetic id that means nothing to the rating
+     * API, so its rating is the rating of the recording it was resolved to.
+     * Before it has been resolved there is no rating to show, which is the
+     * same as none.
+     */
+    fun likeStatusOf(song: Song): LikeStatus {
+        val direct = likeStatuses.value[song.videoId]
+        if (direct != null) return direct
+        val resolved = RatingTarget.videoIdFor(song.videoId) ?: return LikeStatus.INDIFFERENT
+        return likeStatuses.value[resolved] ?: LikeStatus.INDIFFERENT
+    }
 
     /**
      * Sets (or clears) the thumbs rating on [videoId].
@@ -989,24 +1016,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (previous == status) return
         LikeState.set(videoId, status)
         viewModelScope.launch {
-            YtMusicRepository.rate(videoId, status).fold(
-                onSuccess = {
-                    // Liked Music is now out of date either way.
-                    libraryStale = true
-                    if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)
-                    else prependLikedRow()
-                    // Clearing the heart means forgetting the song, not
-                    // demoting it — see [forgetFromLibrary].
-                    val unliked = previous == LikeStatus.LIKE &&
-                        status == LikeStatus.INDIFFERENT
-                    if (unliked) forgetFromLibrary(videoId)
-                },
-                onFailure = {
-                    LikeState.set(videoId, previous)
-                },
-            )
+            writeLike(videoId, status, previous)
         }
     }
+
+    /**
+     * Writes a rating to YouTube Music and does the housekeeping around it.
+     *
+     * Shared by the plain path and the Spotify-row path, which differ only in
+     * which id is written and which key the screen is watching.
+     *
+     * @return whether YouTube took it.
+     */
+    private suspend fun writeLike(videoId: String, status: LikeStatus, previous: LikeStatus): Boolean =
+        YtMusicRepository.rate(videoId, status).fold(
+            onSuccess = {
+                // Liked Music is now out of date either way.
+                libraryStale = true
+                if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)
+                else prependLikedRow()
+                // Clearing the heart means forgetting the song, not
+                // demoting it — see [forgetFromLibrary].
+                val unliked = previous == LikeStatus.LIKE &&
+                    status == LikeStatus.INDIFFERENT
+                if (unliked) forgetFromLibrary(videoId)
+                true
+            },
+            onFailure = {
+                LikeState.set(videoId, previous)
+                false
+            },
+        )
 
     /**
      * Takes an un-liked track out of the library as well, and reports whether
@@ -1124,6 +1164,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (likeStatusOf(videoId) == LikeStatus.LIKE) LikeStatus.INDIFFERENT else LikeStatus.LIKE,
     )
 
+    /**
+     * The heart, for a row that may not be a YouTube row.
+     *
+     * A Spotify row is rated through the YouTube recording behind it: the
+     * rating API takes a YouTube video id, and the row's own id is a
+     * synthetic one that the API refuses — which used to leave the heart
+     * doing nothing at all on every track found in Spotify's catalogue or
+     * through a Spotify search.
+     *
+     * The row is resolved first, and the answer kept, so the second tap costs
+     * nothing. Nothing to write against means nothing is written: the row
+     * keeps its rating rather than being given a fake one.
+     */
+    fun toggleLike(song: Song) {
+        if (!requireSignIn()) return
+        if (!RatingTarget.isRowId(song.videoId)) {
+            toggleLike(song.videoId)
+            return
+        }
+        val previous = likeStatusOf(song)
+        val target = if (previous == LikeStatus.LIKE) LikeStatus.INDIFFERENT else LikeStatus.LIKE
+        // Written to the screen first, under the row's own id, so the heart
+        // fills on the tap rather than after the lookup.
+        LikeState.set(song.videoId, target)
+        viewModelScope.launch {
+            val videoId = RatingTarget.resolve(song)
+            if (videoId == null) {
+                // No YouTube recording behind the row: there is nothing to
+                // rate, and the heart goes back rather than claiming a rating
+                // that was never written.
+                LikeState.set(song.videoId, previous)
+                return@launch
+            }
+            val written = writeLike(videoId, target, likeStatusOf(videoId))
+            LikeState.set(song.videoId, if (written) target else previous)
+        }
+    }
+
     /** As [toggleLike], for the thumb-down. */
     fun toggleDislike(videoId: String): LikeStatus? {
         if (!requireSignIn()) return null
@@ -1137,6 +1215,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
         return previous
+    }
+
+    /**
+     * The thumb-down, for a row that may not be a YouTube row.
+     *
+     * The same arrangement as [toggleLike]: a Spotify row is rated through
+     * the YouTube recording behind it, because the rating API takes a YouTube
+     * video id and the row's own id is a synthetic one.
+     */
+    fun toggleDislike(song: Song): LikeStatus? {
+        if (!requireSignIn()) return null
+        if (!RatingTarget.isRowId(song.videoId)) return toggleDislike(song.videoId)
+        val previous = likeStatusOf(song)
+        val target = if (previous == LikeStatus.DISLIKE) LikeStatus.INDIFFERENT else LikeStatus.DISLIKE
+        LikeState.set(song.videoId, target)
+        viewModelScope.launch {
+            val videoId = RatingTarget.resolve(song)
+            if (videoId == null) {
+                LikeState.set(song.videoId, previous)
+                return@launch
+            }
+            val written = writeLike(videoId, target, likeStatusOf(videoId))
+            LikeState.set(song.videoId, if (written) target else previous)
+        }
+        return previous
+    }
+
+    /**
+     * Resolves a Spotify row to the recording behind it, before the heart is
+     * asked about.
+     *
+     * The resolution is the one thing the heart needs and the row does not
+     * carry: without it the heart cannot show the rating of a recording that
+     * was liked earlier, and the first tap pays for a lookup the player has
+     * usually already made.
+     */
+    fun prepareRatingTarget(song: Song) {
+        if (!RatingTarget.isRowId(song.videoId)) return
+        if (RatingTarget.videoIdFor(song.videoId) != null) return
+        viewModelScope.launch { RatingTarget.resolve(song) }
     }
 
     /**

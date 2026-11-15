@@ -138,6 +138,7 @@ import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.RatingTarget
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.discordAudioQualityLine
@@ -1877,6 +1878,12 @@ class PlaybackService : MediaLibraryService() {
                     val best = TrackMatcher.best(songs, target)
                         ?: songs.firstOrNull { TrackMatcher.sharesArtist(target.artist, it.artist) }
                     best?.let { song ->
+                        // The recording this row was matched to, kept for the
+                        // rating: a Spotify row has no YouTube id of its own,
+                        // and the heart needs one to write against. The answer
+                        // is already in hand here, so the tap does not have to
+                        // ask for it again.
+                        RatingTarget.remember(videoId, song.videoId)
                         runCatching { StreamResolver.resolve(song.videoId) }
                             .getOrNull()
                             ?.let { url -> SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)) }
@@ -4080,6 +4087,38 @@ class PlaybackService : MediaLibraryService() {
         // the optimistic state with YouTube in the background.
         LikeState.set(videoId, target)
         refreshCustomLayouts()
+
+        // A row out of Spotify's catalogue carries a synthetic id that the
+        // rating API refuses, so the notification's heart used to do nothing
+        // on one. The row is resolved to the recording behind it first — the
+        // same recording the player resolves it to — and the rating is
+        // written against that.
+        if (RatingTarget.isRowId(videoId)) {
+            val song = player?.currentMediaItem?.toSong()
+            favoriteActionJob = scope.launch {
+                val resolved = song?.let { RatingTarget.resolve(it) }
+                if (resolved == null) {
+                    LikeState.set(videoId, previous)
+                    refreshCustomLayouts()
+                    TrackLog.w(
+                        "BitChord",
+                        "notification favorite: no recording behind $videoId",
+                        about = videoId,
+                    )
+                    return@launch
+                }
+                LikeState.set(resolved, target)
+                YtMusicRepository.rate(resolved, target)
+                    .onFailure {
+                        LikeState.set(videoId, previous)
+                        LikeState.set(resolved, previous)
+                        refreshCustomLayouts()
+                        TrackLog.w("BitChord", "notification favorite failed: ${it.message}", about = videoId)
+                    }
+            }
+            return
+        }
+
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
                 .onFailure {

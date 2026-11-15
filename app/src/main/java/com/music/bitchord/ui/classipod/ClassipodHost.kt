@@ -321,7 +321,7 @@ fun ClassipodHost(
                     pop()
                 },
                 MenuItem(if (liked) "Unlove" else "Love") {
-                    viewModel.toggleLike(song.videoId)
+                    viewModel.toggleLike(song)
                     pop()
                     push(podSongMenu(song))
                 },
