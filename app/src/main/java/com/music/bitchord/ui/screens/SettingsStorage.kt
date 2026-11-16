@@ -16,7 +16,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import coil3.SingletonImageLoader
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
@@ -24,8 +26,8 @@ import com.music.bitchord.data.settings.AppSettings
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** The Storage category: the song cache and the local music folder. */
 @Composable
@@ -102,9 +104,16 @@ internal fun StorageSettings(
                     val loader = SingletonImageLoader.get(context)
                     loader.memoryCache?.clear()
                     // Deleting up to the whole artwork cache is file I/O, so
-                    // not on the main thread; the toast waits for it to finish.
+                    // not on the main thread. Once asked for, it runs to the
+                    // end in the process's own scope: leaving the page must not
+                    // cancel it, not even while it is still waiting for an IO
+                    // thread. Only the toast belongs to the page, and is
+                    // skipped if the page has gone by the time it is done.
+                    val clearing = ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
+                        loader.diskCache?.clear()
+                    }
                     clearScope.launch {
-                        withContext(Dispatchers.IO) { loader.diskCache?.clear() }
+                        clearing.await()
                         Toast.makeText(context, context.getString(R.string.image_cache_cleared), Toast.LENGTH_SHORT).show()
                     }
                 },
