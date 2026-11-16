@@ -26,7 +26,7 @@ import sys
 
 sys.dont_write_bytecode = True  # importing classfile must not leave a __pycache__ in tools/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from classfile import ClassFileError, class_files, methods  # noqa: E402
+from classfile import run_check  # noqa: E402
 
 
 def argument_words(descriptor):
@@ -49,50 +49,33 @@ def argument_words(descriptor):
     return words
 
 
+LIMIT = 254
+
+
+def inspect(root, path, methods):
+    """A finding for every constructor wider than dex can call."""
+    found = []
+    for name, descriptor, _ in methods:
+        if name == "<init>":
+            words = argument_words(descriptor)
+            if words > LIMIT:
+                found.append((words, "%s: constructor takes %d arguments" % (path, words)))
+    return found
+
+
 def main(roots):
-    limit = 254
-    bad = []
-    unreadable = []
-    for root in roots:
-        # Fails rather than passes when there is nothing to check: a missing
-        # or empty class directory means the compile did not run, not that
-        # every constructor is fine.
-        try:
-            paths = class_files(root)
-        except ClassFileError as e:
-            unreadable.append(str(e))
-            continue
-        for path in paths:
-            try:
-                for name, descriptor, _ in methods(open(path, "rb").read()):
-                    if name != "<init>":
-                        continue
-                    words = argument_words(descriptor)
-                    if words > limit:
-                        bad.append((words, path))
-            except ClassFileError as e:
-                # A class it cannot read is a class it cannot vouch for.
-                unreadable.append("%s: %s" % (path, e))
-    for message in unreadable:
-        print("could not check %s" % message)
-    if unreadable and not bad:
-        print("\n%d unreadable input(s): failing rather than passing unchecked." % len(unreadable))
-        return 1
-    for words, path in sorted(bad, reverse=True):
-        print("%s: constructor takes %d arguments" % (path, words))
-    if bad:
-        print(
-            "\n%d constructor(s) wider than dex can call. A call to a "
-            "constructor with N arguments needs N+1 registers, and dex "
-            "keeps that count in one byte (255). Split the captures: a "
-            "lambda that holds more than 254 of them cannot be called." % len(bad)
-        )
-        return 1
-    if unreadable:
-        return 1
-    print("constructors: all within dex's argument limit")
-    return 0
+    return run_check(
+        roots,
+        inspect,
+        ok_message="constructors: all within dex's argument limit",
+        failure_hint=(
+            "A call to a constructor with N arguments needs N+1 registers, and dex "
+            "keeps that count in one byte (255). Split the captures: a lambda that "
+            "holds more than 254 of them cannot be called."
+        ),
+        usage="usage: check_constructor_widths.py <classes-dir>...",
+    )
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:] or ["."]))
+    sys.exit(main(sys.argv[1:]))
