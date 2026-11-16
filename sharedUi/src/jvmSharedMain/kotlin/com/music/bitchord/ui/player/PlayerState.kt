@@ -24,6 +24,7 @@ import coil3.compose.LocalPlatformContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
+import coil3.size.Precision
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -94,7 +95,20 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
  * Everything here is keyed on the cover's [url] — see [rememberPlayerArtwork].
  */
 @Stable
-internal class PlayerArtwork(val url: String?, private val context: PlatformContext) {
+internal class PlayerArtwork(
+    val url: String?,
+    private val context: PlatformContext,
+    /**
+     * The size of the copy to decode, in pixels — the width of the window the
+     * player is drawn in, capped at the largest rung on the ladder.
+     *
+     * Kept here rather than read from a constant because it is the size the
+     * screen can actually show: asking for the largest rung on every screen
+     * decodes a cover several times the size of the window it is drawn on, and
+     * it is that bitmap — not the picture — that costs the frame.
+     */
+    private val artPx: Int,
+) {
     /**
      * Whether the cover is on screen. Keyed on the artwork rather than on the
      * track, because that is what it actually describes and because only Coil
@@ -152,7 +166,14 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
         val attempt = attempt
         ImageRequest.Builder(context)
             .data(url)
-            .size(ART_PX)
+            .size(artPx)
+            // The cover is decoded at the size the screen can show, and a
+            // source smaller than that is left at its own size rather than
+            // blown up to fill the request: an upscaled copy is more pixels to
+            // hold and no more picture to look at. Coil's painter asks for the
+            // same thing by default; said here so the request means it on its
+            // own.
+            .precision(Precision.INEXACT)
             // What makes a retry a new request as far as Coil's model comparison
             // is concerned. Only from the second go onwards, so the ordinary
             // request stays byte-identical to the one the mesh and the palette
@@ -186,10 +207,13 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
 }
 
 @Composable
-internal fun rememberPlayerArtwork(remoteArt: String?): PlayerArtwork {
+internal fun rememberPlayerArtwork(remoteArt: String?, artPx: Int): PlayerArtwork {
     val context = LocalPlatformContext.current
-    val artUrl = remoteArt?.artworkAt(ART_PX)
-    val art = remember(artUrl) { PlayerArtwork(artUrl, context) }
+    val artUrl = remoteArt?.artworkAt(artPx)
+    // Keyed on the size as well as the cover: a source without a size hint in
+    // its URL keeps the same address at every size, and the copy to decode
+    // still changes with the window.
+    val art = remember(artUrl, artPx) { PlayerArtwork(artUrl, context, artPx) }
     LaunchedEffect(artUrl, art.failed) {
         // A track with no artwork at all fails immediately and would fail
         // identically three more times: there is no request to make, so there is

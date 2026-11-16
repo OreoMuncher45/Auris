@@ -161,8 +161,8 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaybackSourceType
-import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.playerArtPx
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
@@ -176,14 +176,6 @@ import kotlin.math.roundToInt
 
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
-/**
- * Comfortably over the sleeve's drawn size on a phone, without wasting bytes.
- *
- * A rung on the app-wide ladder rather than a number of the player's own, so a
- * large home-screen widget asks for the same copy — see [PLAYER_ART_PX].
- */
-internal const val ART_PX = PLAYER_ART_PX
-
 /**
  * How many further goes a cover that failed to load gets.
  *
@@ -1172,6 +1164,16 @@ fun NowPlayingScreen(
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
+    // The size of the copy of the cover this player draws: the width of the
+    // window it is drawn in, capped at the largest rung on the ladder — see
+    // [playerArtPx]. Every surface below asks for that same copy, so the
+    // sleeve, the mesh, the palette and the full-cover blur share one
+    // download of it, and none of them decodes a cover bigger than the screen
+    // it is shown on.
+    val artPx = remember(windowWidth, density.density) {
+        playerArtPx(windowWidth.value, density.density)
+    }
+
     // The lyric bloom reads the same switch on its own; this half silences the
     // shadow behind the title, credits and transport type.
     val textGlow by PlayerSettings.textGlow.collectAsStateWithLifecycle()
@@ -1587,7 +1589,7 @@ fun NowPlayingScreen(
     // had and never re-emits, so the `onState` that is the sole writer here
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
-    val art = rememberPlayerArtwork(remoteArt)
+    val art = rememberPlayerArtwork(remoteArt, artPx)
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -1650,7 +1652,7 @@ fun NowPlayingScreen(
     // how bright the cover is. The backdrop keeps the artwork's own colours,
     // so the two do not collapse into one grey wash. See
     // [computeNowPlayingPalette].
-    val nowPlayingPalette = rememberNowPlayingPalette(remoteArt, ART_PX)
+    val nowPlayingPalette = rememberNowPlayingPalette(remoteArt, artPx)
     // …unless a clip is standing in for the sleeve, in which case the picture
     // behind the controls is the clip and the clip is what the ink has to
     // belong to. A white sleeve under a black Canvas is the case that used to
@@ -1958,7 +1960,7 @@ fun NowPlayingScreen(
     // effect.
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
         imageUrl = remoteArt,
-        artPx = ART_PX,
+        artPx = artPx,
         prepare = landscape || tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen ||
             playerPrewarmStage >= 1,
     )
@@ -2194,6 +2196,7 @@ fun NowPlayingScreen(
             spotifyCanvasPresentation = spotifyCanvasPresentation,
             trackKey = song.videoId,
             imageUrl = remoteArt,
+            artPx = artPx,
             meshLiveFrames = meshLiveFrames,
             // Asked for at draw time: the line the wash hangs from moves
             // while the picture grows into its banner and comes back

@@ -16,14 +16,20 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 
 /**
- * Saves a track's cover at full quality to the gallery.
+ * Saves a track's cover to the gallery.
  *
  * List rows carry small thumbs (`w60-h60` hints, 640px Tidal covers), so the
  * URL is first upgraded to the largest rendition the host serves before a
  * single byte is fetched — saving the row's own thumbnail would keep a
- * blurry copy forever. Bytes are stored as-is (no re-encode), through
- * MediaStore like the Replay poster: permission-free on API 29+, best
- * effort below it.
+ * blurry copy forever.
+ *
+ * What is filed is then compressed before it is written: a cover kept at the
+ * source's own quality is a megabyte of file for a picture nobody looks at
+ * closely, and the copy the app draws is smaller than that anyway. The
+ * picture is not changed — see [ArtworkCompressor] — only its file is.
+ *
+ * Written through MediaStore like the Replay poster: permission-free on API
+ * 29+, best effort below it.
  */
 object ArtworkDownload {
 
@@ -42,17 +48,21 @@ object ArtworkDownload {
         return thumbnailUrl
     }
 
-    /** Fetches full-quality bytes and files them in Pictures/Auris. */
+    /** Fetches the cover, compresses it, and files it in Pictures/Auris. */
     suspend fun save(context: Context, song: Song): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val url = fullUrl(song.thumbnailUrl) ?: error("no artwork")
-            val bytes = fetch(url)
-            val ext = mimeExt(bytes.contentType)
+            val fetched = fetch(url)
+            // Compressed before it is written. A cover this cannot read is
+            // filed as it arrived rather than lost: the source bytes are
+            // better than no cover at all.
+            val stored = compress(fetched) ?: fetched
+            val ext = mimeExt(stored.contentType)
             val name = fileName(song, ext)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Images.Media.MIME_TYPE, bytes.contentType)
+                    put(MediaStore.Images.Media.MIME_TYPE, stored.contentType)
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
                         "${Environment.DIRECTORY_PICTURES}/Auris",
@@ -61,21 +71,31 @@ object ArtworkDownload {
                 val uri = context.contentResolver
                     .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                     ?: error("no row")
-                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes.data) }
+                context.contentResolver.openOutputStream(uri)?.use { it.write(stored.data) }
                     ?: error("no stream")
             } else {
                 val dir = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
                     "Auris",
                 ).also { it.mkdirs() }
-                FileOutputStream(File(dir, name)).use { it.write(bytes.data) }
+                FileOutputStream(File(dir, name)).use { it.write(stored.data) }
             }
-            TrackLog.d(TAG, "cover saved: $name (${bytes.data.size / 1024} KB)")
+            TrackLog.d(TAG, "cover saved: $name (${stored.data.size / 1024} KB)")
             name
         }
     }
 
     private data class Fetched(val data: ByteArray, val contentType: String)
+
+    /**
+     * The fetched bytes as a compressed JPEG, or null when they are not an
+     * image this can read.
+     */
+    private fun compress(fetched: Fetched): Fetched? {
+        val jpeg = ArtworkCompressor.toJpeg(fetched.data, ArtworkCompressor.GALLERY_MAX_SIDE)
+            ?: return null
+        return Fetched(jpeg, "image/jpeg")
+    }
 
     private fun fetch(url: String): Fetched {
         val request = Request.Builder().url(url)

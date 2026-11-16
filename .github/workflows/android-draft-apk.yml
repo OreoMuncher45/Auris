@@ -143,6 +143,10 @@ on:
           - The onboarding flow, the slide and the scroll stopped dropping frames. A
             long track no longer takes the process down with it, and background work
             can no longer take the app down with it.
+          - Album art arrives smaller: the player asks for the copy the screen can
+            actually show, so a cover no longer takes the frame when it lands. The
+            copies kept on the phone — the one filed in the gallery and the one
+            inside a downloaded track — are compressed as well, and look the same.
           
           Audio
           - Dolby Atmos is now a rung for downloads on devices that can actually decode

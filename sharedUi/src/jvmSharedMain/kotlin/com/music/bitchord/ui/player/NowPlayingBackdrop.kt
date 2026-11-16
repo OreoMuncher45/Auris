@@ -62,6 +62,11 @@ internal fun BoxScope.PortraitBackdrop(
     spotifyCanvasPresentation: Boolean,
     trackKey: String,
     imageUrl: String?,
+    /**
+     * The size of the copy of the cover to read, in pixels — the same one the
+     * sleeve asks for, so both come off one download of it.
+     */
+    artPx: Int,
     meshLiveFrames: Flow<ImageBitmap?>?,
     seam: () -> Dp,
     lift: () -> Dp,
@@ -132,6 +137,7 @@ internal fun BoxScope.PortraitBackdrop(
             PlayerMeshBackdrop(
                 trackKey = trackKey,
                 imageUrl = imageUrl,
+                artPx = artPx,
                 liveFrames = meshLiveFrames,
                 seam = seam,
                 lift = lift,
@@ -305,6 +311,7 @@ internal fun BoxScope.SpotifyCanvasChrome(
 private fun PlayerMeshBackdrop(
     trackKey: String,
     imageUrl: String?,
+    artPx: Int,
     liveFrames: Flow<ImageBitmap?>?,
     seam: () -> Dp,
     modifier: Modifier = Modifier,
@@ -312,7 +319,7 @@ private fun PlayerMeshBackdrop(
     liftFrom: () -> Dp = { 0.dp },
 ) {
     val mesh = key(trackKey) {
-        rememberArtworkMesh(imageUrl, artPx = ART_PX, liveFrames = liveFrames)
+        rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames)
     }
     ArtworkMeshBackdrop(
         mesh = mesh,

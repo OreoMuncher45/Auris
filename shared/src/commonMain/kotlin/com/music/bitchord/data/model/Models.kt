@@ -1,5 +1,7 @@
 package com.music.bitchord.data.model
 
+import kotlin.math.roundToInt
+
 /** Tier of an item in the playback queue. */
 enum class QueueTier {
     /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
@@ -306,6 +308,32 @@ const val NOTIFICATION_ART_PX = 544
  * track had artwork at all.
  */
 const val PLAYER_ART_PX = 1200
+
+/**
+ * The smallest copy of the player's artwork worth asking for.
+ *
+ * A window narrower than this would be served a copy bigger than it can show,
+ * which costs bytes and decode time for pixels nobody sees. This is the floor
+ * under that.
+ */
+const val MIN_PLAYER_ART_PX = 640
+
+/**
+ * The player's artwork size in pixels: the width of the window the player is
+ * drawn in, capped at the largest rung on the ladder.
+ *
+ * The sleeve and the banner are the picture edge to edge, so the window's own
+ * width is what the artwork has to cover — and nothing past it is ever on
+ * screen. Asking for the window's size rather than the largest rung is what
+ * stops the player from decoding a cover several times the size of the screen
+ * it is drawn on: a 1200px cover on a 720px-wide phone is 2MB of bitmap for
+ * pixels that are never shown, and it is the decode and the upload of that
+ * bitmap that makes a cover's arrival jank the player.
+ */
+fun playerArtPx(windowWidthDp: Float, density: Float): Int {
+    val px = (windowWidthDp * density).roundToInt()
+    return px.coerceIn(MIN_PLAYER_ART_PX, PLAYER_ART_PX)
+}
 
 enum class BrowseType { ALBUM, ARTIST, PLAYLIST, PODCAST, OTHER }
 
