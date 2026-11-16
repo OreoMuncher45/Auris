@@ -1209,18 +1209,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // fills on the tap rather than after the lookup.
         LikeState.set(song.videoId, target)
         viewModelScope.launch {
-            val videoId = RatingTarget.resolve(song)
-            if (videoId == null) {
-                // No YouTube recording behind the row: there is nothing to
-                // rate, and the heart goes back rather than claiming a rating
-                // that was never written.
-                LikeState.set(song.videoId, previous)
-                return@launch
+            withRowRating(song.videoId) {
+                val videoId = RatingTarget.resolve(song)
+                if (videoId == null) {
+                    // No YouTube recording behind the row: there is nothing to
+                    // rate, and the heart goes back rather than claiming a rating
+                    // that was never written.
+                    LikeState.set(song.videoId, previous)
+                    return@withRowRating
+                }
+                val written = writeLike(videoId, target, likeStatusOf(videoId))
+                LikeState.set(song.videoId, if (written) target else previous)
             }
-            val written = writeLike(videoId, target, likeStatusOf(videoId))
-            LikeState.set(song.videoId, if (written) target else previous)
         }
     }
+
+    /**
+     * One rating at a time per row, in tap order. Without it a quick second
+     * tap could finish its lookup and write first, and the older tap would
+     * then land on top of it. Rows don't wait on each other. [Mutex] is fair,
+     * and each launch reaches the lock before its first suspension, so the
+     * queue is the order the taps came in.
+     */
+    private val rowRatingLocks = ConcurrentHashMap<String, Mutex>()
+
+    private suspend inline fun withRowRating(rowId: String, block: () -> Unit) =
+        rowRatingLocks.getOrPut(rowId) { Mutex() }.withLock(action = block)
 
     /** As [toggleLike], for the thumb-down. */
     fun toggleDislike(videoId: String): LikeStatus? {
@@ -1251,13 +1265,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val target = if (previous == LikeStatus.DISLIKE) LikeStatus.INDIFFERENT else LikeStatus.DISLIKE
         LikeState.set(song.videoId, target)
         viewModelScope.launch {
-            val videoId = RatingTarget.resolve(song)
-            if (videoId == null) {
-                LikeState.set(song.videoId, previous)
-                return@launch
+            withRowRating(song.videoId) {
+                val videoId = RatingTarget.resolve(song)
+                if (videoId == null) {
+                    LikeState.set(song.videoId, previous)
+                    return@withRowRating
+                }
+                val written = writeLike(videoId, target, likeStatusOf(videoId))
+                LikeState.set(song.videoId, if (written) target else previous)
             }
-            val written = writeLike(videoId, target, likeStatusOf(videoId))
-            LikeState.set(song.videoId, if (written) target else previous)
         }
         return previous
     }
