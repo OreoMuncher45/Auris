@@ -351,8 +351,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 add(SmbCoverFetcher.Factory())
             }
             .memoryCache {
+                // A fifth of the heap, as before, except on a phone that calls
+                // itself low on RAM. Coil's own default already allows for
+                // that (15% there), and a hard-coded 0.20 overrode it on the
+                // devices that can least spare it. Those phones usually have a
+                // 96–128 MB heap, so this is about 5–6 MB of decoded covers
+                // that the low-memory killer no longer counts against the app.
+                val lowRam = getSystemService(android.app.ActivityManager::class.java)
+                    ?.isLowRamDevice == true
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.20)
+                    .maxSizePercent(context, if (lowRam) 0.15 else 0.20)
                     .build()
             }
             .diskCache {
