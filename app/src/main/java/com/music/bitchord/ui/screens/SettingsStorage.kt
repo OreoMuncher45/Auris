@@ -22,7 +22,6 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.settings.AppSettings
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 /** The Storage category: the song cache and the local music folder. */
 @Composable
