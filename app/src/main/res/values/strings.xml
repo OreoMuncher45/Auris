@@ -161,6 +161,7 @@
     <string name="login_failed">Login failed</string>
     <string name="song_cache_cleared">Song cache cleared</string>
     <string name="image_cache_cleared">Image cache cleared</string>
+    <string name="image_cache_clear_failed">Couldn’t clear the image cache: %1$s</string>
     <string name="no_equalizer">No system equalizer on this device</string>
     <string name="no_dolby_atmos">No Dolby Atmos panel on this device</string>
     <string name="dolby_atmos_open_failed">Couldn’t open Dolby Atmos settings</string>

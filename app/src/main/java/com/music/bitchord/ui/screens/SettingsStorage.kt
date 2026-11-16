@@ -23,6 +23,7 @@ import coil3.SingletonImageLoader
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.settings.AppSettings
+import java.io.IOException
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -109,12 +110,29 @@ internal fun StorageSettings(
                     // cancel it, not even while it is still waiting for an IO
                     // thread. Only the toast belongs to the page, and is
                     // skipped if the page has gone by the time it is done.
+                    //
+                    // A file Coil cannot delete surfaces as an IOException
+                    // from clear(); it is reported in the toast rather than
+                    // thrown, and the success toast is only shown on success.
                     val clearing = ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
-                        loader.diskCache?.clear()
+                        try {
+                            loader.diskCache?.clear()
+                            null
+                        } catch (e: IOException) {
+                            e
+                        }
                     }
                     clearScope.launch {
-                        clearing.await()
-                        Toast.makeText(context, context.getString(R.string.image_cache_cleared), Toast.LENGTH_SHORT).show()
+                        val failure = clearing.await()
+                        val message = if (failure == null) {
+                            context.getString(R.string.image_cache_cleared)
+                        } else {
+                            context.getString(
+                                R.string.image_cache_clear_failed,
+                                failure.message ?: context.getString(R.string.unknown_error),
+                            )
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }
                 },
             )
