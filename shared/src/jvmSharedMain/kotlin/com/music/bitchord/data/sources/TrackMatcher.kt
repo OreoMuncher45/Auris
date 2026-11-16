@@ -404,6 +404,14 @@ object TrackMatcher {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
         var text = normalize(raw)
+        // "Morning Light Eclipsa Audio", "봄날 - Eclipsa Audio", "Song (Eclipsa
+        // Audio)": YouTube's immersive upload of the stereo track, filed under
+        // the stereo title with the format added. No other catalogue prints
+        // the format, so a title that kept it searched for "eclipsa", found
+        // nothing, and the song stayed on YouTube's Opus. Taken out before any
+        // bracket or dash is read, so every shape of it goes the same way.
+        // Never down to nothing: a title that is only the label keeps it.
+        text.replace(IMMERSIVE_LABEL, " ").takeIf { it.isNotBlank() }?.let { text = it }
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -479,14 +487,7 @@ object TrackMatcher {
         // its name.
         while (words.size > 1) {
             val last = words.last()
-            // "Morning Light Eclipsa Audio": YouTube's immersive upload of the
-            // stereo track, filed under the stereo title with the format
-            // appended. No other catalogue prints the format, so a search
-            // that kept "eclipsa" found nothing and the song stayed on
-            // YouTube's Opus. Dropped as a pair, never "eclipsa" on its own.
-            if (words.size > 2 && last == "audio" && words[words.size - 2] == "eclipsa") {
-                words = words.dropLast(2)
-            } else if (last in TRAILING_NOISE) words = words.dropLast(1)
+            if (last in TRAILING_NOISE) words = words.dropLast(1)
             else if (last in TRAILING_TAKES) {
                 versions += last
                 words = words.dropLast(1)
@@ -494,9 +495,7 @@ object TrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            // The same immersive suffix comes off the raw core too, or
-            // "봄날 Eclipsa Audio" would still miss a stereo row named "봄날".
-            text.replace(IMMERSIVE_SUFFIX, "").replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -851,8 +850,11 @@ object TrackMatcher {
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
 
-    /** YouTube's immersive-upload label at the end of a title; see [parseTitle]. */
-    private val IMMERSIVE_SUFFIX = Regex("""\s+eclipsa\s+audio[\s\p{Punct}]*$""", RegexOption.IGNORE_CASE)
+    /**
+     * YouTube's immersive-upload label, wherever a title carries it, with the
+     * separators in front of it ("봄날·Eclipsa Audio"); see [parseTitle].
+     */
+    private val IMMERSIVE_LABEL = Regex("""[\s\p{P}\p{S}]*(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
