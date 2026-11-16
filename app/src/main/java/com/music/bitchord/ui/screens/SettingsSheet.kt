@@ -156,7 +156,6 @@ import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.NerdStats
-import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.theme.AppFonts
 import com.music.bitchord.data.settings.OutputPcmMode
@@ -313,7 +312,6 @@ fun SettingsScreen(
 
     // Read here so the row can say "In a party · ABC123" rather than making
     // somebody open the screen to find out whether they are still in one.
-    val party by ListenTogether.state.collectAsStateWithLifecycle()
 
     // Filters the rows below — see [SettingsSearch]. Blank shows everything,
     // exactly as if the field weren't there.
@@ -524,36 +522,13 @@ fun SettingsScreen(
             SettingsCategoryIndex(onOpen = onOpenCategory)
         }
         if (openCategory == SettingsCategory.ACCOUNT || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.ACCOUNT) {
-            val accountTitle = stringResource(R.string.account_integrations)
-            // What the row opens is the scrobbling screen, so the services it
-            // signs into are worth typing at this field even though none of
-            // them is named on the row itself.
-            row(accountTitle, "scrobbling", "last.fm", "listenbrainz") {
-                SettingsRow(
-                    icon = Icons.Rounded.Person,
-                    title = accountTitle,
-                    subtitle = account?.email?.takeIf { it.isNotBlank() }
-                        ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
-                    onClick = onAccountScrobbling,
-                )
-            }
-            // Sits with the account rather than with Playback: a party is up to
-            // five signed-in people, and being signed in is the whole of what
-            // the row needs before it will do anything.
-            val listenTogetherTitle = stringResource(R.string.listen_together)
-            row(listenTogetherTitle, "jam", "party", "sync", "friends") {
-                SettingsRow(
-                    icon = Icons.Rounded.Groups,
-                    title = listenTogetherTitle,
-                    subtitle = party.code?.let {
-                        stringResource(R.string.listen_together_in_party, it)
-                    } ?: stringResource(R.string.listen_together_subtitle),
-                    badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
-                    onClick = onListenTogether,
-                )
-            }
-        }
+            AccountSettings(
+                search = search,
+                signedIn = signedIn,
+                account = account,
+                onAccountScrobbling = onAccountScrobbling,
+                onListenTogether = onListenTogether,
+            )
         }
         if (openCategory == SettingsCategory.AUDIO || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.AUDIO) {
@@ -2952,7 +2927,7 @@ internal class SettingsGroupScope(
  * that didn't, so a filtered card is indistinguishable from a hand-written one.
  */
 @Composable
-private fun SearchableSettingsGroup(
+internal fun SearchableSettingsGroup(
     search: SettingsSearch,
     /** The category these rows belong to; its title is the group's header. */
     category: SettingsCategory? = null,
