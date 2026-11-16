@@ -404,7 +404,7 @@ private const val ARTIST_SONGS_PER_COLUMN = 4
 private val ARTIST_BANNER_HEIGHT = 340.dp
 
 /** The library shelf the account's own playlists arrive on, and the one edits are spliced into. */
-private const val PLAYLISTS_SHELF = "Playlists"
+internal const val PLAYLISTS_SHELF = "Playlists"
 private const val STATS_MAX_DELTA_MS = 15_000L
 private const val SCROBBLE_THRESHOLD_MS = 180_000L
 
@@ -2897,6 +2897,50 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         partySyncHolder[0]?.onLocalIntent()
     }
 
+    // What the page area may ask of the window; see DesktopPageActions.
+    val pageActions = DesktopPageActions(
+        playSong = { song, source -> playSong(song, source = source) },
+        playSongs = { songs, index, source -> playSongs(songs, index, source) },
+        playNext = { song -> playNext(song) },
+        addToQueue = ::addToQueue,
+        addToPlaylist = { playlistTarget = it },
+        toggleLike = { song -> toggleLike(song) },
+        downloadSong = ::downloadSong,
+        downloadAll = ::downloadAll,
+        removeFromOpenPlaylist = ::removeFromOpenPlaylist,
+        shareCollection = ::shareCollection,
+        toggleSubscription = ::toggleSubscription,
+        openArtist = ::openArtist,
+        openArtistByName = ::openArtistByName,
+        openBrowseItem = ::openBrowseItem,
+        openShelfItem = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
+        openLibraryItem = ::openLibraryItem,
+        openMoodGenre = ::openMoodGenre,
+        openPodcastShow = ::openPodcastShow,
+        playRadioSeed = ::playRadioSeed,
+        selectDestination = ::selectDestination,
+        loadHome = ::loadHome,
+        loadMoreHome = ::loadMoreHome,
+        reloadLibrary = ::reloadLibrary,
+        loadMoreCollectionSongs = ::loadMoreCollectionSongs,
+        editQuery = ::editQuery,
+        search = ::search,
+        runSearch = ::runSearch,
+        recordSongSearch = { song -> recordSongSearch(song) },
+        recordBrowseSearch = { item -> recordBrowseSearch(item) },
+        songMenu = { song -> songMenu(song) },
+    )
+    val pageLists = DesktopPageListStates(
+        home = homeListState,
+        explore = exploreListState,
+        radio = radioListState,
+        moodGenre = moodGenreListState,
+        search = searchListState,
+        library = libraryListState,
+        libraryGrid = libraryGridState,
+        podcasts = podcastListState,
+    )
+
     MaterialTheme(
         colorScheme = desktopColorScheme(),
         typography = desktopTypography(),
@@ -3409,9 +3453,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                 },
             ) { contentPadding ->
-                // Desktop pages start at the same top edge as Library. Only preserve space for the
-                // floating player/navigation bar at the bottom in compact windows.
-                val sharedPagePadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
                 CompositionLocalProvider(
                     LocalPullToRefreshEnabled provides false,
                     LocalShelfRowChrome provides DesktopShelfRowChrome,
@@ -3470,366 +3511,27 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onLocalMusicChanged = { localMusicRevision++ },
                             onBack = ::goBack,
                         )
-                        overlays.replay -> DesktopReplayPage(
-                            summary = pages.replaySummary,
-                            period = pages.replayPeriod,
-                            holder = replayHolder,
-                            onPeriodChange = { pages.replayPeriod = it },
-                            onPlaySong = { playSong(it) },
-                            onOpenArtist = ::openArtistByName,
+                        else -> DesktopPageHost(
+                            destination = destination,
                             contentPadding = contentPadding,
-                        )
-                        pages.openedArtist != null -> DesktopArtistPage(
-                            state = pages.artistState,
-                            fallbackName = pages.openedArtist!!.name,
-                            onRetry = {
-                                pages.artistState = UiState.Loading
-                                pages.artistReloads++
-                            },
-                            onPlaySongs = { songs, index ->
-                                playSongs(songs, index, pages.openedArtist?.let { artistSource(it) })
-                            },
-                            onShuffle = { songs ->
-                                playSongs(songs, 0, pages.openedArtist?.let { artistSource(it) })
-                            },
-                            onOpenMenu = { song -> openMenu(song) },
-                            onShelfItemClick = ::openShelfItem,
-                            // A channel subscription is the account's, so a guest is never shown
-                            // the button.
-                            onToggleSubscription = if (youtubeSignedIn) ::toggleSubscription else null,
-                            contentPadding = contentPadding,
-                        )
-                        pages.openedCollection?.loading == true -> DesktopPageScaffold(contentPadding) {
-                            Box(Modifier.fillMaxSize()) {
-                                val error = pages.collectionError
-                                if (error != null) {
-                                    DesktopErrorPage(error) { pages.collectionReloads++ }
-                                } else {
-                                    val title = pages.openedCollection?.title.orEmpty()
-                                    DesktopLoadingPage(if (title.isBlank()) "Loading…" else "Loading $title…")
-                                }
-                            }
-                        }
-                        pages.openedCollection != null -> DesktopCollectionPage(
-                            collection = pages.openedCollection!!,
-                            loadingMore = pages.collectionLoadingMore,
-                            onLoadMore = ::loadMoreCollectionSongs,
-                            onRename = { overlays.rename = true }.takeIf { pages.openedCollection?.owned == true },
-                            onShare = pages.openedCollection
-                                ?.takeIf { it.type == BrowseType.ALBUM || it.type == BrowseType.PLAYLIST }
-                                ?.let { collection -> { shareCollection(collection) } },
-                            onDelete = { overlays.delete = true }.takeIf { pages.openedCollection?.owned == true },
-                            onRemoveFromPlaylist = ::removeFromOpenPlaylist
-                                .takeIf { pages.openedCollection?.owned == true },
-                            likedIds = likedIds,
-                            onPlaySongs = { songs, index ->
-                                playSongs(songs, index, pages.openedCollection?.let { collectionSource(it) })
-                            },
-                            onShuffle = { songs ->
-                                playSongs(songs.shuffled(), 0, pages.openedCollection?.let { collectionSource(it) })
-                            },
-                            onDownloadAll = ::downloadAll,
-                            animatedCanvas = settings.animatedCanvas,
-                            onToggleLike = { song ->
-                                toggleLike(song)
-                            },
-                            onAddToPlaylist = { playlistTarget = it },
-                            onDownload = ::downloadSong,
-                            downloadedIds = downloads.map(Song::videoId).toSet(),
-                            downloadInProgress = downloadInProgress,
-                            contentPadding = contentPadding,
-                        )
-                        destination == DesktopDestination.LISTEN_NOW -> HomeScreen(
-                            state = pages.homeState,
-                            listState = homeListState,
-                            onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
-                            onRetry = ::loadHome,
-                            refreshing = false,
-                            onRefresh = ::loadHome,
-                            pullState = rememberPullToRefreshState(),
-                            contentPadding = sharedPagePadding,
-                            title = null,
-                            signedIn = youtubeSignedIn,
-                            onSignIn = { overlays.accounts = true },
-                            onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
-                            onLoadMore = ::loadMoreHome,
-                            loadingMore = pages.homeLoadingMore,
-                            recentlyPlayedLoading = pages.homeRecentsLoading,
-                            leadHero = false,
-                        )
-                        destination == DesktopDestination.EXPLORE && pages.selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
-                            MoodGenrePlaylistsScreen(
-                                title = pages.selectedMoodGenre!!.title,
-                                state = pages.moodGenreShelves,
-                                listState = moodGenreListState,
-                                onItemClick = { item -> openShelfItem(item, pages.selectedMoodGenre?.title) },
-                                onRetry = {
-                                    pages.moodGenreShelves = UiState.Loading
-                                    pages.moodGenreReloads++
-                                },
-                                contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        pages.openedPodcastShow != null -> DesktopPodcastShowPage(
-                            page = pages.openedPodcastShow!!,
-                            onPlay = { episode ->
-                                playSong(
-                                    episode,
-                                    source = DesktopQueueSource(
-                                        pages.openedPodcastShow?.name ?: "Podcast",
-                                        PlaybackSourceType.EXPLORE,
-                                    ),
-                                )
-                            },
-                            onPlayAll = { episodes ->
-                                playSongs(
-                                    episodes,
-                                    0,
-                                    DesktopQueueSource(
-                                        pages.openedPodcastShow?.name ?: "Podcast",
-                                        PlaybackSourceType.EXPLORE,
-                                    ),
-                                )
-                            },
-                            onBack = { pages.openedPodcastShow = null },
-                            contentPadding = contentPadding,
-                        )
-                        destination == DesktopDestination.PODCASTS -> PodcastsScreen(
-                            state = pages.podcastShows,
-                            listState = podcastListState,
-                            sections = pages.podcastSections,
-                            searchQuery = pages.podcastSearchQuery,
-                            onSearchQueryChange = { pages.podcastSearchQuery = it },
-                            searchResults = pages.podcastSearchResults,
-                            onShowClick = ::openPodcastShow,
-                            onRetry = { pages.podcastReloads++ },
-                            refreshing = false,
-                            onRefresh = { pages.podcastReloads++ },
-                            pullState = rememberPullToRefreshState(),
-                            contentPadding = sharedPagePadding,
-                            showTitle = false,
-                        )
-                        destination == DesktopDestination.RADIO -> RadioScreen(
-                            state = pages.exploreState,
-                            listState = radioListState,
-                            // The Flow tile is a community feature the desktop has no account
-                            // for; the rest of the page stands on its own.
-                            flowItem = null,
-                            onFlowClick = {},
-                            seeds = radioSeeds,
-                            onSeedClick = ::playRadioSeed,
-                            onStationClick = { item ->
-                                // The station's shelves are opened on Explore, which is where
-                                // the phone opens them too.
-                                selectDestination(DesktopDestination.EXPLORE)
-                                openMoodGenre(item)
-                            },
-                            onStartStation = { selectDestination(DesktopDestination.SEARCH) },
-                            onGenresClick = { selectDestination(DesktopDestination.EXPLORE) },
-                            onRetry = { pages.exploreReloads++ },
-                            refreshing = false,
-                            onRefresh = { pages.exploreReloads++ },
-                            pullState = rememberPullToRefreshState(),
-                            contentPadding = sharedPagePadding,
-                        )
-                        destination == DesktopDestination.EXPLORE -> ExploreScreen(
-                            state = pages.exploreState,
-                            listState = exploreListState,
-                            onCategoryClick = ::openMoodGenre,
-                            onRetry = { pages.exploreReloads++ },
-                            refreshing = false,
-                            onRefresh = { pages.exploreReloads++ },
-                            pullState = rememberPullToRefreshState(),
-                            contentPadding = sharedPagePadding,
-                            showTitle = false,
-                        )
-                        destination == DesktopDestination.SEARCH -> SearchScreen(
-                            query = searchState.query,
-                            onQueryChange = ::editQuery,
-                            filter = searchState.filter,
-                            // The playing row's indicator, as the phone passes it: the engine's
-                            // live state, not the selection a track change publishes behind it.
-                            currentSong = playback.song,
+                            pages = pages,
+                            overlays = overlays,
+                            settings = settings,
+                            searchState = searchState,
+                            lists = pageLists,
+                            actions = pageActions,
+                            openMenu = openMenu,
+                            playingSong = playback.song,
                             isPlaying = playback.isPlaying,
-                            onFilterChange = {
-                                searchState.filter = it
-                                if (searchState.query.isNotBlank()) search()
-                            },
-                            results = when {
-                                searchState.loading -> UiState.Loading
-                                searchState.error != null -> UiState.Error(searchState.error!!)
-                                searchState.committed -> UiState.Success(searchState.rows)
-                                else -> null
-                            },
-                            loadingMore = false,
-                            onLoadMore = {},
-                            listState = searchListState,
-                            scrollResetTrigger = searchState.scrollReset,
-                            focusRequested = searchState.focusRequested,
-                            onFocusHandled = { searchState.focusRequested = false },
-                            onSongClick = { songs, index ->
-                                songs.getOrNull(index)?.let { song ->
-                                    recordSongSearch(song)
-                                    playSong(song, source = DesktopQueueSource(DesktopStrings["search", "Search"], PlaybackSourceType.SEARCH))
-                                }
-                            },
-                            onSongLongPress = ::openMenu,
-                            onSongSwipe = { song ->
-                                if (DesktopAppUiHost.swipeToPlayNext.value) playNext(song) else addToQueue(song)
-                            },
-                            onTopResultPlay = { song ->
-                                recordSongSearch(song)
-                                playSong(song, source = DesktopQueueSource(DesktopStrings["search", "Search"], PlaybackSourceType.SEARCH))
-                            },
-                            onTopResultPlaylist = { song ->
-                                recordSongSearch(song)
-                                playlistTarget = song
-                            },
-                            onBrowseClick = { item ->
-                                recordBrowseSearch(item)
-                                openBrowseItem(item)
-                            },
-                            history = searchHistory,
-                            // The typed text leads the list, put there by the keystroke rather than
-                            // taken from the response — the page drops it, as the phone's does.
-                            suggestions = if (searchState.typing && searchState.query.isNotBlank()) {
-                                listOf(searchState.query) +
-                                    searchState.suggestions.filterNot { it.equals(searchState.query, ignoreCase = true) }
-                            } else {
-                                emptyList()
-                            },
-                            typeaheadResults = if (searchState.typing && searchState.query.isNotBlank()) searchState.typeahead else emptyList(),
-                            onSubmit = ::search,
-                            onSuggestionClick = ::runSearch,
-                            onHistoryClick = { entity ->
-                                // Going back to a recent does not record it again, as on the phone.
-                                when (entity.entityType) {
-                                    EntityType.TRACK -> playSong(
-                                        Song(
-                                            videoId = entity.id,
-                                            title = entity.title,
-                                            artist = entity.subtitle,
-                                            thumbnailUrl = entity.artworkUrl,
-                                        ),
-                                        source = DesktopQueueSource(entity.title, PlaybackSourceType.SEARCH),
-                                    )
-                                    EntityType.ARTIST -> openArtist(entity.id, entity.title)
-                                    EntityType.ALBUM, EntityType.PLAYLIST -> openBrowseItem(
-                                        BrowseItem(
-                                            browseId = entity.id,
-                                            title = entity.title,
-                                            subtitle = entity.subtitle,
-                                            thumbnailUrl = entity.artworkUrl,
-                                            type = if (entity.entityType == EntityType.ALBUM) BrowseType.ALBUM else BrowseType.PLAYLIST,
-                                        ),
-                                    )
-                                }
-                            },
-                            onHistoryRemove = DesktopSearchHistory::remove,
-                            onHistoryClear = DesktopSearchHistory::clear,
-                            onTypeaheadLongPress = ::openMenu,
-                            contentPadding = sharedPagePadding,
-                            topPadding = 0.dp,
-                            showField = false,
-                        )
-                        destination == DesktopDestination.LIBRARY && pages.libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
-                            // The phone keeps the grid's sort beside it, in the bar above; here it sits
-                            // at the end of the row the way back is on.
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = 8.dp, end = 12.dp),
-                                horizontalArrangement = Arrangement.End,
-                            ) { DesktopLibrarySortMenu() }
-                            LibraryGridPage(
-                                shelf = pages.libraryShowAll!!,
-                                gridState = libraryGridState,
-                                onItemClick = ::openLibraryItem,
-                                onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
-                                contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
-                                modifier = Modifier.weight(1f),
-                                onNewPlaylist = { overlays.playlistDialog = true }
-                                    .takeIf { pages.libraryShowAll?.title == PLAYLISTS_SHELF },
-                            )
-                        }
-                        destination == DesktopDestination.LIBRARY -> LibraryScreen(
-                            signedIn = youtubeSignedIn,
-                            state = pages.libraryState,
-                            listState = libraryListState,
-                            onShelfItemClick = ::openLibraryItem,
-                            onShelfItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
-                            onNewPlaylist = { overlays.playlistDialog = true },
-                            onShowAll = { shelf -> pages.libraryShowAll = shelf },
-                            replay = {
-                                // The phone's wallet of Replay cards, or nothing until there is
-                                // listening to deal them from.
-                                val cards = remember(pages.replaySummary) { pages.replaySummary.heroCards() }
-                                if (!pages.replaySummary.isEmpty && cards.isNotEmpty()) {
-                                    ShelfRow(
-                                        modifier = Modifier.padding(vertical = 6.dp),
-                                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    ) {
-                                        items(cards, key = { it.label }) { card ->
-                                            ReplayCreditCard(
-                                                label = card.label,
-                                                value = card.value,
-                                                detail = card.detail,
-                                                artworkUrl = card.artworkUrl,
-                                                holder = replayHolder,
-                                                memberSince = pages.replaySummary.memberSince(),
-                                                onClick = { overlays.replay = true },
-                                                modifier = Modifier.width(300.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            onSignIn = { overlays.accounts = true },
-                            onRetry = ::reloadLibrary,
-                            refreshing = false,
-                            onRefresh = ::reloadLibrary,
-                            pullState = rememberPullToRefreshState(),
-                            contentPadding = sharedPagePadding,
-                            links = libraryLinks,
-                            deviceItems = libraryDeviceItems,
-                            showTitle = false,
-                        )
-                        destination == DesktopDestination.HISTORY -> DesktopHistoryPage(
-                            // The account's history when there is one, and what
-                            // this computer played when there is not.
-                            history = pages.remoteHistory.ifEmpty { pages.history },
-                            onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["history", "History"], PlaybackSourceType.HISTORY)) },
-                            onDownload = ::downloadSong,
-                            onAddToPlaylist = { playlistTarget = it },
-                            downloadedIds = downloads.map(Song::videoId).toSet(),
+                            likedIds = likedIds,
+                            downloads = downloads,
                             downloadInProgress = downloadInProgress,
-                            contentPadding = contentPadding,
-                            menu = { song -> songMenu(song) },
-                        )
-                        destination == DesktopDestination.DOWNLOADS -> Box(Modifier.fillMaxSize()) {
-                            DesktopDownloadsPage(
-                                downloads = downloads,
-                                onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["downloads", "Downloads"], PlaybackSourceType.BROWSE)) },
-                                contentPadding = contentPadding,
-                                menu = { song -> songMenu(song) },
-                            )
-                            // Only while there is a queue to look at.
-                            if (downloadInProgress.isNotEmpty()) {
-                                DesktopActionButton(
-                                    "Queue · ${downloadInProgress.size}",
-                                    BitChordIcons.Download,
-                                    onClick = { overlays.downloadManager = true },
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(end = 28.dp, bottom = 28.dp + contentPadding.calculateBottomPadding()),
-                                )
-                            }
-                        }
-                        destination == DesktopDestination.LOCAL_MUSIC -> DesktopLocalMusicPage(
-                            songs = pages.localSongs,
-                            onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["local_music", "Local Music"], PlaybackSourceType.BROWSE)) },
-                            contentPadding = contentPadding,
-                            menu = { song -> songMenu(song) },
+                            youtubeSignedIn = youtubeSignedIn,
+                            radioSeeds = radioSeeds,
+                            searchHistory = searchHistory,
+                            replayHolder = replayHolder,
+                            libraryLinks = libraryLinks,
+                            libraryDeviceItems = libraryDeviceItems,
                         )
                     }
                 }
@@ -4658,7 +4360,7 @@ private const val LOCAL_PLAYLIST_PREFIX = "desktop-playlist:"
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DesktopArtistPage(
+internal fun DesktopArtistPage(
     state: UiState<ArtistPage>,
     fallbackName: String,
     onRetry: () -> Unit,
@@ -4862,11 +4564,11 @@ private fun DesktopStatChip(icon: androidx.compose.ui.graphics.vector.ImageVecto
 
 /** The artist page that is open, and the name to bill it under until it loads. */
 /** The page an artist's tracks were started from. */
-private fun artistSource(target: DesktopArtistTarget) =
+internal fun artistSource(target: DesktopArtistTarget) =
     DesktopQueueSource(target.name, PlaybackSourceType.BROWSE, target.browseId)
 
 /** The album or playlist a queue was started from. */
-private fun collectionSource(collection: DesktopCollection) =
+internal fun collectionSource(collection: DesktopCollection) =
     DesktopQueueSource(collection.title, PlaybackSourceType.BROWSE, collection.browseId)
 
 /** Where a queue was started from, for the player's "Playing from" caption. */
@@ -4921,7 +4623,7 @@ private val SIDEBAR_CAPTION_HEIGHT = 34.dp
 
 
 @Composable
-private fun DesktopHistoryPage(
+internal fun DesktopHistoryPage(
     history: List<Song>,
     onSongClick: (Song) -> Unit,
     onDownload: (Song) -> Unit,
@@ -4955,7 +4657,7 @@ private fun DesktopHistoryPage(
 }
 
 @Composable
-private fun DesktopDownloadsPage(
+internal fun DesktopDownloadsPage(
     downloads: List<Song>,
     onSongClick: (Song) -> Unit,
     contentPadding: PaddingValues,
@@ -4976,7 +4678,7 @@ private fun DesktopDownloadsPage(
 }
 
 @Composable
-private fun DesktopLocalMusicPage(
+internal fun DesktopLocalMusicPage(
     songs: List<Song>,
     onSongClick: (Song) -> Unit,
     contentPadding: PaddingValues,
@@ -6228,7 +5930,7 @@ private fun DesktopSourceEditorDialog(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DesktopCollectionPage(
+internal fun DesktopCollectionPage(
     collection: DesktopCollection,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
@@ -6996,7 +6698,7 @@ private fun DesktopSongRow(
 
 /** A page's box, inset from the shell's chrome. */
 @Composable
-private fun DesktopPageScaffold(contentPadding: PaddingValues, content: @Composable () -> Unit) {
+internal fun DesktopPageScaffold(contentPadding: PaddingValues, content: @Composable () -> Unit) {
     val direction = LocalLayoutDirection.current
     Box(
         Modifier.fillMaxSize().padding(
@@ -7045,7 +6747,7 @@ private fun SectionTitle(
 }
 
 @Composable
-private fun DesktopLoadingPage(label: String) {
+internal fun DesktopLoadingPage(label: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(color = DesktopAccent)
@@ -7056,7 +6758,7 @@ private fun DesktopLoadingPage(label: String) {
 }
 
 @Composable
-private fun DesktopErrorPage(message: String, onRetry: () -> Unit) {
+internal fun DesktopErrorPage(message: String, onRetry: () -> Unit) {
     DesktopEmptyPage(Icons.Rounded.Tune, "Something went wrong", message, onRetry, "Try again")
 }
 
@@ -7247,7 +6949,7 @@ private fun SettingsRow(
 }
 
 @Composable
-private fun DesktopActionButton(
+internal fun DesktopActionButton(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier,
@@ -7266,7 +6968,7 @@ private fun SearchResult.key(): String = when (this) {
     is SearchResult.Browse -> "browse:${item.browseId}"
 }
 
-private fun ShelfItem.toSong(): Song {
+internal fun ShelfItem.toSong(): Song {
     val parts = subtitle.split(" • ", " · ", " | ").filter(String::isNotBlank)
     // Android's InnertubeParser uses the first non-type/non-tally segment.
     val artist = parts.firstOrNull {
