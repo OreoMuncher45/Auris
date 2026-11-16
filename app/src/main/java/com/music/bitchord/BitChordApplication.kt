@@ -61,6 +61,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
         CrashLog.install(this)
+        // Every preference file read before the first frame, set loading now
+        // and all at once. Each init below opens its file and reads it straight
+        // away, and a read blocks until that file's XML is parsed — so the
+        // files were read one after another on the main thread, each behind the
+        // last, the settings file (the biggest) behind the Keystore open. The
+        // framework parses each file on a loader thread of its own from the
+        // moment it is first asked for; asking for them all here lets those
+        // parses run side by side and alongside the Keystore open, and the
+        // inits find them ready or nearly so.
+        prefetchPreferences()
         // The encrypted credential store, opened on a thread of its own from
         // here and joined below, where [authStore] is assigned. Opening it is
         // Keystore work — a master key and a Tink keyset unwrapped — and it
@@ -307,6 +317,19 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     }
 
     /**
+     * Starts the disk load of each preference file the start-up path reads,
+     * without reading any of them — see the call in [onCreate].
+     *
+     * The names are the files the inits in [onCreate] and the first
+     * composition open. A stale name costs nothing: the framework creates no
+     * file for a name until something is written under it, so a file that no
+     * longer exists loads as empty and is dropped with this call's result.
+     */
+    private fun prefetchPreferences() {
+        for (name in STARTUP_PREFERENCE_FILES) getSharedPreferences(name, MODE_PRIVATE)
+    }
+
+    /**
      * A scope for the work that happens beside the app's start rather than on
      * it.
      *
@@ -378,5 +401,24 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     companion object {
         lateinit var authStore: AuthStore
             private set
+
+        /** The preference files read on the way to the first frame; see [prefetchPreferences]. */
+        private val STARTUP_PREFERENCE_FILES = listOf(
+            "bitchord_settings", // AppSettings, SearchHistory, Downloads' legacy blobs
+            "bitchord_media_progress", // MediaProgress
+            "bitchord_podcast_library", // PodcastLibrary
+            "bitchord_local_playlists", // LocalPlaylistStore, from AppSettings.init
+            "bitchord_listen_together", // ListenTogether
+            "bitchord_last_played", // LastPlayed
+            "bitchord_party_queue_stash", // PartyPersonalQueueStash
+            "bitchord_original_versions", // OriginalVersion
+            "bitchord_downloads", // Downloads
+            "bitchord_flow", // FlowStore
+            "bitchord_liked", // LikedCache
+            "audio_cache_state", // AudioCache
+            "presence", // AndroidPresence's install id
+            "bitchord_onboarding", // OnboardingState, in MainActivity's first composition
+            "innertubex_player_config", // AndroidStreamHooks, on the startup thread
+        )
     }
 }
