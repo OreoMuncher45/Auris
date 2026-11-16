@@ -66,10 +66,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // away, and a read blocks until that file's XML is parsed — so the
         // files were read one after another on the main thread, each behind the
         // last, the settings file (the biggest) behind the Keystore open. The
-        // framework parses each file on a loader thread of its own from the
-        // moment it is first asked for; asking for them all here lets those
-        // parses run side by side and alongside the Keystore open, and the
-        // inits find them ready or nearly so.
+        // framework parses a file off the main thread from the moment it is
+        // first asked for (on AOSP 15, one shared loader thread working through
+        // them in the order asked). Asking for them all here starts that work
+        // while the main thread is busy with the Keystore open and the inits
+        // in between, so each init finds its file ready or nearly so.
         prefetchPreferences()
         // The encrypted credential store, opened on a thread of its own from
         // here and joined below, where [authStore] is assigned. Opening it is
