@@ -25,8 +25,6 @@ import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -79,13 +77,9 @@ internal fun PlaybackSettings(
                 title = preferMusicOnlyTitle,
                 subtitle = stringResource(R.string.prefer_music_only_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = preferMusicOnly,
                         onCheckedChange = AppSettings::setPreferMusicOnly,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
@@ -120,13 +114,9 @@ internal fun PlaybackSettings(
                     stringResource(R.string.automix_disabled_subtitle)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = smartFade,
                         onCheckedChange = AppSettings::setSmartFadeEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
@@ -174,13 +164,9 @@ internal fun PlaybackSettings(
                     stringResource(R.string.skip_silence_subtitle)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = skipSilence,
                         onCheckedChange = AppSettings::setSkipSilence,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSkipSilence(!skipSilence) },
@@ -205,13 +191,9 @@ internal fun PlaybackSettings(
                     stringResource(R.string.spatial_audio_subtitle)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = spatialAudio,
                         onCheckedChange = AppSettings::setSpatialAudio,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
@@ -224,13 +206,9 @@ internal fun PlaybackSettings(
                 title = simAtmosTitle,
                 subtitle = stringResource(R.string.simulated_dolby_atmos_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = simulatedAtmos,
                         onCheckedChange = AppSettings::setSimulatedAtmos,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSimulatedAtmos(!simulatedAtmos) },
@@ -243,13 +221,9 @@ internal fun PlaybackSettings(
                 title = smartAlignmentTitle,
                 subtitle = stringResource(R.string.smart_version_alignment_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = smartVersionAlignment,
                         onCheckedChange = AppSettings::setSmartVersionAlignment,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
@@ -266,13 +240,9 @@ internal fun PlaybackSettings(
                     stringResource(R.string.swipe_adds_to_queue)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = swipeToPlayNext,
                         onCheckedChange = AppSettings::setSwipeToPlayNext,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSwipeToPlayNext(!swipeToPlayNext) },
@@ -285,13 +255,9 @@ internal fun PlaybackSettings(
                 title = dontRepeatSongsTitle,
                 subtitle = stringResource(R.string.dont_repeat_songs_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = dontRepeatSuggestions,
                         onCheckedChange = AppSettings::setDontRepeatSuggestions,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
@@ -304,13 +270,9 @@ internal fun PlaybackSettings(
                 title = stopMusicOnCloseTitle,
                 subtitle = stringResource(R.string.stop_music_on_close_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = stopOnTaskRemoved,
                         onCheckedChange = AppSettings::setStopOnTaskRemoved,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setStopOnTaskRemoved(!stopOnTaskRemoved) },

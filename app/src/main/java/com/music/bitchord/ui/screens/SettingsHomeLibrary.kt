@@ -10,9 +10,6 @@ import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -44,13 +41,9 @@ internal fun HomeLibrarySettings(
                 title = homeFlowVisibleTitle,
                 subtitle = stringResource(R.string.show_flow_on_home_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = homeFlowVisible,
                         onCheckedChange = AppSettings::setHomeFlowVisible,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setHomeFlowVisible(!homeFlowVisible) },
@@ -85,13 +78,9 @@ internal fun HomeLibrarySettings(
                 title = blockAiTitle,
                 subtitle = stringResource(R.string.block_ai_music_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = blockAi,
                         onCheckedChange = AppSettings::setBlockAiMusic,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setBlockAiMusic(!blockAi) },
@@ -104,13 +93,9 @@ internal fun HomeLibrarySettings(
                 title = homeReplayVisibleTitle,
                 subtitle = stringResource(R.string.show_replay_on_home_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = homeReplayVisible,
                         onCheckedChange = AppSettings::setHomeReplayVisible,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setHomeReplayVisible(!homeReplayVisible) },
@@ -132,13 +117,9 @@ internal fun HomeLibrarySettings(
                 title = showReplayTitle,
                 subtitle = stringResource(R.string.custom_show_replay_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = libraryReplayVisible,
                         onCheckedChange = AppSettings::setLibraryReplayVisible,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLibraryReplayVisible(!libraryReplayVisible) },

@@ -4,9 +4,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Replay
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -50,13 +47,9 @@ internal fun AdvancedSettings(
                 title = showNerdStatsTitle,
                 subtitle = stringResource(R.string.show_nerd_stats_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = nerdStats,
                         onCheckedChange = AppSettings::setShowNerdStats,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },

@@ -1101,13 +1101,9 @@ internal fun SettingsSubRow(
                 )
             }
         }
-        Switch(
+        SettingsSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-            ),
         )
     }
 }
@@ -1133,6 +1129,28 @@ internal fun Chevron() {
         contentDescription = null,
         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         modifier = Modifier.size(20.dp),
+    )
+}
+
+/**
+ * The switch on every settings row: Material's, with the track and its border
+ * in the accent colour. One function rather than the same four lines at every
+ * row, which kept a copy of the colour call in each row's bytecode.
+ */
+@Composable
+internal fun SettingsSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    enabled: Boolean = true,
+) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedTrackColor = MaterialTheme.colorScheme.primary,
+            checkedBorderColor = MaterialTheme.colorScheme.primary,
+        ),
     )
 }
 

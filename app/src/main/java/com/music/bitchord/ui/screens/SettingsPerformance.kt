@@ -1,9 +1,6 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -35,7 +32,7 @@ internal fun PerformanceSettings(
                     stringResource(R.string.high_performance_subtitle)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = highPerformanceMode,
                         onCheckedChange = { enabled ->
                             if (enabled) {
@@ -44,10 +41,6 @@ internal fun PerformanceSettings(
                                 AppSettings.setHighPerformanceMode(false)
                             }
                         },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = {

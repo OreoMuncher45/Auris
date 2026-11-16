@@ -26,8 +26,6 @@ import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,13 +96,9 @@ internal fun AudioSettings(
                     else -> null
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = offlineOn,
                         onCheckedChange = AppSettings::setOfflineMode,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
             )
@@ -184,13 +178,9 @@ internal fun AudioSettings(
                 title = loudnessTitle,
                 subtitle = stringResource(R.string.loudness_normalization_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = loudnessNormalization,
                         onCheckedChange = AppSettings::setLoudnessNormalization,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
@@ -214,7 +204,7 @@ internal fun AudioSettings(
                 title = seamlessUpgradeTitle,
                 subtitle = stringResource(R.string.seamless_quality_upgrades_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = seamlessQualityUpgrade,
                         onCheckedChange = { enabled ->
                             if (enabled) {
@@ -223,10 +213,6 @@ internal fun AudioSettings(
                                 AppSettings.setSeamlessQualityUpgrade(false)
                             }
                         },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = {
@@ -270,14 +256,10 @@ internal fun AudioSettings(
                 ),
                 enabled = !detectedOffline,
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = autoUpgradeLocal,
                         onCheckedChange = AppSettings::setAutoUpgradeLocalStorage,
                         enabled = !detectedOffline,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = {

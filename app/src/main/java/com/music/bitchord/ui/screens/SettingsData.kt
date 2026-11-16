@@ -7,9 +7,6 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.Replay
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
@@ -51,13 +48,9 @@ internal fun DataSettings(
                     stringResource(R.string.replay_genres_disabled_subtitle)
                 },
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = replayGenres,
                         onCheckedChange = AppSettings::setReplayGenres,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setReplayGenres(!replayGenres) },

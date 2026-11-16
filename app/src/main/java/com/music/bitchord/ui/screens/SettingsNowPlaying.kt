@@ -25,8 +25,6 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.ZoomOut
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -93,13 +91,9 @@ internal fun NowPlayingSettings(
                 title = textGlowTitle,
                 subtitle = stringResource(R.string.custom_text_glow_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = textGlow,
                         onCheckedChange = AppSettings::setTextGlow,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setTextGlow(!textGlow) },
@@ -112,13 +106,9 @@ internal fun NowPlayingSettings(
                 title = nowPlayingLyricsTitle,
                 subtitle = stringResource(R.string.custom_now_playing_lyrics_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showNowPlayingLyrics,
                         onCheckedChange = AppSettings::setShowNowPlayingLyrics,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowNowPlayingLyrics(!showNowPlayingLyrics) },
@@ -131,13 +121,9 @@ internal fun NowPlayingSettings(
                 title = nextTrackStatusTitle,
                 subtitle = stringResource(R.string.custom_next_track_status_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showNextTrackStatus,
                         onCheckedChange = AppSettings::setShowNextTrackStatus,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowNextTrackStatus(!showNextTrackStatus) },
@@ -150,13 +136,9 @@ internal fun NowPlayingSettings(
                 title = upgradeBadgeTitle,
                 subtitle = stringResource(R.string.custom_upgrade_badge_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showUpgradeBadge,
                         onCheckedChange = AppSettings::setShowUpgradeBadge,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowUpgradeBadge(!showUpgradeBadge) },
@@ -169,13 +151,9 @@ internal fun NowPlayingSettings(
                 title = losslessBadgeTitle,
                 subtitle = stringResource(R.string.custom_lossless_badge_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showLosslessBadge,
                         onCheckedChange = AppSettings::setShowLosslessBadge,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowLosslessBadge(!showLosslessBadge) },
@@ -188,13 +166,9 @@ internal fun NowPlayingSettings(
                 title = hiresBadgeTitle,
                 subtitle = stringResource(R.string.custom_hires_badge_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showHiResBadge,
                         onCheckedChange = AppSettings::setShowHiResBadge,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowHiResBadge(!showHiResBadge) },
@@ -220,13 +194,9 @@ internal fun NowPlayingSettings(
                 title = liveBlurTitle,
                 subtitle = stringResource(R.string.custom_live_blur_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = liveBlur,
                         onCheckedChange = AppSettings::setLiveBlur,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLiveBlur(!liveBlur) },
@@ -239,13 +209,9 @@ internal fun NowPlayingSettings(
                 title = perfMonitorTitle,
                 subtitle = stringResource(R.string.perf_monitor_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = perfMonitor,
                         onCheckedChange = AppSettings::setPerfMonitor,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setPerfMonitor(!perfMonitor) },
@@ -291,13 +257,9 @@ internal fun NowPlayingSettings(
                     title = fullScreenCoverArtTitle,
                     subtitle = stringResource(R.string.full_screen_cover_art_subtitle),
                     trailing = {
-                        Switch(
+                        SettingsSwitch(
                             checked = fullBleedArtwork,
                             onCheckedChange = AppSettings::setFullBleedArtwork,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
                         )
                     },
                     onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
@@ -314,13 +276,9 @@ internal fun NowPlayingSettings(
                     title = zoomOutAlbumArtTitle,
                     subtitle = stringResource(R.string.zoom_out_album_art_subtitle),
                     trailing = {
-                        Switch(
+                        SettingsSwitch(
                             checked = zoomOutAlbumArt,
                             onCheckedChange = AppSettings::setZoomOutAlbumArt,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
                         )
                     },
                     onClick = { AppSettings.setZoomOutAlbumArt(!zoomOutAlbumArt) },
@@ -334,13 +292,9 @@ internal fun NowPlayingSettings(
                 title = legacyMeshGradientTitle,
                 subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = legacyMeshGradient,
                         onCheckedChange = AppSettings::setLegacyMeshGradient,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
@@ -356,13 +310,9 @@ internal fun NowPlayingSettings(
                 title = animatedCoverArtTitle,
                 subtitle = stringResource(R.string.animated_cover_art_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = animatedCanvas,
                         onCheckedChange = AppSettings::setAnimatedCanvas,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
@@ -412,13 +362,9 @@ internal fun NowPlayingSettings(
                 title = syncedLyricsTitle,
                 subtitle = stringResource(R.string.synced_lyrics_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = syncedLyrics,
                         onCheckedChange = AppSettings::setSyncedLyrics,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setSyncedLyrics(!syncedLyrics) },
@@ -435,13 +381,9 @@ internal fun NowPlayingSettings(
                     title = lyricsBlurTitle,
                     subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
                     trailing = {
-                        Switch(
+                        SettingsSwitch(
                             checked = lyricsBlur,
                             onCheckedChange = AppSettings::setLyricsBlur,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
                         )
                     },
                     onClick = { AppSettings.setLyricsBlur(!lyricsBlur) },
@@ -485,13 +427,9 @@ internal fun NowPlayingSettings(
                 title = hideVolumeBarTitle,
                 subtitle = stringResource(R.string.hide_volume_bar_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = hideVolumeBar,
                         onCheckedChange = AppSettings::setHideVolumeBar,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
@@ -504,13 +442,9 @@ internal fun NowPlayingSettings(
                 title = hideSongStatusTitle,
                 subtitle = stringResource(R.string.hide_song_status_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = hideSongStatus,
                         onCheckedChange = AppSettings::setHideSongStatus,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setHideSongStatus(!hideSongStatus) },

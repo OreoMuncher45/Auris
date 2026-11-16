@@ -10,9 +10,6 @@ import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -52,13 +49,9 @@ internal fun StorageSettings(
                 title = showCacheFolderTitle,
                 subtitle = stringResource(R.string.show_cache_folder_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = showCacheFolder,
                         onCheckedChange = AppSettings::setShowCacheFolder,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setShowCacheFolder(!showCacheFolder) },
@@ -136,13 +129,9 @@ internal fun StorageSettings(
                 title = filterNonMusicAudioTitle,
                 subtitle = stringResource(R.string.filter_non_music_audio_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = filterNonMusicAudio,
                         onCheckedChange = AppSettings::setFilterNonMusicAudio,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },

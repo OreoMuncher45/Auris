@@ -2,9 +2,6 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Podcasts
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
@@ -26,13 +23,9 @@ internal fun PodcastsSettings(
                 title = podcastsTitle,
                 subtitle = stringResource(R.string.podcasts_enabled_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = podcastsEnabled,
                         onCheckedChange = AppSettings::setPodcastsEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setPodcastsEnabled(!podcastsEnabled) },

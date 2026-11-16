@@ -13,9 +13,6 @@ import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material.icons.rounded.ViewWeek
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -81,13 +78,9 @@ internal fun AppearanceSettings(
                 title = reduceAnimationTitle,
                 subtitle = stringResource(R.string.reduce_animation_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = reduceAnimation,
                         onCheckedChange = AppSettings::setReduceAnimation,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
@@ -100,13 +93,9 @@ internal fun AppearanceSettings(
                 title = reduceDynamicBlurTitle,
                 subtitle = stringResource(R.string.reduce_dynamic_blur_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = reduceDynamicBlur,
                         onCheckedChange = AppSettings::setReduceDynamicBlur,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
@@ -126,14 +115,10 @@ internal fun AppearanceSettings(
                 ),
                 enabled = liquidGlassSupported,
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = liquidGlass,
                         onCheckedChange = AppSettings::setLiquidGlass,
                         enabled = liquidGlassSupported,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
@@ -179,13 +164,9 @@ internal fun AppearanceSettings(
                     title = foldingNavTitle,
                     subtitle = stringResource(R.string.folding_nav_bar_subtitle),
                     trailing = {
-                        Switch(
+                        SettingsSwitch(
                             checked = foldingNavBar,
                             onCheckedChange = AppSettings::setFoldingNavBar,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
                         )
                     },
                     onClick = { AppSettings.setFoldingNavBar(!foldingNavBar) },
@@ -199,13 +180,9 @@ internal fun AppearanceSettings(
                 title = hapticsTitle,
                 subtitle = stringResource(R.string.liquid_glass_haptics_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = liquidGlassHaptics,
                         onCheckedChange = AppSettings::setLiquidGlassHaptics,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setLiquidGlassHaptics(!liquidGlassHaptics) },
@@ -218,13 +195,9 @@ internal fun AppearanceSettings(
                 title = hideStatusBarTitle,
                 subtitle = stringResource(R.string.hide_status_bar_in_player_subtitle),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = hideStatusBarInPlayer,
                         onCheckedChange = AppSettings::setHideStatusBarInPlayer,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setHideStatusBarInPlayer(!hideStatusBarInPlayer) },
@@ -253,13 +226,9 @@ internal fun AppearanceSettings(
                 title = scriptFontsTitle,
                 subtitle = stringResource(R.string.custom_script_fonts_help),
                 trailing = {
-                    Switch(
+                    SettingsSwitch(
                         checked = scriptFonts,
                         onCheckedChange = AppSettings::setScriptFonts,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { AppSettings.setScriptFonts(!scriptFonts) },
