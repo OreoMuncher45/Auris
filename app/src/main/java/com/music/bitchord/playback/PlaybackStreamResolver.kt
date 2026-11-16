@@ -17,7 +17,6 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -61,9 +60,6 @@ internal const val SUBSTITUTE_TIMEOUT_MS = 20_000L
  * a track the sources have never heard of is not held at the hand-over.
  */
 private const val PREPARED_PIN_WAIT_MS = 1_500L
-
-/** How often the wait above re-asks whether the pin has landed. */
-private const val PREPARED_PIN_POLL_MS = 25L
 
 /** Prefix of a queue id that exists only in Spotify's catalogue. */
 private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSource.SPOTIFY_KEY_PREFIX
@@ -405,9 +401,7 @@ internal class PlaybackStreamResolver(
         var pinned = StreamChoice.of(videoId)
         if (pinned == null && StreamChoice.isAwaitingPreparation(videoId)) {
             runBlocking(about) {
-                withTimeoutOrNull(PREPARED_PIN_WAIT_MS) {
-                    while (StreamChoice.isAwaitingPreparation(videoId)) delay(PREPARED_PIN_POLL_MS)
-                }
+                withTimeoutOrNull(PREPARED_PIN_WAIT_MS) { StreamChoice.awaitPreparation(videoId) }
             }
             pinned = StreamChoice.of(videoId)
         }
