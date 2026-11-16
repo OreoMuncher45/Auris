@@ -181,6 +181,21 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val resolver by lazy { context.contentResolver }
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
+
+    /**
+     * When the system asks for memory back, keep the waveform only on the two
+     * newest results (the track playing and the next one) and keep only four
+     * results in memory. The rest are on disk and are restored when a track
+     * comes round again, as after an ordinary eviction. Unregistered in
+     * [release].
+     */
+    private val onMemoryPressure: () -> Unit = {
+        trimResults(peaksKept = PRESSURE_PEAKS_KEPT, memoryMax = PRESSURE_MEMORY_MAX)
+    }
+
+    init {
+        com.music.bitchord.util.MemoryPressure.register(onMemoryPressure)
+    }
     private val running = ConcurrentHashMap.newKeySet<String>()
 
     /**
@@ -472,10 +487,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      *   still on disk, so a track that comes round again is restored rather
      *   than measured a second time.
      */
-    private fun trimResults() {
+    private fun trimResults(
+        peaksKept: Int = ANALYSIS_PEAKS_KEPT,
+        memoryMax: Int = ANALYSIS_MEMORY_MAX,
+    ) {
         val order = resultOrder.toList()
         order.forEachIndexed { index, trackId ->
-            if (index < ANALYSIS_PEAKS_KEPT) return@forEachIndexed
+            if (index < peaksKept) return@forEachIndexed
             results[trackId]?.let { current ->
                 val stripped = current.withoutPeaks()
                 if (stripped !== current) results[trackId] = stripped
@@ -487,7 +505,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
         var guard = 0
         while (
-            (results.size > ANALYSIS_MEMORY_MAX || partials.size > ANALYSIS_MEMORY_MAX) &&
+            (results.size > memoryMax || partials.size > memoryMax) &&
             guard < ANALYSIS_MEMORY_MAX * 8
         ) {
             guard++
@@ -2198,6 +2216,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     )
 
     fun release() {
+        com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
         fastExecutor.shutdownNow()
         wholeExecutor.shutdownNow()
         headAttempts.clear()
@@ -2362,6 +2381,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * to it and stays there.
          */
         const val ANALYSIS_MEMORY_MAX = 24
+
+        /** [ANALYSIS_PEAKS_KEPT] while the system is short of memory. */
+        const val PRESSURE_PEAKS_KEPT = 2
+
+        /** [ANALYSIS_MEMORY_MAX] while the system is short of memory. */
+        const val PRESSURE_MEMORY_MAX = 4
 
         /**
          * Stand-in bitrate for a rendition whose real length isn't recorded yet,

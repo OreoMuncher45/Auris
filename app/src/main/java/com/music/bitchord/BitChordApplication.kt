@@ -304,6 +304,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         initLastfm()
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
+        // The app's own caches let go when the system asks; see MemoryPressure.
+        com.music.bitchord.util.MemoryPressure.install(this)
     }
 
     /**
