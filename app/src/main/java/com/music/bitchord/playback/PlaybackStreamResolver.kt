@@ -503,6 +503,11 @@ internal class PlaybackStreamResolver(
         // hands it over when YouTube is off, away from the playhead. Near the
         // playhead the row keeps playing from its pin, whichever path serves it.
         var viaYouTube = false
+        // Why the YouTube match gave no stream, if it didn't. Carried as the
+        // cause of the failure below, so the load-error policy and
+        // [PlaybackService.permanentReason] can see a permanent one (an
+        // age-gated or removed match) instead of retrying it.
+        var fallbackFailure: Throwable? = null
         val resolved = runBlocking(about) {
             val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
                 SourceResolver.substituteForYouTube(target)
@@ -518,6 +523,8 @@ internal class PlaybackStreamResolver(
                 .joinToString(" ")
             val rows: List<SearchResult> = try {
                 YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull().orEmpty()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
             } catch (error: Exception) {
                 emptyList()
             }
@@ -542,8 +549,19 @@ internal class PlaybackStreamResolver(
                 // is already in hand here, so the tap does not have to
                 // ask for it again.
                 RatingTarget.remember(videoId, song.videoId)
-                runCatching { StreamResolver.resolve(song.videoId) }
-                    .getOrNull()
+                // Bounded like every other resolve here.
+                val streamUrl = try {
+                    withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(song.videoId) }
+                } catch (e: TimeoutCancellationException) {
+                    fallbackFailure = e
+                    null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    fallbackFailure = e
+                    null
+                }
+                streamUrl
                     ?.let { url ->
                         viaYouTube = true
                         SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
@@ -551,6 +569,7 @@ internal class PlaybackStreamResolver(
             }
         } ?: throw java.io.IOException(
             "no enabled source could serve '${target.title}'",
+            fallbackFailure,
         )
         val serving = pinOrPinned(videoId, resolved, substituted = !viaYouTube)
         val sourceName = serving.sourceConfigId
