@@ -896,6 +896,33 @@ object AudioCache {
         }
     }
 
+    /**
+     * Drops every cache entry, all renditions, that belongs to one of
+     * [mediaIds], and returns once they are gone.
+     *
+     * For handing a track over to a different source: see
+     * [StreamChoice.inactivePins]. Its callers pass only tracks away from the
+     * playhead, which nothing is reading.
+     */
+    suspend fun dropEntriesOf(mediaIds: Set<String>) {
+        if (mediaIds.isEmpty() || !::cache.isInitialized) return
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            cache.keys.toList().forEach { key ->
+                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+                val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: return@forEach
+                if (mediaId !in mediaIds) return@forEach
+                runCatching { cache.removeResource(key) }
+                    .onSuccess {
+                        analysisHeads.remove(mediaId)
+                        analysisHeadWant.remove(mediaId)
+                        renditionKeys.remove(mediaId)
+                        TrackLog.d(TAG, "dropped $key: its source is no longer active", about = mediaId)
+                    }
+                    .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+            }
+        }
+    }
+
     /** The part of a cache key that names the track, before any `#rendition`; see [keyFactory]. */
     private fun cacheKeyBaseOf(mediaId: String): String =
         SourceRegistry.parseTrackKey(mediaId)?.let { (source, track) -> "$source|$track" } ?: mediaId

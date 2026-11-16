@@ -154,6 +154,34 @@ object StreamChoice {
     }
 
     /**
+     * Tracks outside [keep] whose pin was served by a source no longer in
+     * [active]: a source switched off, removed, or now above the quality
+     * ceiling.
+     *
+     * A pin outlives its source being switched off, and nothing else lets go
+     * of it: [remember] keeps an unexpired pin over any replacement, so every
+     * later open of the track is served from the switched-off source until the
+     * pin expires. It can't simply be dropped where it is found, because the
+     * cache entry it filled may hold that source's bytes and may still be
+     * written by a reader that opened earlier. The hand-over is done by
+     * [com.music.bitchord.playback.PlaybackService]'s cache purge instead,
+     * for tracks away from the playhead: their entry is dropped first, then
+     * [forgetAll] releases the pin.
+     */
+    fun inactivePins(active: Set<String>, keep: Set<String>): Set<String> =
+        chosen.entries
+            .filter { (id, choice) ->
+                val source = choice.stream.sourceConfigId
+                source != null && source !in active && id !in keep
+            }
+            .mapTo(mutableSetOf()) { it.key }
+
+    /** Releases the pins of [videoIds]; see [inactivePins]. */
+    fun forgetAll(videoIds: Set<String>) {
+        videoIds.forEach(chosen::remove)
+    }
+
+    /**
      * Tracks whose read-ahead preparation is still looking for a stream.
      *
      * [AudioCache.prefetchQueue][com.music.bitchord.playback.AudioCache.prefetchQueue]

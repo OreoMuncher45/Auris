@@ -7139,7 +7139,24 @@ class PlaybackService : MediaLibraryService() {
                 spare?.currentMediaItem?.mediaId?.let(::add)
             }
             AudioCache.dropForeignEntries(keep)
+            retireInactivePins(keep)
         }
+    }
+
+    /**
+     * Lets tracks away from the playhead leave a source that has been switched
+     * off. Their cache entry goes first, then their pin, so the next open
+     * resolves afresh instead of being served the old source's pin by
+     * [StreamChoice.remember]. Tracks in [keep] finish on the source they
+     * started on: their entry may still be read or written, and two servers'
+     * bytes in one entry is the corruption the pin exists to prevent.
+     */
+    private suspend fun retireInactivePins(keep: Set<String>) {
+        val active = SourceRegistry.activeForPlayback().mapTo(mutableSetOf()) { it.configId }
+        val stale = StreamChoice.inactivePins(active, keep)
+        if (stale.isEmpty()) return
+        AudioCache.dropEntriesOf(stale)
+        StreamChoice.forgetAll(stale)
     }
 
     /**
@@ -8171,6 +8188,16 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+        }
+        scope.launch {
+            // A source switched off hands its pinned tracks over at the next
+            // purge, rather than at the next track change; see
+            // [retireInactivePins].
+            SourceRegistry.configs
+                .map { configs -> configs.filter { it.enabled }.map { it.id }.toSet() }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { scheduleForeignCachePurge() }
         }
         scope.launch {
             // Re-evaluate the already queued next track immediately when this
