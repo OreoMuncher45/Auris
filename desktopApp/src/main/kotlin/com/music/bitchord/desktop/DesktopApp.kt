@@ -525,19 +525,22 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     // Radio's seed row: what was played recently, so a station can be started from something the
     // listener already chose rather than a cold suggestion — the phone's own rule.
-    val radioSeeds: List<ShelfItem> = (pages.homeState as? UiState.Success)?.data
-        ?.firstOrNull { shelf ->
-            shelf.title.trim().let { title ->
-                title.equals("Recents", ignoreCase = true) ||
-                    title.equals("Recently played", ignoreCase = true) ||
-                    title.equals("Gần đây", ignoreCase = true) ||
-                    title.equals("最近", ignoreCase = true)
+    // Worked out when the feed changes, not on every composition of the window.
+    val radioSeeds: List<ShelfItem> = remember(pages.homeState) {
+        (pages.homeState as? UiState.Success)?.data
+            ?.firstOrNull { shelf ->
+                shelf.title.trim().let { title ->
+                    title.equals("Recents", ignoreCase = true) ||
+                        title.equals("Recently played", ignoreCase = true) ||
+                        title.equals("Gần đây", ignoreCase = true) ||
+                        title.equals("最近", ignoreCase = true)
+                }
             }
-        }
-        ?.items
-        ?.filter { it.videoId != null }
-        ?.take(10)
-        .orEmpty()
+            ?.items
+            ?.filter { it.videoId != null }
+            ?.take(10)
+            .orEmpty()
+    }
     val podcastListState = rememberLazyListState()
     // How many pages of the feed the app fetches on its own. YouTube's Home continuation never runs
     // dry, so following it as far as the scroll goes means another request every time the tail comes
