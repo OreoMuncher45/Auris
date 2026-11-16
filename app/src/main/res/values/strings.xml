@@ -1349,6 +1349,7 @@
     <string name="perf_monitor_help">Samples CPU use and the player\'s per-frame work. Nothing runs while this is off.</string>
     <string name="perf_save_log">Save performance log</string>
     <string name="perf_save_log_help">Writes a .txt to the app\'s files folder. CPU now %1$d%%.</string>
+    <string name="perf_save_log_failed">Couldn’t save the performance log: %1$s</string>
     <string name="custom_live_blur_help">Follows animated artwork smoothly. Uses more battery.</string>
     <string name="custom_transport_smoothness">Transport corner smoothness</string>
     <string name="custom_transport_smoothness_help">Rounds the play, pause and skip buttons. At 0 the old sharp edge stays; at 100 the glyph is soft but still a triangle.</string>

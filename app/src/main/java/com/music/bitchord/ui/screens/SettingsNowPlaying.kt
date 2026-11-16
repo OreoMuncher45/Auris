@@ -42,6 +42,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
+import java.io.IOException
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -243,13 +244,25 @@ internal fun NowPlayingSettings(
                     onClick = {
                         // Writing the report is file I/O, so not on the main
                         // thread; the toast with its path waits for it.
+                        //
+                        // A failed write (a full disk, storage that went away)
+                        // is said in the toast rather than thrown out of the
+                        // coroutine. Only IOException is caught, so leaving the
+                        // page still cancels the save.
                         saveScope.launch {
-                            val file = withContext(Dispatchers.IO) {
-                                com.music.bitchord.perf.PerfMonitor.save(context)
+                            val message = try {
+                                withContext(Dispatchers.IO) {
+                                    com.music.bitchord.perf.PerfMonitor.save(context)
+                                }.absolutePath
+                            } catch (e: IOException) {
+                                context.getString(
+                                    R.string.perf_save_log_failed,
+                                    e.message ?: context.getString(R.string.unknown_error),
+                                )
                             }
                             android.widget.Toast.makeText(
                                 context,
-                                file.absolutePath,
+                                message,
                                 android.widget.Toast.LENGTH_LONG,
                             ).show()
                         }
