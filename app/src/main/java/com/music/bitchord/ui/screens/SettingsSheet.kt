@@ -242,6 +242,10 @@ fun SettingsScreen(
     // the search reach across all of them.
     val openCategory = SettingsCategory.fromId(category ?: "")
     val searchActive = searchQuery.isNotBlank()
+    // A category's rows are composed on its own page, and on the index while a
+    // search is reaching into every category.
+    fun shows(category: SettingsCategory) =
+        openCategory == category || (openCategory == null && searchActive)
 
     // Which page is on screen, and therefore which list the scroll offset
     // belongs to. The index and each category are different lists, and an
@@ -299,7 +303,7 @@ fun SettingsScreen(
             }
             SettingsCategoryIndex(onOpen = onOpenCategory)
         }
-        if (openCategory == SettingsCategory.ACCOUNT || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.ACCOUNT)) {
             AccountSettings(
                 search = search,
                 signedIn = signedIn,
@@ -308,7 +312,7 @@ fun SettingsScreen(
                 onListenTogether = onListenTogether,
             )
         }
-        if (openCategory == SettingsCategory.AUDIO || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.AUDIO)) {
             AudioSettings(
                 search = search,
                 sheets = sheets,
@@ -316,19 +320,19 @@ fun SettingsScreen(
                 onEqualizer = onEqualizer,
             )
         }
-        if (openCategory == SettingsCategory.PLAYBACK || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.PLAYBACK)) {
             PlaybackSettings(
                 search = search,
                 sheets = sheets,
             )
         }
-        if (openCategory == SettingsCategory.DOWNLOADS || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.DOWNLOADS)) {
             DownloadsSettings(
                 search = search,
                 sheets = sheets,
             )
         }
-        if (openCategory == SettingsCategory.NOW_PLAYING || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.NOW_PLAYING)) {
             NowPlayingSettings(
                 search = search,
                 sheets = sheets,
@@ -338,25 +342,25 @@ fun SettingsScreen(
                 onTranslationLanguage = onTranslationLanguage,
             )
         }
-        if (openCategory == SettingsCategory.HOME_LIBRARY || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.HOME_LIBRARY)) {
             HomeLibrarySettings(
                 search = search,
                 sheets = sheets,
                 onImportSpotifyPlaylist = onImportSpotifyPlaylist,
             )
         }
-        if (openCategory == SettingsCategory.PODCASTS || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.PODCASTS)) {
             PodcastsSettings(
                 search = search,
             )
         }
-        if (openCategory == SettingsCategory.APPEARANCE || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.APPEARANCE)) {
             AppearanceSettings(
                 search = search,
                 sheets = sheets,
             )
         }
-        if (openCategory == SettingsCategory.PERFORMANCE || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.PERFORMANCE)) {
             PerformanceSettings(
                 search = search,
                 sheets = sheets,
@@ -364,14 +368,14 @@ fun SettingsScreen(
                 supportedRefreshRates = supportedRefreshRates,
             )
         }
-        if (openCategory == SettingsCategory.STORAGE || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.STORAGE)) {
             StorageSettings(
                 search = search,
                 sheets = sheets,
                 localMusicFolderPicker = localMusicFolderPicker,
             )
         }
-        if (openCategory == SettingsCategory.DATA || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.DATA)) {
             DataSettings(
                 search = search,
                 sheets = sheets,
@@ -381,13 +385,13 @@ fun SettingsScreen(
                 importStatus = importStatus,
             )
         }
-        if (openCategory == SettingsCategory.LANGUAGE || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.LANGUAGE)) {
             LanguageSettings(
                 search = search,
                 onAppLanguage = onAppLanguage,
             )
         }
-        if (openCategory == SettingsCategory.ADVANCED || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.ADVANCED)) {
             AdvancedSettings(
                 search = search,
             )
@@ -398,7 +402,7 @@ fun SettingsScreen(
         if (!search.anyMatch && (openCategory != null || searchActive)) {
             MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
-        if (openCategory == SettingsCategory.SUPPORT || (openCategory == null && searchActive)) {
+        if (shows(SettingsCategory.SUPPORT)) {
             SupportSettings(
                 search = search,
             )
