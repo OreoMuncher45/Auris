@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -22,6 +23,9 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.settings.AppSettings
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The Storage category: the song cache and the local music folder. */
 @Composable
@@ -35,6 +39,7 @@ internal fun StorageSettings(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
+    val clearScope = rememberCoroutineScope()
     SearchableSettingsGroup(search, SettingsCategory.STORAGE) {
         val cacheUnlimited = cacheLimitBytes == AppSettings.UNLIMITED_CACHE_LIMIT_BYTES
         // The slider's last stop, one step past the largest fixed size, is
@@ -96,8 +101,12 @@ internal fun StorageSettings(
                 onClick = {
                     val loader = SingletonImageLoader.get(context)
                     loader.memoryCache?.clear()
-                    loader.diskCache?.clear()
-                    Toast.makeText(context, context.getString(R.string.image_cache_cleared), Toast.LENGTH_SHORT).show()
+                    // Deleting up to the whole artwork cache is file I/O, so
+                    // not on the main thread; the toast waits for it to finish.
+                    clearScope.launch {
+                        withContext(Dispatchers.IO) { loader.diskCache?.clear() }
+                        Toast.makeText(context, context.getString(R.string.image_cache_cleared), Toast.LENGTH_SHORT).show()
+                    }
                 },
             )
         }
