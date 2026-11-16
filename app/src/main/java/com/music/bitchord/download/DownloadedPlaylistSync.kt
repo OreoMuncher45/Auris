@@ -24,10 +24,21 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * So this looks, and takes what is missing.
  *
+ * ## The switch is per playlist
+ *
+ * Downloading a playlist is what turns this on for it — see
+ * [SavedCollection.autoDownload], which is written with the record and shown as
+ * a switch on the playlist's own page. A playlist with the switch off is not
+ * walked at all: the listener said "these files, not this feed", and a sync
+ * that went looking anyway would be answering a question they had already
+ * answered. Switching it back on fetches everything added in the meantime,
+ * because the walk compares the playlist with the disk rather than with a
+ * memory of where it left off.
+ *
  * Liked Music is the same thing under another id: `VLLM` is the auto-playlist
  * the Liked Songs page *is*, and downloading it records a collection under
- * that id like any other, so the newest like is picked up by exactly the
- * same walk.
+ * that id like any other, so the newest like is picked up by exactly the same
+ * walk.
  *
  * ## Why it has to be told when to look
  *
@@ -52,6 +63,10 @@ import java.util.concurrent.ConcurrentHashMap
  * listener asked for that file to be here, and a playlist's contents are not
  * the listener's filing system. Only additions are acted on.
  *
+ * It never brings back a track the listener deleted by hand. That deletion is
+ * the more specific instruction and it was made later, so it outranks this
+ * path — see [Downloads.deletedByHand] and [missingFromPlaylist].
+ *
  * It never runs offline. A sync is a network walk, and the whole point of
  * the offline switch is that nothing goes out — see
  * [com.music.bitchord.data.NetworkPolicy], which is where that promise is
@@ -68,11 +83,13 @@ object DownloadedPlaylistSync {
     /**
      * How long between passes.
      *
-     * Long enough that a listener who opens the app twenty times a day is
-     * not walked twenty times, and short enough that a song liked this
-     * morning is on the device by the evening.
+     * Long enough that a listener who opens the app twenty times a day is not
+     * walked twenty times, and short enough that a song added this morning is
+     * on the device by the time they look. It used to be half an hour, which
+     * with a persisted clock meant a song added just after a pass waited until
+     * the next one — the whole of the "new songs never arrive" complaint.
      */
-    private const val PERIOD_MS = 30 * 60 * 1000L
+    private const val PERIOD_MS = 5 * 60 * 1000L
 
     /**
      * How long one playlist is left alone after it has been looked at.
@@ -81,7 +98,7 @@ object DownloadedPlaylistSync {
      * something to do every time a page is opened. The global pass picks the
      * rest up within [PERIOD_MS].
      */
-    private const val REFRESH_COOLDOWN_MS = 10 * 60 * 1000L
+    private const val REFRESH_COOLDOWN_MS = 2 * 60 * 1000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -117,7 +134,8 @@ object DownloadedPlaylistSync {
      * an hour for a thing that already happened is what made this feel broken.
      *
      * A playlist that was never downloaded whole is not walked: there is no
-     * promise to keep, and fetching it would be a request for nothing.
+     * promise to keep, and fetching it would be a request for nothing. Neither
+     * is one whose switch is off — see [Downloads.syncableCollections].
      *
      * [force] is for the caller that knows the playlist changed *just now* —
      * a track added through the app's own picker. A page merely being opened
@@ -154,8 +172,8 @@ object DownloadedPlaylistSync {
     }
 
     /**
-     * The pass itself: every downloaded release, looked at, and what is
-     * missing taken.
+     * The pass itself: every downloaded playlist whose switch is on, looked
+     * at, and what is missing taken.
      *
      * @param only one playlist to look at, or null for all of them.
      */
@@ -165,34 +183,35 @@ object DownloadedPlaylistSync {
         // exactly the answer that makes this pass a no-op. So the pass waits
         // for the answer it is going to act on.
         Downloads.awaitIndexReady()
-        val collections = Downloads.savedReleases()
-            .filter { only == null || it.id == only }
+        val collections = Downloads.syncableCollections()
+            .filter { only == null || samePlaylist(it.id, only) }
         if (collections.isEmpty()) return
         // What is really on the disk, not what the record claims: a file
         // deleted from a file manager leaves its record behind, and a track
         // whose file is gone must be fetched again rather than counted as
         // already here.
         val onDisk = Downloads.getDownloadedSongs(context).map { it.videoId }.toSet()
+        // The tracks the listener deleted by hand. They are not missing — they
+        // were asked for and taken away again — and a sync that put them back
+        // would be undoing a decision the listener made on purpose.
+        val deleted = Downloads.deletedByHandIds()
         for (collection in collections) {
-            val remote = YtMusicRepository.browseSongsPaged(collection.id).getOrNull()
-            if (remote.isNullOrEmpty()) continue
-            val known = collection.videoIds.toSet()
-            // The tracks the listener deleted by hand. They are not missing —
-            // they were asked for and taken away again — and a sync that put
-            // them back would be undoing a decision the listener made on
-            // purpose. See [Downloads.deletedByHand].
-            val deleted = Downloads.deletedByHandIds()
-            val missing = remote.filter { song ->
-                song.videoId !in known &&
-                    song.videoId !in onDisk &&
-                    song.videoId !in deleted &&
-                    !song.isDeviceFile()
+            val result = YtMusicRepository.browseSongsPaged(collection.id)
+            val remote = result.getOrNull()
+            if (remote.isNullOrEmpty()) {
+                // Named, not swallowed: an empty answer and a failed request
+                // both mean "nothing to do", and the difference is the whole
+                // of whether the next report can be acted on.
+                Log.w(
+                    TAG,
+                    "could not read ${collection.title}: " +
+                        (result.exceptionOrNull()?.message ?: "the playlist is empty"),
+                )
+                continue
             }
+            val missing = missingFromPlaylist(remote, onDisk, deleted)
             if (missing.isEmpty()) continue
-            Log.i(
-                TAG,
-                "${collection.title}: ${missing.size} new track(s) to download",
-            )
+            Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
             Downloads.markRequested(collection.id, missing.map { it.videoId })
             Downloads.enqueueAll(context, missing, collection.title, automatic = true)
             // The record grows with what was asked for, so the next pass knows
@@ -225,8 +244,41 @@ object DownloadedPlaylistSync {
             .putLong(KEY_LAST_PASS, System.currentTimeMillis())
             .apply()
     }
-
-    /** Whether this song is a file of the listener's own rather than a track to fetch. */
-    private fun Song.isDeviceFile(): Boolean =
-        videoId.startsWith("file://") || videoId.startsWith("content://")
 }
+
+/**
+ * The tracks of [remote] that are not on the device yet and may be fetched.
+ *
+ * Three rules, and each one is a complaint:
+ *
+ *  - A track already on the disk is not fetched again.
+ *  - A track of the listener's own is not fetched at all: their own music is
+ *    already on the device, which is what "local" means.
+ *  - A track they deleted by hand is never fetched again, however clearly the
+ *    playlist still names it. The deletion is the more specific instruction
+ *    and it came later, so it wins over "this playlist is downloaded whole".
+ *
+ * What is *not* a rule: whether the record remembers asking for the track.
+ * The record is pruned to the files still on the disk when it is read, so
+ * asking it would call a hand-deleted track new — which is exactly how those
+ * tracks came back before [Downloads.deletedByHand] existed.
+ *
+ * Split out as plain arguments so the rules can be tested without a device, a
+ * network or a playlist: they are the whole of what makes this correct.
+ */
+internal fun missingFromPlaylist(
+    remote: List<Song>,
+    onDisk: Set<String>,
+    deletedByHand: Set<String>,
+): List<Song> = remote.filter { song ->
+    song.videoId !in onDisk &&
+        song.videoId !in deletedByHand &&
+        !song.isDeviceFile()
+}
+
+/** Whether two ids name the same playlist, with or without YouTube's `VL`. */
+internal fun samePlaylist(a: String, b: String): Boolean = a.removePrefix("VL") == b.removePrefix("VL")
+
+/** Whether this song is a file of the listener's own rather than a track to fetch. */
+internal fun Song.isDeviceFile(): Boolean =
+    videoId.startsWith("file://") || videoId.startsWith("content://")

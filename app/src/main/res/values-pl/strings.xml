@@ -150,8 +150,8 @@
     <string name="widget_preview_pill">Tytuł utworu - Artysta</string>
     <string name="download_quality">Jakość pobierania</string>
     <string name="download_wifi_only">Pobieraj tylko przez Wi-Fi</string>
-    <string name="auto_download_songs">Automatycznie pobieraj odsłuchane utwory</string>
-    <string name="auto_download_songs_subtitle">Utwory, których słuchasz, są zapisywane automatycznie. Pobieranie usunięte ręcznie nie wróci.</string>
+    <string name="auto_download_songs">Automatycznie pobieraj nowe utwory</string>
+    <string name="auto_download_songs_subtitle">Utwory dodane do tej playlisty są pobierane automatycznie. Pobieranie usunięte ręcznie nie wróci.</string>
     <string name="spatial_audio">Dźwięk przestrzenny</string>
     <string name="spatial_audio_subtitle">Większa immersja dzięki poszerzeniu utworów stereo</string>
     <string name="spatial_audio_atmos_subtitle">Wstrzymane dla tego utworu – Dolby Atmos już jest przestrzenny</string>

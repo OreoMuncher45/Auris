@@ -42,21 +42,11 @@ internal fun DownloadsSettings(
     val concurrentDownloads by AppSettings.concurrentDownloads.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
-    val autoDownloadSongs by AppSettings.autoDownloadSongs.collectAsStateWithLifecycle()
     SearchableSettingsGroup(search, SettingsCategory.DOWNLOADS) {
-        // The headline of this section: the songs they play are saved by
-        // themselves. It leads because it is the one that changes what the
-        // app does without a tap, and because the rules below it — Wi-Fi
-        // only, offline mode — are conditions on it.
-        val autoDownloadTitle = stringResource(R.string.auto_download_songs)
-        row(autoDownloadTitle, "automatic", "keep", "offline", "played") {
-            SettingsSubRow(
-                title = autoDownloadTitle,
-                subtitle = stringResource(R.string.auto_download_songs_subtitle),
-                checked = autoDownloadSongs,
-                onCheckedChange = AppSettings::setAutoDownloadSongs,
-            )
-        }
+        // Keeping a playlist whole is asked for on the playlist's own page —
+        // a switch beside its tracks, off unless the listener turns it on —
+        // so there is no global row for it here. What is here is how a
+        // download is made and where it is allowed to happen.
         val downloadQualityTitle = stringResource(R.string.download_quality)
         row(downloadQualityTitle, "offline", "lossless") {
             SettingsRow(

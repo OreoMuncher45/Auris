@@ -68,6 +68,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -318,6 +319,17 @@ fun DetailScreen(
      */
     songSort: SongSort = SongSort.DEFAULT,
     /**
+     * Whether this playlist keeps itself downloaded: songs added to it are
+     * fetched by themselves, and a song deleted by hand stays deleted.
+     *
+     * Null on everything that is not a downloaded playlist, which is what
+     * hides the switch. Non-null on both the playlist's catalogue page and the
+     * downloaded copy's page, so the answer is where the tracks are either way.
+     */
+    autoDownloadSongs: Boolean? = null,
+    /** Flips [autoDownloadSongs]. Null in the same places it is. */
+    onToggleAutoDownloadSongs: (() -> Unit)? = null,
+    /**
      * Asks for the next page of an endless mix — a Super Mix, an artist radio.
      *
      * Those pages have no last one, so the list grows as the listener reaches
@@ -549,6 +561,15 @@ fun DetailScreen(
                         onToggleAiArtist = {
                             AppSettings.toggleArtistAi(page.browseId, page.title)
                         },
+                    )
+                }
+            }
+
+            if (autoDownloadSongs != null && onToggleAutoDownloadSongs != null) {
+                item(key = "auto-download") {
+                    KeepPlaylistWholeRow(
+                        checked = autoDownloadSongs,
+                        onCheckedChange = { onToggleAutoDownloadSongs() },
                     )
                 }
             }
@@ -975,6 +996,46 @@ private fun ReleaseHeader(
                 }
             }
         }
+    }
+}
+
+/**
+ * The switch that keeps a downloaded playlist whole.
+ *
+ * On the playlist's own page, under its header, because that is where the
+ * promise lives: the tracks below it are the playlist's, and this is what
+ * says the next ones will be here too.
+ *
+ * Turning it off stops the next song from arriving and leaves the files that
+ * are here where they are. A song the listener deleted by hand is never
+ * fetched again either way — see
+ * [com.music.bitchord.download.Downloads.deletedByHand].
+ */
+@Composable
+private fun KeepPlaylistWholeRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 22.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.auto_download_songs),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = stringResource(R.string.auto_download_songs_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

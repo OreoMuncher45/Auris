@@ -3958,6 +3958,14 @@ private fun BitChordApp(
                 pageKeyboard?.hide()
             }
         }
+        // Whether the panel is all the way up over a portrait page, read from
+        // the panel's own dock. Derived, as Zenith does it: the open fraction
+        // moves on every frame of the panel's travel, and read straight in the
+        // page's draw it invalidated the page root on each of them. The flag
+        // only flips twice per open or close.
+        val pageHiddenByPlayer by remember(pageCoveredByPlayer, playerDock) {
+            derivedStateOf { pageCoveredByPlayer && playerDock.attached && playerDock.openFraction() >= 1f }
+        }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -3967,18 +3975,16 @@ private fun BitChordApp(
                         if (pageCoveredByPlayer) Modifier.clearAndSetSemantics {} else Modifier,
                     )
                     // Nothing of the page under a portrait player that is fully
-                    // up: that player is its own window, opaque from edge to
-                    // edge, and this one drawing on behind it — the page, the
-                    // glass bar and the blurs that sample it, a now-playing
-                    // row's bars — is GPU time taken from the player on every
-                    // frame for nothing anyone can see. The same test the
-                    // player's own dim skips itself on. Composition and layout
-                    // carry on, so the page is current the moment the player
-                    // starts to come down and this draws again.
+                    // up: the panel is opaque from edge to edge, and the page
+                    // drawing on behind it — the glass bar and the blurs that
+                    // sample it, a now-playing row's bars — is GPU time taken
+                    // from the player on every frame for nothing anyone can
+                    // see. The same test the panel's own dim skips itself on.
+                    // Composition and layout carry on, so the page is current
+                    // the moment the panel starts to come down and this draws
+                    // again.
                     .drawWithContent {
-                        val coveredByPlayer =
-                            showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f
-                        if (!coveredByPlayer) drawContent()
+                        if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
                 // Which page is on screen, as one name. The transition runs
@@ -5424,6 +5430,13 @@ private fun RootPage(
                 song
             }
         }
+        // The playlist behind this page, if it was downloaded whole. Only a
+        // playlist can keep itself up to date: an album is a fixed release
+        // that never gains a track.
+        val downloadedCollection = remember(savedCollections, page.browseId) {
+            Downloads.collectionFor(page.browseId, savedCollections)
+                ?.takeIf { Downloads.isMovingCollection(it) }
+        }
         DetailScreen(
             page = page,
             currentSong = player.song,
@@ -5431,6 +5444,15 @@ private fun RootPage(
             listState = pageDetailListState,
             activeShelf = sheets.detailActiveShelf,
             onActiveShelfChange = { sheets.detailActiveShelf = it },
+            // Keeping the playlist whole is asked for here, on the playlist's
+            // own page: the switch turns the promise on and off for this
+            // playlist alone.
+            autoDownloadSongs = downloadedCollection?.autoDownload,
+            onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
+                {
+                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                }
+            },
             // A Super Mix has no last page: it grows a page at a
             // time as the listener reaches the end of the list.
             onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
