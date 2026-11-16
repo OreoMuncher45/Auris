@@ -1035,6 +1035,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
+        bumpRecordingRating(videoId)
         LikeState.set(videoId, status)
         viewModelScope.launch {
             writeLike(videoId, status, previous)
@@ -1232,13 +1233,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
 
+    /**
+     * Per recording id: bumped by every direct rating of it ([setLike]) and by
+     * each row write through it, so a row write that finishes late only
+     * updates the recording's heart if nothing has rated it since.
+     */
+    private val recordingRatingVersion = HashMap<String, Int>()
+
+    /**
+     * True while [onWebSession] has installed candidate credentials that have
+     * not been validated yet. Row ratings don't write during it: until the
+     * candidate is accepted, a write would go to an account that may never
+     * become the listener.
+     */
+    private var credentialsInValidation = false
+
     private fun cancelRowRatings() {
         rowRatingJobs.cancel()
         rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
         rowRatingLocks.clear()
         rowRatingVersion.clear()
         rowRatingConfirmed.clear()
+        recordingRatingVersion.clear()
     }
+
+    private fun bumpRecordingRating(videoId: String): Int =
+        ((recordingRatingVersion[videoId] ?: 0) + 1).also { recordingRatingVersion[videoId] = it }
 
     /**
      * Rates a row that is rated through the recording behind it.
@@ -1266,14 +1286,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val videoId = RatingTarget.resolve(song)
                 // Checked again after each suspension: the listener can change
                 // while the lookup or the request is out.
-                if (listenerKey() != listener) return@withLock
+                if (listenerKey() != listener || credentialsInValidation) return@withLock
+                val recordingVersion = videoId?.let(::bumpRecordingRating)
                 val written = videoId != null && writeLike(videoId, target, likeStatusOf(videoId))
                 if (written) rowRatingConfirmed[rowId] = target
                 if (listenerKey() != listener) return@withLock
                 // The recording carries the rating too: other rows and players
                 // read it by its own id, and the next unlike reads its previous
                 // state from here to know whether to forget it from the library.
-                if (written && videoId != null) LikeState.set(videoId, target)
+                // Only if nothing rated the recording directly while this write
+                // was out: that later rating is the one the server kept.
+                if (written && videoId != null && recordingRatingVersion[videoId] == recordingVersion) {
+                    LikeState.set(videoId, target)
+                }
                 if (rowRatingVersion[rowId] == version) {
                     rowRatingVersion.remove(rowId)
                     LikeState.set(rowId, rowRatingConfirmed.remove(rowId) ?: previous)
@@ -4608,6 +4633,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // The old implementation persisted first and unconditionally set
             // signedIn=true; a half-finished channel chooser therefore became
             // a durable broken "Personal" account.
+            // Queued row ratings must not go out under the candidate: drop
+            // them, and hold new ones off until validation is over.
+            cancelRowRatings()
+            credentialsInValidation = true
+            try {
+                validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
+            } finally {
+                credentialsInValidation = false
+            }
+        }
+    }
+
+    private suspend fun validateWebSession(
+        session: CapturedSession,
+        mode: WebSessionMode,
+        oldAccountId: String?,
+        oldProfileId: String?,
+        onComplete: (Boolean) -> Unit,
+    ) {
+        run {
             Innertube.cookie = session.cookie
             Innertube.adoptSessionScope(
                 pageId = session.pageId,
@@ -4630,7 +4675,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (account == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
-                return@launch
+                return@run
             }
 
             // A channel switch is another identity under the same Google
@@ -4646,7 +4691,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (accountId == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
-                return@launch
+                return@run
             }
             val previous = authStore.sessions.firstOrNull { it.accountId == accountId }
             val selectedProfileId = profileId(session.pageId, session.dataSyncId, account.name)
