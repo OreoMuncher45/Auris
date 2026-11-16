@@ -47,6 +47,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 import kotlin.concurrent.thread
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
@@ -59,6 +61,20 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
         CrashLog.install(this)
+        // The encrypted credential store, opened on a thread of its own from
+        // here and joined below, where [authStore] is assigned. Opening it is
+        // Keystore work — a master key and a Tink keyset unwrapped — and it
+        // ran on the main thread, in line with everything else in onCreate,
+        // ahead of the first frame. Now it runs alongside the steps below.
+        //
+        // Joined, not left running, because the order after that point is
+        // load-bearing: the session restored from it seeds Innertube's cookie
+        // before onCreate returns, so the first request and the first play are
+        // already signed in, and the startup thread's SourceRegistry open must
+        // not begin before this store exists (they share one master key). None
+        // of the steps it now overlaps reads the store or the session.
+        val authStoreOpen = FutureTask { AuthStore(this) }
+        thread(name = "auth-store-open", block = authStoreOpen::run)
         // The performance monitor. Idle unless its switch is on: it collects
         // the setting and starts a two-second sampler only while it is.
         com.music.bitchord.perf.PerfMonitor.start(this)
@@ -128,7 +144,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         LyricsTranslation.cacheDir = cacheDir
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
-        authStore = AuthStore(this)
+        authStore = try {
+            authStoreOpen.get()
+        } catch (e: ExecutionException) {
+            // The open's own exception, not the wrapper, so a failure keeps
+            // its type and message. Its stack now starts on the open's thread.
+            throw e.cause ?: e
+        }
         // Opened off the main thread, alongside everything below: none of these
         // reads a setting or the session, and between them they are the slowest
         // opens at startup — SourceRegistry's encrypted store most of all.

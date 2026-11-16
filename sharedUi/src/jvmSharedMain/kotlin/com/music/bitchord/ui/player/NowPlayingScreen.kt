@@ -254,7 +254,7 @@ internal const val SEEK_SETTLE_TIMEOUT_MS = 4_000L
  * This is the *collapsed* size only. The expanded sleeve above it is bounded by
  * the window and is not touched — see [HEADER_HEIGHT] for what moved with it.
  */
-private val THUMB_SIZE = 66.dp
+internal val THUMB_SIZE = 66.dp
 /**
  * The credits row the collapsed artwork sits in.
  *
@@ -268,8 +268,8 @@ private val THUMB_SIZE = 66.dp
  * banner, so this is a band rather than a box: everything in it moves down by
  * the same twelve.
  */
-private val HEADER_HEIGHT = 72.dp
-private val ART_TITLE_GAP = 20.dp
+internal val HEADER_HEIGHT = 72.dp
+internal val ART_TITLE_GAP = 20.dp
 /**
  * The size of the player's own title and artist.
  *
@@ -285,8 +285,8 @@ private val ART_TITLE_GAP = 20.dp
  * two read as one block with the title on top rather than as two lines of the
  * same importance.
  */
-private val CREDITS_TITLE_SIZE = 22.sp
-private val CREDITS_ARTIST_SIZE = 17.sp
+internal val CREDITS_TITLE_SIZE = 22.sp
+internal val CREDITS_ARTIST_SIZE = 17.sp
 
 /**
  * How strongly the artist is written.
@@ -295,7 +295,7 @@ private val CREDITS_ARTIST_SIZE = 17.sp
  * reference player writes it at about half strength, which is where this one
  * sat as well.
  */
-private val CREDITS_ARTIST_ALPHA = 0.73f
+internal val CREDITS_ARTIST_ALPHA = 0.73f
 
 /**
  * How far below the artwork the title and the artist sit.
@@ -318,7 +318,7 @@ private val CREDITS_ARTIST_ALPHA = 0.73f
  * and the reference player has no such strip, so it cannot be matched
  * exactly without dropping the feature that carries the current line.
  */
-private val CREDITS_DROP = 40.dp
+internal val CREDITS_DROP = 40.dp
 
 /**
  * How far the sleeve may reach into the player's gutter.
@@ -404,7 +404,7 @@ private val SCRUBBER_MIN_GAP = 6.dp
  * the transport stay exactly where they are and only the two bottom rows ride
  * up.
  */
-private val DECK_ROWS_LIFT = 10.dp
+internal val DECK_ROWS_LIFT = 10.dp
 
 /**
  * How much smaller the picture is drawn inside its card when the listener asks
@@ -415,7 +415,7 @@ private val DECK_ROWS_LIFT = 10.dp
  * the card still reads as a card with a picture in it rather than as a frame
  * with a small print in it.
  */
-private const val ALBUM_ART_ZOOM_OUT = 0.94f
+internal const val ALBUM_ART_ZOOM_OUT = 0.94f
 
 /**
  * How far the wash below the artwork is lifted.
@@ -441,7 +441,7 @@ private val BACKDROP_LIFT = 48.dp
  * spare the whole [SCRUBBER_DROP] comes out of that; on a cramped one only
  * what is there.
  */
-private fun scrubberDropOf(spread: Dp): Dp =
+internal fun scrubberDropOf(spread: Dp): Dp =
     (8.dp + spread / 2 - SCRUBBER_MIN_GAP).coerceIn(0.dp, SCRUBBER_DROP)
 
 /**
@@ -452,7 +452,7 @@ private fun scrubberDropOf(spread: Dp): Dp =
  * outside the clip, which is exactly the slightly-cropped look Apple's own
  * player has and the owner asked for.
  */
-private const val HERO_ART_ZOOM = 1.234f
+internal const val HERO_ART_ZOOM = 1.234f
 /**
  * How far the mesh's dissolve seam sits below the banner's bottom edge. The
  * wash reading as starting at the artwork's own boundary made the blurred
@@ -531,10 +531,10 @@ private const val HERO_FADE_FRACTION = 0.42f
  * linear dissolve starts and stops with a visible crease, and over a stage
  * this tall the crease is the only thing the eye caught.
  */
-private const val ART_FADE_END_FRACTION = 1.0f
+internal const val ART_FADE_END_FRACTION = 1.0f
 /** Black at the very top of the player, fading out over [TOP_SCRIM_FRACTION]. */
-private const val TOP_SCRIM_ALPHA = 0.40f
-private const val TOP_SCRIM_FRACTION = 0.14f
+internal const val TOP_SCRIM_ALPHA = 0.40f
+internal const val TOP_SCRIM_FRACTION = 0.14f
 
 /**
  * The player's ink, as a state.
@@ -638,65 +638,6 @@ private fun PlayerColors(
 }
 
 /**
- * The player's backdrop, in a scope of its own.
- *
- * The mesh is re-read whenever a playing clip produces a frame, and the read
- * lands in a state. Read in the player's own scope, that state change
- * recomposes the whole player — every control on it — once a frame; read in
- * a scope of its own, it recomposes the backdrop and nothing else.
- *
- * Upstream BitChord does the same thing, and for the same reason: see
- * `PlayerMeshBackdrop` in its [NowPlayingScreen].
- */
-@Composable
-private fun PlayerMeshBackdrop(
-    trackKey: String,
-    imageUrl: String?,
-    liveFrames: Flow<ImageBitmap?>?,
-    seam: () -> Dp,
-    modifier: Modifier = Modifier,
-    lift: () -> Dp = { 0.dp },
-    liftFrom: () -> Dp = { 0.dp },
-) {
-    val mesh = key(trackKey) {
-        rememberArtworkMesh(imageUrl, artPx = ART_PX, liveFrames = liveFrames)
-    }
-    ArtworkMeshBackdrop(
-        mesh = mesh,
-        seam = seam,
-        modifier = modifier,
-        lift = lift,
-        liftFrom = liftFrom,
-    )
-}
-
-/**
- * The legacy theme's backdrop, in a scope of its own for the same reason.
- *
- * The legacy backdrop drifts through the colours of whatever is on screen, and
- * a playing clip changes those colours as it plays. The re-read stays here,
- * so it costs the backdrop and not the player.
- */
-@Composable
-private fun LegacyMeshBackdrop(
-    imageUrl: String?,
-    liveFrames: Flow<ImageBitmap?>?,
-    trackKey: String,
-    modifier: Modifier = Modifier,
-) {
-    // One frame at a time: the legacy backdrop takes a picture, not a stream.
-    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(liveFrames) {
-        liveFrames?.collectLatest { frame = it }
-    }
-    MeshGradientBackground(
-        palette = rememberArtworkColors(imageUrl, frame),
-        trackKey = trackKey,
-        modifier = modifier,
-    )
-}
-
-/**
  * How often a playing cover is read with "live blur" on.
  *
  * Eight a second. It used to be thirty, which is as often as the screen
@@ -782,29 +723,6 @@ private val TABLET_PLAYER_MIN_WIDTH = 700.dp
 private val LANDSCAPE_PLAYER_MIN_WIDTH = 560.dp
 
 /**
- * The artwork's own play/pause/scrub pose in the landscape layout. Three flat
- * scales and one priority rule: paused always wins outright over a scrub in
- * progress, rather than the two combining — there is one artwork, in one of
- * three settled poses, never a blend of two.
- */
-private const val ARTWORK_EXPANDED_SCALE = 1f
-private const val ARTWORK_PAUSE_SHRINK_SCALE = 0.88f
-private const val ARTWORK_DRAG_SHRINK_SCALE = 0.94f
-
-/**
- * The curve and duration those three poses move between — an ease-out cubic
- * over 500ms rather than a spring. A spring reads wrong for a press-and-release
- * gesture specifically: it visibly lags a quick scrub and keeps settling after
- * the finger has already lifted.
- *
- * The phone layout keeps its own bouncy spring ([artScale]) — it is answering a
- * different thing there, a sleeve that also collapses into a header, and the
- * bounce is the signature.
- */
-private val ArtworkScaleEasing = CubicBezierEasing(0.215f, 0.61f, 0.355f, 1f)
-private const val ARTWORK_SCALE_DURATION_MS = 500
-
-/**
  * How far a tall screen is allowed to push the transport from the blocks either
  * side of it.
  *
@@ -839,82 +757,8 @@ private var lastHeroSettled = false
  */
 private const val DOCK_FADE_LEAD = 0.15f
 
-/** The least the faded player is drawn at while docking — see the player's fade. */
-private const val DOCK_FADE_FLOOR = 1f / 255f
-
-/**
- * What one frame of docking into the mini player worked out — see
- * [PlayerDock]. Written while the sleeve is laid out and read further down
- * the same frame, by the tile inside the sleeve and by the player's draw; plain
- * fields rather than state, because nothing should recompose or re-lay out for
- * them — the sheet's offset already drives every frame that reads them.
- */
-private class DockFrame {
-    /**
-     * Where the player sits on screen with the sheet fully open. State, the
-     * one field here that is: it arrives a frame after the sheet first lays
-     * out, and the frame it arrives in has to hear about it.
-     */
-    var anchor: Offset? by mutableStateOf(null)
-    /** The player's size [anchor] was measured at. */
-    var anchorFor = IntSize.Zero
-    /** The mini player's cover, in the sleeve's box. */
-    var miniInBox: Rect? = null
-    /** The sheet's offset this frame, in the whole pixels it is placed at. */
-    var offset = 0f
-    /** How much of that the artwork rides — see `dockRide`. */
-    var ride = 0f
-    /** The sleeve as laid out, in the same box. */
-    var sleeve: Rect = Rect.Zero
-    /**
-     * The sleeve's corner as a shape, made again only when its radius moves:
-     * both of the sleeve's clipping layers ask for it, on every frame of any
-     * transition, and an unchanged radius needs no new shape.
-     */
-    private var cornerRadius = Dp.Unspecified
-    private var corner: Shape = RectangleShape
-    fun cornerShape(radius: Dp): Shape {
-        if (radius != cornerRadius) {
-            cornerRadius = radius
-            corner = RoundedCornerShape(radius)
-        }
-        return corner
-    }
-    /** Where the sleeve's pixels land in the player, for drawing it on top. */
-    var portalLeft = 0f
-    var portalTop = 0f
-    /**
-     * Where the player's own title and artist are, in the player's box.
-     *
-     * Written while the credits are laid out and read by the draw that flies
-     * them into the mini player. A recorded layer carries no placement of its
-     * own, which is the same reason [portalLeft] and [portalTop] exist for
-     * the sleeve.
-     */
-    var creditsLeft = 0f
-    var creditsTop = 0f
-    /** Whether the credits have been placed at least once. */
-    var creditsKnown = false
-    /**
-     * How much smaller than laid out the sleeve is drawn there. Always 1 for
-     * the portrait sleeve, which is re-laid out at its size each frame; the
-     * landscape one keeps its layout and is scaled down onto the cover.
-     */
-    var portalScale = 1f
-    /** The player itself, for placing the landscape sleeve within it. */
-    var host: LayoutCoordinates? = null
-    /** The landscape sleeve, as last placed. */
-    var landscapeArt: LayoutCoordinates? = null
-}
-
-/**
- * One frame of the landscape sleeve's trip to the mini player: where it is
- * drawn in the player, and how small. See `landscapeDockPose`.
- */
-private class LandscapeDockPose(val left: Float, val top: Float, val scale: Float)
-
 /** The placeholder tile's corners — one shape, not a new one every frame it moves. */
-private val TileShape = RoundedCornerShape(8.dp)
+internal val TileShape = RoundedCornerShape(8.dp)
 
 /**
  * [content], for as long as [shown] says so.
@@ -926,7 +770,7 @@ private val TileShape = RoundedCornerShape(8.dp)
  * one caption or one line of stats coming or going.
  */
 @Composable
-private fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
+internal fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
     if (shown()) content()
 }
 
@@ -955,7 +799,7 @@ fun fullBleedArtworkAvailable(windowWidth: Dp): Boolean =
  * not shaped like. Unknown (the cover has not decoded) leaves the crop alone
  * rather than guessing a wrong shape.
  */
-private fun artworkFitScale(width: Float, height: Float, aspect: Float?): Float {
+internal fun artworkFitScale(width: Float, height: Float, aspect: Float?): Float {
     if (width <= 0f || height <= 0f || aspect == null || aspect <= 0f) return 1f
     val drawnWidth = maxOf(width, height * aspect)
     val drawnHeight = drawnWidth / aspect
@@ -1002,7 +846,7 @@ internal fun creditsHandoverAlpha(progress: Float): Float =
  * Whether a player given the whole of a window this wide is still narrow enough
  * to run its artwork edge to edge.
  */
-private fun playerFillsWindow(windowWidth: Dp): Boolean =
+internal fun playerFillsWindow(windowWidth: Dp): Boolean =
     windowWidth <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
 
 /**
@@ -1034,20 +878,20 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
     windowWidth > windowHeight && windowWidth >= LANDSCAPE_PLAYER_MIN_WIDTH
 
 /** How long the player stands under the lyrics untouched before standing down. */
-private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
+internal const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 /** Default Spotify Canvas delay before its optional automatic collapse. */
-private const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
+internal const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
 /** One shared travel time keeps the deck, credits and stats moving as a unit. */
-private const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
+internal const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
 /** The deck's fade back in on returning from lyrics or the queue. */
 private const val PLAYER_DECK_FADE_IN_MS = 700
 /** Shared top-only scrim transition for the Canvas lower deck. */
-private const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
+internal const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
 
 // The lower glass and the controls use one piece of motion. Keeping the slide
 // specification here prevents a busy frame from exposing slightly different
 // timings between the surface and the player drawn over it.
-private fun playerDeckSlideIn() = slideInVertically(
+internal fun playerDeckSlideIn() = slideInVertically(
     animationSpec = tween(
         SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
         easing = FastOutSlowInEasing,
@@ -1055,7 +899,7 @@ private fun playerDeckSlideIn() = slideInVertically(
     initialOffsetY = { it },
 )
 
-private fun playerDeckSlideOut() = slideOutVertically(
+internal fun playerDeckSlideOut() = slideOutVertically(
     animationSpec = tween(
         SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
         easing = FastOutSlowInEasing,
@@ -1350,21 +1194,14 @@ fun NowPlayingScreen(
     // source tree, so it needs its own source for the same frosted material as
     // the bottom navigation pill.
     val playerHaze = remember { HazeState() }
-    var showAudioPipeline by remember { mutableStateOf(false) }
-    var showCast by remember { mutableStateOf(false) }
-    var showAudioOutput by remember { mutableStateOf(false) }
-    var showLyricsProviders by remember { mutableStateOf(false) }
+    // Which drawers and dialogs are up over the player — see [PlayerOverlays].
+    val overlays = remember { PlayerOverlayState() }
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
-    val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
+    val openAudioOutput = rememberOutputPicker { overlays.audioOutput = true }
     // Listening in a party whose host has taken the controls: the transport
     // keeps only play/pause, which from here moves this device alone.
     val controlsLocked = rememberControlsLocked()
-    var showListenTogetherMembers by remember { mutableStateOf(false) }
-    // Who's actually in the party is worth a look before the settings page —
-    // see [ListenTogetherMembersSheet]. Only meaningful once there is a party
-    // to show, so the pill and the caption fall back to [onListenTogether]
-    // itself (create/join) when there isn't one.
-    val openListenTogetherMembers: () -> Unit = { showListenTogetherMembers = true }
+    val openListenTogetherMembers = overlays.openListenTogetherMembers
 
     val syncedLyricsEnabled by PlayerSettings.syncedLyrics.collectAsStateWithLifecycle()
     // Display only: lyrics keep loading so the full panel still works, but the
@@ -1379,7 +1216,6 @@ fun NowPlayingScreen(
     }
     val hideVolumeBar by PlayerSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by PlayerSettings.hideSongStatus.collectAsStateWithLifecycle()
-    val closeLabel = stringResource(Res.string.close_player)
 
     // Animated cover art: the looping video some labels publish alongside a
     // release, laid over the sleeve. A miss is the normal answer — see
@@ -1389,41 +1225,8 @@ fun NowPlayingScreen(
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
     val canvas = rememberCanvasArtwork(song)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
-    // Whether the clip actually has a frame on screen right now, and one of
-    // them — used to blow the sleeve out to the full-bleed hero treatment and
-    // to re-tint the backdrop off the clip's own colours rather than the
-    // still sleeve's.
-    // All five keyed on the clip rather than the song, so a switch that keeps
-    // the same clip — the common case, same title, same search — carries them
-    // through untouched: the player never re-reports a first frame, the
-    // sleeve never flashes back in under a clip that never went away, and
-    // the Spotify deck keeps its state and captured measurements instead of
-    // snapping open mid-loop. A different clip resets them with itself.
-    val canvasRenderedState = remember(canvas?.url) { mutableStateOf(false) }
-    var canvasRendered by canvasRenderedState
-    // The clip's newest frame, held outside this screen's composition — see
-    // [CanvasFrameHolder].
-    //
-    // It used to be a state of this screen's own, read here for the ink, the
-    // mesh and the blurred backdrop. A frame arrives while the clip plays, so
-    // that was a recomposition of the whole player — every control on it —
-    // every time one was captured, and the captures came ten times a second.
-    // The frame is now read by the three things that want it, each in an
-    // effect of its own, and it never reaches this composition at all.
-    val canvasFrameHolder = remember(canvas?.url) { CanvasFrameHolder() }
-    // Spotify's phone presentation starts with the full control deck over its
-    // video. It leaves on a Canvas tap, or after the optional idle timeout.
-    var spotifyCanvasControlsOpen by remember(canvas?.url) { mutableStateOf(true) }
-    // Captured while the deck is fully laid out. SlidingPlayerDeck collapses
-    // that deck's measured height, which makes the weighted region grow;
-    // retaining both measurements keeps the credits' destination stationary.
-    var spotifyCanvasDeckHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
-    var spotifyCanvasExpandedTopHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
-    // How much of the still artwork the clip is covering, reported by the clip
-    // itself. Read from a draw scope rather than in composition: it moves every
-    // frame of the fade, and the still art it governs is an AsyncImage whose
-    // request is rebuilt on each pass and so would not be skipped.
-    val canvasCover = remember(canvas?.url) { mutableFloatStateOf(0f) }
+    // What travels with the clip rather than the song — see [CanvasClipState].
+    val clipState = remember(canvas?.url) { CanvasClipState() }
     // v1.5's backdrop, kept behind a switch — see [PlayerSettings.legacyMeshGradient].
     val legacyMesh by PlayerSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     // The backdrop's colours, taken off the artwork's own arrangement rather
@@ -1472,13 +1275,7 @@ fun NowPlayingScreen(
     // the same surface on phones and tablets without making this UI state a
     // continuously collected setting.
     val restoredPlayerScreen = remember { PlayerSettings.lastPlayerScreen.value }
-    var queueOpen by remember {
-        mutableStateOf(restoredPlayerScreen == LastPlayerScreen.QUEUE)
-    }
-    var lyricsOpen by remember {
-        mutableStateOf(restoredPlayerScreen == LastPlayerScreen.LYRICS)
-    }
-    val queueSlide = remember { mutableFloatStateOf(0f) }
+    val panels = remember { PlayerPanelState(restoredPlayerScreen) }
     // The mini player this player docks into — read here rather than further
     // down, because the prewarm below has to know whether the sheet has come
     // to rest before it lays anything heavy out. The read itself is free: a
@@ -1520,32 +1317,16 @@ fun NowPlayingScreen(
         delay(650)
         playerPrewarmStage = 3 // queue layout and initial scroll
     }
-    // Whether the lyrics or queue list is actively mid-scroll. The player's own
-    // swipe gestures — skip-by-drag and the dismiss band — are suppressed for
-    // as long as either is true, so a scroll that grazes past a list's edge
-    // can never be misread as a drag meant for the player underneath it. Reset
-    // whenever the owning panel closes, since a list scrolled mid-transition
-    // out never gets a matching "stopped scrolling" event of its own.
-    var lyricsScrolling by remember { mutableStateOf(false) }
-    var queueScrolling by remember { mutableStateOf(false) }
-    LaunchedEffect(lyricsOpen) { if (!lyricsOpen) lyricsScrolling = false }
-    LaunchedEffect(queueOpen) { if (!queueOpen) queueScrolling = false }
-    val panelScrolling = lyricsScrolling || queueScrolling
-    var lyricsControlsOpen by remember {
-        mutableStateOf(restoredPlayerScreen == LastPlayerScreen.LYRICS)
-    }
-    var queueControlsOpen by remember { mutableStateOf(true) }
-    // The queue's search. Open over the whole player rather than inside the
-    // queue pane, so the listener searches and adds without ever leaving the
-    // player — the music keeps playing underneath and the queue is one tap
-    // back.
-    var queueSearchOpen by remember { mutableStateOf(false) }
+    // See [PlayerPanelState.lyricsScrolling].
+    LaunchedEffect(panels.lyricsOpen) { if (!panels.lyricsOpen) panels.lyricsScrolling = false }
+    LaunchedEffect(panels.queueOpen) { if (!panels.queueOpen) panels.queueScrolling = false }
+    val panelScrolling = panels.lyricsScrolling || panels.queueScrolling
     // The way into that search, or null where the platform has none — which is
     // what hides the row in the queue. Read once: whether a catalogue is behind
     // this player is a fact about the platform, not about the track.
     val openQueueSearch: (() -> Unit)? = remember {
         if (PlayerPlatform.host.queueSearchAvailable) {
-            { queueSearchOpen = true }
+            { overlays.queueSearch = true }
         } else {
             null
         }
@@ -1558,44 +1339,23 @@ fun NowPlayingScreen(
     val playerDeckSettledOpen by remember(playerDeckReveal) {
         derivedStateOf { playerDeckReveal.value >= 0.999f }
     }
-    LaunchedEffect(lyricsOpen, queueOpen) {
+    LaunchedEffect(panels.lyricsOpen, panels.queueOpen) {
         PlayerSettings.setLastPlayerScreen(
             when {
-                lyricsOpen -> LastPlayerScreen.LYRICS
-                queueOpen -> LastPlayerScreen.QUEUE
+                panels.lyricsOpen -> LastPlayerScreen.LYRICS
+                panels.queueOpen -> LastPlayerScreen.QUEUE
                 else -> LastPlayerScreen.MAIN
             },
         )
         // A fresh visit always starts with the half player present. Scrolling
         // the queue can then dismiss it without this effect firing again.
-        if (queueOpen) queueControlsOpen = true
+        if (panels.queueOpen) panels.queueControlsOpen = true
     }
-    // Change the panel and its controls in the same snapshot. Driving the
-    // controls from a LaunchedEffect left one composed frame where lyrics were
-    // open but the half-player was not, so every trip into lyrics briefly
-    // started an exit animation and reversed it on the following frame.
-    val openLyrics: () -> Unit = {
-        lyricsControlsOpen = true
-        lyricsOpen = true
-        queueOpen = false
-    }
-    val closeLyrics: () -> Unit = {
-        lyricsControlsOpen = false
-        lyricsOpen = false
-    }
-    val toggleLyrics: () -> Unit = {
-        if (lyricsOpen) closeLyrics() else openLyrics()
-    }
-    val toggleQueue: () -> Unit = {
-        val opening = !queueOpen
-        if (opening && lyricsOpen) queueSlide.floatValue = 1f
-        // With the queue rather than after it, for the reason [openLyrics]
-        // gives: left to the effect above, it was a second recomposition of
-        // the whole player on the sleeve's first frame of moving.
-        if (opening) queueControlsOpen = true
-        queueOpen = opening
-        if (opening) closeLyrics()
-    }
+    // See [PlayerPanelState.openLyrics].
+    val openLyrics = panels.openLyrics
+    val closeLyrics = panels.closeLyrics
+    val toggleLyrics = panels.toggleLyrics
+    val toggleQueue = panels.toggleQueue
     val lyricsLoadingLines = stringArrayResource(Res.array.lyrics_loading_lines)
     val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
     val lyricsTranslation = rememberLyricsTranslation(
@@ -1606,11 +1366,6 @@ fun NowPlayingScreen(
         loadingText = lyricsLoadingText,
         haptics = haptics,
     )
-    // The drawer holding the finished card, set the moment Share is confirmed.
-    // Nothing is drawn here: the picture is a bitmap and a canvas, which is the
-    // phone's to make, so the request is handed down and the sheet comes back
-    // through [PlayerHost.LyricsShareSheet].
-    var lyricsShare by remember { mutableStateOf<LyricsShareRequest?>(null) }
     val lyricsShareEnabled = lyricsShareAvailable
     val lyricPicker = rememberLyricsPicker(
         song = song,
@@ -1618,9 +1373,9 @@ fun NowPlayingScreen(
         subLines = lyricsTranslation.subLines,
         artworkUrl = remoteArt,
         haptics = haptics,
-        onCard = { lyricsShare = it },
+        onCard = { overlays.lyricsShare = it },
     )
-    // Nothing here resets [lyricsOpen] on a track change, deliberately. The
+    // Nothing here resets [PlayerPanelState.lyricsOpen] on a track change, deliberately. The
     // panel is a place, not a property of the track: someone reading along who
     // skips — or who simply lets the queue run on — means to carry on reading,
     // so the words change underneath them and the panel stays. Closing it
@@ -1649,80 +1404,27 @@ fun NowPlayingScreen(
     // recomposition: this is a piece of state on the window, not a per-frame
     // value, and the panel now outlives a track change (see above), so there is
     // no longer a whole-player recomposition standing behind it as a backstop.
-    KeepScreenOn(enabled = lyricsOpen)
+    KeepScreenOn(enabled = panels.lyricsOpen)
 
-    // Back out of the lyrics panel to the player, and only from the player
-    // itself out to the mini player.
-    //
-    // See [PlayerBackHandler] for why this needs more than a BackHandler.
-    // Controls being visible must not insert an extra navigation level. Back
-    // always leaves lyrics in one step, whether it starts over the lyrics list
-    // or over the half-player at the bottom.
-    PlayerBackHandler(enabled = lyricsOpen, onBack = closeLyrics)
+    // Back closes whatever is on top first — see [PlayerBackHandlers] for the
+    // order, which is the order back reads them in.
+    PlayerBackHandlers(
+        panels = panels,
+        overlays = overlays,
+        lyricsOffsetOpen = lyricsOffsetOpen,
+        onDismissLyricsOffset = onDismissLyricsOffset,
+        automixPanelOpen = automixPanelOpen,
+        onAutomixPanelOpenChange = onAutomixPanelOpenChange,
+        lyricPicker = lyricPicker,
+    )
 
-    // Back out of the queue to the player.
-    PlayerBackHandler(enabled = queueOpen) { queueOpen = false }
-
-    // Back out of the queue's search to the queue. Registered after the
-    // queue's own handler because that is the order back reads them in: the
-    // newest enabled handler is the one the next press reaches, and the search
-    // is drawn over the queue rather than instead of it.
-    PlayerBackHandler(enabled = queueSearchOpen) { queueSearchOpen = false }
-
-    // Registered ahead of the pipeline dialog's own handler below: the
-    // pipeline is now only ever opened from the row at the bottom of this
-    // drawer, so it is always the topmost of the two when both are up, and
-    // back has to close it first rather than taking the drawer out from
-    // under it.
-    PlayerBackHandler(enabled = showAudioOutput) { showAudioOutput = false }
-
-    PlayerBackHandler(enabled = showLyricsProviders) { showLyricsProviders = false }
-
-    PlayerBackHandler(enabled = showListenTogetherMembers) { showListenTogetherMembers = false }
-
-    PlayerBackHandler(enabled = showAudioPipeline) { showAudioPipeline = false }
-
-    PlayerBackHandler(enabled = showCast) { showCast = false }
-
-    PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
-
-    PlayerBackHandler(enabled = automixPanelOpen) { onAutomixPanelOpenChange(false) }
-
-    // Both of these sit ahead of [lyricsOpen]'s own handler — see the note on
-    // the queue above — because both are drawn *over* the panel rather than
-    // instead of it: back should take away whichever of them is up and leave the
-    // lyrics underneath exactly where the reader left them.
-    PlayerBackHandler(enabled = lyricsShare != null) { lyricsShare = null }
-
-    // Backing out of a pick drops the pick, not the panel: somebody who changed
-    // their mind lands on the same verses they started from rather than having
-    // to open the whole panel again.
-    PlayerBackHandler(enabled = lyricPicker.picking) { lyricPicker.cancel() }
-
-    // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
-    //
-    // Plain state driven by an animation rather than [animateFloatAsState],
-    // because it has two drivers and only one of them is an animation: the
-    // toggle at the foot of the player, which travels end to end, and a finger
-    // dragging the sleeve upward, which sets it outright. An animation keyed on
-    // [queueOpen] cannot be pushed around mid-flight by a drag — and a drag that
-    // could only move the *target* would have nothing to show for itself until
-    // it was released, then jump from wherever the animation had got to.
-    //
-    // Read only inside layout and draw lambdas and the thresholds below, never
-    // as a value here — see [p].
-    // Whether a finger is on the sleeve right now. Parks the settle below rather
-    // than leaving the two to write the same value on alternate frames.
-    var queueDragging by remember { mutableStateOf(false) }
-    // Bumped when a drag hands the value back, so the settle runs again even
-    // though [queueOpen] may not have moved: a swipe that gave up short of
-    // [QUEUE_CARRY_FRACTION] has to fall back to 0 just as surely as one that
-    // carried has to finish reaching 1.
-    var queueReleased by remember { mutableIntStateOf(0) }
-    LaunchedEffect(queueOpen, queueDragging, queueReleased) {
-        if (queueDragging) return@LaunchedEffect
-        val target = if (queueOpen) 1f else 0f
-        val from = queueSlide.floatValue
+    // 0 = full sleeve, 1 = queue — see [PlayerPanelState.queueSlide], and
+    // [PlayerPanelState.queueDragging] and [PlayerPanelState.queueReleased]
+    // for the two that drive its settle.
+    LaunchedEffect(panels.queueOpen, panels.queueDragging, panels.queueReleased) {
+        if (panels.queueDragging) return@LaunchedEffect
+        val target = if (panels.queueOpen) 1f else 0f
+        val from = panels.queueSlide.floatValue
         if (from == target) return@LaunchedEffect
         animate(
             initialValue = from,
@@ -1731,7 +1433,7 @@ fun NowPlayingScreen(
                 durationMillis = (QUEUE_TRAVEL_MS * abs(target - from)).roundToInt(),
                 easing = FastOutSlowInEasing,
             ),
-        ) { value, _ -> queueSlide.floatValue = value }
+        ) { value, _ -> panels.queueSlide.floatValue = value }
     }
 
     // Horizontal fling anywhere on the player skips tracks; the artwork
@@ -1785,42 +1487,21 @@ fun NowPlayingScreen(
     // Never while a finger is on the scrubber or the volume bar: those are the
     // two controls that are *being used* while nothing else on screen moves,
     // and timing out underneath them would take the thing away mid-gesture.
-    LaunchedEffect(lyricsOpen, lyricsControlsOpen, scrub.scrubbing, volume.dragging) {
-        if (lyricsOpen && lyricsControlsOpen && !scrub.scrubbing && !volume.dragging) {
-            delay(LYRICS_CONTROLS_IDLE_MS)
-            lyricsControlsOpen = false
-        }
-    }
+    //
+    // In a scope of its own: two of the states it waits on change at the
+    // start and end of every scrub and volume drag, and read here they
+    // recomposed the whole player each time.
+    LyricsControlsIdleEffect(panels = panels, scrub = scrub, volume = volume)
     // How collapsed the sleeve is, whichever surface asked for it — one 420ms
     // ease for the queue and the lyrics both.
     val animatedCollapse = animateFloatAsState(
-        targetValue = if (lyricsOpen || queueOpen) 1f else 0f,
+        targetValue = if (panels.lyricsOpen || panels.queueOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
-    // A queue tap/drag already owns a 420ms progress value. Reusing it avoids
-    // driving this large layout from two independent animations on every frame.
-    // Lyrics retain the ordinary collapse animation; switching queue -> lyrics
-    // stays at one because its target never changed.
-    //
-    // A function rather than a value. It moves on every frame of a 420ms
-    // collapse and of a finger dragging the queue, and read here as a value it
-    // recomposed this whole function on each of those frames — the sleeve, the
-    // credits, both panels and the controls, just to move a few of them. Layout
-    // and draw lambdas call it where they place or paint; composition only asks
-    // the thresholds below, each of which changes once per collapse.
-    val p: () -> Float = {
-        val queueOwnsCollapse = !lyricsOpen &&
-            (queueOpen || queueDragging || queueSlide.floatValue > 0.001f)
-        if (queueOwnsCollapse) queueSlide.floatValue else animatedCollapse.value
-    }
-    val collapseStarted by remember { derivedStateOf { p() > 0f } }
-    val collapseAtRest by remember { derivedStateOf { p() == 0f } }
-    val collapsePastSettling by remember { derivedStateOf { p() >= 0.01f } }
-    val collapsePastHalf by remember { derivedStateOf { p() >= 0.5f } }
-    val collapseAlmostDone by remember { derivedStateOf { p() >= 0.999f } }
-    val collapseDone by remember { derivedStateOf { p() >= 1f } }
-    val queueShowing by remember { derivedStateOf { queueSlide.floatValue > 0.01f } }
+    // How far the sleeve has collapsed, and the thresholds composition asks
+    // of it — see [PlayerCollapse].
+    val collapse = remember { PlayerCollapse(panels, animatedCollapse) }
 
     // Whether the sleeve has finished getting out of the way, and how far the
     // panel that replaces it has faded up since.
@@ -1850,10 +1531,10 @@ fun NowPlayingScreen(
     val panelFade = remember {
         // Already up for a player opened onto a panel, as the animated value
         // this replaces started at its first target.
-        Animatable(if (Snapshot.withoutReadObservation { collapseDone }) 1f else 0f)
+        Animatable(if (Snapshot.withoutReadObservation { collapse.done }) 1f else 0f)
     }
     LaunchedEffect(Unit) {
-        snapshotFlow { collapseDone }.collectLatest { settled ->
+        snapshotFlow { collapse.done }.collectLatest { settled ->
             panelFade.animateTo(
                 if (settled) 1f else 0f,
                 tween(durationMillis = 200, easing = FastOutSlowInEasing),
@@ -1921,9 +1602,9 @@ fun NowPlayingScreen(
     // can land in the middle of the sleeve coming back out of a panel —
     // recomposed this whole screen to run a block that, every time after the
     // first, had nothing left to do.
-    LaunchedEffect(art, canvasRenderedState) {
+    LaunchedEffect(art, clipState.renderedState) {
         if (heroSettled) return@LaunchedEffect
-        snapshotFlow { art.loaded || canvasRenderedState.value }.first { it }
+        snapshotFlow { art.loaded || clipState.renderedState.value }.first { it }
         heroSettled = true
         lastHeroSettled = true
     }
@@ -1931,10 +1612,10 @@ fun NowPlayingScreen(
     // its opacity on exactly what is mounted here: both are decided in the same
     // composition pass, so the still art is whole again in the very frame the
     // clip goes, rather than a frame later with no artwork anywhere.
-    val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
+    val heroClip = canvas?.takeIf { heroMode && !collapse.pastHalf }
     val spotifyCanvasFullscreen = spotifyCanvasOnPhone &&
         heroClip?.source == CanvasSource.SPOTIFY
-    val spotifyCanvasPresentation = spotifyCanvasFullscreen && canvasRendered
+    val spotifyCanvasPresentation = spotifyCanvasFullscreen && clipState.rendered
     val canvasFirstPortrait = !spotifyCanvasFullscreen &&
         heroClip != null && canvasAspect > 0f && canvasAspect < 1f
     // The clip's player, which outlives [heroClip] by the second half of a
@@ -1952,7 +1633,7 @@ fun NowPlayingScreen(
     // off that, its last few frames would resize the view and rebuild its
     // fade for a picture nobody can see.
     val heroClipMounted = canvas?.takeIf {
-        heroMode && (!(lyricsOpen || queueOpen) || !collapseDone)
+        heroMode && (!(panels.lyricsOpen || panels.queueOpen) || !collapse.done)
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
         heroClipMounted?.source == CanvasSource.SPOTIFY
@@ -1982,7 +1663,7 @@ fun NowPlayingScreen(
     } else {
         LiveColorSource.LIVE_ART
     }
-    val canvasPalette = rememberLivePalette(canvasFrameHolder.frames, canvasSource)
+    val canvasPalette = rememberLivePalette(clipState.frameHolder.frames, canvasSource)
     // The clip owns the whole screen when Spotify's presentation is on. Then
     // there is no sleeve in the answer at all.
     val canvasOwnsScreen = spotifyCanvasPresentation || clipFullscreen
@@ -2017,42 +1698,19 @@ fun NowPlayingScreen(
     }
 
 
-    // The setting defaults on, restoring the five-second stand-down, but the
-    // listener can keep the deck open indefinitely from Spotify integration.
-    // Pausing or interacting with a continuous control suspends the countdown;
-    // it starts fresh once playback/interaction resumes.
-    LaunchedEffect(
-        spotifyCanvasPresentation,
-        spotifyCanvasControlsOpen,
-        spotifyCanvasAutoHide,
-        isPlaying,
-        scrub.scrubbing,
-        volume.dragging,
-        lyricsOpen,
-        queueOpen,
-        mixing,
-    ) {
-        if (!spotifyCanvasPresentation || !spotifyCanvasControlsOpen ||
-            !spotifyCanvasAutoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
-            lyricsOpen || queueOpen || mixing
-        ) return@LaunchedEffect
-        delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
-        spotifyCanvasControlsOpen = false
-    }
-
-    // Returning from a subview, or regaining the TextureView after backgrounding,
-    // is a fresh visit, so show the deck again before any optional countdown.
-    LaunchedEffect(spotifyCanvasPresentation, lyricsOpen, queueOpen) {
-        if (spotifyCanvasPresentation && !lyricsOpen && !queueOpen) {
-            spotifyCanvasControlsOpen = true
-        }
-    }
-    // A transition can begin while Canvas is standing alone. Restore and pin
-    // the compact deck so both the outgoing and incoming song are identified;
-    // normal tap/idle collapsing resumes as soon as the mix finishes.
-    LaunchedEffect(spotifyCanvasPresentation, mixing) {
-        if (spotifyCanvasPresentation && mixing) spotifyCanvasControlsOpen = true
-    }
+    // When Spotify's deck stands down and comes back — see
+    // [SpotifyCanvasDeckEffects].
+    SpotifyCanvasDeckEffects(
+        clipState = clipState,
+        presentation = spotifyCanvasPresentation,
+        autoHide = spotifyCanvasAutoHide,
+        isPlaying = isPlaying,
+        scrub = scrub,
+        volume = volume,
+        lyricsOpen = panels.lyricsOpen,
+        queueOpen = panels.queueOpen,
+        mixing = mixing,
+    )
     // The mesh follows the clip only while the mesh is the backdrop. When
     // Spotify's Canvas owns the screen there is no mesh behind it, and
     // averaging one that nobody can see is work for nothing.
@@ -2076,13 +1734,13 @@ fun NowPlayingScreen(
         targetValue = if (
             // Latched first, so a clip coming and going isn't listened for
             // once the banner has settled — see [heroSettled].
-            heroMode && (heroSettled || art.loaded || canvasRendered)
+            heroMode && (heroSettled || art.loaded || clipState.rendered)
         ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
     val spotifyChromeAlpha by animateFloatAsState(
-        targetValue = if (!spotifyCanvasPresentation || spotifyCanvasControlsOpen) 1f else 0f,
+        targetValue = if (!spotifyCanvasPresentation || clipState.spotifyControlsOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
         label = "spotifyCanvasChrome",
     )
@@ -2099,28 +1757,19 @@ fun NowPlayingScreen(
     // target that followed the lyrics alone re-cropped the picture the moment
     // the queue opened, and the thumbnail appeared to zoom in without moving.
     val headerUncrop by animateFloatAsState(
-        targetValue = if (lyricsOpen || queueOpen) 1f else 0f,
+        targetValue = if (panels.lyricsOpen || panels.queueOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "headerUncrop",
     )
-    // How tall that banner is, worked out down in the layout where the sleeve's
-    // own geometry is known. Zero until the first measure, which is fine: there
-    // is nothing to show that early either.
-    var heroHeight by remember { mutableStateOf(0.dp) }
-    // The card's own bottom edge, in the player's pixels.
-    //
-    // Published out of the layout that measures it, because the backdrop is
-    // drawn in another scope: this is the line the wash below the artwork is
-    // lifted from, and the two have to be given the same line.
-    var cardBottom by remember { mutableStateOf(0.dp) }
-    var playerBounds by remember { mutableStateOf(IntSize.Zero) }
+    // What the layout measures and publishes back — see [PlayerMeasures].
+    val measures = remember { PlayerMeasures() }
     // The bottom of a top-aligned, contained clip in the full-player view.
     // Use measured pixels and the decoded display aspect, never screen constants.
     fun canvasBottom(portrait: Boolean): Dp =
-        if (portrait && playerBounds.width > 0 && playerBounds.height > 0) {
-            val viewAspect = playerBounds.width.toFloat() / playerBounds.height
-            val videoHeight = if (canvasAspect >= viewAspect) playerBounds.width / canvasAspect
-                else playerBounds.height.toFloat()
+        if (portrait && measures.playerBounds.width > 0 && measures.playerBounds.height > 0) {
+            val viewAspect = measures.playerBounds.width.toFloat() / measures.playerBounds.height
+            val videoHeight = if (canvasAspect >= viewAspect) measures.playerBounds.width / canvasAspect
+                else measures.playerBounds.height.toFloat()
             with(density) { videoHeight.toDp() }
         } else 0.dp
     val renderedCanvasBottom = canvasBottom(canvasFirstPortrait)
@@ -2129,7 +1778,7 @@ fun NowPlayingScreen(
     // Match the old hero's fade height in physical pixels, not its much larger
     // percentage of a portrait video. The mask ends at the real video bottom.
     val clipFadeFraction = if (clipBottom > 0.dp) {
-        (heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
+        (measures.heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
     } else 0f
     // The status bar's own height, whether it is showing or not.
     //
@@ -2175,11 +1824,8 @@ fun NowPlayingScreen(
     // Both start at zero, which is a band with no height and so no hole at all
     // until the first layout pass. There is nothing on screen to drag then
     // either.
-    var dismissBandTop by remember { mutableFloatStateOf(0f) }
-    var dismissBandBottom by remember { mutableFloatStateOf(0f) }
-    // The suppressing Column's own coordinates, to put a pointer's local
-    // position into the same space as the two edges above.
-    var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    //
+    // Held in [PlayerMeasures.dismissBandTop] and [PlayerMeasures.dismissBandBottom].
 
     // Where the caption above the credits leads: the party for a track someone
     // else queued, the queue itself for a queue-built session, and otherwise
@@ -2188,7 +1834,7 @@ fun NowPlayingScreen(
         if (playedBy != null) {
             onListenTogether()
         } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
-            queueOpen = true
+            panels.queueOpen = true
             closeLyrics()
         } else {
             onOpenPlaybackSource()
@@ -2199,40 +1845,18 @@ fun NowPlayingScreen(
     // screen, the landscape one on the sleeve alone — the right column there is
     // full of horizontal sliders and a lyric list that should not be one stray
     // sideways drag away from changing the song.
-    val skipSwipeGesture = Modifier.pointerInput(showAudioPipeline, showCast, panelScrolling, controlsLocked) {
-        if (showAudioPipeline || showCast || panelScrolling) return@pointerInput
-        var total = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { total = 0f },
-            onDragCancel = { setSwipeOffset(0f) },
-            onDragEnd = {
-                // The same two buzzes the transport glyphs give, so swiping the
-                // sleeve and tapping skip feel like one gesture with two
-                // spellings.
-                val crossed = total <= -swipeThreshold || total >= swipeThreshold
-                when {
-                    // Still tracks the finger and still springs back, so the
-                    // sleeve does not feel dead — it just says why it did not
-                    // move on.
-                    controlsLocked -> if (crossed) onBlockedControl()
-                    total <= -swipeThreshold -> {
-                        haptics.play(Haptic.SkipNext)
-                        onNext()
-                    }
-                    total >= swipeThreshold -> {
-                        haptics.play(Haptic.SkipPrevious)
-                        onPrevious()
-                    }
-                }
-                setSwipeOffset(0f)
-            },
-            onHorizontalDrag = { _, delta ->
-                total += delta
-                // Damped: it's a hint, not a drag-to-position.
-                setSwipeOffset(total * 0.35f)
-            },
-        )
-    }
+    val skipSwipeGesture = Modifier.skipSwipeGesture(
+        pipelineOpen = overlays.audioPipeline,
+        castOpen = overlays.cast,
+        panelScrolling = panelScrolling,
+        controlsLocked = controlsLocked,
+        swipeThreshold = swipeThreshold,
+        haptics = haptics,
+        onBlockedControl = onBlockedControl,
+        onNext = onNext,
+        onPrevious = onPrevious,
+        setSwipeOffset = setSwipeOffset,
+    )
 
     // The scrubber's two halves, shared by both layouts so a drop point is held
     // the same way in each — see [PlayerScrub.pendingSeek].
@@ -2247,135 +1871,47 @@ fun NowPlayingScreen(
     val onVolumeChange: (Float) -> Unit = volume::drag
     val onVolumeChangeFinished: () -> Unit = volume::release
 
-    // Lyrics, output and queue, with the output name under them — the row both
-    // layouts end on, and the only thing in the landscape player's left column
-    // besides the sleeve.
-    // The row both shapes of the player end on, and — on the wide one — the
-    // output line beneath it.
-    //
-    // [showOutputLine] is about the portrait player: the reference player has
-    // no line under its controls at all, and the AirPlay mark already says
-    // whether the sound is on a receiver. So portrait passes false and drops
-    // the plain device name, keeping it only while a Listen Together party is
-    // live — the one state nothing else on that screen shows. Landscape has
-    // room under the row and keeps it.
+    // The row both shapes of the player end on — see [PlayerActionsFooter].
     val playerActions: @Composable (showOutputLine: Boolean) -> Unit = { showOutputLine ->
-        PlayerActionRow(
-            lyricsOpen = lyricsOpen,
-            queueOpen = queueOpen,
+        PlayerActionsFooter(
+            showOutputLine = showOutputLine,
+            panels = panels,
             shuffleEnabled = shuffleEnabled,
             repeatMode = repeatMode,
             autoplayEnabled = autoplayEnabled,
-            onToggleLyrics = toggleLyrics,
-            onToggleQueue = toggleQueue,
             onToggleShuffle = onToggleShuffle,
             onCycleRepeat = onCycleRepeat,
             onToggleAutoplay = onToggleAutoplay,
             onOpenOutput = openAudioOutput,
             outputActive = castConnected,
+            accountName = accountName,
+            onOpenMembers = openListenTogetherMembers,
         )
-        if (showOutputLine || rememberPartyBadge().inParty) {
-            Spacer(Modifier.height(18.dp))
-            Box(
-                modifier = Modifier.fillMaxWidth().height(20.dp),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                OutputCaption(
-                    accountName = accountName,
-                    onOpenOutput = openAudioOutput,
-                    onOpenMembers = openListenTogetherMembers,
-                )
-            }
-        }
     }
 
     // The drawers and dialogs the player raises over itself. Mounted by
     // whichever layout is on screen — they are overlays over the player, not
     // part of either shape of it.
     val playerOverlays: @Composable () -> Unit = {
-        if (showAudioOutput) {
-            AudioOutputSheet(
-                hazeState = playerHaze,
-                accountName = accountName,
-                onDismiss = { showAudioOutput = false },
-                onOpenPipeline = { showAudioPipeline = true },
-                onOpenCast = { showCast = true },
-                onListenTogether = onListenTogether,
-                onOpenListenTogetherMembers = openListenTogetherMembers,
-                spatialOn = spatialAudioOn,
-                onToggleSpatial = onToggleSpatial,
-            )
-        }
-        if (showLyricsProviders) {
-            LyricsProviderSheet(
-                hazeState = playerHaze,
-                currentSource = lyricsSource,
-                states = lyricsProviderStates,
-                onSelect = onSelectLyricsProvider,
-                onDismiss = { showLyricsProviders = false },
-            )
-        }
-        if (showAudioPipeline) {
-            AudioPipelineDialog(
-                hazeState = playerHaze,
-                isPlaying = isPlaying,
-                onDismiss = { showAudioPipeline = false },
-            )
-        }
-        if (showCast) {
-            PlayerPlatform.host.CastDialog(
-                hazeState = playerHaze,
-                onDismiss = { showCast = false },
-            )
-        }
-        if (showListenTogetherMembers) {
-            ListenTogetherMembersSheet(
-                hazeState = playerHaze,
-                onDismiss = { showListenTogetherMembers = false },
-                onManage = {
-                    showListenTogetherMembers = false
-                    onListenTogether()
-                },
-            )
-        }
-        if (lyricsOffsetOpen) {
-            LyricsOffsetSheet(
-                hazeState = playerHaze,
-                onDismiss = onDismissLyricsOffset,
-            )
-        }
-        if (automixPanelOpen) {
-            AutomixPanelSheet(
-                hazeState = playerHaze,
-                onDismiss = { onAutomixPanelOpenChange(false) },
-            )
-        }
-        lyricsShare?.let { request ->
-            PlayerPlatform.host.LyricsShareSheet(
-                hazeState = playerHaze,
-                request = request,
-                onDismiss = { lyricsShare = null },
-            )
-        }
-        // Last, and drawn over everything: the search covers the whole player,
-        // the queue behind it included. It is the one overlay here the listener
-        // types into, so nothing may sit above it.
-        // A box, not a page: it arrives where it is going to be with a short
-        // fade and a small settle, and the scrim beneath it comes up with it so
-        // the player behind dims rather than disappearing. The field takes focus
-        // as it composes, so nothing about the search waits for the animation.
-        AnimatedVisibility(
-            visible = queueSearchOpen,
-            enter = fadeIn(tween(160)) + scaleIn(tween(200), initialScale = 0.94f),
-            exit = fadeOut(tween(120)) + scaleOut(tween(150), targetScale = 0.96f),
-        ) {
-            PlayerQueueSearchBox(
-                currentSong = song,
-                onDismiss = { queueSearchOpen = false },
-                onAddToQueue = onAddToQueue,
-                onPlayNext = onPlayNext,
-            )
-        }
+        PlayerOverlays(
+            overlays = overlays,
+            hazeState = playerHaze,
+            song = song,
+            isPlaying = isPlaying,
+            accountName = accountName,
+            onListenTogether = onListenTogether,
+            spatialAudioOn = spatialAudioOn,
+            onToggleSpatial = onToggleSpatial,
+            lyricsSource = lyricsSource,
+            lyricsProviderStates = lyricsProviderStates,
+            onSelectLyricsProvider = onSelectLyricsProvider,
+            lyricsOffsetOpen = lyricsOffsetOpen,
+            onDismissLyricsOffset = onDismissLyricsOffset,
+            automixPanelOpen = automixPanelOpen,
+            onAutomixPanelOpenChange = onAutomixPanelOpenChange,
+            onAddToQueue = onAddToQueue,
+            onPlayNext = onPlayNext,
+        )
     }
 
     // A landscape window — a tablet, or a phone on its side — takes an entirely
@@ -2406,10 +1942,10 @@ fun NowPlayingScreen(
     val legacyMeshBackdrop = !tabletArtworkBackdrop && !spotifyCanvasPresentation &&
         legacyMesh && !canvasFirstPortrait
     val fullCoverBackdropVisible = landscape ||
-        (!legacyMeshBackdrop && (tabletArtworkBackdrop || lyricsOpen || queueOpen))
+        (!legacyMeshBackdrop && (tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen))
     val meshLiveFrames = if (
         spotifyCanvasPresentation || fullCoverBackdropVisible
-    ) null else canvasFrameHolder.frames
+    ) null else clipState.frameHolder.frames
     // Owned by the song-level player composition, not by any one screen state.
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
@@ -2417,7 +1953,7 @@ fun NowPlayingScreen(
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
         imageUrl = remoteArt,
         artPx = ART_PX,
-        prepare = landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
+        prepare = landscape || tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen ||
             playerPrewarmStage >= 1,
     )
     // One movable Image node, not two backdrop call sites. Compose carries it
@@ -2435,7 +1971,7 @@ fun NowPlayingScreen(
     // backdrop drawn at zero alpha is a readback and a blur paid for a wash
     // nobody can see.
     val currentLiveBlurFrames = rememberUpdatedState(
-        if (fullCoverBackdropVisible) canvasFrameHolder.frames else null,
+        if (fullCoverBackdropVisible) clipState.frameHolder.frames else null,
     )
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
@@ -2521,189 +2057,21 @@ fun NowPlayingScreen(
     // that hole as the title having been lost.
     val creditsLayer = rememberGraphicsLayer()
 
-    // Whether the title and artist are on their way into the mini player.
-    // Both ends of that decision have to agree: the credits are recorded
-    // instead of drawn, and the recorded layer is drawn over the sleeve, so
-    // one of them without the other loses the text entirely.
-    val creditsHandover: () -> Boolean = {
-        docking() && dock?.hasMiniText() == true
-    }
-
-    // How big the bar's title is compared with the player's. The title that
-    // flies between them is scaled by this, so it arrives at the size it is
-    // going to be rather than at the size it left.
-    val creditsTitleRatio: () -> Float = {
-        val mini = dock?.miniTextTitlePx() ?: 0f
-        val full = with(density) { CREDITS_TITLE_SIZE.toPx() }
-        if (mini > 0f && full > 0f) (mini / full).coerceIn(0.4f, 1.2f) else 1f
-    }
-
-    // The player's own end of the docking, for whichever shape it takes: where
-    // it sits on screen, the fade, and the artwork drawn over that fade.
-    val dockHost: Modifier = Modifier
-        .then(
-            if (dock != null) {
-                Modifier.onGloballyPositioned { coordinates ->
-                    dockFrame.host = coordinates
-                    // Where the player would be fully open, on screen: its
-                    // position now, less the sheet's offset that placed it
-                    // there. Constant for the life of the sheet, and that
-                    // plus the offset of any later frame is where the
-                    // player is in that frame.
-                    //
-                    // Measured once, and again only if the player's size
-                    // changes: this is called on every frame the sheet
-                    // moves, with the same answer each time. Measuring it
-                    // each time also walked the artwork back and forth by a
-                    // pixel, the sheet rounding its offset its own way.
-                    if (dockFrame.anchor != null && dockFrame.anchorFor == coordinates.size) {
-                        return@onGloballyPositioned
-                    }
-                    val offset = dock.offset() ?: return@onGloballyPositioned
-                    dockFrame.anchorFor = coordinates.size
-                    dockFrame.anchor = coordinates.positionOnScreen() - Offset(0f, offset.toInt().toFloat())
-                    if (!dock.attached) dock.attached = true
-                }
-            } else {
-                Modifier
-            },
-        )
-        // Outside the fade below, so the artwork is the one thing on the
-        // player that doesn't fade on its way to the bar. Drawn on top of
-        // everything while it travels, as the one thing still moving.
-        .drawWithContent {
-            drawContent()
-            if (docking()) {
-                translate(dockFrame.portalLeft, dockFrame.portalTop) {
-                    val portalScale = dockFrame.portalScale
-                    scale(portalScale, portalScale, pivot = Offset.Zero) { drawLayer(sleeveLayer) }
-                }
-                // ...and then the title and the artist, on their way into the
-                // bar. Everything else on the player is allowed to be behind
-                // the artwork while it leaves; these are not, because the band
-                // the artwork's lower edge crosses is theirs.
-                //
-                // They travel rather than fade: the position and the size are
-                // worked out against the mini player's own title, which is in
-                // another window and is found in screen coordinates. The sheet
-                // is `offset` below where it was when it was open, so a screen
-                // point is that much further down the player's own box.
-                val anchor = dockFrame.anchor
-                val offset = dock?.offset()
-                val target = dock?.miniTextOnScreen()
-                if (creditsHandover() && anchor != null && offset != null &&
-                    target != null && dockFrame.creditsKnown
-                ) {
-                    val progress = (1f - dockT()).coerceIn(0f, 1f)
-                    // The title travels first and hands over last. It is home
-                    // by the time the sheet's own dimming has cleared the bar
-                    // — so the words it is replacing are already lit when it
-                    // arrives — and the dissolve into them happens in place,
-                    // over the last stretch of the trip.
-                    val travel = creditsTravel(progress)
-                    val from = Offset(dockFrame.creditsLeft, dockFrame.creditsTop)
-                    val to = Offset(
-                        target.left - anchor.x - offset,
-                        target.top - anchor.y - offset,
-                    )
-                    val at = Offset(
-                        from.x + (to.x - from.x) * travel,
-                        from.y + (to.y - from.y) * travel,
-                    )
-                    // The bar's title is smaller than the player's. The title
-                    // that flies there has to end up the size it is going to
-                    // be, or it arrives as the right words at the wrong size.
-                    val ratio = creditsTitleRatio()
-                    val size = 1f + (ratio - 1f) * travel
-                    creditsLayer.alpha = creditsHandoverAlpha(progress)
-                    translate(at.x, at.y) {
-                        scale(size, size, pivot = Offset.Zero) { drawLayer(creditsLayer) }
-                    }
-                } else if (dockFrame.creditsKnown) {
-                    // Nothing to fly to this trip: the mini player's own title
-                    // has not been laid out, so there is no target and no
-                    // dissolve to run. Keep the recorded words where they are
-                    // — on top of the sleeve drawn a few lines up, which is
-                    // the point. Left to the layout, they were under the
-                    // artwork for the whole of the open, and the title and
-                    // artist slid out from behind the cover when it settled.
-                    creditsLayer.alpha = 1f
-                    val inPlace = 1f - 0.2f * p()
-                    translate(dockFrame.creditsLeft, dockFrame.creditsTop) {
-                        scale(inPlace, inPlace, pivot = Offset.Zero) { drawLayer(creditsLayer) }
-                    }
-                }
-            }
-        }
-        // Never quite zero while docking. A layer at alpha 0 is skipped
-        // outright, children and all — and the sleeve records itself for
-        // the draw above from inside it, so for the last stretch of the
-        // way home the cover went on being drawn from a stale recording,
-        // bigger and higher than the bar's. One step of 255 is nothing to
-        // look at and keeps the subtree drawing.
-        .graphicsLayer { alpha = if (docking()) dockFade().coerceAtLeast(DOCK_FADE_FLOOR) else 1f }
+    // The player's own end of the docking, for whichever shape it takes —
+    // see [playerDockHost].
+    val dockHost: Modifier = Modifier.playerDockHost(
+        dock = dock,
+        dockFrame = dockFrame,
+        dockT = dockT,
+        docking = docking,
+        dockFade = dockFade,
+        p = collapse.p,
+        sleeveLayer = sleeveLayer,
+        creditsLayer = creditsLayer,
+        density = density,
+    )
 
     if (landscape) {
-        // Paused always wins outright over a scrub in progress — see
-        // [ARTWORK_PAUSE_SHRINK_SCALE].
-        val landscapeArtScale by animateFloatAsState(
-            targetValue = when {
-                !isPlaying -> ARTWORK_PAUSE_SHRINK_SCALE
-                scrub.scrubbing -> ARTWORK_DRAG_SHRINK_SCALE
-                else -> ARTWORK_EXPANDED_SCALE
-            },
-            animationSpec = tween(durationMillis = ARTWORK_SCALE_DURATION_MS, easing = ArtworkScaleEasing),
-            label = "landscapeArtworkScale",
-        )
-        val versionAligning by PlayerSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
-        val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
-        val panelOpen = lyricsOpen || queueOpen
-
-        // Where the sleeve is drawn this frame on its way to or from the mini
-        // player's cover, or null when it can't be worked out.
-        //
-        // Unlike the portrait sleeve, this one keeps its layout and is carried:
-        // it is square and so is the cover, so a move and a scale take it the
-        // whole way, with nothing about the picture's crop to re-lay out. It
-        // rides as much of the sheet's travel as it can without passing the
-        // cover — the same share, for the same reason, as the portrait
-        // sleeve's `dockRide`.
-        fun landscapeDockPose(): LandscapeDockPose? {
-            if (dock == null) return null
-            val t = dockT()
-            val mini = dock.miniArtOnScreen() ?: return null
-            val anchor = dockFrame.anchor ?: return null
-            val host = dockFrame.host?.takeIf { it.isAttached } ?: return null
-            val sleeve = dockFrame.landscapeArt?.takeIf { it.isAttached } ?: return null
-            val offset = (dock.offset() ?: return null).toInt().toFloat()
-            val travel = dock.sheetTravel.takeIf { it > 0f } ?: return null
-            if (sleeve.size.width <= 0) return null
-            val open = Rect(
-                offset = anchor + host.localPositionOf(sleeve, Offset.Zero),
-                size = Size(sleeve.size.width.toFloat(), sleeve.size.height.toFloat()),
-            )
-            val ride = ((mini.top - open.top) / travel).coerceIn(0f, 1f)
-            val rect = lerp(mini, open.translate(0f, offset * ride), t)
-            // In the player's own pixels, where it sits this frame.
-            return LandscapeDockPose(
-                left = rect.left - anchor.x,
-                top = rect.top - anchor.y - offset,
-                scale = rect.width / open.width,
-            )
-        }
-        // The sleeve's corner as laid out, rounding off into the cover's as it
-        // lands. Laid out at full size and drawn scaled, so asked for as the
-        // radius that comes out right once it has been scaled.
-        val landscapeArtShape: () -> Shape = {
-            val t = dockT()
-            if (dock == null || t >= 1f) {
-                dockFrame.cornerShape(LANDSCAPE_ART_CORNER)
-            } else {
-                val scale = landscapeDockPose()?.scale?.takeIf { it > 0f } ?: 1f
-                dockFrame.cornerShape(lerp(dock.miniArtCorner(), LANDSCAPE_ART_CORNER, t) / scale)
-            }
-        }
-
         PlayerColors(
             ink = playerInkState,
             glow = playerInkGlowState,
@@ -2714,274 +2082,82 @@ fun NowPlayingScreen(
             lyricsSource = lyricsSourceInk,
             alphas = nowPlayingPalette.alphas,
         ) {
-        Box(modifier = modifier.fillMaxSize().then(dockHost)) {
-            LandscapePlayerLayout(
-                pane = when {
-                    lyricsOpen -> PlayerPane.Lyrics
-                    queueOpen -> PlayerPane.Queue
-                    else -> PlayerPane.Main
-                },
-                background = { backgroundModifier ->
-                    // The whole screen is the sheets' frost source: there is
-                    // no full-bleed banner here to be it instead.
-                    fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
-                },
-                artwork = { artworkModifier ->
-                    LandscapeArtwork(
-                        artRequest = art.request,
-                        artLoaded = art.loaded,
-                        onArtState = art::onState,
-                        canvas = canvas,
-                        canvasRendered = canvasRendered,
-                        isPlaying = isPlaying,
-                        onCanvasRenderedChange = { canvasRendered = it },
-                        // A clip decoding behind a player on its way to the
-                        // bar is work nobody sees — see [dockMoving].
-                        pausedForTransition = dockMoving,
-                        sleeveShape = landscapeArtShape,
-                        // Let go of on the way to the mini player, whose
-                        // cover sits flat in its bar.
-                        shadowFraction = dockT,
-                        modifier = artworkModifier
-                            .then(
-                                if (dock != null) {
-                                    Modifier.onGloballyPositioned { dockFrame.landscapeArt = it }
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            // While it docks the sleeve is drawn by the player
-                            // itself, over everything and outside the player's
-                            // fade — see [dockHost] — at the place and size
-                            // [landscapeDockPose] gives it.
-                            .drawWithContent {
-                                val pose = if (docking()) landscapeDockPose() else null
-                                if (pose != null) {
-                                    dockFrame.portalLeft = pose.left
-                                    dockFrame.portalTop = pose.top
-                                    dockFrame.portalScale = pose.scale
-                                    sleeveLayer.record { this@drawWithContent.drawContent() }
-                                } else {
-                                    if (docking()) {
-                                        // Nowhere to fly to this frame: the
-                                        // portal draws nothing rather than a
-                                        // stale copy.
-                                        dockFrame.portalScale = 0f
-                                    }
-                                    drawContent()
-                                }
-                            }
-                            .then(skipSwipeGesture)
-                            .graphicsLayer {
-                                // The paused shrink and the swipe nudge are
-                                // let go of on the way, as the portrait
-                                // sleeve's are: the cover does neither.
-                                val t = dockT()
-                                val scale = if (t >= 1f) landscapeArtScale else 1f + (landscapeArtScale - 1f) * t
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = if (t >= 1f) swipeSettle.value else swipeSettle.value * t
-                            }
-                            // With a panel up the sleeve is the way back to
-                            // the player, as the portrait thumbnail is.
-                            .clickable(
-                                enabled = panelOpen,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                queueOpen = false
-                                closeLyrics()
-                            },
-                    ) {
-                        // The stats belong to the player, not to the sleeve, so
-                        // they leave it along with the rest of the player.
-                        SleeveNerdStats(
-                            song = song,
-                            isPlaying = isPlaying,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
-                                // Faded with the player rather than flown with
-                                // the sleeve: the cover in the bar has none.
-                                .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
-                        )
-                    }
-                },
-                actions = { playerActions(true) },
-                mainPane = { compact ->
-                    LandscapeMainPane(
-                        compact = compact,
-                        caption = if (hideSongStatus) null else playbackOriginText(song, playedBy),
-                        onOpenCaption = openPlaybackOrigin,
-                        credits = {
-                            LandscapeCredits(
-                                song = song,
-                                signedIn = signedIn,
-                                likeStatus = likeStatus,
-                                showRevertCue = showRevertCue,
-                                onToggleLike = onToggleLike,
-                                onOpenMenu = onOpenMenu,
-                                onMenuAnchor = onMenuAnchor,
-                                onOpenAlbum = onOpenAlbum,
-                                onOpenArtist = onOpenArtist,
-                            )
-                        },
-                        lyricStrip = if (syncedLyricsEnabled && lyricLineEnabled) {
-                            {
-                                CurrentLyricStrip(
-                                    lines = lyricsTranslation.displayedLyrics,
-                                    trackKey = song.videoId,
-                                    playhead = lyricsPlayhead,
-                                    isPlaying = isPlaying && position.advancing,
-                                    durationMs = durationMs,
-                                    lyricsUnavailable = lyricsUnavailable,
-                                    loadingText = lyricsLoadingText,
-                                    onClick = openLyrics,
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        scrubber = {
-                            PlayerScrubber(
-                                shown = shown,
-                                durationMs = durationMs,
-                                loading = versionAligning || audioVersionSwitching,
-                                mixing = mixing && !scrub.scrubbing,
-                                transitionWindow = transitionWindow
-                                    ?.takeIf { !scrub.scrubbing && it.end > it.start }
-                                    ?.let { it.start..it.end },
-                                transitionWindowInflated = automixPanelOpen,
-                                onTransitionWindowLongPress = {
-                                    onAutomixPanelOpenChange(true)
-                                },
-                                onScrub = onScrub,
-                                onScrubFinished = onScrubFinished,
-                            ) {
-                                PlaybackQualityLabel(
-                                    song = song,
-                                    isLoading = isLoading,
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .padding(horizontal = 8.dp),
-                                )
-                            }
-                        },
-                        transport = { spacing ->
-                            TransportRow(
-                                isPlaying = isPlaying,
-                                isLoading = isLoading || audioVersionSwitching,
-                                previousEnabled = !controlsLocked &&
-                                    (hasPrevious || pastRestartPoint),
-                                nextEnabled = !controlsLocked && hasNext,
-                                onPrevious = onPrevious,
-                                onPlayPause = onPlayPause,
-                                onNext = onNext,
-                                compact = compact,
-                                smoothness = transportSmoothness,
-                                spacing = spacing,
-                            )
-                        },
-                        volume = if (hideVolumeBar) {
-                            null
-                        } else {
-                            {
-                                VolumeRow(
-                                    value = { volume.level.value },
-                                    onValueChange = onVolumeChange,
-                                    onValueChangeFinished = onVolumeChangeFinished,
-                                )
-                            }
-                        },
-                    )
-                },
-                lyricsPane = {
-                    LandscapeLyricsPane(
-                        hasLyrics = lyricsTranslation.displayedLyrics.isNotEmpty(),
-                        placeholder = if (lyricsUnavailable) {
-                            stringResource(Res.string.lyrics_not_available)
-                        } else {
-                            lyricsLoadingText
-                        },
-                        status = lyricsTranslation.status,
-                        onStatusClick = { showLyricsProviders = true },
-                        picking = lyricPicker.picking,
-                        pickBar = {
-                            LyricsPickBar(
-                                shareEnabled = lyricPicker.picks.isNotEmpty() &&
-                                    !lyricPicker.overBudget,
-                                onCancel = lyricPicker.cancel,
-                                onShare = lyricPicker.share,
-                            )
-                        },
-                        romanizationToggle = {
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
-                        },
-                        translationToggle = {
-                            TranslationToggleButton(
-                                state = lyricsTranslation.translationState,
-                                showingTranslation = lyricsTranslation.showingTranslation,
-                                enabled = !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleTranslation,
-                            )
-                        },
-                    ) { panelModifier ->
-                        LyricsTranslationMotion(
-                            trigger = lyricsTranslation.transition,
-                            reduceMotion = lyricsTranslation.reduceMotion,
-                            modifier = panelModifier,
-                        ) { particleProgress ->
-                            // [controlsOpen] is a constant `true`: that flag
-                            // exists because the portrait player hides its
-                            // transport behind the lyrics and needs a tap to
-                            // bring it back. Here there is nothing hidden for
-                            // a tap to reveal, and leaving the reveal gesture
-                            // armed would only eat taps meant for the lines.
-                            LyricsPanel(
-                                lines = lyrics.orEmpty(),
-                                subLines = lyricsTranslation.subLines,
-                                trackKey = song.videoId,
-                                playhead = lyricsPlayhead,
-                                looking = !lyricsUnavailable,
-                                isPlaying = isPlaying && position.advancing,
-                                onSeekToLine = seekToLyric,
-                                controlsOpen = true,
-                                onRevealControls = {},
-                                onHideControls = {},
-                                translationProgress = particleProgress,
-                                canPick = lyricsShareEnabled,
-                                picking = lyricPicker.picking,
-                                picked = lyricPicker.picks,
-                                onPickLine = lyricPicker.pick,
-                                onTogglePick = lyricPicker.toggle,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                },
-                queuePane = {
-                    InlineQueue(
-                        queue = queue,
-                        currentIndex = queueIndex,
-                        autoplayEnabled = autoplayEnabled,
-                        controlsLocked = controlsLocked,
-                        onJumpTo = onJumpTo,
-                        onRemove = onRemoveFromQueue,
-                        onMove = onMoveInQueue,
-                        onClear = onClearQueue,
-                        onDragActiveChange = onQueueDragActiveChange,
-                        onOpenSearch = openQueueSearch,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                },
+            LandscapeNowPlaying(
+                song = song,
+                playedBy = playedBy,
+                transportSmoothness = transportSmoothness,
+                isPlaying = isPlaying,
+                isLoading = isLoading,
+                position = position,
+                durationMs = durationMs,
+                audioVersionSwitching = audioVersionSwitching,
+                queue = queue,
+                queueIndex = queueIndex,
+                hasPrevious = hasPrevious,
+                hasNext = hasNext,
+                autoplayEnabled = autoplayEnabled,
+                signedIn = signedIn,
+                likeStatus = likeStatus,
+                onToggleLike = onToggleLike,
+                onPlayPause = onPlayPause,
+                onNext = onNext,
+                onPrevious = onPrevious,
+                onJumpTo = onJumpTo,
+                onRemoveFromQueue = onRemoveFromQueue,
+                onMoveInQueue = onMoveInQueue,
+                onQueueDragActiveChange = onQueueDragActiveChange,
+                onClearQueue = onClearQueue,
+                onOpenMenu = onOpenMenu,
+                onMenuAnchor = onMenuAnchor,
+                onOpenAlbum = onOpenAlbum,
+                onOpenArtist = onOpenArtist,
+                lyrics = lyrics,
+                lyricsUnavailable = lyricsUnavailable,
+                automixPanelOpen = automixPanelOpen,
+                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
+                playerHaze = playerHaze,
+                overlays = overlays,
+                controlsLocked = controlsLocked,
+                showLyricStrip = { syncedLyricsEnabled && lyricLineEnabled },
+                lyricsPlayhead = lyricsPlayhead,
+                seekToLyric = seekToLyric,
+                hideVolumeBar = { hideVolumeBar },
+                hideSongStatus = { hideSongStatus },
+                mixing = { mixing },
+                canvas = canvas,
+                clipState = clipState,
+                scrub = scrub,
+                shown = shown,
+                pastRestartPoint = { pastRestartPoint },
+                panels = panels,
+                dock = dock,
+                openQueueSearch = openQueueSearch,
+                lyricsLoadingText = lyricsLoadingText,
+                lyricsTranslation = lyricsTranslation,
+                lyricsShareEnabled = lyricsShareEnabled,
+                lyricPicker = lyricPicker,
+                showRevertCue = { showRevertCue },
+                swipeSettle = swipeSettle,
+                volume = volume,
+                art = art,
+                openPlaybackOrigin = openPlaybackOrigin,
+                skipSwipeGesture = skipSwipeGesture,
+                onScrub = onScrub,
+                onScrubFinished = onScrubFinished,
+                onVolumeChange = onVolumeChange,
+                onVolumeChangeFinished = onVolumeChangeFinished,
+                playerActions = playerActions,
+                playerOverlays = playerOverlays,
+                fullArtworkBlurContent = fullArtworkBlurContent,
+                dockFrame = dockFrame,
+                dockT = dockT,
+                docking = docking,
+                dockMoving = { dockMoving },
+                dockFade = dockFade,
+                sleeveLayer = sleeveLayer,
+                dockHost = dockHost,
+                modifier = modifier,
             )
-            playerOverlays()
-        }
         }
         return
     }
@@ -2990,7 +2166,7 @@ fun NowPlayingScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .onSizeChanged { playerBounds = it }
+            .onSizeChanged { measures.playerBounds = it }
             .then(dockHost)
             .background(Color.Black),
     ) {
@@ -3004,134 +2180,40 @@ fun NowPlayingScreen(
             lyricsSource = lyricsSourceInk,
             alphas = nowPlayingPalette.alphas,
         ) {
-        // Anchored to the sleeve's bottom edge, so the screen carries on in the
-        // colours the artwork ended in rather than in a quantiser's idea of what
-        // the artwork was about. Position ticks recompose this screen twice a
-        // second and must not drag a full-screen blur along with them, which is
-        // why the mesh is passed as one immutable value.
-        //
-        // The seam is the *expanded* banner's bottom edge and is left there as
-        // the player collapses, rather than following the sleeve down: it is
-        // the anchor for a blurred layer, and moving it would re-blur the whole
-        // screen on every frame of the drag. Above it the mesh holds one colour,
-        // so a seam left behind a collapsed sleeve shows nothing at all.
-        // Both phone backgrounds stay mounted for the entire song. Only these
-        // retained layers' alpha changes when a panel opens, so the full-cover
-        // blur is neither rebuilt nor switched in on a hard frame boundary.
-        // The tablet has no mirrored main-player treatment to crossfade from.
-        // Legacy mesh is the whole backdrop on every page, so the lyrics and
-        // queue panels must not crossfade the blurred artwork over it.
-        // The legacy backdrop is the mesh's own older cousin — settled above,
-        // where the landscape and tablet answers were known.
-        val fullArtworkBackdropAlpha by animateFloatAsState(
-            targetValue = if (
-                !legacyMeshBackdrop &&
-                (tabletArtworkBackdrop || lyricsOpen || queueOpen) &&
-                (tabletArtworkBackdrop || fullArtworkBlurImage != null)
-            ) 1f else 0f,
-            animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-            label = "fullArtworkBackdropCrossfade",
+        PortraitBackdrop(
+            legacyMesh = legacyMeshBackdrop,
+            tablet = tabletArtworkBackdrop,
+            panelOpen = panels.lyricsOpen || panels.queueOpen,
+            blurReady = fullArtworkBlurImage != null,
+            spotifyCanvasPresentation = spotifyCanvasPresentation,
+            trackKey = song.videoId,
+            imageUrl = remoteArt,
+            meshLiveFrames = meshLiveFrames,
+            // Asked for at draw time: the line the wash hangs from moves
+            // while the picture grows into its banner and comes back
+            // out of it, and a value read in composition would take the
+            // whole player with it on every frame of that.
+            seam = {
+                if (canvasFirstPortrait) {
+                    renderedCanvasBottom
+                } else {
+                    lerp(0.dp, measures.heroHeight + MESH_SEAM_NUDGE, heroT.value)
+                }
+            },
+            // The wash under a card is lifted, so the colour that sat
+            // right under the picture rides up behind it and the
+            // controls stand on a calmer band. A banner has its own
+            // wash under it and is not lifted.
+            lift = { BACKDROP_LIFT * (1f - heroT.value) },
+            liftFrom = { measures.cardBottom },
+            fullArtworkBlur = fullArtworkBlurContent,
+            heroHeight = measures.heroHeight,
+            heroWash = { heroT.value },
         )
-        if (legacyMeshBackdrop) {
-            // v1.5's backdrop, restored verbatim: no seam, because the blobs
-            // are not anchored to anything on screen — they fill the player and
-            // the artwork simply sits on top of them. Keyed on the track, so
-            // they drift when the player opens and on every skip, then rest.
-            // Position ticks recompose this screen twice a second and must not
-            // drag a full-screen blur along with them, which is why the palette
-            // is passed as one immutable value.
-            //
-            // In a scope of its own, for the same reason the mesh is: a clip's
-            // frame re-reads the colours, and a re-read in this scope would
-            // recompose the whole player.
-            LegacyMeshBackdrop(
-                imageUrl = remoteArt,
-                liveFrames = meshLiveFrames,
-                trackKey = song.videoId,
-                modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
-            )
-        } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
-            // Not drawn once the full-cover blur has taken the screen: a
-            // backdrop at zero alpha is still a full-screen draw — a stretched
-            // texture, a gradient and, on a still cover, a full-screen
-            // `RenderEffect` — paid for on every frame the screen redraws.
-            if (fullArtworkBackdropAlpha < 0.999f) {
-                PlayerMeshBackdrop(
-                    trackKey = song.videoId,
-                    imageUrl = remoteArt,
-                    liveFrames = meshLiveFrames,
-                    // Asked for at draw time: the line the wash hangs from moves
-                    // while the picture grows into its banner and comes back
-                    // out of it, and a value read in composition would take the
-                    // whole player with it on every frame of that.
-                    seam = {
-                        if (canvasFirstPortrait) {
-                            renderedCanvasBottom
-                        } else {
-                            lerp(0.dp, heroHeight + MESH_SEAM_NUDGE, heroT.value)
-                        }
-                    },
-                    // The wash under a card is lifted, so the colour that sat
-                    // right under the picture rides up behind it and the
-                    // controls stand on a calmer band. A banner has its own
-                    // wash under it and is not lifted.
-                    lift = { BACKDROP_LIFT * (1f - heroT.value) },
-                    liftFrom = { cardBottom },
-                    modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
-                )
-            }
-        }
-        // The same, the other way round: the full-cover blur is only drawn
-        // while it is on the screen.
-        if (fullArtworkBackdropAlpha > 0.001f) {
-            fullArtworkBlurContent(
-                Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
-            )
-        }
-
-        // The wash the controls stand on, from the art's bottom edge down.
-        //
-        // ArchiveTune's Immersive theme grades the region under the stage
-        // rather than leaving the backdrop bare. This is now only a hint of
-        // depth: the palette already tone-maps every backdrop cell to hold
-        // text contrast, so a heavier grade would only make the blur darker
-        // than the sleeve it came from.
-        //
-        // The gradient is drawn from the stage's bottom edge, not the screen's
-        // top, so it moves with the art.
-        //
-        // Faded by the picture's own journey rather than switched on and off
-        // with it: the artwork grows into its banner and comes back out of it
-        // when the listener taps it, and a wash that appeared all at once at
-        // the end of that movement would be the one thing on screen that did
-        // not move with the picture.
-        if (heroHeight > 0.dp) {
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .drawWithContent {
-                        val wash = heroT.value
-                        if (wash > 0.001f) {
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.Transparent,
-                                        0.38f to Color.Transparent,
-                                        0.68f to Color.Black.copy(alpha = 0.04f * wash),
-                                        1f to Color.Black.copy(alpha = 0.12f * wash),
-                                    ),
-                                    startY = heroHeight.toPx(),
-                                    endY = size.height,
-                                ),
-                            )
-                        }
-                    },
-            )
-        }
 
         // Mount once, behind the controls. A known portrait aspect changes the
         // invisible view to full-player bounds before its first frame is shown.
-        if (heroMode && heroHeight > 0.dp) {
+        if (heroMode && measures.heroHeight > 0.dp) {
             heroClipMounted?.let { clip ->
                 CanvasArtworkPlayer(
                     canvas = clip,
@@ -3153,8 +2235,8 @@ fun NowPlayingScreen(
                     // sleeve stands in for it — and it starts once the player
                     // has settled. Upstream BitChord holds the clip still
                     // through the movement for the same reason.
-                    pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                        collapseStarted || dockMoving || !sheetSettled,
+                    pausedForTransition = panels.lyricsOpen || panels.queueOpen || panels.queueDragging ||
+                        collapse.started || dockMoving || !sheetSettled,
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
@@ -3165,7 +2247,7 @@ fun NowPlayingScreen(
                     },
                     alignPortraitTop = clipPortrait,
                     onAspectRatioChanged = { canvasAspect = it },
-                    portraitRevealBounds = playerBounds,
+                    portraitRevealBounds = measures.playerBounds,
                     // Gone by the half, where [heroClip] lets it go — and the
                     // still sleeve collapsing over it takes exactly the cover
                     // this gives up, so the two never leave a gap or a pop
@@ -3173,8 +2255,8 @@ fun NowPlayingScreen(
                     // And with the rest of the player as it docks: a
                     // TextureView doesn't reliably take the fade from a
                     // Compose layer around it.
-                    presentationAlpha = { (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() },
-                    onRenderedChanged = { canvasRendered = it },
+                    presentationAlpha = { (1f - 2f * collapse.p()).coerceIn(0f, 1f) * dockFade() },
+                    onRenderedChanged = { clipState.rendered = it },
                     onFrameCaptured = { frame ->
                         // The clip's own colours, read as it plays. The ink
                         // follows them wherever the clip is — including when
@@ -3188,8 +2270,8 @@ fun NowPlayingScreen(
                         // their own, and a frame that reached this composition
                         // would recompose the whole player every time the
                         // clip produced one.
-                        if (!lyricsOpen && !queueOpen && !queueDragging) {
-                            canvasFrameHolder.offer(frame)
+                        if (!panels.lyricsOpen && !panels.queueOpen && !panels.queueDragging) {
+                            clipState.frameHolder.offer(frame)
                         }
                     },
                     // The readback is the expensive half, so this is the number
@@ -3200,13 +2282,13 @@ fun NowPlayingScreen(
                     // stalls the GPU's pipeline, and the one movement the eye
                     // is on is the slide.
                     refreshFrameEveryMs = if (
-                        lyricsOpen || queueOpen || queueDragging || dockMoving || !sheetSettled
+                        panels.lyricsOpen || panels.queueOpen || panels.queueDragging || dockMoving || !sheetSettled
                     ) {
                         null
                     } else {
                         liveRefreshMs
                     },
-                    onCoverChanged = { canvasCover.floatValue = it },
+                    onCoverChanged = { clipState.cover.floatValue = it },
                     bottomFade = when {
                         clipFullscreen -> 0f
                         clipPortrait -> clipFadeFraction
@@ -3218,32 +2300,19 @@ fun NowPlayingScreen(
                         .align(Alignment.TopStart)
                         .then(
                             if (clipFullscreen || clipPortrait) Modifier.fillMaxSize()
-                            else Modifier.fillMaxWidth().height(heroHeight),
+                            else Modifier.fillMaxWidth().height(measures.heroHeight),
                         )
                         .hazeSource(playerHaze),
                 )
             }
         }
 
-        // The top of the screen is always shaded, whatever the cover: 40% black
-        // at the very top, gone by 14% of the screen. It keeps the system icons
-        // and the "Playing from..." line readable over a bright sleeve, and it
-        // is the same treatment on every cover so the player does not flicker
-        // brighter when the album changes.
-        val topScrimBrush = remember {
-            Brush.verticalGradient(
-                0f to Color.Black.copy(alpha = TOP_SCRIM_ALPHA),
-                1f to Color.Transparent,
-            )
-        }
-        // Painted by the handle strip rather than laid out here — see there.
-
-        if (canvasFirstPortrait && canvasRendered) {
+        if (canvasFirstPortrait && clipState.rendered) {
             // The image remains visible through the controls; a plain scrim
             // protects text and touch targets without erasing the video.
             Box(
                 Modifier.matchParentSize()
-                    .graphicsLayer { alpha = canvasCover.floatValue }
+                    .graphicsLayer { alpha = clipState.cover.floatValue }
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Transparent,
@@ -3254,95 +2323,11 @@ fun NowPlayingScreen(
             )
         }
 
-        // Spotify Canvas keeps its pixels sharp across the whole phone. Pure
-        // glass blur belongs only under the temporary lower control deck,
-        // above the video. When the deck slides away this layer leaves with
-        // it as well.
-        AnimatedVisibility(
-            visible = spotifyCanvasPresentation && spotifyCanvasControlsOpen,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(0.56f),
-            enter = fadeIn(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideIn(),
-            exit = fadeOut(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideOut(),
-        ) {
-            // Subscribe only while Spotify's glass layer exists. Static art and
-            // non-Spotify motion covers do not observe this new state at all.
-            val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (reduceDynamicBlur || !renderEffectBlurSupported) {
-                            // A real backdrop RenderEffect is unavailable on
-                            // older Android versions and intentionally skipped
-                            // when dynamic blur is reduced. Retain the deck's
-                            // contrast without paying for a fake blur path,
-                            // while keeping the same progressive top edge as
-                            // the live glass surface.
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black.copy(alpha = 0.40f),
-                                    1.00f to Color.Black.copy(alpha = 0.40f),
-                                ),
-                            )
-                        } else {
-                            Modifier.optimizedHazeEffect(
-                                state = playerHaze,
-                                // Do not use HazeMaterials with Transparent:
-                                // that preset treats transparent RGB as black
-                                // and replaces its alpha with a dark 0.8 tint.
-                                style = HazeStyle(
-                                    backgroundColor = Color.Transparent,
-                                    tints = emptyList(),
-                                    // Canvas stays sharp above the deck; the
-                                    // lower glass needs stronger separation
-                                    // from a moving video than static artwork.
-                                    blurRadius = 48.dp,
-                                    noiseFactor = 0f,
-                                    fallbackTint = HazeTint(Color.Transparent),
-                                ),
-                            ) {
-                                // This is a continuously changing video, so a
-                                // full third-resolution backdrop is still more
-                                // detail than a 48dp blur can preserve. At 18%
-                                // this processes roughly 30% of the pixels used
-                                // by optimizedHazeEffect's normal 33% path.
-                                inputScale = HazeInputScale.Fixed(0.18f)
-                                canDrawArea = { true }
-                                mask = Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black,
-                                    1.00f to Color.Black,
-                                )
-                            }
-                        },
-                    ),
-            )
-        }
-
-        // While the control deck is up, the whole Canvas sits under a flat 50%
-        // dim so the buttons and text read against any clip. It fades out as
-        // the deck collapses to the full-screen video, and back in with the
-        // deck, on the deck's own timing. Alpha is read in the draw phase, so
-        // the fade never recomposes the player. Drawn above the glass deck, not
-        // under it: the deck's blur samples the video layer itself, so a dim
-        // beneath it never reached the glass and the deck stayed bright.
-        val spotifyCanvasDim = animateFloatAsState(
-            targetValue = if (spotifyCanvasPresentation && spotifyCanvasControlsOpen) 0.5f else 0f,
-            animationSpec = tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS),
-            label = "spotifyCanvasDim",
+        SpotifyCanvasChrome(
+            deckShown = spotifyCanvasPresentation && clipState.spotifyControlsOpen,
+            presentation = spotifyCanvasPresentation,
+            hazeState = playerHaze,
         )
-        val spotifyCanvasDimShowing by remember { derivedStateOf { spotifyCanvasDim.value > 0f } }
-        if (spotifyCanvasPresentation || spotifyCanvasDimShowing) {
-            Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = spotifyCanvasDim.value }
-                    .background(Color.Black),
-            )
-        }
 
         Column(
             modifier = Modifier
@@ -3354,108 +2339,27 @@ fun NowPlayingScreen(
                 // video above or below them toggles the lower deck either way.
                 .toggleSpotifyCanvasControlsOnTap(
                     enabled = spotifyCanvasPresentation && !mixing,
-                    onToggle = { spotifyCanvasControlsOpen = !spotifyCanvasControlsOpen },
+                    onToggle = { clipState.spotifyControlsOpen = !clipState.spotifyControlsOpen },
                 )
                 .then(skipSwipeGesture),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // The only strip that passes drags through to the sheet, so the
-            // player closes from the handle and the space around it — not from
-            // a stray downward swipe on the artwork or the controls.
-            //
-            // Drawn above the column under it, and the status-bar scrim with
-            // it: the full-bleed sleeve lives in that column and runs up behind
-            // both, and the handle, the caption and the scrim all belong on
-            // top of the artwork. The scrim reaches up past the strip's own
-            // top to the screen's, the band it always covered.
-            Box(
-                modifier = Modifier
-                    .zIndex(1f)
-                    .fillMaxWidth()
-                    .height(topStrip)
-                    .drawBehind {
-                        // Translated rather than offset: the gradient is laid
-                        // out from the canvas origin, not from the rect's. It
-                        // runs past this strip to 14% of the player, over the
-                        // top of the artwork, which is what the caption and
-                        // the system icons actually sit on.
-                        //
-                        // Up by the whole top inset rather than by the status
-                        // bar alone: the strip now starts below the cutout as
-                        // well, and the scrim still has to reach the screen's
-                        // own top edge to darken the camera's corner.
-                        val above = statusBarTop.toPx()
-                        val scrimHeight = playerBounds.height
-                            .takeIf { it > 0 }
-                            ?.let { it * TOP_SCRIM_FRACTION }
-                            ?: (size.height + above)
-                        translate(top = -above) {
-                            drawRect(
-                                brush = topScrimBrush,
-                                size = Size(size.width, scrimHeight),
-                            )
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                // The way out, at the top left where the reference player puts
-                // it: a chevron that reads as "down to the rest of the app".
-                // It replaces the grab handle — a pill says "drag me", and a
-                // mark that looks like a button should do what a button does.
-                // The strip still hands drags to the sheet, so the gesture is
-                // untouched; the chevron is simply the tap for it.
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        // Centred on the caption block rather than the strip's
-                        // top: the reference player draws it level with the
-                        // two caption lines, not floating above them.
-                        .offset(x = PLAYER_GUTTER - 10.dp, y = 24.dp)
-                        .size(44.dp)
-                        .graphicsLayer { alpha = spotifyChromeAlpha }
-                        .clip(CircleShape)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            haptics.play(Haptic.Tap)
-                            onClose()
-                        }
-                        .semantics { contentDescription = closeLabel },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = PlayerIcons.ChevronDown.painter(),
-                        contentDescription = null,
-                        tint = LocalPlayerInk.current.value.copy(alpha = 0.92f),
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                // [p] is the shared album-to-panel transition. Keeping this in
-                // composition until its final frame gives the caption a real
-                // fade on both entry and exit, but removes its click target
-                // entirely once lyrics or the queue owns the player.
-                if (!hideSongStatus) {
-                    WhileShown({ !collapseAlmostDone }) {
-                        PlaybackOriginCaptionStacked(
-                            label = if (playedBy != null) {
-                                stringResource(Res.string.played_by_label)
-                            } else {
-                                stringResource(Res.string.playing_from_label)
-                            },
-                            title = playedBy
-                                ?: song.radioName
-                                ?: song.playbackSource
-                                ?: song.albumName
-                                ?: stringResource(Res.string.queue),
-                            onClick = openPlaybackOrigin,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .graphicsLayer { alpha = (1f - p()) * spotifyChromeAlpha },
-                        )
-                    }
-                }
-            }
+            PlayerTopStrip(
+                height = topStrip,
+                statusBarTop = statusBarTop,
+                playerHeight = { measures.playerBounds.height },
+                chromeAlpha = { spotifyChromeAlpha },
+                onClose = {
+                    haptics.play(Haptic.Tap)
+                    onClose()
+                },
+                caption = !hideSongStatus,
+                captionShown = { !collapse.almostDone },
+                captionAlpha = { 1f - collapse.p() },
+                song = song,
+                playedBy = playedBy,
+                onOpenCaption = openPlaybackOrigin,
+            )
 
             Column(
                 modifier = Modifier
@@ -3485,23 +2389,23 @@ fun NowPlayingScreen(
                     // the queue opens, and a hole that waited for it spent that
                     // half second lying across a list the finger was already
                     // scrolling.
-                    .onGloballyPositioned { dismissBandSpace = it }
-                    .pointerInput(showAudioPipeline, showCast, panelScrolling) {
-                        if (showAudioPipeline || showCast || panelScrolling) return@pointerInput
+                    .onGloballyPositioned { measures.dismissBandSpace = it }
+                    .pointerInput(overlays.audioPipeline, overlays.cast, panelScrolling) {
+                        if (overlays.audioPipeline || overlays.cast || panelScrolling) return@pointerInput
                         awaitEachGesture {
                             // Unconsumed on purpose, as the blanket version was:
                             // the collapsed sleeve's own clickable — the way back
                             // out of the queue — has taken the press by the time
                             // an ancestor sees it.
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            val space = dismissBandSpace
+                            val space = measures.dismissBandSpace
                             val y = space?.localToRoot(down.position)?.y
                                 ?: down.position.y
                             // A panel is up from the moment it is asked for to
                             // the moment the sleeve has finished growing back —
                             // never mind where the sleeve is in between.
-                            val panelUp = queueOpen || lyricsOpen ||
-                                queueSlide.floatValue > 0.01f
+                            val panelUp = panels.queueOpen || panels.lyricsOpen ||
+                                panels.queueSlide.floatValue > 0.01f
                             val bandTop: Float
                             val bandBottom: Float
                             if (panelUp) {
@@ -3509,8 +2413,8 @@ fun NowPlayingScreen(
                                 bandBottom = bandTop +
                                     (ART_BOX_TOP_PAD + HEADER_HEIGHT).toPx()
                             } else {
-                                bandTop = dismissBandTop
-                                bandBottom = dismissBandBottom
+                                bandTop = measures.dismissBandTop
+                                bandBottom = measures.dismissBandBottom
                             }
                             if (y >= bandTop && y <= bandBottom) {
                                 if (!panelUp) {
@@ -3518,17 +2422,17 @@ fun NowPlayingScreen(
                                         down = down,
                                         travel = bandBottom - bandTop -
                                             HEADER_HEIGHT.toPx(),
-                                        slide = queueSlide,
-                                        onHold = { queueDragging = it },
+                                        slide = panels.queueSlide,
+                                        onHold = { panels.queueDragging = it },
                                         onSettle = { open ->
-                                            if (open != queueOpen) {
+                                            if (open != panels.queueOpen) {
                                                 haptics.play(
                                                     if (open) Haptic.Expand else Haptic.Tap,
                                                 )
-                                                if (open) queueControlsOpen = true
-                                                queueOpen = open
+                                                if (open) panels.queueControlsOpen = true
+                                                panels.queueOpen = open
                                             }
-                                            queueReleased++
+                                            panels.queueReleased++
                                         },
                                     )
                                 }
@@ -3576,9 +2480,9 @@ fun NowPlayingScreen(
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
                 if (spotifyCanvasPresentation && playerDeckSettledOpen &&
-                    maxHeight != spotifyCanvasExpandedTopHeight
+                    maxHeight != clipState.spotifyExpandedTopHeight
                 ) {
-                    SideEffect { spotifyCanvasExpandedTopHeight = maxHeight }
+                    SideEffect { clipState.spotifyExpandedTopHeight = maxHeight }
                 }
                 // The height this box would have if the controls at the foot of
                 // the screen were at their natural size. They aren't: they are
@@ -3611,8 +2515,8 @@ fun NowPlayingScreen(
                 // gutter it is inset by is assumed: on a phone that is exactly
                 // what it is, and a card sized against it does not jump when
                 // the real width arrives.
-                val playerWidthPx = if (playerBounds.width > 0) {
-                    playerBounds.width
+                val playerWidthPx = if (measures.playerBounds.width > 0) {
+                    measures.playerBounds.width
                 } else {
                     constraints.maxWidth + with(density) {
                         (PLAYER_GUTTER * 2).toPx().roundToInt()
@@ -3728,7 +2632,7 @@ fun NowPlayingScreen(
                 // The panels asked about first, so a collapse on its way in
                 // — whose sleeve leaves rest on its first frame — isn't
                 // listened for here at all.
-                if (!lyricsOpen && !queueOpen && !queueDragging && collapseAtRest && controlDeckIsMeasured) {
+                if (!panels.lyricsOpen && !panels.queueOpen && !panels.queueDragging && collapse.atRest && controlDeckIsMeasured) {
                     val target = with(density) {
                         val half = slack
                             .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
@@ -3772,54 +2676,20 @@ fun NowPlayingScreen(
                 // it, so the title does not move.
                 val groupTop = (maxHeight - scrubberDrop - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp) / 2 + artBias
-                // Functions of the collapse, called at placement and measure
-                // — see [p]. Composition never reads them.
-                fun artSize(): Dp = lerp(fullArt, THUMB_SIZE, p())
-                fun artTop(): Dp = lerp(groupTop, 0.dp, p())
-                // Expanded and height-bound, the sleeve is narrower than the
-                // player and has to be centred in it; collapsed, it belongs
-                // hard against the left edge with the credits beside it.
-                //
-                // Centred on the *screen*, not on the box: the box is inset by
-                // the player's gutter, and the card is allowed to reach past
-                // it, so its own left edge is measured from the screen and
-                // brought back into the box's coordinates.
-                fun artStart(): Dp = lerp(
-                    (playerWidth - fullArt) / 2 - boxInset,
-                    0.dp,
-                    p(),
-                )
-                // The title's own position: the gap below the card, plus what
-                // is left of the credits' drop after the card's growth and its
-                // bias have been paid for out of it. The sum of the two is the
-                // same as it was, which is why the title does not move.
-                fun regularTitleTop(): Dp = lerp(
-                    groupTop + fullArt + ART_TITLE_GAP + creditsDrop,
-                    0.dp,
-                    p(),
-                )
                 // Once Spotify's control deck has left, keep the only remaining
                 // player chrome against the bottom edge instead of stranding it
                 // where the artwork's title normally sits near mid-screen.
                 val spotifyTitleRange = if (spotifyCanvasPresentation) {
-                    val expandedTopHeight = spotifyCanvasExpandedTopHeight
+                    val expandedTopHeight = clipState.spotifyExpandedTopHeight
                         .takeIf { it > 0.dp }
                         ?: maxHeight
                     val collapsedTitleTop = (
-                        expandedTopHeight + spotifyCanvasDeckHeight - HEADER_HEIGHT
+                        expandedTopHeight + clipState.spotifyDeckHeight - HEADER_HEIGHT
                     ).coerceAtLeast(0.dp)
                     collapsedTitleTop
                 } else {
                     null
                 }
-                fun currentTitleTop(): Dp = spotifyTitleRange?.let { collapsedTitleTop ->
-                    // Read in the placement lambda below. This invalidates only
-                    // placement, not composition or measurement, and keeps the
-                    // credits on the deck's exact reveal frame.
-                    lerp(collapsedTitleTop, regularTitleTop(), playerDeckReveal.value)
-                } ?: regularTitleTop()
-                fun titleStart(): Dp = lerp(0.dp, THUMB_SIZE + 12.dp, p())
-
                 // How far down the *screen* the sleeve's bottom edge sits.
                 // Everything between the screen's top and this box's own top is
                 // fixed padding, so it can simply be added back up rather than
@@ -3846,9 +2716,9 @@ fun NowPlayingScreen(
                 // from inside a layout. Writing the same answer back costs a
                 // comparison here and a whole frame if it is left to the snapshot
                 // to notice.
-                val bannerSettled = !lyricsOpen || heroHeight == 0.dp
-                if (bannerSettled && bannerBottom != heroHeight) {
-                    SideEffect { heroHeight = bannerBottom }
+                val bannerSettled = !panels.lyricsOpen || measures.heroHeight == 0.dp
+                if (bannerSettled && bannerBottom != measures.heroHeight) {
+                    SideEffect { measures.heroHeight = bannerBottom }
                 }
 
                 // The card's own bottom edge, in the player's pixels — the line
@@ -3859,657 +2729,94 @@ fun NowPlayingScreen(
                 // the picture's edge, and the wash hangs from the picture.
                 val cardBottomPx = statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt
-                if (cardBottomPx != cardBottom) {
-                    SideEffect { cardBottom = cardBottomPx }
+                if (cardBottomPx != measures.cardBottom) {
+                    SideEffect { measures.cardBottom = cardBottomPx }
                 }
 
-                // Where the sleeve is drawn, as a function of the collapse — see
-                // [p] — in this box's own pixels. Called at measure, placement
-                // and draw; composition never reads it.
-                //
-                // Three rects rather than two. The card is the square sleeve
-                // ([artStart], [artTop], [artSize]); the banner is the
-                // full-bleed artwork — the player's whole width, up behind the
-                // status bar, down to [heroHeight]; the thumbnail is the header.
-                // [heroT] carries the expanded sleeve from the card to the
-                // banner, and the collapse carries either one down to the
-                // thumbnail. One layer the whole way: opening the queue or the
-                // lyrics shrinks the full-bleed artwork itself into the header,
-                // instead of dissolving it over a second, card-sized copy that
-                // shrinks underneath.
-                //
-                // The banner is placed off this box's own edges: above it is
-                // fixed padding (see [bannerBottom]), and either side the
-                // gutter, which the two widths give back between them.
                 val bannerTopPx = with(density) {
                     -(statusBarTop.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
                 }
                 val boxWidthPx = constraints.maxWidth
-                // How far the expanded sleeve is the banner rather than the
-                // card. Zero until there is a banner to be, which is to say
-                // until [heroHeight] and the player's width have been measured.
-                fun bannerShare(): Float =
-                    if (heroHeight > 0.dp && playerBounds.width > 0) heroT.value else 0f
-                // How much of the banner is on screen: its share, given up as
-                // the sleeve collapses — the same movement as the collapse
-                // rather than a fade chained after it.
-                fun bannerShown(): Float = bannerShare() * (1f - p())
-                // The card's paused shrink, let go of as it collapses.
-                fun cardScale(): Float = artScale + (1f - artScale) * p()
-                fun cardRect(): Rect = with(density) {
-                    val side = artSize().roundToPx().toFloat()
-                    Rect(
-                        offset = Offset(artStart().roundToPx().toFloat(), artTop().roundToPx().toFloat()),
-                        size = Size(side, side),
-                    )
-                }
-                fun sleeveRect(): Rect {
-                    val card = cardRect()
-                    val share = bannerShare()
-                    if (share == 0f) return card
-                    val banner = with(density) {
-                        Rect(
-                            offset = Offset(-(playerBounds.width - boxWidthPx) / 2f, bannerTopPx.toFloat()),
-                            size = Size(playerBounds.width.toFloat(), heroHeight.roundToPx().toFloat()),
-                        )
-                    }
-                    val thumbSide = with(density) { THUMB_SIZE.roundToPx().toFloat() }
-                    val thumb = Rect(Offset.Zero, Size(thumbSide, thumbSide))
-                    return lerp(card, lerp(banner, thumb, p()), share)
-                }
                 // The box's left edge in the player — the gutter, which the two
                 // widths give back between them.
-                val boxLeftPx = ((playerBounds.width - boxWidthPx) / 2f).roundToInt()
-                // The mini player's cover in this box's own pixels, this frame,
-                // or null when the player isn't docking. The box sits a fixed
-                // padding below the player's top (see [bannerBottom]), and the
-                // player wherever the sheet has put it this frame.
-                fun miniInBox(): Rect? {
-                    if (dock == null || !docking()) return null
-                    val mini = dock.miniArtOnScreen() ?: return null
-                    val anchor = dockFrame.anchor ?: return null
-                    val offset = dock.offset() ?: return null
-                    dockFrame.offset = offset.toInt().toFloat()
-                    return mini.translate(
-                        -(anchor.x + boxLeftPx),
-                        -(anchor.y + dockFrame.offset - bannerTopPx),
-                    )
-                }
-                // How much of the sheet's own travel the artwork rides on its
-                // way between the player and the cover.
-                //
-                // Riding all of it — blending from the cover to where the sleeve
-                // sits on the moving sheet — sent the cover past its mark: that
-                // end of the blend is off the bottom of the screen as the sheet
-                // goes, and for the last stretch it dragged the artwork a good
-                // twenty pixels below the bar before it climbed back. Riding
-                // none of it leaves the artwork standing still under a finger
-                // dragging the player down. This much is the most it can ride and
-                // still never pass the cover — it lands tangentially, its speed
-                // run down to nothing exactly on the cover — and on the way it
-                // still follows the finger most of the way.
-                //
-                // Worked out off the sleeve, once a frame, and shared with the
-                // tile inside it so the two travel together.
-                fun dockRide(sleeve: Rect, mini: Rect): Float {
-                    val travel = dock?.sheetTravel ?: return 0f
-                    if (travel <= 0f) return 0f
-                    // The cover's distance below where the sleeve sits with the
-                    // sheet fully open, as a share of the sheet's travel.
-                    return ((mini.top + dockFrame.offset - sleeve.top) / travel).coerceIn(0f, 1f)
-                }
-                // A rect of the sleeve's, carried as far towards the cover as
-                // the sheet has gone.
-                fun towardsDock(rect: Rect, mini: Rect?): Rect {
-                    if (mini == null) return rect
-                    val unridden = dockFrame.offset * (1f - dockFrame.ride)
-                    return lerp(mini, rect.translate(0f, -unridden), dockT())
-                }
-                // The banner's dissolve, firmed up into the cover's hard edge as
-                // it docks.
-                fun sleeveShown(): Float = bannerShown() * dockT()
-                fun sleeveCorner(): Dp {
-                    val corner = 8.dp * (1f - sleeveShown())
-                    val t = dockT()
-                    return if (dock == null || t >= 1f) corner else lerp(dock.miniArtCorner(), corner, t)
-                }
+                val boxLeftPx = ((measures.playerBounds.width - boxWidthPx) / 2f).roundToInt()
 
-                // The sleeve proper — card, banner and thumbnail in turn, see
-                // [sleeveRect]. Separate from the slot below, which keeps the
-                // card's place for the stats line and the gestures: a banner
-                // is not where the stats sit, nor where a drag should start.
-                Box(
-                    modifier = Modifier
-                        // Measured and placed at layout time rather than in
-                        // composition, so the collapse costs a layout pass and
-                        // not a recomposition per frame. Reports no size of its
-                        // own: the banner is wider than this box, and a child
-                        // measured past its constraints gets re-centred on them.
-                        .layout { measurable, _ ->
-                            // Stashed for the tile inside, which is measured
-                            // within this, and for the player's own draw.
-                            val mini = miniInBox()
-                            val open = sleeveRect()
-                            if (mini != null) dockFrame.ride = dockRide(open, mini)
-                            val rect = towardsDock(open, mini)
-                            dockFrame.miniInBox = mini
-                            dockFrame.sleeve = rect
-                            val placeable = measurable.measure(
-                                Constraints.fixed(rect.width.roundToInt(), rect.height.roundToInt()),
-                            )
-                            layout(0, 0) {
-                                val x = rect.left.roundToInt()
-                                val y = rect.top.roundToInt()
-                                dockFrame.portalLeft = (boxLeftPx + x).toFloat()
-                                dockFrame.portalScale = 1f
-                                dockFrame.portalTop = (y - bannerTopPx).toFloat()
-                                placeable.place(x, y)
-                            }
-                        }
-                        // While it docks the sleeve is drawn by the player
-                        // itself, over everything and outside the player's
-                        // fade, rather than here among the things fading
-                        // around it. The same node, laid out right here: only
-                        // where its pixels land changes.
-                        .drawWithContent {
-                            if (docking()) {
-                                sleeveLayer.record { this@drawWithContent.drawContent() }
-                            } else {
-                                drawContent()
-                            }
-                        }
-                        .graphicsLayer {
-                            // The paused shrink and the swipe nudge belong to
-                            // the full card alone. A banner shrinking or sliding
-                            // would open bare backdrop down the screen's edges,
-                            // and the mini player's cover does neither.
-                            val share = bannerShare()
-                            val idle = cardScale()
-                            val t = dockT()
-                            val open = idle + (1f - idle) * share
-                            val scale = if (t >= 1f) open else 1f + (open - 1f) * t
-                            scaleX = scale
-                            scaleY = scale
-                            translationX = swipeSettle.value * (1f - p()) * (1f - share) * t
-                        }
-                        // Haze must observe the drawable layer itself, the
-                        // banner included — a source on the surrounding layout
-                        // only captured its mesh backdrop.
-                        .hazeSource(playerHaze)
-                        .graphicsLayer {
-                            // Hands its opacity to a full-bleed clip as the clip
-                            // takes over, and takes it straight back if there
-                            // is no clip mounted to hand it to. The clip is gone
-                            // by the collapse's half, so the sleeve is whole
-                            // again by the time it unmounts.
-                            alpha = if (heroClip != null) 1f - canvasCover.floatValue else 1f
-                        }
-                        .graphicsLayer {
-                            val shown = sleeveShown()
-                            // A drop shadow grounds a photo; on the flat
-                            // placeholder tile it has nothing to sit behind, so
-                            // it just reads as a second, darker square ringing
-                            // the first. Only cast it once there's actually art,
-                            // and only as a card: the banner has no edge to cast
-                            // one from, so it comes in over the second half of a
-                            // collapse, once the dissolve has all but gone. Let
-                            // go of on the way to the mini player, whose cover
-                            // sits flat in its bar.
-                            shadowElevation = if (art.loaded) {
-                                10.dp.toPx() * (1f - 2f * shown).coerceAtLeast(0f) * dockT()
-                            } else {
-                                0f
-                            }
-                            shape = dockFrame.cornerShape(sleeveCorner())
-                            // What `.shadow` did: it clips only when it casts.
-                            clip = art.loaded
-                        }
-                        .graphicsLayer {
-                            // Clipped a second time, as `.shadow` and then
-                            // `.clip` always did: a card's anti-aliased corners
-                            // come out as they did before the banner moved in.
-                            shape = dockFrame.cornerShape(sleeveCorner())
-                            clip = true
-                            // The mask below erases part of what this layer
-                            // drew, which it can only do in a buffer of its own.
-                            compositingStrategy = if (sleeveShown() > 0f) {
-                                CompositingStrategy.Offscreen
-                            } else {
-                                CompositingStrategy.Auto
-                            }
-                        }
-                        // The banner dissolves into the backdrop from the title
-                        // down to the stage's bottom, and firms back up as it
-                        // collapses.
-                        .drawWithContent {
-                            drawContent()
-                            val shown = sleeveShown()
-                            if (shown > 0f) {
-                                // The title's row, in the sleeve's own pixels:
-                                // the old stage bottom recovered out of the
-                                // [HERO_ART_ZOOM] extension, plus the half
-                                // [ART_TITLE_GAP] the row sits below it.
-                                val fadeStart = size.height / HERO_ART_ZOOM +
-                                    ART_TITLE_GAP.toPx() / 2f
-                                // Eased, not linear: alpha holds near full as
-                                // the title begins, gives way through the
-                                // credits and settles at the stage's bottom
-                                // with no crease at either end.
-                                val steps = 16
-                                val colorStops = Array(steps + 1) { index ->
-                                    val t = index / steps.toFloat()
-                                    val eased = t * t * (3f - 2f * t)
-                                    t to Color.Black.copy(alpha = 1f - shown * eased)
-                                }
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        colorStops = colorStops,
-                                        startY = fadeStart,
-                                        endY = size.height * ART_FADE_END_FRACTION,
-                                    ),
-                                    blendMode = BlendMode.DstIn,
-                                )
-                            }
-                        },
+                // The sleeve's geometry as functions of the collapse — see
+                // [SleeveGeometry]. Remembered on its inputs, so the layout
+                // and draw lambdas that hold it are the same lambdas from one
+                // pass to the next.
+                val geometry = remember(
+                    density, collapse.p, dockT, docking, dock, dockFrame, fullArt, groupTop, playerWidth,
+                    boxInset, creditsDrop, spotifyTitleRange, bannerTopPx, boxWidthPx, boxLeftPx,
                 ) {
-                    // Empty state lives on this tile, not the AsyncImage: a
-                    // background *and* a painter both trying to fill the same
-                    // clipped shape is what read as two overlapping squares
-                    // whenever there was nothing to paint. One layer, one square.
-                    //
-                    // Kept at the card's place and size however much of the
-                    // banner the sleeve is standing in for: a placeholder is a
-                    // card or it is nothing, and blown out to the banner it
-                    // would only tint the top third of the screen. Under the
-                    // cover, which hides it the moment there is one.
-                    Box(
-                        modifier = Modifier
-                            .layout { measurable, _ ->
-                                val card = towardsDock(cardRect(), dockFrame.miniInBox)
-                                val sleeve = dockFrame.sleeve
-                                val placeable = measurable.measure(
-                                    Constraints.fixed(card.width.roundToInt(), card.height.roundToInt()),
-                                )
-                                layout(0, 0) {
-                                    placeable.place(
-                                        (card.left - sleeve.left).roundToInt(),
-                                        (card.top - sleeve.top).roundToInt(),
-                                    )
-                                }
-                            }
-                            .graphicsLayer {
-                                // The card's own shrink and nudge, where the
-                                // sleeve around it is not taking them.
-                                val share = bannerShare()
-                                val idle = cardScale()
-                                val t = dockT()
-                                val scale = if (t >= 1f) {
-                                    idle / (idle + (1f - idle) * share)
-                                } else {
-                                    (1f + (idle - 1f) * t) / (1f + (idle + (1f - idle) * share - 1f) * t)
-                                }
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = swipeSettle.value * (1f - p()) * share * t
-                                // Its own corners only once it is smaller than
-                                // the sleeve; as the whole card it takes the
-                                // sleeve's clip, as it always did.
-                                shape = TileShape
-                                clip = share > 0f
-                            }
-                            .background(Color.Black.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (!art.loaded && !canvasRendered) {
-                            Icon(
-                                painter = PlayerIcons.NoArtwork.painter(),
-                                contentDescription = null,
-                                tint = LocalPlayerInk.current.value.copy(alpha = 0.35f),
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .graphicsLayer {
-                                        val scale = 1f - 0.5f * p()
-                                        scaleX = scale
-                                        scaleY = scale
-                                    },
-                            )
-                        }
-                    }
-                    AsyncImage(
-                        // Decode at the sleeve's *expanded* size, always.
-                        // Coil otherwise sizes the decode to however large
-                        // this is when the request goes out — and changing
-                        // track from the queue does that while the sleeve is
-                        // collapsed to a thumbnail, leaving a thumbnail-sized
-                        // bitmap to be blown back up when the queue closes.
-                        // Skipping tracks with the transport keeps it sharp
-                        // only because the sleeve happens to be full size at
-                        // that moment.
-                        //
-                        // Asked for at the source's own size rather than the
-                        // sleeve's: the banner is taller than the card is
-                        // wide, and the one bitmap has to serve both shapes
-                        // with nothing to upscale between them.
-                        model = art.request,
-                        contentDescription = null,
-                        // Video thumbnails are 16:9; letterboxing them inside
-                        // the square sleeve looks like a broken frame.
-                        contentScale = ContentScale.Crop,
-                        onState = art::onState,
-                        // TextureView-backed canvas frames can arrive
-                        // before Coil has decoded the sleeve. Alpha alone
-                        // doesn't hide this layer for that window: a
-                        // TextureView composites through its own hardware
-                        // layer, and on some devices that layer wins the
-                        // stacking order against a sibling Compose layer
-                        // even when that layer's alpha is zero — so the
-                        // still image's empty placeholder still shows
-                        // through, above a perfectly healthy animated
-                        // cover. Skipping the draw call outright leaves
-                        // nothing there to composite, in the wrong order
-                        // or otherwise; the request stays mounted so
-                        // loading still finishes in the background and
-                        // [PlayerArtwork.loaded] still flips the moment it does.
-                        modifier = Modifier
-                            .fillMaxSize()
-                            // In the banner, Crop still takes the tighter slice
-                            // the old [HERO_ART_ZOOM] layer took — the stage is
-                            // taller by exactly that factor, so the same source
-                            // occupies the same pixels and only its bottom, which
-                            // the credits now stand on, is uncovered. The sleeve
-                            // keeps its fitted card; the crop is a banner idea.
-                            //
-                            // The layer is always on rather than only in the
-                            // banner, because the two crops are one picture's
-                            // two zoom levels and the listener can move between
-                            // them: the crop is blended with the journey, so
-                            // the picture grows into the banner and comes back
-                            // out of it instead of jumping into it and out of
-                            // it. A layer with no scale on it costs a transform
-                            // and nothing else.
-                            .graphicsLayer {
-                                // The stage is taller by [HERO_ART_ZOOM],
-                                // so in portrait Crop already supplies the
-                                // scale the removed layer did. Where the
-                                // stage is still width-bound — the banner
-                                // shorter than the player is wide — Crop
-                                // cannot, and the zoom is put back.
-                                val oldBottom = size.height / HERO_ART_ZOOM
-                                val zoom = maxOf(size.width, oldBottom) * HERO_ART_ZOOM /
-                                    maxOf(size.width, size.height)
-                                // Uncrop: lyrics ask for the whole image,
-                                // and docking onto the mini player blends
-                                // into it as the sheet closes. Shrinking
-                                // the cropped draw to the fit ratio within
-                                // the same box is exactly "the same
-                                // picture, zoomed out": the stage shows
-                                // around it and nothing is re-laid out.
-                                val dockUncrop = dock?.let { d ->
-                                    if (d.attached && d.offset() != null) {
-                                        (1f - d.openFraction()).coerceIn(0f, 1f)
-                                    } else {
-                                        0f
-                                    }
-                                } ?: 0f
-                                val uncrop = maxOf(headerUncrop, dockUncrop)
-                                val fit = artworkFitScale(size.width, size.height, art.aspect)
-                                val bannerScale = zoom + (fit - zoom) * uncrop
-                                // How far the picture is on its way to being a
-                                // banner: zero is the card's own crop, one is
-                                // the banner's.
-                                val banner = heroT.value
-                                // The picture a little smaller inside its card,
-                                // when the listener asks for that — and only in
-                                // the card: a banner is the picture, edge to
-                                // edge, and there is nothing to sit inside.
-                                // Nor in the header's thumbnail, which is the
-                                // cover itself and has no edge of its own.
-                                //
-                                // The card's own share of the picture: one while
-                                // the sleeve is a card, and back to none as it
-                                // collapses into the mini player, where the
-                                // picture is the cover again and shrinking it
-                                // would only take it out of sight.
-                                //
-                                // [dockT] is one while the player is open and
-                                // falls to zero as it rides down onto the mini
-                                // player, so it is read as it is: one means the
-                                // card is there to be looked at.
-                                val cardShare = ((1f - p()) * dockT())
-                                    .coerceIn(0f, 1f)
-                                val cardZoom = if (zoomOutAlbumArt) {
-                                    lerpFloat(1f, ALBUM_ART_ZOOM_OUT, cardShare)
-                                } else {
-                                    1f
-                                }
-                                val scale = lerpFloat(1f, bannerScale, banner) *
-                                    lerpFloat(cardZoom, 1f, banner)
-                                scaleX = scale
-                                scaleY = scale
-                                // The card's own corners on the picture, so a
-                                // zoomed-out picture keeps the card's shape
-                                // instead of showing square corners inside it.
-                                //
-                                // The radius is divided by the picture's scale,
-                                // so it comes out the same size as the card's
-                                // own corner however far the picture is
-                                // shrunk, and it is the card's radius — zero in
-                                // the banner, where the picture is edge to edge
-                                // and there are no corners to keep.
-                                //
-                                // A scale of zero would divide into nothing and
-                                // leave the radius infinite, which is not a
-                                // shape anything can draw.
-                                val radius = sleeveCorner()
-                                if (cardZoom < 0.999f && radius > 0.dp && scale > 0.01f) {
-                                    shape = RoundedCornerShape(radius / scale)
-                                    clip = true
-                                }
-                                // Cropped, the crop grows at the bottom rather
-                                // than lifting the art off the status bar; once
-                                // uncropped the whole picture should sit in the
-                                // middle of the stage, so the anchor slides from
-                                // the top edge to the centre with it.
-                                //
-                                // No translation here: the banner's box is already
-                                // pinned to the screen's own top edge, and a
-                                // downward nudge on top of that showed a band of
-                                // the mesh backdrop above the artwork — the gap
-                                // reported as the safe area cutting the image.
-                                // The zoom alone grows it downwards.
-                                transformOrigin = TransformOrigin(0.5f, 0.5f * uncrop)
-                            }
-                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() }
-                            // Tapping the picture switches between the card and
-                            // the full-bleed banner.
-                            //
-                            // The switch is the preference itself, so the
-                            // picture on screen and the switch in Settings
-                            // cannot disagree, and the movement between the
-                            // two is the player's own: the banner grows out of
-                            // the card and the card grows back out of it.
-                            //
-                            // Not offered where there is nothing to switch
-                            // between: a window the player does not fill has no
-                            // full-bleed treatment, a tablet's picture is
-                            // already edge to edge, and Spotify's Canvas owns
-                            // the whole screen while it is playing. Nor on the
-                            // header's thumbnail, which is the way back out of
-                            // the queue or the lyrics.
-                            //
-                            // Watched rather than consumed: the artwork is
-                            // also where a drag starts — up for the queue,
-                            // down for the sheet — and a tap detector that
-                            // took the press would take that gesture with it.
-                            // This one takes nothing and only counts a press
-                            // that never travelled, so the two can share the
-                            // picture.
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val start = down.position
-                                    var travelled = false
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes
-                                            .firstOrNull { it.id == down.id } ?: break
-                                        if (!change.pressed) {
-                                            if (!travelled) {
-                                                if (p() <= 0.5f &&
-                                                    !spotifyCanvasPresentation &&
-                                                    playerFillsWindow(windowWidth)
-                                                ) {
-                                                    haptics.play(Haptic.Tap)
-                                                    PlayerSettings.setFullBleedArtwork(
-                                                        !fullBleedArtNow.value,
-                                                    )
-                                                }
-                                            }
-                                            break
-                                        }
-                                        if ((change.position - start).getDistance() >
-                                            viewConfiguration.touchSlop
-                                        ) {
-                                            travelled = true
-                                        }
-                                    }
-                                }
-                            },
-                    )
-
-                    // Where the clip plays when it can't have the banner:
-                    // inside the same clip as the still art, taking the
-                    // sleeve's corners, shadow and paused shrink for free.
-                    if (!heroMode && canvas != null) {
-                        WhileShown({ !collapsePastHalf }) {
-                            CanvasArtworkPlayer(
-                                canvas = canvas,
-                                isPlaying = isPlaying,
-                                // The panels first: a collapse the tap asked
-                                // for is paused from the tap, and then never
-                                // asks after its first frame of movement.
-                                // And the sheet's travel, for the reason the
-                                // banner's clip gives above.
-                                pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                                    collapseStarted || dockMoving || !sheetSettled,
-                                onRenderedChanged = { canvasRendered = it },
-                                onFrameCaptured = {
-                                    if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
-                                        canvasFrameHolder.offer(it)
-                                    }
-                                },
-                                refreshFrameEveryMs = if (
-                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving ||
-                                    !sheetSettled
-                                ) null else liveRefreshMs,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                }
-
-                // The card's slot: where the sleeve sits as a card, whether or
-                // not it is being drawn as one. Holds the stats line and takes
-                // the gestures, both of which belong to the card's place even
-                // while the artwork runs full bleed around it.
-                Box(
-                    modifier = Modifier
-                        // The lambda overload deliberately: the Dp one reads
-                        // its arguments at composition, so an animated offset
-                        // recomposes and re-measures this Box once per frame.
-                        // Read at placement instead, the same movement costs a
-                        // placement pass.
-                        .offset { IntOffset(artStart().roundToPx(), artTop().roundToPx()) }
-                        // What `.size(artSize)` measured, asked at measure
-                        // time instead of composition.
-                        .layout { measurable, constraints ->
-                            val side = artSize().roundToPx()
-                            val placeable = measurable.measure(
-                                constraints.constrain(Constraints.fixed(side, side)),
-                            )
-                            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-                        }
-                        // Where the dismiss band starts. Read here, above the
-                        // paused shrink below, so the band covers the sleeve's
-                        // slot rather than the 86% of it that is drawn while
-                        // paused — the ring of backdrop the shrink opens up is
-                        // still the artwork as far as a finger is concerned, and
-                        // a band that breathed with the shrink would hand it
-                        // back and forth on every play and pause.
-                        .onGloballyPositioned { dismissBandTop = it.boundsInRoot().top }
-                        .graphicsLayer {
-                            // The paused shrink and the swipe nudge only make
-                            // sense on the full sleeve.
-                            val idle = cardScale()
-                            scaleX = idle
-                            scaleY = idle
-                            translationX = swipeSettle.value * (1f - p())
-                        }
-                        // Collapsed, the sleeve is the way back: tapping the
-                        // thumbnail puts the queue or the lyrics away again.
-                        .then(
-                            if (queueOpen || lyricsOpen) {
-                                Modifier.clickable {
-                                    queueOpen = false
-                                    closeLyrics()
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    // Measured stats stay on the sleeve's bottom centre. They
-                    // fade away with Spotify's lower control deck rather than
-                    // following the compact credits to the bottom edge.
-                    WhileShown({ !collapsePastHalf }) {
-                        SleeveNerdStats(
-                            song = song,
-                            isPlaying = isPlaying,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
-                                .graphicsLayer {
-                                    alpha = (1f - p() * 2f) * spotifyChromeAlpha
-                                },
-                        )
-                    }
-                }
-
-                // Sits in the gap under the sleeve, clear of its rounded
-                // corners and shadow — no box, no clip, nothing for the art
-                // itself to be cropped by. Just a glyph that fades in with
-                // the drag to hint which way a release would skip.
-                //
-                // Shown under the banner as well as under the card, and it is
-                // the only feedback the drag has there: a card can slide with
-                // the finger, but a full-bleed image sliding would open a strip
-                // of bare backdrop down one edge of the screen. It lands where
-                // the banner has all but dissolved, so it reads against the
-                // backdrop rather than against the artwork.
-                if (swipeHintShown) {
-                    val showNext = swipeHintNext
-                    val enabled = if (showNext) hasNext else hasPrevious
-                    val hintAlpha = if (enabled) 0.85f else 0.3f
-                    Icon(
-                        painter = (if (showNext) PlayerIcons.SkipNext else PlayerIcons.SkipPrevious).painter(),
-                        contentDescription = null,
-                        tint = LocalPlayerInk.current.value,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .offset {
-                                IntOffset(0, (artTop() + artSize() + (ART_TITLE_GAP - 16.dp) / 2).roundToPx())
-                            }
-                            .size(16.dp)
-                            .graphicsLayer {
-                                alpha = (abs(swipeSettle.value) / swipeThreshold)
-                                    .coerceIn(0f, 1f) * (1f - p()) * hintAlpha
-                            },
+                    SleeveGeometry(
+                        density = density,
+                        p = collapse.p,
+                        dockT = dockT,
+                        docking = docking,
+                        dock = dock,
+                        dockFrame = dockFrame,
+                        fullArt = fullArt,
+                        groupTop = groupTop,
+                        playerWidth = playerWidth,
+                        boxInset = boxInset,
+                        creditsDrop = creditsDrop,
+                        spotifyTitleRange = spotifyTitleRange,
+                        deckReveal = { playerDeckReveal.value },
+                        heroHeight = { measures.heroHeight },
+                        playerBounds = { measures.playerBounds },
+                        heroT = { heroT.value },
+                        artScale = { artScale },
+                        bannerTopPx = bannerTopPx,
+                        boxWidthPx = boxWidthPx,
+                        boxLeftPx = boxLeftPx,
                     )
                 }
+
+                PortraitSleeve(
+                    geometry = geometry,
+                    p = collapse.p,
+                    dockT = dockT,
+                    docking = docking,
+                    dock = dock,
+                    dockFrame = dockFrame,
+                    sleeveLayer = sleeveLayer,
+                    swipeSettle = swipeSettle,
+                    swipeThreshold = swipeThreshold,
+                    swipeHintShown = { swipeHintShown },
+                    swipeHintNext = { swipeHintNext },
+                    hasNext = hasNext,
+                    hasPrevious = hasPrevious,
+                    hazeState = playerHaze,
+                    heroClipShown = heroClip != null,
+                    canvasCover = clipState.cover,
+                    art = art,
+                    canvasRendered = clipState.renderedState,
+                    headerUncrop = { headerUncrop },
+                    heroT = { heroT.value },
+                    zoomOutAlbumArt = { zoomOutAlbumArt },
+                    heroMode = heroMode,
+                    canvas = canvas,
+                    isPlaying = isPlaying,
+                    panels = panels,
+                    collapseStarted = { collapse.started },
+                    collapsePastHalf = { collapse.pastHalf },
+                    dockMoving = { dockMoving },
+                    sheetSettled = sheetSettled,
+                    tabletArtworkBackdrop = tabletArtworkBackdrop,
+                    canvasFrameHolder = clipState.frameHolder,
+                    liveRefreshMs = liveRefreshMs,
+                    spotifyCanvasPresentation = spotifyCanvasPresentation,
+                    windowWidth = windowWidth,
+                    haptics = haptics,
+                    fullBleedArtNow = fullBleedArtNow,
+                    song = song,
+                    spotifyChromeAlpha = { spotifyChromeAlpha },
+                    onDismissBandTop = { measures.dismissBandTop = it },
+                )
 
                 // ---- Title + menu ----
-                Row(
+                PortraitCredits(
                     modifier = Modifier
                         .fillMaxWidth()
                         // Collapsed, this row shares the header with the sleeve
@@ -4525,15 +2832,15 @@ fun NowPlayingScreen(
                             IntOffset(
                                 x = 0,
                                 y = (
-                                    currentTitleTop() -
-                                        lerp(0.dp, (HEADER_HEIGHT - THUMB_SIZE) / 2, p())
+                                    geometry.currentTitleTop() -
+                                        lerp(0.dp, (HEADER_HEIGHT - THUMB_SIZE) / 2, collapse.p())
                                 ).roundToPx(),
                             )
                         }
                         // What `.padding(start = titleStart)` laid out, asked at
                         // measure time instead of composition.
                         .layout { measurable, constraints ->
-                            val start = titleStart().roundToPx()
+                            val start = geometry.titleStart().roundToPx()
                             val placeable = measurable.measure(constraints.offset(horizontal = -start))
                             layout(
                                 constraints.constrainWidth(placeable.width + start),
@@ -4546,12 +2853,8 @@ fun NowPlayingScreen(
                         // from the sleeve so the gap between the two is inside
                         // the band as well: it is a gap in one block, not a seam
                         // between two, and a finger should not be able to find it.
-                        .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        Modifier
-                            .weight(1f)
+                        .onGloballyPositioned { measures.dismissBandBottom = it.boundsInRoot().bottom },
+                    creditsModifier = Modifier
                             // Where the title and the artist are, for the draw
                             // that flies them into the mini player. Measured in
                             // the player's own box; the sheet's own travel is
@@ -4596,306 +2899,49 @@ fun NowPlayingScreen(
                             // operation. Animating fontSize forced both marquee
                             // texts through shaping and measurement every frame.
                             .graphicsLayer {
-                                val scale = 1f - 0.2f * p()
+                                val scale = 1f - 0.2f * collapse.p()
                                 scaleX = scale
                                 scaleY = scale
                                 transformOrigin = TransformOrigin(0f, 0.5f)
                             },
-                    ) {
-                        // Only the title's own overflow gates the artist's stagger
-                        // below — an artist line that's long on its own has no
-                        // reason to wait on a title that already fits.
-                        var titleOverflowing by remember { mutableStateOf(false) }
-                        // Only while these credits are the screen. Collapsed into
-                        // a header over the queue or the lyrics they are a label
-                        // on a list, and a label that crawls pulls the eye off
-                        // whatever is being read below it.
-                        //
-                        // Asked inside the crossfade's own content, so the
-                        // switch recomposes the two lines and not the box
-                        // round the whole sleeve — and asked of the panels
-                        // first, so a collapse a tap asked for stops the crawl
-                        // with the tap, instead of a frame into the movement.
-                        val scrolls = {
-                            !(lyricsOpen || queueOpen || queueDragging) && !collapsePastSettling
-                        }
-                        // Targeted on the words rather than the videoId: two
-                        // cuts that share a title cross-fade into the exact
-                        // same text, which is nothing at all and leaves the
-                        // marquee where it was; a cut that renames the song
-                        // ("… (Live)") dissolves into the new one instead of
-                        // snapping while the rest of the switch moves around
-                        // it.
-                        Crossfade(
-                            targetState = song.title to song.artist,
-                            animationSpec = tween(durationMillis = 300),
-                            label = "playerCredits",
-                        ) {
-                            val scrolling = scrolls()
-                            // The title wears the ink, like everything else on
-                            // the screen — unless the listener pinned a colour
-                            // for the text. The artist below it keeps the ink
-                            // itself: the second line of the block is not the
-                            // loudest thing on the screen.
-                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current.value
-                            val artistInk = LocalPlayerText.current ?: LocalPlayerInk.current.value
-                            val alphas = LocalPlayerAlphas.current
-                            // The glow the text wears, read here rather than
-                            // in the screen above: the glow moves with the
-                            // ink, and a screen that read it would recompose
-                            // the whole player every time the ink did.
-                            val glow = LocalPlayerInkGlow.current.value
-                            val playerShadow = remember(glow, textGlow) {
-                                if (textGlow) Shadow(color = glow, blurRadius = 9f) else null
-                            }
-                            Column {
-                                MarqueeText(
-                                    text = song.title,
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontSize = CREDITS_TITLE_SIZE,
-                                        lineHeight = 27.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        shadow = playerShadow,
-                                    ),
-                                    color = ink,
-                                    enabled = scrolling,
-                                    leading = if (song.isExplicit == true) {
-                                        { ExplicitBadge(color = ink) }
-                                    } else {
-                                        null
-                                    },
-                                    onOverflowChange = { titleOverflowing = it },
-                                    rtl = isRtlText(song.title),
-                                    // Only the tracks YouTube hands us a browse id for
-                                    // lead anywhere; the rest stay plain text.
-                                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
-                                )
-                                ArtistCreditsMarquee(
-                                    text = song.artist,
-                                    credits = remember(song.artist, song.artists, song.artistId) {
-                                        artistCredits(song.artist, song.artists, song.artistId)
-                                    },
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = CREDITS_ARTIST_SIZE,
-                                        lineHeight = 24.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        shadow = playerShadow,
-                                    ),
-                                    // Under the title in weight and in strength,
-                                    // as the reference player sets it: the name
-                                    // is the second line of the block, not a
-                                    // second heading.
-                                    color = artistInk.copy(alpha = alphas.secondary * CREDITS_ARTIST_ALPHA),
-                                    enabled = scrolling,
-                                    // A title that's also scrolling gets to go first —
-                                    // starting together reads as clutter, so the artist
-                                    // waits a beat before it joins in.
-                                    startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                                    onOpenArtist = onOpenArtist,
-                                    rtl = isRtlText(song.artist),
-                                )
-                                if (isAiTrack ||
-                                    song.genAi != com.music.bitchord.data.model.GenAiDisclosure.NONE
-                                ) {
-                                    // Deliberately a small outline chip rather than a
-                                    // button: the listener asked for transparency, not
-                                    // another control competing with the transport.
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .padding(top = 6.dp)
-                                            .border(
-                                                width = 1.dp,
-                                                color = ink.copy(alpha = 0.45f),
-                                                shape = RoundedCornerShape(6.dp),
-                                            )
-                                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                                    ) {
-                                        Text(
-                                            text = if (song.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY) {
-                                                "AI · partly"
-                                            } else {
-                                                "AI"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = ink.copy(alpha = 0.75f),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    // Beside the credits rather than down in the toggle row:
-                    // liking is about *this song*, and the row below is about
-                    // how the queue plays. Guests get nothing to tap, since
-                    // there's no account to record it against — and neither
-                    // does a local file or a finished download, which carries
-                    // no YouTube identity to rate.
-                    //
-                    // Both marks are bare, with no disc behind them: the star
-                    // and the ellipsis are things about the song, and a filled
-                    // circle under each turned them into two more buttons on a
-                    // screen that already has a row of them.
-                    if (signedIn && song.localUri == null) {
-                        val liked = likeStatus == LikeStatus.LIKE
-                        CircleGlyph(
-                            icon = if (liked) PlayerIcons.Liked else PlayerIcons.LikedOff,
-                            contentDescription = stringResource(
-                                if (liked) Res.string.remove_from_liked else Res.string.like,
-                            ),
-                            onClick = onToggleLike,
-                            haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                            glyphSize = 24.dp,
-                            touchSize = 40.dp,
-                            disc = false,
-                            // A liked song says so: the filled star is written
-                            // at full strength, an empty one quietly.
-                            glyphAlpha = if (liked) {
-                                LocalPlayerAlphas.current.primary
-                            } else {
-                                LocalPlayerAlphas.current.tertiary
-                            },
-                        )
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    CircleGlyph(
-                        icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
-                        contentDescription = stringResource(Res.string.more),
-                        onClick = onOpenMenu,
-                        glyphSize = 22.dp,
-                        touchSize = 40.dp,
-                        disc = false,
-                        // Beside the title, and quiet: the reference player
-                        // writes it at half strength, where this one was the
-                        // brightest mark on the screen.
-                        glyphAlpha = LocalPlayerAlphas.current.tertiary,
-                        modifier = Modifier.reportMenuAnchor(onMenuAnchor),
-                    )
-                }
+                    song = song,
+                    isAiTrack = isAiTrack,
+                    textGlow = textGlow,
+                    scrolls = {
+                        !(panels.lyricsOpen || panels.queueOpen || panels.queueDragging) && !collapse.pastSettling
+                    },
+                    signedIn = signedIn,
+                    likeStatus = likeStatus,
+                    showRevertCue = showRevertCue,
+                    onToggleLike = onToggleLike,
+                    onOpenMenu = onOpenMenu,
+                    onMenuAnchor = onMenuAnchor,
+                    onOpenAlbum = onOpenAlbum,
+                    onOpenArtist = onOpenArtist,
+                )
 
                 // [lyricsOpen] asked first: a close has already hidden the
                 // panel, and doesn't then listen for the sleeve leaving the
                 // header — which is its first frame of moving.
-                val lyricsPanelVisible = lyricsOpen && collapseDone
+                val lyricsPanelVisible = panels.lyricsOpen && collapse.done
                 if (lyricsPanelVisible || playerPrewarmStage >= 2) {
-                        LyricsTranslationMotion(
-                            trigger = lyricsTranslation.transition,
-                            reduceMotion = lyricsTranslation.reduceMotion,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT)
-                                // Keep the prepared list measured but completely
-                                // outside hit-testing/drawing until it is needed.
-                                .offset {
-                                    if (lyricsPanelVisible) IntOffset.Zero else IntOffset(100_000, 0)
-                                }
-                                // Arrives after the sleeve has finished collapsing
-                                // into the header rather than during — see
-                                // [collapseDone]. Fading lyrics in over a sleeve
-                                // still mid-collapse doubled the same movement in
-                                // two places on screen at once, and composing them
-                                // there was what made the collapse stutter.
-                                .graphicsLayer { alpha = if (lyricsPanelVisible) panelFade.value else 0f },
-                        ) { particleProgress ->
-                            LyricsPanel(
-                                lines = lyrics.orEmpty(),
-                                subLines = lyricsTranslation.subLines,
-                                trackKey = song.videoId,
-                                playhead = lyricsPlayhead,
-                                looking = !lyricsUnavailable,
-                                isPlaying = isPlaying && position.advancing,
-                                active = lyricsPanelVisible,
-                                onSeekToLine = seekToLyric,
-                                controlsOpen = lyricsControlsOpen,
-                                onRevealControls = { lyricsControlsOpen = true },
-                                onHideControls = { lyricsControlsOpen = false },
-                                translationProgress = particleProgress,
-                                onScrollingChange = { lyricsScrolling = it },
-                                canPick = lyricsShareEnabled,
-                                picking = lyricPicker.picking,
-                                picked = lyricPicker.picks,
-                                onPickLine = lyricPicker.pick,
-                                onTogglePick = lyricPicker.toggle,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-
-                    // Floated over the foot of the lyrics rather than placed in
-                    // the controls below them. In the controls it was a row of
-                    // layout like any other, and the bottom block is measured at
-                    // its natural height — so the button's 34dp came straight
-                    // off the panel above it and the lyrics lost a line. Drawn
-                    // here it costs the panel nothing and still reads as sitting
-                    // on top of the half player, because that is where it is.
-                    //
-                    // Arrives and leaves on the controls' own fade: the panel is
-                    // for reading, and a control parked over the words when
-                    // nobody asked for the controls is one more thing between
-                    // the reader and them.
-                    val translateShown = lyricsPanelVisible && lyricsControlsOpen
-                    val translateFade by animateFloatAsState(
-                        targetValue = if (translateShown) 1f else 0f,
-                        animationSpec = tween(if (translateShown) 220 else 160),
-                        label = "translateFade",
+                    PortraitLyricsPane(
+                        visible = lyricsPanelVisible,
+                        fade = { panelFade.value },
+                        panels = panels,
+                        lyrics = lyrics,
+                        lyricsTranslation = lyricsTranslation,
+                        song = song,
+                        lyricsPlayhead = lyricsPlayhead,
+                        lyricsUnavailable = lyricsUnavailable,
+                        isPlaying = isPlaying,
+                        position = position,
+                        onSeekToLine = seekToLyric,
+                        canPick = lyricsShareEnabled,
+                        lyricPicker = lyricPicker,
+                        singActive = singActive,
+                        onOpenSing = onOpenSing,
                     )
-                    if (translateFade > 0.01f && !lyricPicker.picking) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            TranslationToggleButton(
-                                state = lyricsTranslation.translationState,
-                                showingTranslation = lyricsTranslation.showingTranslation,
-                                // Not tappable on the way out: a disc at 20%
-                                // opacity is on its way to gone, not a target.
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleTranslation,
-                            )
-                        }
-                        // Sing's way in, centered between the two language
-                        // discs the way Apple's mic sits in its lyrics view.
-                        // Hidden while picking: the pick bar owns the bottom
-                        // center then, and a mic under it would be a second
-                        // target in the same place.
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            SingMicButton(
-                                singActive = singActive,
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = onOpenSing,
-                            )
-                        }
-                    }
-                    // The bar arrives and leaves without a transition of its own:
-                    // it is an instruction over the words, and one that has to
-                    // be legible the instant it is on. Anything that animated
-                    // would be over the reader's first pick anyway.
-                    if (lyricPicker.picking) {
-                        LyricsPickBar(
-                            shareEnabled = lyricPicker.picks.isNotEmpty() &&
-                                !lyricPicker.overBudget,
-                            onCancel = lyricPicker.cancel,
-                            onShare = lyricPicker.share,
-                            modifier = Modifier.align(Alignment.BottomCenter),
-                        )
-                    }
                 }
 
                 // Toggles and the queue arrive after the sleeve has finished
@@ -4910,49 +2956,24 @@ fun NowPlayingScreen(
                 // Gone with [queueOpen], as the lyrics are with theirs, rather
                 // than a frame later when the sleeve first moves: listening
                 // for that frame was a recomposition on it.
-                val queuePanelVisible = !lyricsOpen &&
-                    (queueDragging || (queueOpen && queueShowing && collapseDone))
+                val queuePanelVisible = !panels.lyricsOpen &&
+                    (panels.queueDragging || (panels.queueOpen && collapse.queueShowing && collapse.done))
                 if (queuePanelVisible || playerPrewarmStage >= 3) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = HEADER_HEIGHT)
-                            .offset {
-                                if (queuePanelVisible) IntOffset.Zero else IntOffset(100_000, 0)
-                            }
-                            .graphicsLayer {
-                                alpha = if (!queuePanelVisible) {
-                                    0f
-                                } else if (queueDragging) {
-                                    ((queueSlide.floatValue - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                } else {
-                                    panelFade.value
-                                }
-                                translationY = if (queuePanelVisible) {
-                                    (1f - queueSlide.floatValue) * 26.dp.toPx()
-                                } else {
-                                    0f
-                                }
-                            },
-                    ) {
-                        InlineQueue(
-                            queue = queue,
-                            currentIndex = queueIndex,
-                            autoplayEnabled = autoplayEnabled,
-                            controlsLocked = controlsLocked,
-                            onJumpTo = onJumpTo,
-                            onRemove = onRemoveFromQueue,
-                            onMove = onMoveInQueue,
-                            onClear = onClearQueue,
-                            onScrollingChange = { queueScrolling = it },
-                            onDragActiveChange = onQueueDragActiveChange,
-                            collapsePlayerOnScroll = true,
-                            onRevealPlayer = { queueControlsOpen = true },
-                            onHidePlayer = { queueControlsOpen = false },
-                            onOpenSearch = openQueueSearch,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                    PortraitQueuePane(
+                        visible = queuePanelVisible,
+                        fade = { panelFade.value },
+                        panels = panels,
+                        queue = queue,
+                        queueIndex = queueIndex,
+                        autoplayEnabled = autoplayEnabled,
+                        controlsLocked = controlsLocked,
+                        onJumpTo = onJumpTo,
+                        onRemoveFromQueue = onRemoveFromQueue,
+                        onMoveInQueue = onMoveInQueue,
+                        onClearQueue = onClearQueue,
+                        onQueueDragActiveChange = onQueueDragActiveChange,
+                        onOpenSearch = openQueueSearch,
+                    )
                 }
             }
 
@@ -4967,163 +2988,58 @@ fun NowPlayingScreen(
                 // (see [LyricsPanel]'s bottom-half tap), so nothing brings the
                 // player back under somebody choosing lines.
                 visible = !lyricPicker.picking &&
-                    (!lyricsOpen || lyricsControlsOpen) &&
-                    (!queueOpen || queueControlsOpen) &&
-                    (!spotifyCanvasPresentation || spotifyCanvasControlsOpen || mixing),
+                    (!panels.lyricsOpen || panels.lyricsControlsOpen) &&
+                    (!panels.queueOpen || panels.queueControlsOpen) &&
+                    (!spotifyCanvasPresentation || clipState.spotifyControlsOpen || mixing),
                 reveal = playerDeckReveal,
                 // Back to the main player from lyrics or the queue with the
                 // deck stood down: the sleeve is about to come back out, so
                 // the deck has to hold its full height from the first frame.
                 // Asked when the deck is shown rather than read here — [p]
                 // read in this scope recomposes the whole player with it.
-                fadeIn = { !lyricsOpen && !queueOpen && p() > 0f },
+                fadeIn = { !panels.lyricsOpen && !panels.queueOpen && collapse.p() > 0f },
             ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.onSizeChanged { size ->
-                    if (spotifyCanvasPresentation) {
-                        val measuredHeight = with(density) { size.height.toDp() }
-                        if (measuredHeight != spotifyCanvasDeckHeight) {
-                            spotifyCanvasDeckHeight = measuredHeight
-                        }
+            PortraitControlDeck(
+                panels = panels,
+                onSpotifyDeckHeight = { measuredHeight ->
+                    if (spotifyCanvasPresentation && measuredHeight != clipState.spotifyDeckHeight) {
+                        clipState.spotifyDeckHeight = measuredHeight
                     }
                 },
-            ) {
-            Column(
-                modifier = Modifier
-                    .widthIn(max = PLAYER_MAX_WIDTH)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-            // Current lyric, one line, directly above the scrubber. It stays in
-            // the layout — and stays fully visible — whether or not the queue
-            // is open: dropping it would shorten this block and the controls
-            // under it would jump the moment the queue started sliding in, and
-            // fading it away behind the queue left this the one place in the
-            // player where the current line simply vanished.
-            //
-            // Off means off: with synced lyrics disabled in Settings, or the
-            // line switched off in Customization, the slot goes with it. A
-            // placeholder kept "for the layout" is exactly the empty row this
-            // preference exists to remove, and the deck is anchored to the foot
-            // of the player, so it closes up rather than leaving a hole. The
-            // dedicated lyrics button in the bottom row is still the way into
-            // the full panel.
-            if (!lyricsOpen && syncedLyricsEnabled && lyricLineEnabled) {
-                CurrentLyricStrip(
-                    lines = lyricsTranslation.displayedLyrics,
-                    trackKey = song.videoId,
-                    playhead = lyricsPlayhead,
-                    isPlaying = isPlaying && position.advancing,
-                    durationMs = durationMs,
-                    lyricsUnavailable = lyricsUnavailable,
-                    loadingText = lyricsLoadingText,
-                    // Still visible over the queue, so still a valid way in:
-                    // opens the same full lyrics panel it always has, closing
-                    // the queue behind it the same way the "Up next" glyph
-                    // closes lyrics behind the queue.
-                    onClick = openLyrics,
-                )
-            }
-            if (lyricsOpen) {
-                LyricsStatusWithChange(
-                    status = lyricsTranslation.status,
-                    onStatusClick = { showLyricsProviders = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .offset(y = 6.dp)
-                        .padding(vertical = 4.dp),
-                )
-            }
-            val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
-            PlayerScrubber(
-                shown = shown,
+                showLyricLine = syncedLyricsEnabled && lyricLineEnabled,
+                lyricsTranslation = lyricsTranslation,
+                song = song,
+                lyricsPlayhead = lyricsPlayhead,
+                isPlaying = isPlaying,
+                position = position,
                 durationMs = durationMs,
-                loading = versionSwitching,
-                mixing = mixing && !scrub.scrubbing,
-                // Hidden while scrubbing: the planner is still describing
-                // where the transition *would* be, and a marker sitting under
-                // a finger that is moving the playhead invites reading it as
-                // a drag target.
-                transitionWindow = transitionWindow
-                    ?.takeIf { !scrub.scrubbing && it.end > it.start }
-                    ?.let { it.start..it.end },
-                transitionWindowInflated = automixPanelOpen,
-                onTransitionWindowLongPress = {
-                    onAutomixPanelOpenChange(true)
-                },
+                lyricsUnavailable = lyricsUnavailable,
+                lyricsLoadingText = lyricsLoadingText,
+                onShowLyricsProviders = { overlays.lyricsProviders = true },
+                shown = shown,
+                versionSwitching = versionSwitching,
+                mixing = mixing,
+                scrub = scrub,
+                automixPanelOpen = automixPanelOpen,
+                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
-            ) {
-                PlaybackQualityLabel(
-                    song = song,
-                    isLoading = isLoading,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(horizontal = 8.dp),
-                )
-            }
-
-            // The transport rides midway between the two blocks it separates:
-            // the scrubber above it, and the volume bar and toggle row below,
-            // which sit close enough together to read as one. Both of its own
-            // gaps take half the spread, so on a tall screen it holds the
-            // centre rather than drifting up under the seek bar.
-            //
-            // The gap above it also gives up the scrubber's drop: the lyric
-            // line and the scrubber go down by that much, and the transport
-            // stays where it is. See [SCRUBBER_DROP].
-            Spacer(Modifier.height(8.dp + controlSpread / 2 - scrubberDropOf(controlSpread)))
-
-            TransportRow(
-                isPlaying = isPlaying,
-                isLoading = isLoading || audioVersionSwitching,
+                isLoading = isLoading,
+                controlSpread = controlSpread,
+                audioVersionSwitching = audioVersionSwitching,
                 previousEnabled = !controlsLocked &&
                     (hasPrevious || pastRestartPoint),
                 nextEnabled = !controlsLocked && hasNext,
                 onPrevious = onPrevious,
                 onPlayPause = onPlayPause,
                 onNext = onNext,
-                smoothness = transportSmoothness,
+                transportSmoothness = transportSmoothness,
+                hideVolumeBar = hideVolumeBar,
+                volume = volume,
+                onVolumeChange = onVolumeChange,
+                onVolumeChangeFinished = onVolumeChangeFinished,
+                actions = { playerActions(false) },
             )
-
-            Spacer(Modifier.height(12.dp - DECK_ROWS_LIFT + controlSpread / 2))
-
-            // Hidden means gone: no placeholder slot. The deck is anchored to
-            // the foot of the player, so the rows above it close down into the
-            // space instead of leaving the empty band a hidden bar used to sit
-            // in — which read as a gap between the transport and the action row.
-            if (!hideVolumeBar) {
-                VolumeRow(
-                    value = { volume.level.value },
-                    onValueChange = onVolumeChange,
-                    onValueChangeFinished = onVolumeChangeFinished,
-                )
-            }
-
-            // The volume slider already has 13dp below its drawn track.
-            // Balance that invisible inset with the caption gap below the icons.
-            Spacer(Modifier.height(6.dp))
-
-            playerActions(false)
-            // The deck is pinned to the foot of the player, so every dp taken
-            // off this gap moves the whole deck down by a dp: the lyric strip,
-            // the scrubber, the times, the transport and the action row all
-            // ride a little lower, and the space comes out of the bottom
-            // margin instead.
-            //
-            // Which is where the reference player's own deck sits: its scrubber
-            // is at seventy per cent of the screen and its transport at
-            // eighty, where this one had them three per cent higher. It is
-            // the smallest move on the screen and the one that makes the
-            // bottom of it line up with the reference's.
-            //
-            // The lift comes out of the gap above the volume row and not out of
-            // here, so the row has air under it while the rows above it stay
-            // put — see [DECK_ROWS_LIFT].
-            Spacer(Modifier.height(6.dp + DECK_ROWS_LIFT))
-            }
-            }
             }
             }
         }

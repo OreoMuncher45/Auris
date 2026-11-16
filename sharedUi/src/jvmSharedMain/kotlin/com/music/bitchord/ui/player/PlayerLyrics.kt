@@ -1502,12 +1502,21 @@ private fun Modifier.lyricParticles(
  * as it took to find out that it did.
  */
 @Composable
-private fun LyricsSkeleton(modifier: Modifier = Modifier) {
+private fun LyricsSkeleton(
+    modifier: Modifier = Modifier,
+    /**
+     * False while the panel is kept offscreen as a warm layout. The sweep is
+     * an infinite animation, and one that kept running behind an invisible
+     * panel asked for a new frame on every vsync for as long as the lookup
+     * took — frames that drew nothing anyone could see.
+     */
+    animated: Boolean = true,
+) {
     // Under "reduce animation" the bars are still there, with one fixed
     // highlight instead of a full-width band sweeping the panel on every frame
     // for as long as the lookup takes.
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val sweep: State<Float> = if (reduceAnimation) {
+    val sweep: State<Float> = if (reduceAnimation || !animated) {
         remember { mutableStateOf(0.5f) }
     } else {
         rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
@@ -1836,7 +1845,7 @@ internal fun LyricsPanel(
         // "None" is a finding, and it is only worth reporting once the lookup
         // has actually come back with it.
         if (looking) {
-            LyricsSkeleton(empty)
+            LyricsSkeleton(empty, animated = active)
         } else {
             Box(empty, contentAlignment = Alignment.Center) {
                 Text(

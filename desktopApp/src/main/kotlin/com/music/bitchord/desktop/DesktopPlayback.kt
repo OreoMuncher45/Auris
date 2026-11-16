@@ -59,6 +59,13 @@ data class DesktopPlaybackState(
         com.music.bitchord.data.settings.SmartAnalysis(),
 )
 
+/**
+ * This state with the playhead taken out: what the window reads, so the four-a-second position
+ * updates do not recompose everything that only cares what is playing and how.
+ */
+internal fun DesktopPlaybackState.withoutClock(): DesktopPlaybackState =
+    copy(positionMs = 0L, positionSampledAtNanos = 0L)
+
 internal data class DesktopStream(
     val url: String,
     val format: DesktopStreamFormat = DesktopStreamFormat(),
