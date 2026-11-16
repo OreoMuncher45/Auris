@@ -428,8 +428,14 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
                     .map { player.getMediaItemAt(it).toSong() }
             } else if (refreshCurrentQueueItem && item != null) {
                 val index = player.currentMediaItemIndex
-                if (index in queueSnapshot.indices) {
-                    queueSnapshot = queueSnapshot.toMutableList().also { it[index] = item.toSong() }
+                // Metadata events also come from playlist metadata — the
+                // service's lyric subtitle sets it on every line — which leaves
+                // the item itself as it was. Copying the queue for those meant
+                // an O(queue) copy, and an O(queue) equality check in the
+                // `queue` read, once per lyric line.
+                val refreshed = item.toSong()
+                if (index in queueSnapshot.indices && queueSnapshot[index] != refreshed) {
+                    queueSnapshot = queueSnapshot.toMutableList().also { it[index] = refreshed }
                 }
             }
             // Synced here too, so seeking while paused or buffering still moves

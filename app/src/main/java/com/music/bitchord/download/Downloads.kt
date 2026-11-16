@@ -264,6 +264,23 @@ object Downloads {
         }
     }
 
+    /**
+     * [clearDeletedByHand] for a whole batch, with one write.
+     *
+     * Re-downloading a release the listener had deleted cleared each track's
+     * mark on its own, and each clear is a synchronous `commit()` — an fsync
+     * per track, on the main thread that the download button runs on.
+     */
+    fun clearDeletedByHand(videoIds: Collection<String>) {
+        synchronized(deletedLock) {
+            val current = _deletedByHand.value
+            val updated = current - videoIds.filterTo(HashSet()) { it.isNotBlank() }
+            if (updated.size == current.size) return
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
     /** Writes the marks down. Called with the lock held. */
     private fun persistDeletedByHand(ids: Set<String>) {
         if (!::prefs.isInitialized) return
@@ -498,7 +515,7 @@ object Downloads {
         val app = context.applicationContext
         val accepted = mutableListOf<Song>()
         val refused = mutableListOf<Song>()
-        if (!automatic) songs.forEach { clearDeletedByHand(it.videoId) }
+        if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
             for (song in songs) {
                 val id = song.videoId

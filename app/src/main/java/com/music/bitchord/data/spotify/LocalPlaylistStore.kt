@@ -3,6 +3,7 @@ package com.music.bitchord.data.spotify
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.download.CoalescingWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
@@ -82,7 +83,7 @@ object LocalPlaylistStore {
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
-        persist(updated)
+        persist()
         return playlist
     }
 
@@ -100,7 +101,7 @@ object LocalPlaylistStore {
         val folder = LocalPlaylist(id = id, title = clean, songs = emptyList(), isFolder = true)
         val updated = listOf(folder) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
-        persist(updated)
+        persist()
         return folder
     }
 
@@ -117,7 +118,7 @@ object LocalPlaylistStore {
             if (it.id == folder.id) it.copy(songs = it.songs + song) else it
         }
         _playlists.value = updated
-        persist(updated)
+        persist()
         return true
     }
 
@@ -132,13 +133,13 @@ object LocalPlaylistStore {
             }
         }
         _playlists.value = updated
-        persist(updated)
+        persist()
     }
 
     fun deletePlaylist(id: String) {
         val updated = _playlists.value.filterNot { it.id == id || it.browseId == id || it.id == id.removePrefix("local:playlist:") }
         _playlists.value = updated
-        persist(updated)
+        persist()
     }
 
     fun renamePlaylist(id: String, newTitle: String) {
@@ -149,7 +150,7 @@ object LocalPlaylistStore {
             } else it
         }
         _playlists.value = updated
-        persist(updated)
+        persist()
     }
 
     fun getPlaylist(id: String): LocalPlaylist? {
@@ -157,8 +158,25 @@ object LocalPlaylistStore {
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }
     }
 
-    private fun persist(list: List<LocalPlaylist>) {
+    /**
+     * Encodes and writes off the caller's thread, coalesced to the latest list.
+     *
+     * Every edit — a track added from a menu, a folder renamed, a Spotify
+     * import — re-serialises every playlist and every song in it, and those
+     * edits come from click handlers and ViewModel launches on Main. With a few
+     * imported playlists that is thousands of JSON objects per tap. The edit
+     * itself is already in [_playlists] when this is called, so readers never
+     * wait on it; the sink always encodes the newest list, so a burst of edits
+     * costs one write.
+     */
+    private val writer = CoalescingWriter { _ -> writeNow(_playlists.value) }
+
+    private fun persist() {
         if (!this::prefs.isInitialized) return
+        writer.submit(emptyMap())
+    }
+
+    private fun writeNow(list: List<LocalPlaylist>) {
         runCatching {
             val jsonArray = JSONArray()
             for (playlist in list) {

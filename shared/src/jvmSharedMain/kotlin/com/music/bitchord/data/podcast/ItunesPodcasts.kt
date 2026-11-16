@@ -13,6 +13,8 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -79,9 +81,13 @@ object ItunesPodcasts {
             parameter("limit", limit.coerceIn(1, 200).toString())
             parameter("country", country)
         }.bodyAsText()
-        val root = jsonFormat.parseToJsonElement(body).jsonObject
-        val results = root["results"]?.jsonArray.orEmpty()
-        return results.mapNotNull { element -> (element as? JsonObject)?.toShow() }
+        // Ktor only suspends for the network; the parse would run on the
+        // caller's dispatcher, which for the podcast screens is Main.
+        return withContext(Dispatchers.Default) {
+            val root = jsonFormat.parseToJsonElement(body).jsonObject
+            val results = root["results"]?.jsonArray.orEmpty()
+            results.mapNotNull { element -> (element as? JsonObject)?.toShow() }
+        }
     }
 
     /** Fetch one show by collectionId — used when a saved show is opened but the search cache is cold. */
@@ -91,8 +97,10 @@ object ItunesPodcasts {
             parameter("entity", "podcast")
             parameter("country", country)
         }.bodyAsText()
-        val root = jsonFormat.parseToJsonElement(body).jsonObject
-        return root["results"]?.jsonArray?.firstOrNull()?.let { (it as? JsonObject)?.toShow() }
+        return withContext(Dispatchers.Default) {
+            val root = jsonFormat.parseToJsonElement(body).jsonObject
+            root["results"]?.jsonArray?.firstOrNull()?.let { (it as? JsonObject)?.toShow() }
+        }
     }
 
     /**
@@ -112,7 +120,12 @@ object ItunesPodcasts {
      */
     suspend fun episodes(show: ItunesShow): List<Song> {
         val feed = runCatching { client.get(show.feedUrl).bodyAsText() }.getOrNull() ?: return emptyList()
-        return runCatching { parseEpisodes(feed, show) }.getOrNull() ?: emptyList()
+        // A whole back catalogue is a DOM of several MB of XML plus a date
+        // sort: tens to hundreds of ms. Kept off whatever called this, which
+        // is the ViewModel on Main.
+        return withContext(Dispatchers.Default) {
+            runCatching { parseEpisodes(feed, show) }.getOrNull() ?: emptyList()
+        }
     }
 
     /**

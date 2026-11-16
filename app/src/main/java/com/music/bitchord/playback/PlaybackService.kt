@@ -3979,9 +3979,18 @@ class PlaybackService : MediaLibraryService() {
                 // has fallen out of the visible 25-song window to the end
                 // instead of deleting it; it becomes upcoming again in the
                 // same order and the loop can continue indefinitely.
-                repeat(expiredHistory) {
-                    exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
-                }
+                //
+                // One range move, not one move per row: each move is its own
+                // PLAYLIST_CHANGED, and every one of those ran the timeline
+                // listener (queue snapshot, layouts, cast) and pushed a new
+                // timeline to every controller, on the main looper at the
+                // moment the track starts. Jumping deep into a long repeat-all
+                // queue made hundreds of them. The resulting order is the same.
+                exoPlayer.moveMediaItems(
+                    0,
+                    expiredHistory,
+                    exoPlayer.mediaItemCount - expiredHistory,
+                )
             } else {
                 exoPlayer.removeMediaItems(0, expiredHistory)
             }
@@ -7020,10 +7029,14 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
+        if (range.isEmpty()) return
         persistedQueueStart = range.first
+        // Only the window is stored, so only the window is converted. This runs
+        // on the main looper when a radio queue lands; converting every item
+        // out of the player first was an O(queue) walk for at most 76 rows.
         LastPlayed.saveQueueImmediately(
-            songs = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toSong() },
-            index = player.currentMediaItemIndex,
+            songs = range.map { player.getMediaItemAt(it).toSong() },
+            index = player.currentMediaItemIndex - range.first,
             positionMs = player.currentPosition,
         )
     }
@@ -10160,18 +10173,21 @@ class PlaybackService : MediaLibraryService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
-            // 1. If player currently holds items in its queue, resume from it
-            val activePlayer = player
-            if (activePlayer != null && activePlayer.mediaItemCount > 0) {
+            // 1. If player currently holds items in its queue, resume from it.
+            // The player is read on its own (main) thread; the rest of this
+            // future stays on IO for the disk and network fallbacks. Reading
+            // ExoPlayer from IO broke Media3's single-thread rule.
+            val fromPlayer = withContext(Dispatchers.Main) {
+                val activePlayer = player
+                if (activePlayer == null || activePlayer.mediaItemCount == 0) return@withContext null
                 val currentItems = (0 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it) }
-                val startIndex = activePlayer.currentMediaItemIndex.coerceIn(0, currentItems.size - 1)
-                val startPositionMs = activePlayer.currentPosition.coerceAtLeast(0L)
-                return@future MediaSession.MediaItemsWithStartPosition(
+                MediaSession.MediaItemsWithStartPosition(
                     ImmutableList.copyOf(currentItems),
-                    startIndex,
-                    startPositionMs,
+                    activePlayer.currentMediaItemIndex.coerceIn(0, currentItems.size - 1),
+                    activePlayer.currentPosition.coerceAtLeast(0L),
                 )
             }
+            if (fromPlayer != null) return@future fromPlayer
 
             // 2. Fallback to local downloaded songs (offline-ready)
             val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)

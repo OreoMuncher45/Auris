@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Resume + "listened" memory for long-form media (podcast episodes, audiobook
@@ -24,8 +26,25 @@ object MediaProgress {
 
     private lateinit var prefs: SharedPreferences
 
-    private data class Entry(var posMs: Long, var durMs: Long, var listened: Boolean)
+    private class Entry(
+        @Volatile var posMs: Long,
+        @Volatile var durMs: Long,
+        @Volatile var listened: Boolean,
+    )
     private val entries = ConcurrentHashMap<String, Entry>()
+
+    /**
+     * Writes the blob off the caller's thread. [record] is called from the
+     * playback service on the main looper every few seconds while playing, and
+     * [entries] holds every id ever played, so building its JSON there grew
+     * into a main-thread cost that scaled with listening history.
+     */
+    private val writer = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "MediaProgress-writer").apply { isDaemon = true }
+    }
+
+    /** A save is queued and has not read [entries] yet; later changes ride along with it. */
+    private val savePending = AtomicBoolean(false)
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -43,7 +62,21 @@ object MediaProgress {
         }
     }
 
+    /**
+     * Queue a write of the current [entries]. The in-memory map, which every
+     * reader uses, is already up to date when this returns; only the copy on
+     * disk follows a moment later. Saves that arrive while one is still queued
+     * are folded into it, since it reads the map when it runs.
+     */
     private fun save() {
+        if (!savePending.compareAndSet(false, true)) return
+        writer.execute {
+            savePending.set(false)
+            runCatching { writeNow() }
+        }
+    }
+
+    private fun writeNow() {
         val obj = JSONObject()
         entries.forEach { (id, e) ->
             obj.put(id, JSONObject().put("pos", e.posMs).put("dur", e.durMs).put("listened", e.listened))

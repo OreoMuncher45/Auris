@@ -102,6 +102,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -988,10 +989,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (overrides[rowId] == null) next[rowId] = status
             }
             next
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+        }
+            // Built off Main: the library's liked songs can run to thousands,
+            // and this map is rebuilt for every liked-music page that is seeded
+            // and every Spotify row that is resolved. Readers of `.value` only
+            // need the latest known map; the combine already delivered it
+            // after a dispatch before this moved.
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /**
+     * The session's own rating is read straight from [LikeState] first.
+     * [likeStatuses] is built off Main, so for a moment after a tap it can
+     * still hold the previous rating; a second tap in that moment would read
+     * it and send the same rating again. Overrides already win in the
+     * combined map, so once it is current the answer is the same.
+     */
     fun likeStatusOf(videoId: String): LikeStatus =
-        likeStatuses.value[videoId] ?: LikeStatus.INDIFFERENT
+        LikeState.overrides.value[videoId]
+            ?: likeStatuses.value[videoId]
+            ?: LikeStatus.INDIFFERENT
 
     /**
      * The rating of [song], for a row that may not be a YouTube row.
@@ -1002,9 +1019,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * same as none.
      */
     fun likeStatusOf(song: Song): LikeStatus {
+        // Pending ratings first, as in the id overload: the row's own, then
+        // the recording it resolved to, which is what the combined map shows.
+        val overrides = LikeState.overrides.value
+        overrides[song.videoId]?.let { return it }
+        val resolved = RatingTarget.videoIdFor(song.videoId)
+        if (resolved != null) overrides[resolved]?.let { return it }
         val direct = likeStatuses.value[song.videoId]
         if (direct != null) return direct
-        val resolved = RatingTarget.videoIdFor(song.videoId) ?: return LikeStatus.INDIFFERENT
+        if (resolved == null) return LikeStatus.INDIFFERENT
         return likeStatuses.value[resolved] ?: LikeStatus.INDIFFERENT
     }
 
@@ -1020,6 +1043,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
+        bumpRecordingRating(videoId)
         LikeState.set(videoId, status)
         viewModelScope.launch {
             writeLike(videoId, status, previous)
@@ -1034,9 +1058,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @return whether YouTube took it.
      */
-    private suspend fun writeLike(videoId: String, status: LikeStatus, previous: LikeStatus): Boolean =
+    private suspend fun writeLike(
+        videoId: String,
+        status: LikeStatus,
+        previous: LikeStatus,
+        // Runs as soon as YouTube accepts the rating, before the library
+        // housekeeping below, which can suspend and be cancelled.
+        onAccepted: () -> Unit = {},
+    ): Boolean =
         YtMusicRepository.rate(videoId, status).fold(
             onSuccess = {
+                onAccepted()
                 // Liked Music is now out of date either way.
                 libraryStale = true
                 if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)
@@ -1191,20 +1223,131 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.LIKE) LikeStatus.INDIFFERENT else LikeStatus.LIKE
-        // Written to the screen first, under the row's own id, so the heart
-        // fills on the tap rather than after the lookup.
-        LikeState.set(song.videoId, target)
-        viewModelScope.launch {
-            val videoId = RatingTarget.resolve(song)
-            if (videoId == null) {
-                // No YouTube recording behind the row: there is nothing to
-                // rate, and the heart goes back rather than claiming a rating
-                // that was never written.
-                LikeState.set(song.videoId, previous)
-                return@launch
+        rateRow(song, target)
+    }
+
+    /**
+     * One rating at a time per row, in tap order. Without it a quick second
+     * tap could finish its lookup and write first, and the older tap would
+     * then land on top of it. Rows don't wait on each other. [Mutex] is fair,
+     * and each launch reaches the lock before its first suspension, so the
+     * queue is the order the taps came in.
+     */
+    private val rowRatingLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * Per row: the latest tap's number, and the last rating the server took.
+     * Main-thread only, like every caller of [rateRow].
+     */
+    private val rowRatingVersion = HashMap<String, Int>()
+    private val rowRatingConfirmed = HashMap<String, LikeStatus>()
+
+    /**
+     * Per row with taps in flight: the row's own override before the first of
+     * them, or null if it had none. An unconfirmed run settles back to this,
+     * not to the fallback the tap toggled from: an unresolved row reads as
+     * INDIFFERENT only because its recording isn't known yet, and writing
+     * that down would mask the recording's real rating once it resolves.
+     */
+    private val rowRatingBefore = HashMap<String, LikeStatus?>()
+
+    /** What an in-flight row settles to: the server-confirmed rating, else its state before the taps. */
+    private fun settleRow(rowId: String) {
+        val confirmed = rowRatingConfirmed.remove(rowId)
+        val before = rowRatingBefore.remove(rowId)
+        if (confirmed != null) LikeState.set(rowId, confirmed) else LikeState.restore(rowId, before)
+    }
+
+    /**
+     * Parent of every queued row rating, so that switching listener can cancel
+     * them in one go: a tap made as one account must never be written to, or
+     * shown for, the next one.
+     */
+    private var rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
+
+    /**
+     * Per recording id: bumped by every direct rating of it ([setLike]) and by
+     * each row write through it, so a row write that finishes late only
+     * updates the recording's heart if nothing has rated it since.
+     */
+    private val recordingRatingVersion = HashMap<String, Int>()
+
+    /**
+     * True while [onWebSession] has installed candidate credentials that have
+     * not been validated yet. Row ratings don't write during it: until the
+     * candidate is accepted, a write would go to an account that may never
+     * become the listener.
+     */
+    private var credentialsInValidation = false
+
+    private fun cancelRowRatings() {
+        // A cancelled tap was never sent: put each row back to what the server
+        // has, rather than leave its optimistic heart behind.
+        for (rowId in rowRatingBefore.keys.toList()) settleRow(rowId)
+        rowRatingJobs.cancel()
+        rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
+        rowRatingLocks.clear()
+        rowRatingVersion.clear()
+        rowRatingConfirmed.clear()
+        rowRatingBefore.clear()
+        recordingRatingVersion.clear()
+    }
+
+    private fun bumpRecordingRating(videoId: String): Int =
+        ((recordingRatingVersion[videoId] ?: 0) + 1).also { recordingRatingVersion[videoId] = it }
+
+    /**
+     * Rates a row that is rated through the recording behind it.
+     *
+     * The heart shows [target] at once, under the row's own id, so it fills on
+     * the tap rather than after the lookup. Only the latest tap's completion
+     * touches the screen: an older one finishing while a newer tap is still
+     * queued would otherwise put back a rating the user already tapped past,
+     * and the next tap would toggle from the wrong state. When the latest
+     * finishes, the heart shows the last rating the server confirmed, or, if
+     * none got through, the row's own state before the first tap (see
+     * [rowRatingBefore]).
+     */
+    private fun rateRow(song: Song, target: LikeStatus) {
+        val rowId = song.videoId
+        val listener = listenerKey()
+        val version = (rowRatingVersion[rowId] ?: 0) + 1
+        // The first tap of a run: what the screen shows is what the server has.
+        if (version == 1) rowRatingBefore[rowId] = LikeState.overrides.value[rowId]
+        rowRatingVersion[rowId] = version
+        LikeState.set(rowId, target)
+        viewModelScope.launch(rowRatingJobs) {
+            rowRatingLocks.getOrPut(rowId) { Mutex() }.withLock {
+                // No YouTube recording behind the row means nothing to rate,
+                // and nothing written: the confirmed rating stands.
+                val videoId = RatingTarget.resolve(song)
+                // Checked again after each suspension: the listener can change
+                // while the lookup or the request is out.
+                if (listenerKey() != listener) return@withLock
+                // Held off during sign-in validation: not sent, and settled
+                // below like any other unwritten tap.
+                val sendable = videoId != null && !credentialsInValidation
+                val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
+                // Confirmed the moment YouTube accepts it, so a cancel during
+                // the housekeeping that follows settles to it, not to the
+                // pre-tap state.
+                val written = sendable && writeLike(videoId!!, target, likeStatusOf(videoId)) {
+                    rowRatingConfirmed[rowId] = target
+                }
+                if (listenerKey() != listener) return@withLock
+                // The recording carries the rating too: other rows and players
+                // read it by its own id, and the next unlike reads its previous
+                // state from here to know whether to forget it from the library.
+                // Only if nothing rated the recording directly while this write
+                // was out: that later rating is the one the server kept.
+                if (written && videoId != null && recordingRatingVersion[videoId] == recordingVersion) {
+                    LikeState.set(videoId, target)
+                }
+                if (rowRatingVersion[rowId] == version) {
+                    rowRatingVersion.remove(rowId)
+                    settleRow(rowId)
+                }
             }
-            val written = writeLike(videoId, target, likeStatusOf(videoId))
-            LikeState.set(song.videoId, if (written) target else previous)
         }
     }
 
@@ -1235,16 +1378,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!RatingTarget.isRowId(song.videoId)) return toggleDislike(song.videoId)
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.DISLIKE) LikeStatus.INDIFFERENT else LikeStatus.DISLIKE
-        LikeState.set(song.videoId, target)
-        viewModelScope.launch {
-            val videoId = RatingTarget.resolve(song)
-            if (videoId == null) {
-                LikeState.set(song.videoId, previous)
-                return@launch
-            }
-            val written = writeLike(videoId, target, likeStatusOf(videoId))
-            LikeState.set(song.videoId, if (written) target else previous)
-        }
+        rateRow(song, target)
         return previous
     }
 
@@ -4563,6 +4697,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // The old implementation persisted first and unconditionally set
             // signedIn=true; a half-finished channel chooser therefore became
             // a durable broken "Personal" account.
+            // Queued row ratings must not go out under the candidate: drop
+            // them, and hold new ones off until validation is over.
+            cancelRowRatings()
+            credentialsInValidation = true
+            try {
+                validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
+            } finally {
+                credentialsInValidation = false
+            }
+        }
+    }
+
+    private suspend fun validateWebSession(
+        session: CapturedSession,
+        mode: WebSessionMode,
+        oldAccountId: String?,
+        oldProfileId: String?,
+        onComplete: (Boolean) -> Unit,
+    ) {
+        run {
             Innertube.cookie = session.cookie
             Innertube.adoptSessionScope(
                 pageId = session.pageId,
@@ -4585,7 +4739,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (account == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
-                return@launch
+                return@run
             }
 
             // A channel switch is another identity under the same Google
@@ -4601,7 +4755,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (accountId == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
-                return@launch
+                return@run
             }
             val previous = authStore.sessions.firstOrNull { it.accountId == accountId }
             val selectedProfileId = profileId(session.pageId, session.dataSyncId, account.name)
@@ -4754,6 +4908,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearListenerState(restoreCached: Boolean = false) {
         _account.value = null
         likedSyncJob?.cancel()
+        cancelRowRatings()
         LikeState.clear()
         _playlistsLoading.value = false
         _playlists.value = emptyList()
@@ -4818,6 +4973,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
         likedSyncJob?.cancel()
+        cancelRowRatings()
         LikeState.clear()
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()
@@ -4851,7 +5007,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 favTrackCount = favTracks,
                 favArtistCount = favArtists,
             )
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, FlowStatus(false, 0, 0))
+        }
+            // Counts the whole like map; off Main for the same reason as [likeStatuses].
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, FlowStatus(false, 0, 0))
 
     private val _flowQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Success(emptyList()))
     val flowQueue: StateFlow<UiState<List<Song>>> = _flowQueue.asStateFlow()
