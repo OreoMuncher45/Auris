@@ -45,13 +45,10 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.TextFields
-import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -134,7 +131,6 @@ import com.music.bitchord.ui.theme.AppFonts
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppUi
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.stats.Backup
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -190,10 +186,6 @@ fun SettingsScreen(
     val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
     val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
-    val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
-    val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
-    val blockedArtists by AppSettings.blockedArtists.collectAsStateWithLifecycle()
-    val blockAi by AppSettings.blockAiMusic.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val appUi by AppSettings.appUi.collectAsStateWithLifecycle()
@@ -222,8 +214,6 @@ fun SettingsScreen(
     // The customisation settings that used to live on their own page, read here
     // because their rows sit in the Now Playing, Home & library and Appearance
     // categories now.
-    val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
-    val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val appFont by AppSettings.appFont.collectAsStateWithLifecycle()
     val scriptFonts by AppSettings.scriptFonts.collectAsStateWithLifecycle()
 
@@ -478,129 +468,11 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.HOME_LIBRARY || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.HOME_LIBRARY) {
-            val homeFlowVisibleTitle = stringResource(R.string.show_flow_on_home)
-            row(homeFlowVisibleTitle, "flow", "home", "hide") {
-                SettingsRow(
-                    icon = Icons.Rounded.Home,
-                    title = homeFlowVisibleTitle,
-                    subtitle = stringResource(R.string.show_flow_on_home_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = homeFlowVisible,
-                            onCheckedChange = AppSettings::setHomeFlowVisible,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setHomeFlowVisible(!homeFlowVisible) },
-                )
-            }
-            val importSpotifyTitle = stringResource(R.string.import_spotify)
-            row(importSpotifyTitle, "spotify", "import", "playlist") {
-                SettingsRow(
-                    icon = Icons.Rounded.Download,
-                    title = importSpotifyTitle,
-                    subtitle = stringResource(R.string.import_spotify_subtitle),
-                    onClick = onImportSpotifyPlaylist,
-                )
-            }
-            val blockedArtistsTitle = stringResource(R.string.blocked_artists)
-            row(blockedArtistsTitle, "block", "hide", "artist") {
-                SettingsRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    title = blockedArtistsTitle,
-                    subtitle = if (blockedArtists.isEmpty()) {
-                        stringResource(R.string.blocked_artists_subtitle)
-                    } else {
-                        stringResource(R.string.blocked_artists_count, blockedArtists.size)
-                    },
-                    onClick = { sheets.showBlockedArtists = true },
-                )
-            }
-            val blockAiTitle = stringResource(R.string.block_ai_music)
-            row(blockAiTitle, "ai", "block") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = blockAiTitle,
-                    subtitle = stringResource(R.string.block_ai_music_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = blockAi,
-                            onCheckedChange = AppSettings::setBlockAiMusic,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setBlockAiMusic(!blockAi) },
-                )
-            }
-            val homeReplayVisibleTitle = stringResource(R.string.show_replay_on_home)
-            row(homeReplayVisibleTitle, "replay", "home", "hide", "card") {
-                SettingsRow(
-                    icon = Icons.Rounded.Replay,
-                    title = homeReplayVisibleTitle,
-                    subtitle = stringResource(R.string.show_replay_on_home_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = homeReplayVisible,
-                            onCheckedChange = AppSettings::setHomeReplayVisible,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setHomeReplayVisible(!homeReplayVisible) },
-                )
-            }
-            val shelfOrderTitle = stringResource(R.string.settings_home_order)
-            row(shelfOrderTitle, "shelf", "shelves", "order", "reorder", "arrange", "home") {
-                SettingsRow(
-                    icon = Icons.Rounded.ViewList,
-                    title = shelfOrderTitle,
-                    subtitle = stringResource(R.string.custom_home_help),
-                    onClick = { sheets.showShelfOrder = true },
-                )
-            }
-            val showReplayTitle = stringResource(R.string.custom_show_replay)
-            row(showReplayTitle, "replay", "library", "stats") {
-                SettingsRow(
-                    icon = Icons.Rounded.BarChart,
-                    title = showReplayTitle,
-                    subtitle = stringResource(R.string.custom_show_replay_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = libraryReplayVisible,
-                            onCheckedChange = AppSettings::setLibraryReplayVisible,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setLibraryReplayVisible(!libraryReplayVisible) },
-                )
-            }
-            val librarySortTitle = stringResource(R.string.custom_library_sort)
-            row(librarySortTitle, "sort", "library", "order", "a-z") {
-                SettingsRow(icon = Icons.Rounded.Sort, title = librarySortTitle)
-                SegmentedControl(
-                    options = listOf(
-                        stringResource(R.string.sort_default),
-                        stringResource(R.string.sort_title_asc),
-                        stringResource(R.string.sort_title_desc),
-                    ),
-                    selectedIndex = LibrarySort.entries.indexOf(librarySort),
-                    onSelect = { AppSettings.setLibrarySort(LibrarySort.entries[it]) },
-                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
-                )
-            }
-        }
+            HomeLibrarySettings(
+                search = search,
+                sheets = sheets,
+                onImportSpotifyPlaylist = onImportSpotifyPlaylist,
+            )
         }
         if (openCategory == SettingsCategory.PODCASTS || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.PODCASTS) {
