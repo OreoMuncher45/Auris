@@ -99,6 +99,13 @@ internal fun BoxScope.PortraitBackdrop(
         animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
         label = "fullArtworkBackdropCrossfade",
     )
+    // Which of the two backdrops is drawn at all, asked of the crossfade
+    // through derived state: read as a value, the 360ms crossfade recomposed
+    // this backdrop on every one of its frames to answer a question whose
+    // answer changes once at each end. The alphas themselves are read in the
+    // layers below, in draw.
+    val meshDrawn by remember { derivedStateOf { fullArtworkBackdropAlpha < 0.999f } }
+    val blurDrawn by remember { derivedStateOf { fullArtworkBackdropAlpha > 0.001f } }
     if (legacyMesh) {
         // v1.5's backdrop, restored verbatim: no seam, because the blobs
         // are not anchored to anything on screen — they fill the player and
@@ -122,7 +129,7 @@ internal fun BoxScope.PortraitBackdrop(
         // backdrop at zero alpha is still a full-screen draw — a stretched
         // texture, a gradient and, on a still cover, a full-screen
         // `RenderEffect` — paid for on every frame the screen redraws.
-        if (fullArtworkBackdropAlpha < 0.999f) {
+        if (meshDrawn) {
             PlayerMeshBackdrop(
                 trackKey = trackKey,
                 imageUrl = imageUrl,
@@ -136,7 +143,7 @@ internal fun BoxScope.PortraitBackdrop(
     }
     // The same, the other way round: the full-cover blur is only drawn
     // while it is on the screen.
-    if (fullArtworkBackdropAlpha > 0.001f) {
+    if (blurDrawn) {
         fullArtworkBlur(
             Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
         )
