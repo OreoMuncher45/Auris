@@ -548,10 +548,10 @@ internal class PlaybackStreamResolver(
             // somebody else's recording under it is the wrong answer
             // dressed as a working one. A row the matcher refused for
             // a duration or an album disagreement is still the right
-            // artist, so it plays; a row by a different artist does
-            // not, and the row says so instead.
-            val best = TrackMatcher.best(songs, target)
-                ?: songs.firstOrNull { TrackMatcher.sharesArtist(target.artist, it.artist) }
+            // artist and the right song, so it plays. A different song
+            // by that artist, or a row by a different artist, does not,
+            // and the row says so instead.
+            val best = TrackMatcher.bestOrSameArtist(songs, target)
             best?.let { song ->
                 // The recording this row was matched to, kept for the
                 // rating: a Spotify row has no YouTube id of its own,

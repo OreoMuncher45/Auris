@@ -132,6 +132,28 @@ object TrackMatcher {
         ranked(candidates, target).firstOrNull()
 
     /**
+     * [best], or failing that the first of [candidates] by the same artist
+     * with the same title.
+     *
+     * The second chance is for a row [score] refused over its runtime, its
+     * album or its version marker: still the right artist and the right
+     * song, so it plays. It is not for a different song by that artist. The
+     * title is compared exactly as [score] compares it, so this never plays
+     * one recording under another's name.
+     */
+    fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? =
+        best(candidates, target)
+            ?: candidates.firstOrNull { sharesArtist(target.artist, it.artist) && sameTitle(it, target) }
+
+    /** Whether [candidate]'s title is [target]'s, as [score] judges titles. */
+    fun sameTitle(candidate: Song, target: Target): Boolean {
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        return titleCoresMatch(wanted.core, got.core)
+    }
+
+    /**
      * The catalogue counterpart for a music-video upload selected explicitly
      * by the listener.
      *
@@ -202,6 +224,14 @@ object TrackMatcher {
      * and the next source — ultimately YouTube, which by definition has the
      * track — still plays what the user asked for.
      */
+    /** Whether two parsed title cores name the same song; see [score]. */
+    private fun titleCoresMatch(wanted: String, got: String): Boolean = when {
+        wanted == got -> true
+        romajiOf(wanted) == romajiOf(got) -> true
+        wanted.length <= 3 || got.length <= 3 -> false
+        else -> wanted.contains(got) || got.contains(wanted)
+    }
+
     fun score(candidate: Song, target: Target): Int? {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
@@ -212,13 +242,7 @@ object TrackMatcher {
         // romaji tail instead, and English loans like ドア/door don't
         // transliterate to each other either). Past that, a guarded
         // containment absorbs minor punctuation and symbol differences.
-        val isTitleMatch = when {
-            wanted.core == got.core -> true
-            romajiOf(wanted.core) == romajiOf(got.core) -> true
-            wanted.core.length <= 3 || got.core.length <= 3 -> false
-            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
-        }
-        if (!isTitleMatch) return null
+        if (!titleCoresMatch(wanted.core, got.core)) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
         // the album cut. Markers living on the release rather than the row come
