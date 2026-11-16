@@ -1335,7 +1335,13 @@ object AudioCache {
                 // pinned over it could write one server's bytes at the offsets
                 // another server had filled.
                 val alreadyPinned = StreamChoice.of(next)
-                    ?.takeIf { !pinnedToYouTube && StreamChoice.isSubstitute(next) }
+                    // A Spotify row pinned to its YouTube fallback is not a
+                    // substitute, but it is answered: searching again would
+                    // only find the same nothing.
+                    ?.takeIf {
+                        !pinnedToYouTube &&
+                            (StreamChoice.isSubstitute(next) || next.startsWith(SPOTIFY_ROW_PREFIX))
+                    }
                 val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
                     // Announced before the search, not after: the player opens
                     // a queue's next item before it is reached, and that open

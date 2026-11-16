@@ -49,6 +49,18 @@ class StreamChoiceInactivePinsTest {
     }
 
     @Test
+    fun aYouTubePinInsideTheWindowStaysOnYouTubeWhenItIsSwitchedOff() {
+        // A Spotify row's YouTube fallback is pinned like this too: as YouTube's own.
+        StreamChoice.remember("inactive-youtube", SourceStream("https://example.invalid/yt"), substituted = false)
+
+        val inside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = setOf("inactive-youtube"))
+        val outside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet())
+
+        assertEquals(emptyMap<String, Boolean>(), inside.filterKeys { it in ids })
+        assertEquals(mapOf("inactive-youtube" to true), outside.filterKeys { it in ids })
+    }
+
+    @Test
     fun aReleasedPinNoLongerBlocksItsReplacement() {
         pin("inactive-off", "saavn")
         // While the old pin is held it wins over any replacement.

@@ -448,7 +448,10 @@ internal class PlaybackStreamResolver(
                 // Only substituted, non-lossless choices need this. A pinned
                 // YouTube URL has no source result to promote, and a lossless
                 // module result already satisfies the request.
-                if (StreamChoice.isSubstitute(videoId) &&
+                // A Spotify row's YouTube fallback is pinned as YouTube's, not
+                // as a substitute, but it still deserves a later look: a source
+                // may answer for the row after all.
+                if ((StreamChoice.isSubstitute(videoId) || videoId.startsWith(SPOTIFY_ROW_PREFIX)) &&
                     serving.format.isLossless != true &&
                     QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
                 ) {
@@ -494,6 +497,12 @@ internal class PlaybackStreamResolver(
                 .build()
         }
         val target = SourceResolver.targetIn(dataSpec.uri)
+        // Set when the answer is YouTube's own stream rather than a source's.
+        // That stream is pinned as YouTube's, not as a substitute, so the pin
+        // follows the YouTube switch like any other YouTube pin: the purge
+        // hands it over when YouTube is off, away from the playhead. Near the
+        // playhead the row keeps playing from its pin, whichever path serves it.
+        var viaYouTube = false
         val resolved = runBlocking(about) {
             val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
                 SourceResolver.substituteForYouTube(target)
@@ -535,14 +544,18 @@ internal class PlaybackStreamResolver(
                 RatingTarget.remember(videoId, song.videoId)
                 runCatching { StreamResolver.resolve(song.videoId) }
                     .getOrNull()
-                    ?.let { url -> SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)) }
+                    ?.let { url ->
+                        viaYouTube = true
+                        SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
+                    }
             }
         } ?: throw java.io.IOException(
             "no enabled source could serve '${target.title}'",
         )
-        val serving = pinOrPinned(videoId, resolved, substituted = true)
+        val serving = pinOrPinned(videoId, resolved, substituted = !viaYouTube)
         val sourceName = serving.sourceConfigId
-            ?.let { SourceRegistry.config(it)?.displayName } ?: "Module"
+            ?.let { SourceRegistry.config(it)?.displayName }
+            ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
         NerdStats.onSourceStream(videoId, serving.format, sourceName)
         NerdStats.recordSource(videoId, sourceName)
         return dataSpec.buildUpon()
