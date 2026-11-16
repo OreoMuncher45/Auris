@@ -101,6 +101,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -1225,6 +1226,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val rowRatingConfirmed = HashMap<String, LikeStatus>()
 
     /**
+     * Parent of every queued row rating, so that switching listener can cancel
+     * them in one go: a tap made as one account must never be written to, or
+     * shown for, the next one.
+     */
+    private var rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
+
+    private fun cancelRowRatings() {
+        rowRatingJobs.cancel()
+        rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
+        rowRatingLocks.clear()
+        rowRatingVersion.clear()
+        rowRatingConfirmed.clear()
+    }
+
+    /**
      * Rates a row that is rated through the recording behind it.
      *
      * The heart shows [target] at once, under the row's own id, so it fills on
@@ -1237,19 +1253,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun rateRow(song: Song, previous: LikeStatus, target: LikeStatus) {
         val rowId = song.videoId
+        val listener = listenerKey()
         val version = (rowRatingVersion[rowId] ?: 0) + 1
         // The first tap of a run: what the screen shows is what the server has.
         if (version == 1) rowRatingConfirmed[rowId] = previous
         rowRatingVersion[rowId] = version
         LikeState.set(rowId, target)
-        viewModelScope.launch {
+        viewModelScope.launch(rowRatingJobs) {
             rowRatingLocks.getOrPut(rowId) { Mutex() }.withLock {
                 // No YouTube recording behind the row means nothing to rate,
                 // and nothing written: the confirmed rating stands.
                 val videoId = RatingTarget.resolve(song)
+                // Checked again after each suspension: the listener can change
+                // while the lookup or the request is out.
+                if (listenerKey() != listener) return@withLock
                 if (videoId != null && writeLike(videoId, target, likeStatusOf(videoId))) {
                     rowRatingConfirmed[rowId] = target
                 }
+                if (listenerKey() != listener) return@withLock
                 if (rowRatingVersion[rowId] == version) {
                     rowRatingVersion.remove(rowId)
                     LikeState.set(rowId, rowRatingConfirmed.remove(rowId) ?: previous)
@@ -4775,6 +4796,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearListenerState(restoreCached: Boolean = false) {
         _account.value = null
         likedSyncJob?.cancel()
+        cancelRowRatings()
         LikeState.clear()
         _playlistsLoading.value = false
         _playlists.value = emptyList()
@@ -4839,6 +4861,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
         likedSyncJob?.cancel()
+        cancelRowRatings()
         LikeState.clear()
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()
