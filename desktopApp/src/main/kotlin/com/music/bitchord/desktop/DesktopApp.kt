@@ -2800,7 +2800,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             sourceName = playback.streamSourceId?.let { id ->
                 sourceConfigs.firstOrNull { it.id == id }?.displayName
             },
-            pipeline = playbackEngine.pipeline(),
+            // Read on each of the engine's updates, as it was when the window recomposed on each.
+            pipeline = playbackClock.value.let { playbackEngine.pipeline() },
             onDismiss = onDismiss,
         )
     }
@@ -3122,6 +3123,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         accountPlaylists = accountPlaylists,
                         playback = playback,
                         playbackEngine = playbackEngine,
+                        playbackClock = playbackClock,
                         sourceConfigs = sourceConfigs,
                         actions = dialogActions,
                     )
@@ -3214,7 +3216,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onQueryChange = { settingsQuery = it },
                             listState = settingsListState,
                             song = playback.song,
-                            outputSummary = playbackEngine.outputSummary(),
+                            outputSummary = playbackEngine::outputSummary,
+                            playbackClock = playbackClock,
                             sleepTimerMinutes = sleepTimerMinutes,
                             sleepAfterTrack = sleepAfterTrack,
                             sleepRemainingMs = sleepRemainingMs,

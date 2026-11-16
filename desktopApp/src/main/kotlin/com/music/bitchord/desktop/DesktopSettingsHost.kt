@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import com.music.bitchord.data.model.Song
@@ -34,7 +35,12 @@ internal fun DesktopSettingsHost(
     onQueryChange: (String) -> Unit,
     listState: LazyListState,
     song: Song?,
-    outputSummary: String,
+    /**
+     * The sink's format as text. A plain read of the engine rather than state, so it is read
+     * again on each of [playbackClock]'s updates, as it was when the window recomposed on each.
+     */
+    outputSummary: () -> String,
+    playbackClock: State<DesktopPlaybackState>,
     sleepTimerMinutes: Int?,
     sleepAfterTrack: Boolean,
     sleepRemainingMs: Long?,
@@ -166,7 +172,7 @@ internal fun DesktopSettingsHost(
                     settings.outputPrecision = it
                     persistence.saveString("output_precision", it)
                 },
-                outputSummary = outputSummary,
+                outputSummary = playbackClock.value.let { outputSummary() },
                 trayIconEnabled = settings.trayIconEnabled,
                 closeToTray = settings.closeToTray,
                 onCloseToTrayChange = {

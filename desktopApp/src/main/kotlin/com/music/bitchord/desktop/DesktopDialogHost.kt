@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.coroutines.CancellationException
@@ -42,6 +43,8 @@ internal fun DesktopDialogHost(
     accountPlaylists: List<UserPlaylist>,
     playback: DesktopPlaybackState,
     playbackEngine: DesktopPlaybackEngine,
+    /** Read where an engine readout is drawn, so it follows the engine; see DesktopSettingsHost. */
+    playbackClock: State<DesktopPlaybackState>,
     sourceConfigs: List<DesktopSourceConfig>,
     actions: DesktopDialogActions,
 ) {
@@ -194,7 +197,7 @@ internal fun DesktopDialogHost(
             sourceName = playback.streamSourceId?.let { id ->
                 sourceConfigs.firstOrNull { it.id == id }?.displayName
             },
-            pipeline = playbackEngine.pipeline(),
+            pipeline = playbackClock.value.let { playbackEngine.pipeline() },
             onDismiss = { overlays.pipeline = false },
         )
     }
