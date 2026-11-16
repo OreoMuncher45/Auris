@@ -215,16 +215,20 @@ private class DrawBackdropElement(
 
     override fun update(node: DrawBackdropNode) {
         // Only capture inputs require a new recording; overlay changes need a redraw only.
+        val shapeChanged = node.shapeProvider != shapeProvider
+        val effectsChanged = node.effects !== effects
+        val scaleChanged = node.backdropScale != backdropScale
         val captureChanged =
             node.backdrop !== backdrop ||
-                node.shapeProvider !== shapeProvider ||
-                node.effects !== effects ||
+                shapeChanged ||
+                effectsChanged ||
                 node.layerBlock !== layerBlock ||
                 node.onDrawBackdrop !== onDrawBackdrop ||
-                node.backdropScale != backdropScale
+                scaleChanged
 
         node.backdrop = backdrop
-        node.shapeProvider = shapeProvider
+        // An equal provider keeps the node's own, and with it the cached outline.
+        if (shapeChanged) node.shapeProvider = shapeProvider
         node.effects = effects
         node.layerBlock = layerBlock
         if (node.exportedBackdrop != exportedBackdrop) {
@@ -246,8 +250,13 @@ private class DrawBackdropElement(
             node.surfaceDirty = true
             node.clearLoopPool()
         }
-        // Redraw overlays even when reusing the capture.
-        node.invalidateDrawCache()
+        if (effectsChanged || shapeChanged || scaleChanged) {
+            // The effect chain depends on these: run it again and re-observe its reads.
+            node.invalidateDrawCache()
+        } else {
+            // Overlays only: redraw with the RenderEffect chain already built.
+            node.invalidateDraw()
+        }
     }
 
     override fun InspectorInfo.inspectableProperties() {
