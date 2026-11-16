@@ -4014,9 +4014,18 @@ class PlaybackService : MediaLibraryService() {
                 // has fallen out of the visible 25-song window to the end
                 // instead of deleting it; it becomes upcoming again in the
                 // same order and the loop can continue indefinitely.
-                repeat(expiredHistory) {
-                    exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
-                }
+                //
+                // One range move, not one move per row: each move is its own
+                // PLAYLIST_CHANGED, and every one of those ran the timeline
+                // listener (queue snapshot, layouts, cast) and pushed a new
+                // timeline to every controller, on the main looper at the
+                // moment the track starts. Jumping deep into a long repeat-all
+                // queue made hundreds of them. The resulting order is the same.
+                exoPlayer.moveMediaItems(
+                    0,
+                    expiredHistory,
+                    exoPlayer.mediaItemCount - expiredHistory,
+                )
             } else {
                 exoPlayer.removeMediaItems(0, expiredHistory)
             }
