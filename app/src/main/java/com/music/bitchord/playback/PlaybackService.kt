@@ -1445,7 +1445,26 @@ class PlaybackService : MediaLibraryService() {
 
         startMediaSession(exoPlayer)
         attachCast()
+
+        // restoreQueue has published the widget and startMediaSession the
+        // custom layout, both from these inputs; see [observeCustomLayoutInputs].
+        controlsInputsAtStartup = currentControlsInputs()
     }
+
+    /** What the notification's custom buttons and the widget are drawn from. */
+    private data class ControlsInputs(
+        val shuffle: Boolean,
+        val mediaId: String?,
+        val like: LikeStatus?,
+    )
+
+    private fun currentControlsInputs(): ControlsInputs {
+        val mediaId = player?.currentMediaItem?.mediaId
+        return ControlsInputs(QueueShuffle.enabled.value, mediaId, LikeState.overrides.value[mediaId])
+    }
+
+    /** The inputs [onCreate] published from. Read only by each collector's first value. */
+    private var controlsInputsAtStartup: ControlsInputs? = null
 
     /**
      * Resets what a previous service in this process left behind and starts the
@@ -1456,6 +1475,10 @@ class PlaybackService : MediaLibraryService() {
         // the listener pauses and then leaves; ProcessLifecycleOwner does.
         ProcessLifecycleOwner.get().lifecycle.addObserver(discordIdleObserver)
 
+        // Not a Keystore open, although AuthStore is the encrypted store: the
+        // service shares the application's process, BitChordApplication has
+        // opened this store before any service can start, and EncryptedPrefs
+        // keeps one store per file per process. This is a read from that one.
         if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
             com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
         }
@@ -1506,18 +1529,38 @@ class PlaybackService : MediaLibraryService() {
         // Both the player screen and notification route their Shuffle command
         // here. Observe its state so either surface's icon follows the queue
         // edit once that single service-side transaction has completed.
+        //
+        // A StateFlow hands each collector its current value first, and that
+        // first value arrives just after onCreate, which has already published
+        // the widget and the layout from the same inputs. Republishing it was
+        // a second and third setCustomLayout to every controller and widget
+        // write per service start. So each collector's first value is skipped
+        // when the inputs are still the ones onCreate published from, and
+        // only then: a change in the gap, even one this collector didn't see,
+        // still publishes. Every later value publishes as before.
+        //
+        // Two things this leans on. [scope] is Dispatchers.Main, not
+        // Main.immediate, so neither collector runs before onCreate has
+        // recorded its inputs (if it did, it would compare against null and
+        // publish, which is safe). And every writer of these inputs runs on the
+        // main thread, so none can land between onCreate's publishes and the
+        // moment it records them.
         scope.launch {
+            val startupRepeat = StartupRepeat { controlsInputsAtStartup }
             QueueShuffle.enabled
                 .collectLatest {
+                    if (startupRepeat.skip(currentControlsInputs())) return@collectLatest
                     refreshCustomLayouts()
                     publishWidgetState()
                 }
         }
         scope.launch {
+            val startupRepeat = StartupRepeat { controlsInputsAtStartup }
             LikeState.overrides
                 .map { it[player?.currentMediaItem?.mediaId] }
                 .distinctUntilChanged()
                 .collectLatest {
+                    if (startupRepeat.skip(currentControlsInputs())) return@collectLatest
                     refreshCustomLayouts()
                     publishWidgetState()
                 }
