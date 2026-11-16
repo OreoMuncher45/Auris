@@ -26,8 +26,8 @@ import com.music.bitchord.data.settings.AppSettings
 import java.io.IOException
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /** The Storage category: the song cache and the local music folder. */
@@ -114,16 +114,23 @@ internal fun StorageSettings(
                     // A file Coil cannot delete surfaces as an IOException
                     // from clear(); it is reported in the toast rather than
                     // thrown, and the success toast is only shown on success.
-                    val clearing = ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
-                        try {
+                    //
+                    // Anything else is a bug and is thrown from the process's
+                    // own coroutine, the same whether or not the page is still
+                    // open; it never completes `outcome`, so the page shows no
+                    // toast for it.
+                    val outcome = CompletableDeferred<IOException?>()
+                    ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
+                        val failure = try {
                             loader.diskCache?.clear()
                             null
                         } catch (e: IOException) {
                             e
                         }
+                        outcome.complete(failure)
                     }
                     clearScope.launch {
-                        val failure = clearing.await()
+                        val failure = outcome.await()
                         val message = if (failure == null) {
                             context.getString(R.string.image_cache_cleared)
                         } else {
