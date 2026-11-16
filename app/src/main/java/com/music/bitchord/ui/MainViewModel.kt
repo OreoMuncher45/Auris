@@ -1249,6 +1249,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var credentialsInValidation = false
 
     private fun cancelRowRatings() {
+        // A cancelled tap was never sent: put each row back to what the server
+        // has, rather than leave its optimistic heart behind.
+        for ((rowId, confirmed) in rowRatingConfirmed) LikeState.set(rowId, confirmed)
         rowRatingJobs.cancel()
         rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
         rowRatingLocks.clear()
@@ -1286,9 +1289,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val videoId = RatingTarget.resolve(song)
                 // Checked again after each suspension: the listener can change
                 // while the lookup or the request is out.
-                if (listenerKey() != listener || credentialsInValidation) return@withLock
-                val recordingVersion = videoId?.let(::bumpRecordingRating)
-                val written = videoId != null && writeLike(videoId, target, likeStatusOf(videoId))
+                if (listenerKey() != listener) return@withLock
+                // Held off during sign-in validation: not sent, and settled
+                // below like any other unwritten tap.
+                val sendable = videoId != null && !credentialsInValidation
+                val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
+                val written = sendable && writeLike(videoId!!, target, likeStatusOf(videoId))
                 if (written) rowRatingConfirmed[rowId] = target
                 if (listenerKey() != listener) return@withLock
                 // The recording carries the rating too: other rows and players
