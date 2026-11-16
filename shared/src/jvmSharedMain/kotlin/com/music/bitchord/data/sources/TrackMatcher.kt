@@ -479,7 +479,14 @@ object TrackMatcher {
         // its name.
         while (words.size > 1) {
             val last = words.last()
-            if (last in TRAILING_NOISE) words = words.dropLast(1)
+            // "Morning Light Eclipsa Audio": YouTube's immersive upload of the
+            // stereo track, filed under the stereo title with the format
+            // appended. No other catalogue prints the format, so a search
+            // that kept "eclipsa" found nothing and the song stayed on
+            // YouTube's Opus. Dropped as a pair, never "eclipsa" on its own.
+            if (words.size > 2 && last == "audio" && words[words.size - 2] == "eclipsa") {
+                words = words.dropLast(2)
+            } else if (last in TRAILING_NOISE) words = words.dropLast(1)
             else if (last in TRAILING_TAKES) {
                 versions += last
                 words = words.dropLast(1)
