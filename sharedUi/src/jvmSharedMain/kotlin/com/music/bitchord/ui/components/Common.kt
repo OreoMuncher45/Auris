@@ -72,6 +72,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.runtime.State
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -480,10 +485,19 @@ private fun SongRowContent(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
         label = "song row title",
     )
-    val activeBackground by animateColorAsState(
+    // Held as a State and read in [drawBehind], so the fade in and out of the
+    // highlight redraws the row rather than recomposing it once per frame.
+    val activeBackground = animateColorAsState(
         targetValue = if (isCurrent || selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
         label = "song row background",
     )
+    // Built once per artist line rather than on every pass of the row.
+    val subtitle = remember(song.artist, song.downloadFormat) {
+        listOfNotNull(
+            song.artist.takeIf { it.isNotBlank() },
+            song.downloadFormat,
+        ).joinToString(" · ")
+    }
     // A Spotify track still being matched to a YouTube Music song, or one that
     // has no match: shown, but not something a tap or a menu can act on.
     val matching = song.isMatchPending
@@ -492,7 +506,7 @@ private fun SongRowContent(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (unavailable) 0.45f else 1f)
-            .background(activeBackground)
+            .drawBehind { drawRect(activeBackground.value) }
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onMore ?: onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
@@ -552,10 +566,7 @@ private fun SongRowContent(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = listOfNotNull(
-                    song.artist.takeIf { it.isNotBlank() },
-                    song.downloadFormat,
-                ).joinToString(" · "),
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = subtitleColor,
                 maxLines = 1,
@@ -659,14 +670,19 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
     // Three infinite transitions per visible marker, redrawn at the display's
     // refresh rate for as long as a list row is on screen. With "reduce
     // animation" they settle into a fixed shape and stop scheduling frames.
+    //
+    // The heights are read in the draw pass, not in composition. Read here they
+    // recomposed the marker — and sized three boxes again — on every frame of
+    // the animation; read in [drawBehind] a frame costs one redraw of the
+    // marker's own layer and nothing else.
     val reduceAnimation by com.music.bitchord.ui.player.PlayerSettings.reduceAnimation
         .collectAsStateWithLifecycle()
-    val heights = if (reduceAnimation) {
-        listOf(0.78f, 1f, 0.88f)
+    val heights: List<State<Float>> = if (reduceAnimation) {
+        STILL_BAR_HEIGHTS
     } else {
         listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
             val transition = rememberInfiniteTransition(label = "search playing bar $index")
-            val height by transition.animateFloat(
+            transition.animateFloat(
                 initialValue = minimum,
                 targetValue = 1f - (index * 0.12f),
                 animationSpec = infiniteRepeatable(
@@ -680,7 +696,6 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
                 ),
                 label = "search bar height $index",
             )
-            height
         }
     }
     // The plate is a fixed square so only the bars move, never the box around them.
@@ -691,23 +706,36 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.52f)),
         contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier.height(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            heights.forEach { height ->
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .height(14.dp * height)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color.White),
-                )
-            }
-        }
+        // Three 3dp bars 2dp apart, standing on a shared floor 14dp below the
+        // tallest they reach.
+        Box(
+            Modifier
+                .size(width = PLAYING_BAR_WIDTH * 3 + PLAYING_BAR_GAP * 2, height = 14.dp)
+                .drawBehind {
+                    val bar = PLAYING_BAR_WIDTH.toPx()
+                    val gap = PLAYING_BAR_GAP.toPx()
+                    val corner = CornerRadius(2.dp.toPx())
+                    heights.forEachIndexed { index, height ->
+                        val h = size.height * height.value
+                        drawRoundRect(
+                            color = Color.White,
+                            topLeft = Offset(index * (bar + gap), size.height - h),
+                            size = Size(bar, h),
+                            cornerRadius = corner,
+                        )
+                    }
+                },
+        )
     }
 }
+
+private val PLAYING_BAR_WIDTH = 3.dp
+private val PLAYING_BAR_GAP = 2.dp
+
+/** The marker's settled shape under "reduce animation". */
+private val STILL_BAR_HEIGHTS: List<State<Float>> = listOf(0.78f, 1f, 0.88f).map(::StillHeight)
+
+private class StillHeight(override val value: Float) : State<Float>
 
 /**
  * The mark on a row whose track is already on disk.

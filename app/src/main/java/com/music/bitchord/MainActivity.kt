@@ -701,6 +701,17 @@ private fun dialogWindowOf(view: View): android.view.Window? {
     return null
 }
 
+/**
+ * Runs [content] as a restart scope of its own.
+ *
+ * State read directly in a big composable's body invalidates the whole body.
+ * Read inside this lambda, it invalidates the lambda alone — which is how a
+ * value that flips often (play/pause, buffering) is kept from recomposing
+ * everything around the one widget that shows it.
+ */
+@Composable
+private fun IsolatedScope(content: @Composable () -> Unit) = content()
+
 @Composable
 private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -4658,30 +4669,38 @@ private fun BitChordApp(
                             .onSizeChanged { floatingBarsHeight.intValue = it.height },
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        QueueActionNoticeHost(queueNotice)
-                        player.song?.let { song ->
-                            MiniPlayer(
-                                song = song,
-                                isPlaying = player.isPlaying,
-                                isLoading = playPauseBusy,
-                                hazeState = hazeState,
-                                onPlayPause = {
-                                    togglePlayPause()
-                                },
-                                onNext = { controller?.seekToNextMediaItem() },
-                                onPrevious = { controller?.seekToPrevious() },
-                                onExpand = if (reducePlayerMotion) {
-                                    { showNowPlaying = true }
-                                } else {
-                                    playerSheetMotion::open
-                                },
-                                controlsLocked = controlsLocked,
-                                onBlockedControl = showHostOnlyNotice,
-                                dock = activeDock,
-                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
+                        // Its own restart scope. The song, play/pause, buffering
+                        // and queue-notice reads below change many times a
+                        // session; made directly in this Column they invalidated
+                        // the whole root content lambda — every page, sheet and
+                        // bar under AppRootBox — on each play/pause and each
+                        // buffering flip. In here they re-run the mini player.
+                        IsolatedScope {
+                            QueueActionNoticeHost(queueNotice)
+                            player.song?.let { song ->
+                                MiniPlayer(
+                                    song = song,
+                                    isPlaying = player.isPlaying,
+                                    isLoading = playPauseBusy,
+                                    hazeState = hazeState,
+                                    onPlayPause = {
+                                        togglePlayPause()
+                                    },
+                                    onNext = { controller?.seekToNextMediaItem() },
+                                    onPrevious = { controller?.seekToPrevious() },
+                                    onExpand = if (reducePlayerMotion) {
+                                        { showNowPlaying = true }
+                                    } else {
+                                        playerSheetMotion::open
+                                    },
+                                    controlsLocked = controlsLocked,
+                                    onBlockedControl = showHostOnlyNotice,
+                                    dock = activeDock,
+                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                         }
                         FloatingBottomBar(
                             tabs = tabs,
