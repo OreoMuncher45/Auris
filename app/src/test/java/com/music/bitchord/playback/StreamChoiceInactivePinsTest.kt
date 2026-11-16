@@ -30,7 +30,7 @@ class StreamChoiceInactivePinsTest {
         pin("inactive-kept", "saavn")
         StreamChoice.remember("inactive-youtube", SourceStream("https://example.invalid/yt"), substituted = false)
 
-        val stale = StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = setOf("inactive-kept"))
+        val stale = StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = setOf("inactive-kept"), youtubeConfigIds = emptySet())
 
         assertEquals(mapOf("inactive-off" to false), stale.filterKeys { it in ids })
     }
@@ -41,8 +41,8 @@ class StreamChoiceInactivePinsTest {
         // A substitute with no source id names no source, so it is never retired.
         pin("inactive-on", null)
 
-        val off = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet())
-        val on = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = true, keep = emptySet())
+        val off = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet(), youtubeConfigIds = emptySet())
+        val on = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = true, keep = emptySet(), youtubeConfigIds = emptySet())
 
         assertEquals(mapOf("inactive-youtube" to true), off.filterKeys { it in ids })
         assertEquals(emptyMap<String, Boolean>(), on.filterKeys { it in ids })
@@ -53,8 +53,8 @@ class StreamChoiceInactivePinsTest {
         // A Spotify row's YouTube fallback is pinned like this too: as YouTube's own.
         StreamChoice.remember("inactive-youtube", SourceStream("https://example.invalid/yt"), substituted = false)
 
-        val inside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = setOf("inactive-youtube"))
-        val outside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet())
+        val inside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = setOf("inactive-youtube"), youtubeConfigIds = emptySet())
+        val outside = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet(), youtubeConfigIds = emptySet())
 
         assertEquals(emptyMap<String, Boolean>(), inside.filterKeys { it in ids })
         assertEquals(mapOf("inactive-youtube" to true), outside.filterKeys { it in ids })
@@ -92,7 +92,7 @@ class StreamChoiceInactivePinsTest {
         assertEquals("saavn", StreamChoice.of("inactive-off")?.sourceConfigId)
 
         StreamChoice.forgetAll(
-            StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = emptySet()).keys,
+            StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = emptySet(), youtubeConfigIds = emptySet()).keys,
         )
 
         assertNull(StreamChoice.of("inactive-off"))

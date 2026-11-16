@@ -186,7 +186,7 @@ object StreamChoice {
         enabled: Set<String>,
         youtubeEnabled: Boolean,
         keep: Set<String>,
-        youtubeConfigIds: Set<String> = emptySet(),
+        youtubeConfigIds: Set<String>,
     ): Map<String, Boolean> =
         buildMap {
             for ((id, choice) in chosen) {
