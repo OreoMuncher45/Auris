@@ -2247,11 +2247,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Apple's catalogue. See [PodcastShelfCache] for why they are kept.
      */
     private fun publishCachedPodcastSections() {
-        val cached = PodcastShelfCache.load(getApplication()) ?: return
-        cached.forEach { shelf -> shelf.shows.forEach { itunesShows[it.collectionId] = it } }
-        val shelves = cached.toHomeShelves()
-        if (shelves.isEmpty()) return
-        _podcastSections.value = UiState.Success(shelves)
+        // Read and parsed on IO. This runs from the view model's init, which is
+        // the app's first composition, and the cache is a JSON file of every
+        // shelf and show: on the main thread it was a file read and a parse
+        // ahead of the first frame, for a tab nobody has opened yet.
+        viewModelScope.launch(Dispatchers.IO) {
+            val cached = PodcastShelfCache.load(getApplication()) ?: return@launch
+            cached.forEach { shelf -> shelf.shows.forEach { itunesShows[it.collectionId] = it } }
+            val shelves = cached.toHomeShelves()
+            if (shelves.isEmpty()) return@launch
+            // Only into a page still waiting. The fresh fetch is started beside
+            // this and publishes as each shelf lands; last launch's copy must
+            // never overwrite one that already has.
+            _podcastSections.compareAndSet(UiState.Loading, UiState.Success(shelves))
+        }
     }
 
     private var podcastsRequested = false
