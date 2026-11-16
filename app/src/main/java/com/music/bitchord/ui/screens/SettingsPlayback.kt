@@ -29,7 +29,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -60,7 +62,10 @@ internal fun PlaybackSettings(
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val playingFormat by NerdStats.current.collectAsStateWithLifecycle()
-    val playingDolbyAtmos = playingFormat?.isDolbyAtmos == true
+    // Derived, so a format publish that leaves the answer as it was (most of
+    // them: bitrate, decoder, the next track in the same format) does not
+    // recompose the page. Read by the spatial audio row alone.
+    val playingDolbyAtmos by remember { derivedStateOf { playingFormat?.isDolbyAtmos == true } }
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
