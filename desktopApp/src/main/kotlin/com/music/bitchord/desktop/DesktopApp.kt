@@ -188,6 +188,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -1591,7 +1592,15 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             }
         }
     }
-    val playback by playbackEngine.state.collectAsState()
+    // The engine publishes its state four times a second while playing, for the playhead. Read
+    // whole, that recomposed this entire window on every tick, though nothing here draws the
+    // playhead except the top bar's progress line. So the window reads the state with the clock
+    // taken out, and changes only when something else does; the top bar reads the clock in its
+    // own slot, and effects that need it read [playbackClock] when they run.
+    val playbackClock = playbackEngine.state.collectAsState()
+    val playback by remember(playbackClock) {
+        derivedStateOf { playbackClock.value.withoutClock() }
+    }
 
     // The shared player reads the playhead off this one object, and only where it
     // draws it — see PlaybackPosition — so a tick never recomposes the player.
@@ -1691,7 +1700,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         settings.playbackSpeed,
     ) {
         mprisController.update(
-            playback = playback,
+            playback = playbackClock.value,
             shuffle = settings.shuffle,
             loopStatus = when (settings.repeatMode) {
                 DesktopRepeatMode.OFF -> "None"
@@ -1702,8 +1711,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         )
     }
     LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs) {
-        DesktopScrobbling.onPlaybackStateChanged(playback)
-        DesktopWindowsMedia.publish(playback)
+        DesktopScrobbling.onPlaybackStateChanged(playbackClock.value)
+        DesktopWindowsMedia.publish(playbackClock.value)
     }
     // Refetched on opening the page rather than cached for the session: the
     // point of it is that something played elsewhere shows up here.
@@ -1723,7 +1732,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // Keyed on the same things, plus the rate: Discord counts the bar down on
     // its own clock, so only a change to what it was told is worth another push.
     LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs, settings.playbackSpeed) {
-        DesktopDiscordRpc.onPlaybackStateChanged(playback, settings.playbackSpeed)
+        DesktopDiscordRpc.onPlaybackStateChanged(playbackClock.value, settings.playbackSpeed)
     }
     // The account's own history on YouTube Music, which is what the home feed is built out of.
     DisposableEffect(playback.song?.videoId) {
@@ -1744,7 +1753,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(playback.song?.videoId, playback.isPlaying) {
         val songId = playback.song?.videoId ?: return@LaunchedEffect
         if (!playback.isPlaying) return@LaunchedEffect
-        var previousPosition = playback.positionMs
+        var previousPosition = playbackClock.value.positionMs
         var countedAsPlay = songId in statsCountedSongs
         while (currentCoroutineContext().isActive) {
             delay(STATS_SAMPLE_MS)
@@ -2937,15 +2946,17 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                 },
                 topBar = { compact ->
+                    // Read here, in the top bar's own slot, so a tick recomposes only the bar.
+                    val clock = playbackClock.value
                     DesktopTopBar(
                         compact = compact,
                         song = selectedSong,
                         isPlaying = playback.isPlaying,
                         isLoading = playback.isLoading,
                         previousEnabled = liveQueue.hasPrevious ||
-                            playback.positionMs > BACK_RESTARTS_AFTER_MS,
-                        progress = if (playback.durationMs > 0L) {
-                            playback.positionMs.toFloat() / playback.durationMs.toFloat()
+                            clock.positionMs > BACK_RESTARTS_AFTER_MS,
+                        progress = if (clock.durationMs > 0L) {
+                            clock.positionMs.toFloat() / clock.durationMs.toFloat()
                         } else {
                             0f
                         },
