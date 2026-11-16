@@ -223,6 +223,14 @@ private class DrawBackdropElement(
         if (node.exportedBackdrop != exportedBackdrop) {
             node.exportedBackdrop?.layerCoordinates = null
             node.exportedBackdrop = exportedBackdrop
+            node.exportDirty = true
+        }
+        // Overlay callbacks only feed the exported copy: re-record that, not the source.
+        if (node.onDrawBehind !== onDrawBehind ||
+            node.onDrawSurface !== onDrawSurface ||
+            node.onDrawFront !== onDrawFront
+        ) {
+            node.exportDirty = true
         }
         node.onDrawBehind = onDrawBehind
         node.onDrawBackdrop = onDrawBackdrop
@@ -323,6 +331,9 @@ private class DrawBackdropNode(
 
     // Re-record after element/effect changes; otherwise reuse until source content or geometry changes.
     internal var surfaceDirty = true
+
+    // Set when the exported overlay changes; forces only the export recording, not a source re-capture.
+    internal var exportDirty = true
 
     private var recordedBackdropVersion: Int? = null
     private var recordedBackdropOffset: Offset? = null
@@ -468,13 +479,14 @@ private class DrawBackdropNode(
         onDrawFront?.invoke(this)
 
         exportedBackdrop?.graphicsLayer?.let { layer ->
-            if (surfaceDirty || contentRecorded) {
+            if (surfaceDirty || exportDirty || contentRecorded) {
                 recordLayer(this@DrawBackdropNode, layer) {
                     onDrawBehind?.invoke(this)
                     drawBackdropLayer()
                     onDrawSurface?.invoke(this)
                     onDrawFront?.invoke(this)
                 }
+                exportDirty = false
             }
         }
         surfaceDirty = false
