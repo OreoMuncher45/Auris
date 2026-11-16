@@ -477,7 +477,7 @@ internal enum class DesktopDestination(val id: String, val label: String) {
     SETTINGS("settings", "Settings"),
 }
 
-private enum class DesktopRepeatMode {
+internal enum class DesktopRepeatMode {
     OFF,
     ALL,
     ONE,
@@ -514,6 +514,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     var personalPositionStash by remember { mutableStateOf(0L) }
     var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
+    val settings = remember { DesktopAppSettings(persistence) }
     var availableUpdate by remember { mutableStateOf<DesktopUpdateChecker.UpdateInfo?>(null) }
     LaunchedEffect(Unit) { availableUpdate = DesktopUpdateChecker.check() }
     availableUpdate?.let { update ->
@@ -667,65 +668,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // the credit under the title is not a link at all. Android does the same
     // thing, and for the same reason; see its `links` in MainActivity.
     var trackLinks by remember { mutableStateOf<Song?>(null) }
-    // Settings is a modal over whatever page is open, the way Music puts its own preferences in a
-    // sheet rather than a navigation destination.
-    var autoplay by remember { mutableStateOf(persistence.boolean("autoplay", true)) }
-    var dontRepeatSuggestions by remember {
-        mutableStateOf(persistence.boolean(KEY_DONT_REPEAT_SUGGESTIONS, false))
-    }
     /** Everything AutoPlay has played or offered this run — see [KEY_DONT_REPEAT_SUGGESTIONS]. */
     val sessionSongHistory = remember { mutableListOf<Song>() }
-    var filterNonMusicAudio by remember {
-        mutableStateOf(persistence.boolean(DesktopLocalMusic.KEY_FILTER_NON_MUSIC_AUDIO, false))
-    }
     var localMusicRevision by remember { mutableStateOf(0) }
     // The track the queued station was built around, so a top-up is asked for once per song rather
     // than once per recomposition.
     var autoplaySeed by remember { mutableStateOf<String?>(null) }
     var autoplayJob by remember { mutableStateOf<Job?>(null) }
-    var automix by remember { mutableStateOf(persistence.boolean("automix", false)) }
-    var automixPerformance by remember {
-        mutableStateOf(
-            runCatching { AutomixPerformanceMode.valueOf(persistence.string("automix_performance", "BALANCED")) }
-                .getOrDefault(AutomixPerformanceMode.BALANCED),
-        )
-    }
-    var shuffle by remember { mutableStateOf(persistence.boolean("shuffle", false)) }
-    var repeatMode by remember {
-        mutableStateOf(
-            runCatching { DesktopRepeatMode.valueOf(persistence.string("repeat_mode", "OFF")) }
-                .getOrDefault(DesktopRepeatMode.OFF),
-        )
-    }
-    var playbackSpeed by remember { mutableStateOf(persistence.string("playback_speed", "1.0").toFloatOrNull() ?: 1.0f) }
-    var volume by remember { mutableStateOf(persistence.string("volume", "1.0").toFloatOrNull()?.coerceIn(0.0f, 1.0f) ?: 1.0f) }
-    var crossfadeSeconds by remember { mutableStateOf(persistence.string("crossfade_seconds", "0").toIntOrNull()?.coerceIn(0, 12) ?: 0) }
-    var downloadQuality by remember { mutableStateOf(persistence.string("download_quality", "LOSSLESS")) }
-    var trayIconEnabled by remember { mutableStateOf(persistence.boolean("tray_icon", true)) }
-    var closeToTray by remember { mutableStateOf(persistence.boolean("close_to_tray", true)) }
-    // The three the FFmpeg engine unlocked: none of them could exist while JavaFX owned the decode,
-    // because none of them can be done without the samples themselves.
-    var spatialAudio by remember { mutableStateOf(persistence.boolean("spatial_audio", false)) }
-    var dolbyAtmos by remember { mutableStateOf(persistence.boolean("dolby_atmos", true)) }
-    var skipSilence by remember { mutableStateOf(persistence.boolean("skip_silence", false)) }
-    var outputPrecision by remember { mutableStateOf(persistence.string("output_precision", "PCM_16")) }
-    // The blob backdrop the mesh replaced, kept as an opt-out.
-    var legacyMeshGradient by remember { mutableStateOf(persistence.boolean("legacy_mesh_gradient", false)) }
-    var animatedCanvas by remember { mutableStateOf(persistence.boolean("animated_canvas", true)) }
-    var spotifyCanvasCookie by remember { mutableStateOf(DesktopSpotifyToken.cookie()) }
-    var showNerdStats by remember { mutableStateOf(persistence.boolean("show_nerd_stats", false)) }
-    var syncedLyrics by remember {
-        mutableStateOf(persistence.boolean(DesktopLyricsClient.KEY_SYNCED_LYRICS, true))
-    }
-    var lyricsBlur by remember {
-        mutableStateOf(persistence.boolean(DesktopLyricsClient.KEY_LYRICS_BLUR, true))
-    }
-    var prioritizeSyllables by remember {
-        mutableStateOf(persistence.boolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, false))
-    }
-    var lyricsOrder by remember { mutableStateOf(persistence.lyricsSourceOrder()) }
-    var lyricsOn by remember { mutableStateOf(persistence.lyricsEnabledSources()) }
-    var fullBleedArtwork by remember { mutableStateOf(persistence.boolean("full_bleed_artwork", false)) }
     var accounts by remember { mutableStateOf(DesktopAccounts.accounts()) }
     var activeAccountId by remember { mutableStateOf(DesktopAccounts.activeAccountId()) }
     var activeProfileId by remember { mutableStateOf(DesktopAccounts.activeProfileId()) }
@@ -793,7 +742,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         withContext(Dispatchers.IO) { DesktopAccounts.activate() }
         sessionRevision++
     }
-    var audioQuality by remember { mutableStateOf(persistence.audioQuality()) }
     var sourceConfigs by remember { mutableStateOf(persistence.sourceConfigs()) }
     var sourceStatus by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val youtubeSourceEnabled = sourceConfigs.any {
@@ -948,13 +896,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             selectedIndex = at,
             contextSource = playable[at].queueSource(),
         )
-        liveQueue = if (shuffle) {
+        liveQueue = if (settings.shuffle) {
             DesktopQueue.shuffledStartingAt(built.timeline, built.startIndex)
         } else {
             // Keep the complete queue so Previous can navigate to the tracks before the selected one.
             DesktopQueue.startingAt(built.timeline, built.startIndex)
         }
-        preShuffleOrder = if (shuffle) built.timeline.map(DesktopQueue::orderKey) else emptyList()
+        preShuffleOrder = if (settings.shuffle) built.timeline.map(DesktopQueue::orderKey) else emptyList()
         playCurrent()
     }
 
@@ -1067,8 +1015,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 partySyncHolder[0]?.onLocalIntent()
             } else {
                 val station = listOf(seed.asQueueEntry(QueueTier.CONTEXT)) + related
-                liveQueue = if (shuffle) DesktopQueue.shuffledStartingAt(station, 0) else DesktopQueue(station, 0)
-                preShuffleOrder = if (shuffle) station.map(DesktopQueue::orderKey) else emptyList()
+                liveQueue = if (settings.shuffle) DesktopQueue.shuffledStartingAt(station, 0) else DesktopQueue(station, 0)
+                preShuffleOrder = if (settings.shuffle) station.map(DesktopQueue::orderKey) else emptyList()
                 playCurrent()
             }
             DesktopTrackLog.log("radio: started a station on '${song.title}' with ${related.size} tracks")
@@ -1228,12 +1176,12 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     fun loadAutoplaySongs(playFirst: Boolean = false) {
         val current = selectedSong ?: return
         val party = DesktopListenTogether.state.value
-        if (!DesktopAutoplay.enabled(party, autoplay) ||
-            repeatMode == DesktopRepeatMode.ALL ||
+        if (!DesktopAutoplay.enabled(party, settings.autoplay) ||
+            settings.repeatMode == DesktopRepeatMode.ALL ||
             (party.inParty && DesktopAutoplay.supplierId(party) != party.you?.memberId)
         ) return
 
-        if (dontRepeatSuggestions) sessionSongHistory += current
+        if (settings.dontRepeatSuggestions) sessionSongHistory += current
 
         // In a party the server's queue is the one being topped up, and this computer's copy of it
         // lags by however long reconcile is held off. Counted from the copy, a batch that had
@@ -1258,7 +1206,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 val partyQueue = DesktopListenTogether.state.value
                     .takeIf { it.inParty }?.queue?.items.orEmpty().map { it.toDesktopSong() }
                 val suggestions = DesktopAutoplay.tracksFor(
-                    existing = if (dontRepeatSuggestions) {
+                    existing = if (settings.dontRepeatSuggestions) {
                         liveQueue.songs + partyQueue + sessionSongHistory
                     } else {
                         liveQueue.songs + partyQueue
@@ -1273,7 +1221,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 // then would attach it to the wrong seed.
                 val latestParty = DesktopListenTogether.state.value
                 if (selectedSong?.videoId != current.videoId ||
-                    !DesktopAutoplay.enabled(latestParty, autoplay) ||
+                    !DesktopAutoplay.enabled(latestParty, settings.autoplay) ||
                     (latestParty.inParty && DesktopAutoplay.supplierId(latestParty) != latestParty.you?.memberId)
                 ) return@launch
                 if (suggestions.isEmpty()) {
@@ -1309,7 +1257,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     // its own.
                     if (playFirst) playQueueIndex(at)
                 }
-                if (dontRepeatSuggestions) sessionSongHistory += suggestions
+                if (settings.dontRepeatSuggestions) sessionSongHistory += suggestions
                 DesktopTrackLog.log(
                     "autoplay: queued ${suggestions.size} after '${current.title}'",
                 )
@@ -1329,7 +1277,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      */
     fun setAutoplay(enabled: Boolean) {
         if (DesktopListenTogether.state.value.controlsLocked) return
-        autoplay = enabled
+        settings.autoplay = enabled
         persistence.saveBoolean("autoplay", enabled)
         autoplayJob?.cancel()
         autoplayJob = null
@@ -1359,11 +1307,11 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 liveQueue = liveQueue.next()
                 playCurrent()
             }
-            repeatMode == DesktopRepeatMode.ALL && liveQueue.songs.isNotEmpty() -> {
+            settings.repeatMode == DesktopRepeatMode.ALL && liveQueue.songs.isNotEmpty() -> {
                 liveQueue = liveQueue.copy(index = 0)
                 playCurrent()
             }
-            DesktopAutoplay.enabled(DesktopListenTogether.state.value, autoplay) ->
+            DesktopAutoplay.enabled(DesktopListenTogether.state.value, settings.autoplay) ->
                 loadAutoplaySongs(playFirst = true)
         }
     }
@@ -1391,7 +1339,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      */
     fun setShuffle(enabled: Boolean) {
         if (DesktopListenTogether.state.value.controlsLocked) return
-        shuffle = enabled
+        settings.shuffle = enabled
         persistence.saveBoolean("shuffle", enabled)
         liveQueue = if (enabled) {
             preShuffleOrder = liveQueue.orderKeys()
@@ -1498,7 +1446,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 selectedSong?.let(DesktopScrobbling::onPlaybackEnded)
                 if (DesktopSleepTimer.afterTrack.value) {
                     DesktopSleepTimer.cancel()
-                } else if (repeatMode == DesktopRepeatMode.ONE) {
+                } else if (settings.repeatMode == DesktopRepeatMode.ONE) {
                     // Replayed in place. [startSong] makes the track a queue of one, which threw
                     // the rest of the queue away the first time it repeated.
                     val song = selectedSong
@@ -1611,24 +1559,24 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             onNext = ::playNext,
             onPrevious = ::playPrevious,
             onShuffleChanged = { enabled ->
-                shuffle = enabled
+                settings.shuffle = enabled
                 persistence.saveBoolean("shuffle", enabled)
             },
             onLoopStatusChanged = { status ->
-                repeatMode = when (status) {
+                settings.repeatMode = when (status) {
                     "Track" -> DesktopRepeatMode.ONE
                     "Playlist" -> DesktopRepeatMode.ALL
                     else -> DesktopRepeatMode.OFF
                 }
-                persistence.saveString("repeat_mode", repeatMode.name)
+                persistence.saveString("repeat_mode", settings.repeatMode.name)
             },
             onRateChanged = { value ->
-                playbackSpeed = value.toFloat().coerceIn(0.25f, 3.0f)
-                persistence.saveString("playback_speed", playbackSpeed.toString())
+                settings.playbackSpeed = value.toFloat().coerceIn(0.25f, 3.0f)
+                persistence.saveString("playback_speed", settings.playbackSpeed.toString())
             },
             onVolumeChanged = { value ->
-                volume = value.toFloat().coerceIn(0.0f, 1.0f)
-                persistence.saveString("volume", volume.toString())
+                settings.volume = value.toFloat().coerceIn(0.0f, 1.0f)
+                persistence.saveString("volume", settings.volume.toString())
             },
             onSeek = { positionMs ->
                 if (!DesktopListenTogether.state.value.controlsLocked) {
@@ -1657,11 +1605,11 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         onDispose { DesktopWindowsMedia.stop() }
     }
 
-    LaunchedEffect(playbackSpeed) { playbackEngine.setPlaybackSpeed(playbackSpeed) }
-    LaunchedEffect(volume) { playbackEngine.setVolume(volume) }
-    LaunchedEffect(audioQuality) { playbackEngine.setAudioQuality(audioQuality.name) }
-    LaunchedEffect(automixPerformance) {
-        playbackEngine.setAutomixPerformance(automixPerformance)
+    LaunchedEffect(settings.playbackSpeed) { playbackEngine.setPlaybackSpeed(settings.playbackSpeed) }
+    LaunchedEffect(settings.volume) { playbackEngine.setVolume(settings.volume) }
+    LaunchedEffect(settings.audioQuality) { playbackEngine.setAudioQuality(settings.audioQuality.name) }
+    LaunchedEffect(settings.automixPerformance) {
+        playbackEngine.setAutomixPerformance(settings.automixPerformance)
     }
     // Every one of the seven settings renders the same curve, so they are collected together
     // rather than destructured — seven sources of one tuning is seven chances to read them in the
@@ -1676,32 +1624,32 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(eqEnabled, eqMode, eqToneX, eqToneY, eqFocused, eqBalance, eqBands) {
         playbackEngine.setEqualizer(eqEnabled, DesktopEqualizerSettings.curve(), eqBalance)
     }
-    LaunchedEffect(spatialAudio, skipSilence, outputPrecision) {
-        playbackEngine.setSpatialAudio(spatialAudio)
-        playbackEngine.setSkipSilence(skipSilence)
-        playbackEngine.setOutputPrecision(outputPrecision)
+    LaunchedEffect(settings.spatialAudio, settings.skipSilence, settings.outputPrecision) {
+        playbackEngine.setSpatialAudio(settings.spatialAudio)
+        playbackEngine.setSkipSilence(settings.skipSilence)
+        playbackEngine.setOutputPrecision(settings.outputPrecision)
     }
     // Not while listening together, exactly as on the phone: a blend starts the next track early,
     // by a length this computer decides from its own copy of the audio, so every member would begin
     // the next song at a different moment and be dragged back by a correcting seek. The transition a
     // party shares is the plain one. The settings themselves are left alone and come back after.
     val inParty = partyState.inParty
-    LaunchedEffect(automix, crossfadeSeconds, inParty, audioQuality, selectedSong?.videoId, queue, liveQueue.index, shuffle, repeatMode) {
-        playbackEngine.setAutomixEnabled(automix && !inParty)
-        playbackEngine.setCrossfadeSeconds(if (inParty) 0 else crossfadeSeconds)
+    LaunchedEffect(settings.automix, settings.crossfadeSeconds, inParty, settings.audioQuality, selectedSong?.videoId, queue, liveQueue.index, settings.shuffle, settings.repeatMode) {
+        playbackEngine.setAutomixEnabled(settings.automix && !inParty)
+        playbackEngine.setCrossfadeSeconds(if (inParty) 0 else settings.crossfadeSeconds)
         // Exactly what Next would play, so a crossfade can never blend into anything else. Shuffle
         // is already the queue's order; picking "the first track that is not this one" under it
         // blended into a song from history whenever the current one was not at the top.
         // Repeat-one prepares nothing: the track ends and [onEnded] starts it again, rather than
         // blending into the next one.
         val next = selectedSong
-            ?.takeIf { repeatMode != DesktopRepeatMode.ONE }
-            ?.let { liveQueue.followingFor(it.videoId, repeatAll = repeatMode == DesktopRepeatMode.ALL) }
+            ?.takeIf { settings.repeatMode != DesktopRepeatMode.ONE }
+            ?.let { liveQueue.followingFor(it.videoId, repeatAll = settings.repeatMode == DesktopRepeatMode.ALL) }
         playbackEngine.prepareNext(next)
     }
     // Topped up on every track change, the way Android does it, rather than only once the queue has
     // run dry.
-    LaunchedEffect(selectedSong?.videoId, autoplay, repeatMode) {
+    LaunchedEffect(selectedSong?.videoId, settings.autoplay, settings.repeatMode) {
         loadAutoplaySongs()
     }
     val partyAutoplaySupplier = DesktopAutoplay.supplierId(partyState)
@@ -1723,8 +1671,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(liveQueue.songs.size, liveQueue.index, partyState.queue.seq) {
         val currentId = selectedSong?.videoId
         val shouldRefresh = DesktopAutoplay.queueNeedsRefresh(
-            enabled = DesktopAutoplay.enabled(partyState, autoplay),
-            repeatAll = repeatMode == DesktopRepeatMode.ALL,
+            enabled = DesktopAutoplay.enabled(partyState, settings.autoplay),
+            repeatAll = settings.repeatMode == DesktopRepeatMode.ALL,
             currentIndex = liveQueue.index,
             itemCount = liveQueue.songs.size,
             loadInProgress = autoplayJob?.isActive == true,
@@ -1789,10 +1737,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(
         selectedSong?.videoId,
         lyricsLengthMs,
-        syncedLyrics,
-        prioritizeSyllables,
-        lyricsOn,
-        lyricsOrder,
+        settings.syncedLyrics,
+        settings.prioritizeSyllables,
+        settings.lyricsOn,
+        settings.lyricsOrder,
         lyricsOnly,
     ) {
         val current = selectedSong
@@ -1802,7 +1750,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             lyricsLoading = false
             return@LaunchedEffect
         }
-        if (!syncedLyrics) {
+        if (!settings.syncedLyrics) {
             lyricsError = "Synced lyrics are switched off"
             lyricsLoading = false
             return@LaunchedEffect
@@ -1823,9 +1771,9 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         lyricsLoading = false
     }
 
-    LaunchedEffect(selectedSong?.videoId, animatedCanvas) {
+    LaunchedEffect(selectedSong?.videoId, settings.animatedCanvas) {
         val current = selectedSong
-        if (current == null || !animatedCanvas) {
+        if (current == null || !settings.animatedCanvas) {
             canvas = null
             return@LaunchedEffect
         }
@@ -1841,19 +1789,19 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         playback.durationMs,
         playback.volume,
         playback.error,
-        shuffle,
-        repeatMode,
-        playbackSpeed,
+        settings.shuffle,
+        settings.repeatMode,
+        settings.playbackSpeed,
     ) {
         mprisController.update(
             playback = playback,
-            shuffle = shuffle,
-            loopStatus = when (repeatMode) {
+            shuffle = settings.shuffle,
+            loopStatus = when (settings.repeatMode) {
                 DesktopRepeatMode.OFF -> "None"
                 DesktopRepeatMode.ALL -> "Playlist"
                 DesktopRepeatMode.ONE -> "Track"
             },
-            rate = playbackSpeed.toDouble(),
+            rate = settings.playbackSpeed.toDouble(),
         )
     }
     LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs) {
@@ -1877,8 +1825,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
     // Keyed on the same things, plus the rate: Discord counts the bar down on
     // its own clock, so only a change to what it was told is worth another push.
-    LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs, playbackSpeed) {
-        DesktopDiscordRpc.onPlaybackStateChanged(playback, playbackSpeed)
+    LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs, settings.playbackSpeed) {
+        DesktopDiscordRpc.onPlaybackStateChanged(playback, settings.playbackSpeed)
     }
     // The account's own history on YouTube Music, which is what the home feed is built out of.
     DisposableEffect(playback.song?.videoId) {
@@ -2371,19 +2319,19 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
         )
     }
-    DisposableEffect(tray, trayIconEnabled) {
-        if (trayIconEnabled) tray.start()
+    DisposableEffect(tray, settings.trayIconEnabled) {
+        if (settings.trayIconEnabled) tray.start()
         onDispose { tray.stop() }
     }
     // Deliberately not a key on the effect above.
-    DisposableEffect(trayIconEnabled, closeToTray) {
+    DisposableEffect(settings.trayIconEnabled, settings.closeToTray) {
         // The listener's choice, with the tray as its precondition: hiding with no tray to come
         // back from leaves an audible process and no window.
-        DesktopWindowVisibility.keepRunningWhenClosed = trayIconEnabled && closeToTray
+        DesktopWindowVisibility.keepRunningWhenClosed = settings.trayIconEnabled && settings.closeToTray
         onDispose { DesktopWindowVisibility.keepRunningWhenClosed = false }
     }
-    LaunchedEffect(tray, trayIconEnabled) {
-        if (!trayIconEnabled) return@LaunchedEffect
+    LaunchedEffect(tray, settings.trayIconEnabled) {
+        if (!settings.trayIconEnabled) return@LaunchedEffect
         // The logo travels to the tray as pixels: a themed icon name would be whatever the user's
         // theme draws for a generic music player.
         runCatching { Res.readBytes("drawable/logo.svg") }.onSuccess(tray::setIcon)
@@ -2895,21 +2843,21 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     // What the shared player reads as settings, kept in step with the window's own.
     SideEffect {
-        DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
-        DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
-        DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
-        DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
-        DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
-        DesktopPlayerSettings.showNerdStats.value = showNerdStats
-        DesktopPlayerSettings.smartFadeEnabled.value = automix
+        DesktopPlayerSettings.animatedCanvas.value = settings.animatedCanvas
+        DesktopPlayerSettings.fullBleedArtwork.value = settings.fullBleedArtwork
+        DesktopPlayerSettings.legacyMeshGradient.value = settings.legacyMeshGradient
+        DesktopPlayerSettings.lyricsBlur.value = settings.lyricsBlur
+        DesktopPlayerSettings.syncedLyrics.value = settings.syncedLyrics
+        DesktopPlayerSettings.showNerdStats.value = settings.showNerdStats
+        DesktopPlayerSettings.smartFadeEnabled.value = settings.automix
         DesktopPlayerSettings.smartAnalysis.value = playback.smartAnalysis
         DesktopPlayerSettings.smartMixInProgress.value = playback.mixing
         DesktopPlayerSettings.smartTransitionWindow.value = playback.transitionWindow
         DesktopPlayerSettings.lyricsSourceOrder.value =
-            DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn).mapNotNull(::lyricsSourceNamed)
-        DesktopPlayerHost.volumeLevel.value = volume
+            DesktopLyricsClient.enabledSources(settings.lyricsOrder, settings.lyricsOn).mapNotNull(::lyricsSourceNamed)
+        DesktopPlayerHost.volumeLevel.value = settings.volume
         DesktopPlayerHost.onVolumeChange = {
-            volume = it
+            settings.volume = it
             persistence.saveString("volume", it.toString())
         }
     }
@@ -2952,8 +2900,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     val sharedLyrics = lyrics?.lines
     val sharedLyricsSource = remember(lyrics) { lyrics?.source?.let(::lyricsSourceNamed) }
     val sharedLyricsUnavailable = !lyricsLoading && sharedLyrics.isNullOrEmpty()
-    val providerStates = remember(lyricsOrder, lyricsOn, sharedLyricsSource, lyricsLoading) {
-        DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn)
+    val providerStates = remember(settings.lyricsOrder, settings.lyricsOn, sharedLyricsSource, lyricsLoading) {
+        DesktopLyricsClient.enabledSources(settings.lyricsOrder, settings.lyricsOn)
             .mapNotNull(::lyricsSourceNamed)
             .associateWith { source ->
                 when {
@@ -3033,8 +2981,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         onNext = ::playNext,
                         onPrevious = ::playPrevious,
                         onVolumeBy = { delta ->
-                            val moved = (volume + delta).coerceIn(0.0f, 1.0f)
-                            volume = moved
+                            val moved = (settings.volume + delta).coerceIn(0.0f, 1.0f)
+                            settings.volume = moved
                             persistence.saveString("volume", moved.toString())
                         },
                         onFocusSearch = { selectDestination(DesktopDestination.SEARCH) },
@@ -3103,19 +3051,19 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             0f
                         },
                         volume = playback.volume,
-                        shuffle = shuffle,
-                        repeatMode = repeatMode,
+                        shuffle = settings.shuffle,
+                        repeatMode = settings.repeatMode,
                         onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
                         onPrevious = ::playPrevious,
                         onNext = ::playNext,
                         onShuffleChange = ::setShuffle,
                         onRepeatModeChange = {
-                            repeatMode = it
+                            settings.repeatMode = it
                             persistence.saveString("repeat_mode", it.name)
                         },
                         onOpenNowPlaying = { overlays.nowPlaying = true },
                         onVolumeChange = {
-                            volume = it
+                            settings.volume = it
                             persistence.saveString("volume", it.toString())
                         },
                         onOpenAudioOutput = { overlays.audioOutput = true },
@@ -3188,7 +3136,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             DesktopSidePanel.QUEUE -> QueueSidePanel(
                                 queue = liveQueue.songs,
                                 queueIndex = liveQueue.index,
-                                autoplayEnabled = DesktopAutoplay.enabled(partyState, autoplay),
+                                autoplayEnabled = DesktopAutoplay.enabled(partyState, settings.autoplay),
                                 onJumpTo = ::playQueueIndex,
                                 onRemove = ::removeFromQueue,
                                 onMove = ::moveInQueue,
@@ -3233,13 +3181,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             queueIndex = liveQueue.index,
                             hasPrevious = liveQueue.hasPrevious,
                             hasNext = liveQueue.hasNext,
-                            repeatMode = when (repeatMode) {
+                            repeatMode = when (settings.repeatMode) {
                                 DesktopRepeatMode.OFF -> RepeatModes.OFF
                                 DesktopRepeatMode.ONE -> RepeatModes.ONE
                                 DesktopRepeatMode.ALL -> RepeatModes.ALL
                             },
-                            shuffleEnabled = shuffle,
-                            autoplayEnabled = DesktopAutoplay.enabled(partyState, autoplay),
+                            shuffleEnabled = settings.shuffle,
+                            autoplayEnabled = DesktopAutoplay.enabled(partyState, settings.autoplay),
                             signedIn = youtubeSignedIn,
                             accountName = activeAccount?.name?.takeIf(String::isNotBlank),
                             likeStatus = when (current.videoId) {
@@ -3259,18 +3207,18 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 val duration = playbackEngine.state.value.durationMs
                                 if (duration > 0) seekPlayer((fraction * duration).toLong())
                             },
-                            onToggleShuffle = { setShuffle(!shuffle) },
+                            onToggleShuffle = { setShuffle(!settings.shuffle) },
                             // The phone's order: off, all, one.
                             onCycleRepeat = {
-                                repeatMode = when (repeatMode) {
+                                settings.repeatMode = when (settings.repeatMode) {
                                     DesktopRepeatMode.OFF -> DesktopRepeatMode.ALL
                                     DesktopRepeatMode.ALL -> DesktopRepeatMode.ONE
                                     DesktopRepeatMode.ONE -> DesktopRepeatMode.OFF
                                 }
-                                persistence.saveString("repeat_mode", repeatMode.name)
+                                persistence.saveString("repeat_mode", settings.repeatMode.name)
                             },
                             onToggleAutoplay = {
-                                setAutoplay(!DesktopAutoplay.enabled(DesktopListenTogether.state.value, autoplay))
+                                setAutoplay(!DesktopAutoplay.enabled(DesktopListenTogether.state.value, settings.autoplay))
                             },
                             onJumpTo = ::playQueueIndex,
                             onRemoveFromQueue = ::removeFromQueue,
@@ -3498,7 +3446,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                     if (overlays.listenTogether) {
                         DesktopListenTogetherDialog(
-                            autoplayEnabled = autoplay,
+                            autoplayEnabled = settings.autoplay,
                             onDismiss = { overlays.listenTogether = false },
                         )
                     }
@@ -3562,47 +3510,47 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                     query = settingsQuery,
                                     onQueryChange = { settingsQuery = it },
                                     listState = settingsListState,
-                                    autoplay = autoplay,
+                                    autoplay = settings.autoplay,
                                     onAutoplayChange = ::setAutoplay,
-                                    automix = automix,
+                                    automix = settings.automix,
                                     onAutomixChange = {
-                                        automix = it
+                                        settings.automix = it
                                         persistence.saveBoolean("automix", it)
                                     },
-                                    automixPerformance = automixPerformance,
+                                    automixPerformance = settings.automixPerformance,
                                     onAutomixPerformanceChange = {
-                                        automixPerformance = it
+                                        settings.automixPerformance = it
                                         persistence.saveString("automix_performance", it.name)
                                     },
-                                    shuffle = shuffle,
+                                    shuffle = settings.shuffle,
                                     onShuffleChange = ::setShuffle,
-                                    repeatMode = repeatMode,
+                                    repeatMode = settings.repeatMode,
                                     onRepeatModeChange = {
-                                        repeatMode = it
+                                        settings.repeatMode = it
                                         persistence.saveString("repeat_mode", it.name)
                                     },
-                                    playbackSpeed = playbackSpeed,
+                                    playbackSpeed = settings.playbackSpeed,
                                     onPlaybackSpeedChange = {
-                                        playbackSpeed = it
+                                        settings.playbackSpeed = it
                                         persistence.saveString("playback_speed", it.toString())
                                     },
-                                    crossfadeSeconds = crossfadeSeconds,
+                                    crossfadeSeconds = settings.crossfadeSeconds,
                                     onCrossfadeSecondsChange = {
-                                        crossfadeSeconds = it
+                                        settings.crossfadeSeconds = it
                                         persistence.saveString("crossfade_seconds", it.toString())
                                     },
-                                    animatedCanvas = animatedCanvas,
-                                    showNerdStats = showNerdStats,
-                                    fullBleedArtwork = fullBleedArtwork,
+                                    animatedCanvas = settings.animatedCanvas,
+                                    showNerdStats = settings.showNerdStats,
+                                    fullBleedArtwork = settings.fullBleedArtwork,
                                     onAnimatedCanvasChange = {
-                                        animatedCanvas = it
+                                        settings.animatedCanvas = it
                                         persistence.saveBoolean("animated_canvas", it)
                                     },
-                                    spotifyCanvasReady = spotifyCanvasCookie.isNotBlank(),
+                                    spotifyCanvasReady = settings.spotifyCanvasCookie.isNotBlank(),
                                     onOpenSpotifyCanvasSetup = { overlays.settingsPage = DesktopSettingsPage.SPOTIFY_CANVAS },
-                                    dontRepeatSuggestions = dontRepeatSuggestions,
+                                    dontRepeatSuggestions = settings.dontRepeatSuggestions,
                                     onDontRepeatSuggestionsChange = {
-                                        dontRepeatSuggestions = it
+                                        settings.dontRepeatSuggestions = it
                                         persistence.saveBoolean(KEY_DONT_REPEAT_SUGGESTIONS, it)
                                     },
                                     onChooseLocalMusicFolder = { onChosen ->
@@ -3613,83 +3561,83 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                         }
                                     },
                                     onLocalMusicFolderChanged = { localMusicRevision++ },
-                                    filterNonMusicAudio = filterNonMusicAudio,
+                                    filterNonMusicAudio = settings.filterNonMusicAudio,
                                     onFilterNonMusicAudioChange = {
-                                        filterNonMusicAudio = it
+                                        settings.filterNonMusicAudio = it
                                         persistence.saveBoolean(DesktopLocalMusic.KEY_FILTER_NON_MUSIC_AUDIO, it)
                                         // The scan's result changes with it, so it has to be taken again.
                                         localMusicRevision++
                                     },
-                                    syncedLyrics = syncedLyrics,
+                                    syncedLyrics = settings.syncedLyrics,
                                     onSyncedLyricsChange = {
-                                        syncedLyrics = it
+                                        settings.syncedLyrics = it
                                         persistence.saveBoolean(DesktopLyricsClient.KEY_SYNCED_LYRICS, it)
                                     },
-                                    lyricsBlur = lyricsBlur,
+                                    lyricsBlur = settings.lyricsBlur,
                                     onLyricsBlurChange = {
-                                        lyricsBlur = it
+                                        settings.lyricsBlur = it
                                         persistence.saveBoolean(DesktopLyricsClient.KEY_LYRICS_BLUR, it)
                                     },
-                                    enabledLyricsSources = DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn),
+                                    enabledLyricsSources = DesktopLyricsClient.enabledSources(settings.lyricsOrder, settings.lyricsOn),
                                     onOpenLyricsSources = { overlays.settingsPage = DesktopSettingsPage.LYRICS_SOURCES },
                                     onOpenTranslationLanguage = { overlays.settingsPage = DesktopSettingsPage.TRANSLATION_LANGUAGE },
                                     onOpenEqualizer = { overlays.settingsPage = DesktopSettingsPage.EQUALIZER },
                                     onOpenAudioOutput = { overlays.settingsPage = DesktopSettingsPage.AUDIO_OUTPUT },
                                     onOpenListenTogether = { overlays.settingsPage = DesktopSettingsPage.LISTEN_TOGETHER },
                                     onShowNerdStatsChange = {
-                                        showNerdStats = it
+                                        settings.showNerdStats = it
                                         persistence.saveBoolean("show_nerd_stats", it)
                                     },
                                     onFullBleedArtworkChange = {
-                                        fullBleedArtwork = it
+                                        settings.fullBleedArtwork = it
                                         persistence.saveBoolean("full_bleed_artwork", it)
                                     },
-                                    legacyMeshGradient = legacyMeshGradient,
+                                    legacyMeshGradient = settings.legacyMeshGradient,
                                     onLegacyMeshGradientChange = {
-                                        legacyMeshGradient = it
+                                        settings.legacyMeshGradient = it
                                         persistence.saveBoolean("legacy_mesh_gradient", it)
                                     },
-                                    spatialAudio = spatialAudio,
+                                    spatialAudio = settings.spatialAudio,
                                     onSpatialAudioChange = {
-                                        spatialAudio = it
+                                        settings.spatialAudio = it
                                         persistence.saveBoolean("spatial_audio", it)
                                     },
-                                    dolbyAtmos = dolbyAtmos,
+                                    dolbyAtmos = settings.dolbyAtmos,
                                     onDolbyAtmosChange = {
-                                        dolbyAtmos = it
+                                        settings.dolbyAtmos = it
                                         DesktopAddonSettings.dolbyAtmosEnabled = it
                                         persistence.saveBoolean("dolby_atmos", it)
                                         DesktopAddonSource.clearCompletedTrackCalls()
                                     },
-                                    skipSilence = skipSilence,
+                                    skipSilence = settings.skipSilence,
                                     onSkipSilenceChange = {
-                                        skipSilence = it
+                                        settings.skipSilence = it
                                         persistence.saveBoolean("skip_silence", it)
                                     },
-                                    outputPrecision = outputPrecision,
+                                    outputPrecision = settings.outputPrecision,
                                     onOutputPrecisionChange = {
-                                        outputPrecision = it
+                                        settings.outputPrecision = it
                                         persistence.saveString("output_precision", it)
                                     },
                                     outputSummary = playbackEngine.outputSummary(),
-                                    trayIconEnabled = trayIconEnabled,
-                                    closeToTray = closeToTray,
+                                    trayIconEnabled = settings.trayIconEnabled,
+                                    closeToTray = settings.closeToTray,
                                     onCloseToTrayChange = {
-                                        closeToTray = it
+                                        settings.closeToTray = it
                                         persistence.saveBoolean("close_to_tray", it)
                                     },
                                     onTrayIconChange = {
-                                        trayIconEnabled = it
+                                        settings.trayIconEnabled = it
                                         persistence.saveBoolean("tray_icon", it)
                                     },
-                                    downloadQuality = downloadQuality,
+                                    downloadQuality = settings.downloadQuality,
                                     onDownloadQualityChange = {
-                                        downloadQuality = it
+                                        settings.downloadQuality = it
                                         persistence.saveString("download_quality", it)
                                     },
-                                    audioQuality = audioQuality,
+                                    audioQuality = settings.audioQuality,
                                     onAudioQualityChange = {
-                                        audioQuality = it
+                                        settings.audioQuality = it
                                         persistence.saveAudioQuality(it)
                                     },
                                     sleepTimerMinutes = sleepTimerMinutes,
@@ -3760,31 +3708,31 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 DesktopSettingsPage.EQUALIZER -> DesktopEqualizerDialog(onDismiss = ::goBack)
                                 DesktopSettingsPage.AUDIO_OUTPUT -> DesktopAudioOutputDialog(onDismiss = ::goBack)
                                 DesktopSettingsPage.LISTEN_TOGETHER -> DesktopListenTogetherDialog(
-                                    autoplayEnabled = autoplay,
+                                    autoplayEnabled = settings.autoplay,
                                     onDismiss = ::goBack,
                                 )
                                 DesktopSettingsPage.LYRICS_SOURCES -> DesktopLyricsSourcesDialog(
-                                    order = lyricsOrder,
-                                    enabled = lyricsOn,
-                                    prioritizeSyllables = prioritizeSyllables,
+                                    order = settings.lyricsOrder,
+                                    enabled = settings.lyricsOn,
+                                    prioritizeSyllables = settings.prioritizeSyllables,
                                     onReorder = {
-                                        lyricsOrder = it
+                                        settings.lyricsOrder = it
                                         persistence.saveLyricsSourceOrder(it)
                                     },
                                     onToggle = { name ->
-                                        lyricsOn = if (name in lyricsOn) lyricsOn - name else lyricsOn + name
-                                        persistence.saveLyricsEnabledSources(lyricsOn)
+                                        settings.lyricsOn = if (name in settings.lyricsOn) settings.lyricsOn - name else settings.lyricsOn + name
+                                        persistence.saveLyricsEnabledSources(settings.lyricsOn)
                                     },
                                     onPrioritizeSyllables = {
-                                        prioritizeSyllables = it
+                                        settings.prioritizeSyllables = it
                                         persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, it)
                                     },
                                     onReset = {
-                                        lyricsOrder = DesktopLyricsClient.sources.map { it.name }
-                                        lyricsOn = lyricsOrder.toSet()
-                                        prioritizeSyllables = false
-                                        persistence.saveLyricsSourceOrder(lyricsOrder)
-                                        persistence.saveLyricsEnabledSources(lyricsOn)
+                                        settings.lyricsOrder = DesktopLyricsClient.sources.map { it.name }
+                                        settings.lyricsOn = settings.lyricsOrder.toSet()
+                                        settings.prioritizeSyllables = false
+                                        persistence.saveLyricsSourceOrder(settings.lyricsOrder)
+                                        persistence.saveLyricsEnabledSources(settings.lyricsOn)
                                         persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, false)
                                     },
                                     onDismiss = ::goBack,
@@ -3792,7 +3740,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 DesktopSettingsPage.TRANSLATION_LANGUAGE -> DesktopTranslationLanguageDialog(onDismiss = ::goBack)
                                 DesktopSettingsPage.SPOTIFY_CANVAS -> DesktopSpotifyCanvasDialog(
                                     onDismiss = ::goBack,
-                                    onSaved = { spotifyCanvasCookie = it },
+                                    onSaved = { settings.spotifyCanvasCookie = it },
                                 )
                                 DesktopSettingsPage.INTEGRATIONS -> DesktopIntegrationsDialog(
                                     song = playback.song,
@@ -3864,7 +3812,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 playSongs(songs.shuffled(), 0, openedCollection?.let { collectionSource(it) })
                             },
                             onDownloadAll = ::downloadAll,
-                            animatedCanvas = animatedCanvas,
+                            animatedCanvas = settings.animatedCanvas,
                             onToggleLike = { song ->
                                 toggleLike(song)
                             },
