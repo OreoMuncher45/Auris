@@ -71,7 +71,6 @@ internal fun NowPlayingSettings(
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
     val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
-    val perfCpu by com.music.bitchord.perf.PerfMonitor.cpuPercent.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
     val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
@@ -254,6 +253,9 @@ internal fun NowPlayingSettings(
             )
         }
         if (perfMonitor) {
+            // Collected only while the monitor is on: with it off the reading
+            // is a constant zero and the row it feeds is not shown.
+            val perfCpu by com.music.bitchord.perf.PerfMonitor.cpuPercent.collectAsStateWithLifecycle()
             row(
                 stringResource(R.string.perf_save_log),
                 "performance",
