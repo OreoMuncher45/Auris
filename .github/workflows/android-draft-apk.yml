@@ -178,9 +178,13 @@ on:
             DAC has a control of its own — the absolute level the output ended up at.
           
           Spotify
-          - One algorithm, whichever catalogue you browse. The homepage, Flow, Autoplay
-            and "more like this" are YouTube Music's, and the switch that used to pick
-            a provider's algorithm now picks only the catalogue the search opens on.
+          - Spotify's own home is back. The catalogue switch decides where the
+            homepage and the search come from: switch to Spotify and the page is
+            Spotify's own feed, chips and all; switch back and it is YouTube Music's.
+          - One algorithm, whichever catalogue you browse. Flow, Autoplay and
+            "more like this" are YouTube Music's, always. The switch that used to
+            pick a provider's algorithm now picks only the catalogue the homepage
+            and the search come from.
           - Spotify still knows you: your top tracks and what you played there lately
             are read and matched to something playable, and they seed the mix whichever
             catalogue is chosen — signed in.
@@ -210,6 +214,10 @@ on:
           - The playlists shelf can be read as a list, and Spotify comes in from
             Settings.
           - The next download is prepared ahead of the next track.
+          - Songs you listen to are downloaded by themselves now. It is a setting,
+            and it is on by default.
+          - A download you delete by hand is never fetched again — not by the
+            automatic download, and not by the playlist sync.
           
           First run
           - A first-run flow, with a row to see it again, and the real Spotify mark in

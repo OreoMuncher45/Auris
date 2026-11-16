@@ -644,3 +644,11 @@ compose.desktop {
     }
 
 }
+
+/*
+ * The compiled-class checks (no constructor wider than dex can call, no method
+ * over 32,000 bytes — the second is the one that matters on the desktop JVM).
+ * See gradle/class-checks.gradle.kts and the note in app/build.gradle.kts.
+ */
+extra["classChecks"] = mapOf("compileKotlin" to "classes/kotlin/main")
+apply(from = rootProject.file("gradle/class-checks.gradle.kts"))
