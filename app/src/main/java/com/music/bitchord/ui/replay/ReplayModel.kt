@@ -33,8 +33,14 @@ import java.util.Locale
  * session in exchange for saving a hundred milliseconds nobody would notice.
  *
  * The *period* does survive, because it is a choice rather than a result.
+ *
+ * A data class because [rememberReplayState] builds a new one on every call:
+ * compared by its fields, the value the app root hands its pages is equal to
+ * the last one until the period, the summary, the loading flag or the
+ * "member since" actually changes, and a page holding it can be skipped.
+ * As a plain class every call was a new, unequal value.
  */
-class ReplayState(
+data class ReplayState(
     val period: ReplayPeriod,
     val summary: ReplaySummary?,
     val loading: Boolean,

@@ -134,8 +134,8 @@ internal fun PlaybackSettings(
         }
         // The catalogue, next to the other decisions about how the app
         // finds music for the listener. It sits here rather than with the
-        // account rows because it is a choice about where the search
-        // looks, not about a service connection.
+        // account rows because it is a choice about where the page and
+        // the search come from, not about a service connection.
         val homeProviderTitle = stringResource(R.string.home_provider)
         row(homeProviderTitle, "provider", "spotify", "youtube", "search", "library") {
             SettingsRow(
@@ -300,16 +300,16 @@ private fun HomeProvider.localizedLabel(): String = stringResource(
 )
 
 /**
- * Catalogue picker: which service's catalogue the search opens on.
+ * Catalogue picker: which service's catalogue the homepage and the search
+ * come from.
  *
  * Two rows now and room for more, which is why this is a list rather than a
  * switch: a third catalogue is a row and an enum value, not a redesign.
  *
  * The note at the top says the app restarts, and it is not a warning to be
- * scrolled past — it is the mechanism. The search's own state and the pages
- * it opens belong to the catalogue they were read from, so the change is
- * applied by starting over rather than by swapping a feed underneath a live
- * session.
+ * scrolled past — it is the mechanism. The page and the search belong to the
+ * catalogue they were read from, so the change is applied by starting over
+ * rather than by swapping a feed underneath a live session.
  */
 @Composable
 internal fun HomeProviderSheet(
