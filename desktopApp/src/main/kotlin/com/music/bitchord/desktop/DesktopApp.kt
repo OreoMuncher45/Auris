@@ -3487,258 +3487,31 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     when {
                         // Settings and its pages stand in for the page, held to the width the
                         // Settings card had. Its prompts are still cards, over the page.
-                        overlays.settingsPage != null -> Box(
-                            Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
-                        ) {
-                            CompositionLocalProvider(LocalDesktopPanelIsPage provides true) {
-                            when (overlays.settingsPage!!) {
-                                DesktopSettingsPage.MAIN -> DesktopSettingsScreen(
-                                    query = settingsQuery,
-                                    onQueryChange = { settingsQuery = it },
-                                    listState = settingsListState,
-                                    autoplay = settings.autoplay,
-                                    onAutoplayChange = ::setAutoplay,
-                                    automix = settings.automix,
-                                    onAutomixChange = {
-                                        settings.automix = it
-                                        persistence.saveBoolean("automix", it)
-                                    },
-                                    automixPerformance = settings.automixPerformance,
-                                    onAutomixPerformanceChange = {
-                                        settings.automixPerformance = it
-                                        persistence.saveString("automix_performance", it.name)
-                                    },
-                                    shuffle = settings.shuffle,
-                                    onShuffleChange = ::setShuffle,
-                                    repeatMode = settings.repeatMode,
-                                    onRepeatModeChange = {
-                                        settings.repeatMode = it
-                                        persistence.saveString("repeat_mode", it.name)
-                                    },
-                                    playbackSpeed = settings.playbackSpeed,
-                                    onPlaybackSpeedChange = {
-                                        settings.playbackSpeed = it
-                                        persistence.saveString("playback_speed", it.toString())
-                                    },
-                                    crossfadeSeconds = settings.crossfadeSeconds,
-                                    onCrossfadeSecondsChange = {
-                                        settings.crossfadeSeconds = it
-                                        persistence.saveString("crossfade_seconds", it.toString())
-                                    },
-                                    animatedCanvas = settings.animatedCanvas,
-                                    showNerdStats = settings.showNerdStats,
-                                    fullBleedArtwork = settings.fullBleedArtwork,
-                                    onAnimatedCanvasChange = {
-                                        settings.animatedCanvas = it
-                                        persistence.saveBoolean("animated_canvas", it)
-                                    },
-                                    spotifyCanvasReady = settings.spotifyCanvasCookie.isNotBlank(),
-                                    onOpenSpotifyCanvasSetup = { overlays.settingsPage = DesktopSettingsPage.SPOTIFY_CANVAS },
-                                    dontRepeatSuggestions = settings.dontRepeatSuggestions,
-                                    onDontRepeatSuggestionsChange = {
-                                        settings.dontRepeatSuggestions = it
-                                        persistence.saveBoolean(KEY_DONT_REPEAT_SUGGESTIONS, it)
-                                    },
-                                    onChooseLocalMusicFolder = { onChosen ->
-                                        DesktopLocalMusic.chooseFolder()?.let { chosen ->
-                                            DesktopLocalMusic.setFolder(chosen)
-                                            onChosen()
-                                            localMusicRevision++
-                                        }
-                                    },
-                                    onLocalMusicFolderChanged = { localMusicRevision++ },
-                                    filterNonMusicAudio = settings.filterNonMusicAudio,
-                                    onFilterNonMusicAudioChange = {
-                                        settings.filterNonMusicAudio = it
-                                        persistence.saveBoolean(DesktopLocalMusic.KEY_FILTER_NON_MUSIC_AUDIO, it)
-                                        // The scan's result changes with it, so it has to be taken again.
-                                        localMusicRevision++
-                                    },
-                                    syncedLyrics = settings.syncedLyrics,
-                                    onSyncedLyricsChange = {
-                                        settings.syncedLyrics = it
-                                        persistence.saveBoolean(DesktopLyricsClient.KEY_SYNCED_LYRICS, it)
-                                    },
-                                    lyricsBlur = settings.lyricsBlur,
-                                    onLyricsBlurChange = {
-                                        settings.lyricsBlur = it
-                                        persistence.saveBoolean(DesktopLyricsClient.KEY_LYRICS_BLUR, it)
-                                    },
-                                    enabledLyricsSources = DesktopLyricsClient.enabledSources(settings.lyricsOrder, settings.lyricsOn),
-                                    onOpenLyricsSources = { overlays.settingsPage = DesktopSettingsPage.LYRICS_SOURCES },
-                                    onOpenTranslationLanguage = { overlays.settingsPage = DesktopSettingsPage.TRANSLATION_LANGUAGE },
-                                    onOpenEqualizer = { overlays.settingsPage = DesktopSettingsPage.EQUALIZER },
-                                    onOpenAudioOutput = { overlays.settingsPage = DesktopSettingsPage.AUDIO_OUTPUT },
-                                    onOpenListenTogether = { overlays.settingsPage = DesktopSettingsPage.LISTEN_TOGETHER },
-                                    onShowNerdStatsChange = {
-                                        settings.showNerdStats = it
-                                        persistence.saveBoolean("show_nerd_stats", it)
-                                    },
-                                    onFullBleedArtworkChange = {
-                                        settings.fullBleedArtwork = it
-                                        persistence.saveBoolean("full_bleed_artwork", it)
-                                    },
-                                    legacyMeshGradient = settings.legacyMeshGradient,
-                                    onLegacyMeshGradientChange = {
-                                        settings.legacyMeshGradient = it
-                                        persistence.saveBoolean("legacy_mesh_gradient", it)
-                                    },
-                                    spatialAudio = settings.spatialAudio,
-                                    onSpatialAudioChange = {
-                                        settings.spatialAudio = it
-                                        persistence.saveBoolean("spatial_audio", it)
-                                    },
-                                    dolbyAtmos = settings.dolbyAtmos,
-                                    onDolbyAtmosChange = {
-                                        settings.dolbyAtmos = it
-                                        DesktopAddonSettings.dolbyAtmosEnabled = it
-                                        persistence.saveBoolean("dolby_atmos", it)
-                                        DesktopAddonSource.clearCompletedTrackCalls()
-                                    },
-                                    skipSilence = settings.skipSilence,
-                                    onSkipSilenceChange = {
-                                        settings.skipSilence = it
-                                        persistence.saveBoolean("skip_silence", it)
-                                    },
-                                    outputPrecision = settings.outputPrecision,
-                                    onOutputPrecisionChange = {
-                                        settings.outputPrecision = it
-                                        persistence.saveString("output_precision", it)
-                                    },
-                                    outputSummary = playbackEngine.outputSummary(),
-                                    trayIconEnabled = settings.trayIconEnabled,
-                                    closeToTray = settings.closeToTray,
-                                    onCloseToTrayChange = {
-                                        settings.closeToTray = it
-                                        persistence.saveBoolean("close_to_tray", it)
-                                    },
-                                    onTrayIconChange = {
-                                        settings.trayIconEnabled = it
-                                        persistence.saveBoolean("tray_icon", it)
-                                    },
-                                    downloadQuality = settings.downloadQuality,
-                                    onDownloadQualityChange = {
-                                        settings.downloadQuality = it
-                                        persistence.saveString("download_quality", it)
-                                    },
-                                    audioQuality = settings.audioQuality,
-                                    onAudioQualityChange = {
-                                        settings.audioQuality = it
-                                        persistence.saveAudioQuality(it)
-                                    },
-                                    sleepTimerMinutes = sleepTimerMinutes,
-                                    sleepAfterTrack = sleepAfterTrack,
-                                    sleepRemainingMs = sleepRemainingMs,
-                                    onSleepTimerCycle = ::cycleSleepTimer,
-                                    sourceConfigs = sourceConfigs,
-                                    sourceStatus = sourceStatus,
-                                    onSourceEnabledChange = { config, enabled ->
-                                        val next = sourceConfigs.map {
-                                            if (it.id == config.id && it.kind != DesktopSourceKind.YOUTUBE) {
-                                                it.copy(enabled = enabled)
-                                            } else {
-                                                it
-                                            }
-                                        }
-                                        persistence.saveSourceConfigs(next)
-                                        sourceConfigs = persistence.sourceConfigs()
-                                        DesktopModuleSource.reload()
-                                    },
-                                    onSaveSource = { saved ->
-                                        // Replaced by id, so any number of addons can be configured.
-                                        val without = sourceConfigs.filterNot {
-                                            it.id == saved.id ||
-                                                (saved.kind == DesktopSourceKind.CUSTOM_MODULE &&
-                                                    it.kind == DesktopSourceKind.CUSTOM_MODULE)
-                                        }
-                                        persistence.saveSourceConfigs((without + saved).inSourceOrder())
-                                        sourceConfigs = persistence.sourceConfigs()
-                                        // Whatever was held for this entry describes a server that may no
-                                        // longer be the one selected.
-                                        DesktopAddonSource.forget(saved.id)
-                                        DesktopModuleSource.reload()
-                                    },
-                                    onRemoveSource = { config ->
-                                        if (config.isUserAdded) {
-                                            persistence.saveSourceConfigs(sourceConfigs.filterNot { it.id == config.id })
-                                            sourceConfigs = persistence.sourceConfigs()
-                                            DesktopAddonSource.forget(config.id)
-                                            DesktopModuleSource.reload()
-                                        }
-                                    },
-                                    onMoveSource = { config, delta ->
-                                        val next = moveUserSource(sourceConfigs, config.id, delta)
-                                        persistence.saveSourceConfigs(next)
-                                        sourceConfigs = persistence.sourceConfigs()
-                                    },
-                                    onTestSource = { candidate ->
-                                        sourceStatus = sourceStatus + (candidate.id to "Checking source…")
-                                        scope.launch {
-                                            val health = if (candidate.kind == DesktopSourceKind.ADDON) {
-                                                DesktopAddonSource.health(candidate)
-                                            } else {
-                                                DesktopModuleSource.health(candidate)
-                                            }
-                                            health.fold(
-                                                onSuccess = { sourceStatus = sourceStatus + (candidate.id to it) },
-                                                onFailure = {
-                                                    sourceStatus = sourceStatus +
-                                                        (candidate.id to (it.message ?: "Source unavailable"))
-                                                },
-                                            )
-                                        }
-                                    },
-                                    onOpenIntegrations = { overlays.settingsPage = DesktopSettingsPage.INTEGRATIONS },
-                                    onOpenLicenses = { overlays.settingsPage = DesktopSettingsPage.LICENSES },
-                                )
-                                DesktopSettingsPage.EQUALIZER -> DesktopEqualizerDialog(onDismiss = ::goBack)
-                                DesktopSettingsPage.AUDIO_OUTPUT -> DesktopAudioOutputDialog(onDismiss = ::goBack)
-                                DesktopSettingsPage.LISTEN_TOGETHER -> DesktopListenTogetherDialog(
-                                    autoplayEnabled = settings.autoplay,
-                                    onDismiss = ::goBack,
-                                )
-                                DesktopSettingsPage.LYRICS_SOURCES -> DesktopLyricsSourcesDialog(
-                                    order = settings.lyricsOrder,
-                                    enabled = settings.lyricsOn,
-                                    prioritizeSyllables = settings.prioritizeSyllables,
-                                    onReorder = {
-                                        settings.lyricsOrder = it
-                                        persistence.saveLyricsSourceOrder(it)
-                                    },
-                                    onToggle = { name ->
-                                        settings.lyricsOn = if (name in settings.lyricsOn) settings.lyricsOn - name else settings.lyricsOn + name
-                                        persistence.saveLyricsEnabledSources(settings.lyricsOn)
-                                    },
-                                    onPrioritizeSyllables = {
-                                        settings.prioritizeSyllables = it
-                                        persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, it)
-                                    },
-                                    onReset = {
-                                        settings.lyricsOrder = DesktopLyricsClient.sources.map { it.name }
-                                        settings.lyricsOn = settings.lyricsOrder.toSet()
-                                        settings.prioritizeSyllables = false
-                                        persistence.saveLyricsSourceOrder(settings.lyricsOrder)
-                                        persistence.saveLyricsEnabledSources(settings.lyricsOn)
-                                        persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, false)
-                                    },
-                                    onDismiss = ::goBack,
-                                )
-                                DesktopSettingsPage.TRANSLATION_LANGUAGE -> DesktopTranslationLanguageDialog(onDismiss = ::goBack)
-                                DesktopSettingsPage.SPOTIFY_CANVAS -> DesktopSpotifyCanvasDialog(
-                                    onDismiss = ::goBack,
-                                    onSaved = { settings.spotifyCanvasCookie = it },
-                                )
-                                DesktopSettingsPage.INTEGRATIONS -> DesktopIntegrationsDialog(
-                                    song = playback.song,
-                                    onOpenLastfm = { overlays.lastfmLogin = true },
-                                    onOpenListenBrainz = { overlays.listenBrainzToken = true },
-                                    onOpenDiscordToken = { overlays.discordToken = true },
-                                    onDismiss = ::goBack,
-                                )
-                                DesktopSettingsPage.LICENSES -> DesktopLicensesPage(onDismiss = ::goBack)
-                            }
-                            }
-                        }
+                        overlays.settingsPage != null -> DesktopSettingsHost(
+                            page = overlays.settingsPage!!,
+                            overlays = overlays,
+                            settings = settings,
+                            persistence = persistence,
+                            scope = scope,
+                            contentPadding = contentPadding,
+                            query = settingsQuery,
+                            onQueryChange = { settingsQuery = it },
+                            listState = settingsListState,
+                            song = playback.song,
+                            outputSummary = playbackEngine.outputSummary(),
+                            sleepTimerMinutes = sleepTimerMinutes,
+                            sleepAfterTrack = sleepAfterTrack,
+                            sleepRemainingMs = sleepRemainingMs,
+                            sourceConfigs = sourceConfigs,
+                            sourceStatus = sourceStatus,
+                            onSourceConfigsChange = { sourceConfigs = it },
+                            onSourceStatus = { id, status -> sourceStatus = sourceStatus + (id to status) },
+                            onAutoplayChange = ::setAutoplay,
+                            onShuffleChange = ::setShuffle,
+                            onSleepTimerCycle = ::cycleSleepTimer,
+                            onLocalMusicChanged = { localMusicRevision++ },
+                            onBack = ::goBack,
+                        )
                         overlays.replay -> DesktopReplayPage(
                             summary = replaySummary,
                             period = replayPeriod,
@@ -5475,7 +5248,7 @@ private enum class DesktopSettingsSection {
  * so they are where they were when back returns from one of the pages it opens.
  */
 @Composable
-private fun DesktopSettingsScreen(
+internal fun DesktopSettingsScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     listState: LazyListState,
@@ -6229,7 +6002,7 @@ private fun DesktopSettingsFooter(onLicenses: () -> Unit) {
 
 /** Everything this build is assembled from, and the terms each part came under. A page of Settings. */
 @Composable
-private fun DesktopLicensesPage(onDismiss: () -> Unit) {
+internal fun DesktopLicensesPage(onDismiss: () -> Unit) {
     DesktopSettingsPageFrame {
         Text(
             DesktopStrings["d_third_party_licenses", "Third-party licenses"],
