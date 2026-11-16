@@ -39,7 +39,6 @@ internal fun AdvancedSettings(
                 },
             )
         }
-        RowDivider()
         val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
         row(showNerdStatsTitle, "debug", "bitrate", "codec") {
             SettingsRow(
