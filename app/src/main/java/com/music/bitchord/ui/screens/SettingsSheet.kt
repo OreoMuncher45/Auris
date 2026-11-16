@@ -396,16 +396,20 @@ fun SettingsScreen(
                 search = search,
             )
         }
-        // Read after every group above has had its turn at the query, which is
-        // what makes this an accurate "nothing here" rather than a guess. Not
-        // on the index: nothing has been asked there, so nothing has missed.
-        if (!search.anyMatch && (openCategory != null || searchActive)) {
-            MessageState(stringResource(R.string.settings_search_empty, searchQuery))
-        }
         if (shows(SettingsCategory.SUPPORT)) {
             SupportSettings(
                 search = search,
             )
+        }
+        // Only for a search that found nothing. Without a query nothing has
+        // been searched for, so nothing has missed — even on a page such as
+        // Auris Pass, which has no searchable rows at all.
+        //
+        // Read after every group, Support included, so the answer covers all
+        // of them. When it shows, no group drew a row, so it is the last thing
+        // on the page.
+        if (search.foundNothing) {
+            MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
@@ -792,6 +796,10 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
  * are composed; the empty state at the foot of the list reads [anyMatch] after
  * every group has had its turn, which is why this is made fresh on each pass
  * rather than remembered.
+ *
+ * [anyMatch] answers only while a query is typed. With a blank one it is true
+ * once any group has drawn a row, and still false on a page that draws none,
+ * such as Auris Pass, so the empty state asks [foundNothing] instead.
  */
 internal class SettingsSearch(query: String) {
     // Trimmed, because a trailing space is a typo rather than a search for
@@ -808,6 +816,13 @@ internal class SettingsSearch(query: String) {
         if (hit) anyMatch = true
         return hit
     }
+
+    /**
+     * Whether a typed query found nothing: what the empty state asks. False
+     * for a blank query, however few rows the page drew.
+     */
+    val foundNothing: Boolean
+        get() = needle.isNotEmpty() && !anyMatch
 }
 
 /** Collects the rows of one group that survived the search. */
