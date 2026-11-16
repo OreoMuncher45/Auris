@@ -7212,7 +7212,7 @@ class PlaybackService : MediaLibraryService() {
         val enabled = configs.filter { it.enabled }.mapTo(mutableSetOf()) { it.id }
         val youtubeIds = configs.filter { it.kind == SourceKind.YOUTUBE }.mapTo(mutableSetOf()) { it.id }
         val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep, youtubeIds)
-        StreamChoice.handOver(stale, AudioCache::dropEntriesOf, ::playheadWindow)
+        StreamChoice.handOver(stale, AudioCache::dropEntriesOf, ::playheadWindow, AudioCache.writerGate)
     }
 
     /**

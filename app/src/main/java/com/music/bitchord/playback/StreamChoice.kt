@@ -229,16 +229,55 @@ object StreamChoice {
         stale: Map<String, Boolean>,
         drop: suspend (ids: Set<String>, youtube: Boolean) -> Set<String>,
         window: () -> Set<String>,
+        writers: WriterGate = WriterGate.NONE,
     ): Set<String> {
         if (stale.isEmpty()) return emptySet()
+        // A track something is still writing is left alone entirely: removing
+        // its committed bytes would not stop the writer committing more.
+        val tokens = stale.keys.mapNotNull { id -> writers.token(id)?.let { id to it } }.toMap()
         // The pins as they stand now. Only these are released, so a track that
         // is pinned afresh while the drop runs keeps its new pin.
-        val seen = stale.keys.mapNotNull { id -> chosen[id]?.let { id to it } }.toMap()
-        val dropped = stale.entries.groupBy({ it.value }, { it.key })
+        val seen = tokens.keys.mapNotNull { id -> chosen[id]?.let { id to it } }.toMap()
+        val dropped = stale.filterKeys { it in tokens }.entries.groupBy({ it.value }, { it.key })
             .flatMap { (youtube, ids) -> drop(ids.toSet(), youtube) }
             .toSet()
-        return (dropped - window())
-            .filterTo(mutableSetOf()) { id -> seen[id]?.let { chosen.remove(id, it) } == true }
+        return (dropped - window()).filterTo(mutableSetOf()) { id ->
+            val pin = seen[id] ?: return@filterTo false
+            writers.releaseIf(id, tokens.getValue(id)) { chosen.remove(id, pin) }
+        }
+    }
+
+    /**
+     * What [handOver] asks before it touches a track's cache entry and again
+     * before it releases the pin: whether anything is writing that entry.
+     *
+     * Needed because Media3's `SimpleCache.removeResource` neither refuses an
+     * entry that is being written nor stops the writer, so a writer still
+     * running would commit old bytes after the drop. Implemented by
+     * [AudioCache.writerGate], which counts the fetches its cache makes.
+     */
+    interface WriterGate {
+        /**
+         * A token for [videoId]'s writers, or null while one is fetching or
+         * has only just finished (its last span may not be committed yet).
+         */
+        fun token(videoId: String): Long?
+
+        /**
+         * Runs [release] only if no writer for [videoId] has started since
+         * [token] was taken, atomically with writers starting: a writer that
+         * starts after this either sees the pin still in force, which means
+         * this did not run, or finds it gone and resolves afresh.
+         */
+        fun releaseIf(videoId: String, token: Long, release: () -> Boolean): Boolean
+
+        companion object {
+            /** No writers to wait for. */
+            val NONE: WriterGate = object : WriterGate {
+                override fun token(videoId: String): Long = 0L
+                override fun releaseIf(videoId: String, token: Long, release: () -> Boolean) = release()
+            }
+        }
     }
 
     /**
