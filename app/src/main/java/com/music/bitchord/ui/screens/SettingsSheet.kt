@@ -162,14 +162,6 @@ fun SettingsScreen(
         }
     }
 
-
-    // The customisation settings that used to live on their own page, read here
-    // because their rows sit in the Now Playing, Home & library and Appearance
-    // categories now.
-
-    // Read here so the row can say "In a party · ABC123" rather than making
-    // somebody open the screen to find out whether they are still in one.
-
     // Filters the rows below — see [SettingsSearch]. Blank shows everything,
     // exactly as if the field weren't there.
     var searchQuery by remember { mutableStateOf("") }
@@ -260,61 +252,7 @@ fun SettingsScreen(
     // belongs to. The index and each category are different lists, and an
     // offset that belonged to one of them means nothing in another.
     val scrollPage = openCategory?.id ?: SETTINGS_INDEX_PAGE
-    // A fresh scroll state per page, so one page's offset never carries into
-    // another.
-    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
-    // Where this page was left the last time it was closed.
-    val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
-    // Restored once the page has been measured: a scroll state cannot hold an
-    // offset its content has not got yet, so asking for it before the first
-    // layout would land on zero — which is exactly what the page did before
-    // this, every time it was opened.
-    LaunchedEffect(scrollState, scrollPage, searchQuery) {
-        if (restoredOffset <= 0 || searchQuery.isNotBlank()) return@LaunchedEffect
-        snapshotFlow { scrollState.maxValue }.first { it > 0 }
-        scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
-    }
-    // Written out as the listener scrolls, so the place survives the app
-    // being closed rather than only a page change. Debounced, because a drag
-    // produces an offset every frame and none of them is worth a write.
-    //
-    // Not while a search is running: what is on screen then is a different
-    // list, and its top is not a place in the page.
-    LaunchedEffect(scrollState, scrollPage, searchActive) {
-        if (searchActive) return@LaunchedEffect
-        snapshotFlow { scrollState.value }
-            .distinctUntilChanged()
-            .debounce(SCROLL_SAVE_DEBOUNCE_MS)
-            .collect { AppSettings.saveSettingsScrollOffset(scrollPage, it) }
-    }
-    // …and written out again the moment the page is left, so the last drag
-    // before leaving is not lost to the debounce.
-    DisposableEffect(scrollState, scrollPage, searchActive) {
-        onDispose {
-            if (!searchActive) AppSettings.saveSettingsScrollOffset(scrollPage, scrollState.value)
-        }
-    }
-    var isFirstSearchComposition by remember { mutableStateOf(true) }
-    LaunchedEffect(searchQuery, scrollState, scrollPage) {
-        if (isFirstSearchComposition && searchQuery.isEmpty()) {
-            // Skip the initial composition during Activity recreation:
-            // rememberSaveable already restored the scroll position.
-            isFirstSearchComposition = false
-        } else {
-            isFirstSearchComposition = false
-            if (searchQuery.isEmpty()) {
-                // The page's own list is back, so its own place in it applies.
-                scrollState.scrollTo(
-                    AppSettings.settingsScrollOffset(scrollPage)
-                        .coerceAtMost(scrollState.maxValue),
-                )
-            } else {
-                // What is left after a keystroke is a different list, and the
-                // offset the last one was scrolled to means nothing in it.
-                scrollState.scrollTo(0)
-            }
-        }
-    }
+    val scrollState = rememberSettingsScroll(scrollPage, searchQuery)
 
     Column(
         modifier = modifier
@@ -338,19 +276,7 @@ fun SettingsScreen(
         )
 
         if (openCategory == SettingsCategory.PASS) {
-            val savedName = remember(context) { OnboardingState.name(context) }
-            val passName = savedName.ifBlank { account?.name.orEmpty() }
-            Column(
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                AurisPass(name = passName)
-                Text(
-                    text = stringResource(R.string.auris_pass_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            AurisPassHeader(account)
         }
 
         // The pass is also a row of its own in the search, so that typing
@@ -485,31 +411,7 @@ fun SettingsScreen(
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
         if (searchQuery.isBlank() && openCategory == null) {
-            Text(
-                text = buildAnnotatedString {
-                    append("Auris $version  ")
-                    val linkStyles = TextLinkStyles(
-                        style = SpanStyle(
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline,
-                        ),
-                    )
-                    withLink(LinkAnnotation.Url("https://discord.gg/8VnWqcuzqg", linkStyles)) {
-                        append("Discord")
-                    }
-                    append("  ")
-                    withLink(LinkAnnotation.Url("https://auris.shehriyar.ink", linkStyles)) {
-                        append("Website")
-                    }
-                    append("\n~YouTube Music & Listen Together Backend")
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 8.dp),
-            )
+            SettingsColophon(version)
         }
     }
 
@@ -518,6 +420,121 @@ fun SettingsScreen(
         homeShelfTitles = homeShelfTitles,
         importPicker = importPicker,
         batterySettingsLauncher = batterySettingsLauncher,
+    )
+}
+
+
+/**
+ * The scroll state of one settings page, kept per page and restored where
+ * the listener left it.
+ */
+@Composable
+private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): ScrollState {
+    val searchActive = searchQuery.isNotBlank()
+    // A fresh scroll state per page, so one page's offset never carries into
+    // another.
+    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
+    // Where this page was left the last time it was closed.
+    val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
+    // Restored once the page has been measured: a scroll state cannot hold an
+    // offset its content has not got yet, so asking for it before the first
+    // layout would land on zero — which is exactly what the page did before
+    // this, every time it was opened.
+    LaunchedEffect(scrollState, scrollPage, searchQuery) {
+        if (restoredOffset <= 0 || searchQuery.isNotBlank()) return@LaunchedEffect
+        snapshotFlow { scrollState.maxValue }.first { it > 0 }
+        scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
+    }
+    // Written out as the listener scrolls, so the place survives the app
+    // being closed rather than only a page change. Debounced, because a drag
+    // produces an offset every frame and none of them is worth a write.
+    //
+    // Not while a search is running: what is on screen then is a different
+    // list, and its top is not a place in the page.
+    LaunchedEffect(scrollState, scrollPage, searchActive) {
+        if (searchActive) return@LaunchedEffect
+        snapshotFlow { scrollState.value }
+            .distinctUntilChanged()
+            .debounce(SCROLL_SAVE_DEBOUNCE_MS)
+            .collect { AppSettings.saveSettingsScrollOffset(scrollPage, it) }
+    }
+    // …and written out again the moment the page is left, so the last drag
+    // before leaving is not lost to the debounce.
+    DisposableEffect(scrollState, scrollPage, searchActive) {
+        onDispose {
+            if (!searchActive) AppSettings.saveSettingsScrollOffset(scrollPage, scrollState.value)
+        }
+    }
+    var isFirstSearchComposition by remember { mutableStateOf(true) }
+    LaunchedEffect(searchQuery, scrollState, scrollPage) {
+        if (isFirstSearchComposition && searchQuery.isEmpty()) {
+            // Skip the initial composition during Activity recreation:
+            // rememberSaveable already restored the scroll position.
+            isFirstSearchComposition = false
+        } else {
+            isFirstSearchComposition = false
+            if (searchQuery.isEmpty()) {
+                // The page's own list is back, so its own place in it applies.
+                scrollState.scrollTo(
+                    AppSettings.settingsScrollOffset(scrollPage)
+                        .coerceAtMost(scrollState.maxValue),
+                )
+            } else {
+                // What is left after a keystroke is a different list, and the
+                // offset the last one was scrolled to means nothing in it.
+                scrollState.scrollTo(0)
+            }
+        }
+    }
+    return scrollState
+}
+
+/** The Auris Pass page: the card itself, under the name it was made for. */
+@Composable
+private fun AurisPassHeader(account: Account?) {
+    val context = LocalContext.current
+    val savedName = remember(context) { OnboardingState.name(context) }
+    val passName = savedName.ifBlank { account?.name.orEmpty() }
+    Column(
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        AurisPass(name = passName)
+        Text(
+            text = stringResource(R.string.auris_pass_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** "Auris 3.0  Discord  Website": the version line under the index. */
+@Composable
+private fun SettingsColophon(version: String) {
+    Text(
+        text = buildAnnotatedString {
+            append("Auris $version  ")
+            val linkStyles = TextLinkStyles(
+                style = SpanStyle(
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline,
+                ),
+            )
+            withLink(LinkAnnotation.Url("https://discord.gg/8VnWqcuzqg", linkStyles)) {
+                append("Discord")
+            }
+            append("  ")
+            withLink(LinkAnnotation.Url("https://auris.shehriyar.ink", linkStyles)) {
+                append("Website")
+            }
+            append("\n~YouTube Music & Listen Together Backend")
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp, bottom = 8.dp),
     )
 }
 
