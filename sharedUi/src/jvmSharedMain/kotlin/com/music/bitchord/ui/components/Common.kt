@@ -485,10 +485,19 @@ private fun SongRowContent(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
         label = "song row title",
     )
-    val activeBackground by animateColorAsState(
+    // Held as a State and read in [drawBehind], so the fade in and out of the
+    // highlight redraws the row rather than recomposing it once per frame.
+    val activeBackground = animateColorAsState(
         targetValue = if (isCurrent || selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
         label = "song row background",
     )
+    // Built once per artist line rather than on every pass of the row.
+    val subtitle = remember(song.artist, song.downloadFormat) {
+        listOfNotNull(
+            song.artist.takeIf { it.isNotBlank() },
+            song.downloadFormat,
+        ).joinToString(" · ")
+    }
     // A Spotify track still being matched to a YouTube Music song, or one that
     // has no match: shown, but not something a tap or a menu can act on.
     val matching = song.isMatchPending
@@ -497,7 +506,7 @@ private fun SongRowContent(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (unavailable) 0.45f else 1f)
-            .background(activeBackground)
+            .drawBehind { drawRect(activeBackground.value) }
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onMore ?: onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
@@ -557,10 +566,7 @@ private fun SongRowContent(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = listOfNotNull(
-                    song.artist.takeIf { it.isNotBlank() },
-                    song.downloadFormat,
-                ).joinToString(" · "),
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = subtitleColor,
                 maxLines = 1,
