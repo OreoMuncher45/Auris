@@ -28,8 +28,6 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.BlurOff
-import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -40,7 +38,6 @@ import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Forum
-import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
@@ -48,8 +45,6 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.TextFields
-import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Podcasts
@@ -58,8 +53,6 @@ import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.ViewWeek
-import androidx.compose.material.icons.rounded.Vibration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -112,7 +105,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.AurisSlider
-import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.DonationRow
 import com.music.bitchord.ui.components.MessageState
@@ -127,10 +119,7 @@ import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.ui.theme.AppFonts
 import com.music.bitchord.R
-import com.music.bitchord.data.settings.AppUi
-import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.Backup
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -176,18 +165,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
-    val liquidGlassHaptics by AppSettings.liquidGlassHaptics.collectAsStateWithLifecycle()
-    val hideStatusBarInPlayer by AppSettings.hideStatusBarInPlayer.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
-    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
-    val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
-    val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
-    val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
-    val liquidGlassSupported = isGlassSupported()
-    val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
-    val appUi by AppSettings.appUi.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
@@ -213,8 +191,6 @@ fun SettingsScreen(
     // The customisation settings that used to live on their own page, read here
     // because their rows sit in the Now Playing, Home & library and Appearance
     // categories now.
-    val appFont by AppSettings.appFont.collectAsStateWithLifecycle()
-    val scriptFonts by AppSettings.scriptFonts.collectAsStateWithLifecycle()
 
     // Read here so the row can say "In a party · ABC123" rather than making
     // somebody open the screen to find out whether they are still in one.
@@ -479,223 +455,10 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.APPEARANCE || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.APPEARANCE) {
-            val themeTitle = stringResource(R.string.theme)
-            row(themeTitle, "dark mode", "light mode") {
-                SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
-                SegmentedControl(
-                    options = ThemeMode.entries.map { it.localizedLabel() },
-                    selectedIndex = ThemeMode.entries.indexOf(theme),
-                    onSelect = { AppSettings.setThemeMode(ThemeMode.entries[it]) },
-                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
-                )
-            }
-            val appUiTitle = stringResource(R.string.app_ui)
-            row(appUiTitle, "interface", "ipod", "classipod") {
-                SettingsRow(
-                    icon = Icons.Rounded.MusicNote,
-                    title = appUiTitle,
-                    subtitle = stringResource(R.string.app_ui_subtitle),
-                )
-                SegmentedControl(
-                    options = AppUi.entries.map { it.label },
-                    selectedIndex = AppUi.entries.indexOf(appUi),
-                    onSelect = { AppSettings.setAppUi(AppUi.entries[it]) },
-                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
-                )
-            }
-            val reduceAnimationTitle = stringResource(R.string.reduce_animation)
-            row(reduceAnimationTitle, "motion") {
-                SettingsRow(
-                    icon = Icons.Rounded.MotionPhotosOff,
-                    title = reduceAnimationTitle,
-                    subtitle = stringResource(R.string.reduce_animation_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = reduceAnimation,
-                            onCheckedChange = AppSettings::setReduceAnimation,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
-                )
-            }
-            val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
-            row(reduceDynamicBlurTitle, "blur", "performance") {
-                SettingsRow(
-                    icon = Icons.Rounded.BlurOff,
-                    title = reduceDynamicBlurTitle,
-                    subtitle = stringResource(R.string.reduce_dynamic_blur_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = reduceDynamicBlur,
-                            onCheckedChange = AppSettings::setReduceDynamicBlur,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
-                )
-            }
-            val liquidGlassTitle = stringResource(R.string.liquid_glass)
-            row(liquidGlassTitle, "glass", "blur") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = liquidGlassTitle,
-                    subtitle = stringResource(
-                        if (liquidGlassSupported) {
-                            R.string.liquid_glass_subtitle
-                        } else {
-                            R.string.liquid_glass_unavailable
-                        },
-                    ),
-                    enabled = liquidGlassSupported,
-                    trailing = {
-                        Switch(
-                            checked = liquidGlass,
-                            onCheckedChange = AppSettings::setLiquidGlass,
-                            enabled = liquidGlassSupported,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
-                )
-            }
-            // The slider below the toggle, shown only where the toggle itself
-            // can be on: on a device the engine can't run on, the intensity is
-            // a knob with nothing to turn.
-            if (liquidGlassSupported) {
-                val liquidGlassIntensityTitle = stringResource(R.string.liquid_glass_intensity)
-                row(liquidGlassIntensityTitle, "glass", "intensity", "performance") {
-                    SliderRow(
-                        icon = Icons.Rounded.Tune,
-                        title = liquidGlassIntensityTitle,
-                        subtitle = stringResource(R.string.liquid_glass_intensity_subtitle),
-                        value = "${(liquidGlassIntensity * 100).roundToInt()}%",
-                        sliderValue = liquidGlassIntensity,
-                        onSliderValue = { AppSettings.setLiquidGlassIntensity(it) },
-                        valueRange = AppSettings.MIN_LIQUID_GLASS_INTENSITY..
-                            AppSettings.MAX_LIQUID_GLASS_INTENSITY,
-                        steps = 8,
-                    )
-                }
-                // Frosted instead of refracting: the same glass with its lens
-                // pass skipped, for phones the shader is too much for. A
-                // sub-row rather than a row of its own because it qualifies
-                // the Liquid Glass switch above it.
-                val glassPerformanceTitle = stringResource(R.string.glass_performance)
-                row(glassPerformanceTitle, "glass", "performance", "refraction", "frosted", "lag") {
-                    SettingsSubRow(
-                        title = glassPerformanceTitle,
-                        checked = glassPerformance,
-                        onCheckedChange = AppSettings::setGlassPerformance,
-                        subtitle = stringResource(R.string.glass_performance_subtitle),
-                    )
-                }
-            }
-            if (liquidGlassSupported) {
-                val foldingNavTitle = stringResource(R.string.folding_nav_bar)
-                row(foldingNavTitle, "glass", "fold", "nav") {
-                    SettingsRow(
-                        icon = Icons.Rounded.ViewWeek,
-                        title = foldingNavTitle,
-                        subtitle = stringResource(R.string.folding_nav_bar_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = foldingNavBar,
-                                onCheckedChange = AppSettings::setFoldingNavBar,
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        },
-                        onClick = { AppSettings.setFoldingNavBar(!foldingNavBar) },
-                    )
-                }
-            }
-            val hapticsTitle = stringResource(R.string.liquid_glass_haptics)
-            row(hapticsTitle, "haptics", "glass", "vibrate") {
-                SettingsRow(
-                    icon = Icons.Rounded.Vibration,
-                    title = hapticsTitle,
-                    subtitle = stringResource(R.string.liquid_glass_haptics_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = liquidGlassHaptics,
-                            onCheckedChange = AppSettings::setLiquidGlassHaptics,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setLiquidGlassHaptics(!liquidGlassHaptics) },
-                )
-            }
-            val hideStatusBarTitle = stringResource(R.string.hide_status_bar_in_player)
-            row(hideStatusBarTitle, "status", "bar", "clock", "immersive", "fullscreen", "player") {
-                SettingsRow(
-                    icon = Icons.Rounded.Fullscreen,
-                    title = hideStatusBarTitle,
-                    subtitle = stringResource(R.string.hide_status_bar_in_player_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = hideStatusBarInPlayer,
-                            onCheckedChange = AppSettings::setHideStatusBarInPlayer,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setHideStatusBarInPlayer(!hideStatusBarInPlayer) },
-                )
-            }
-            val fontsTitle = stringResource(R.string.custom_fonts)
-            val fontValue = when (appFont) {
-                AppFonts.CHOICE_SYSTEM -> stringResource(R.string.font_system)
-                AppFonts.CHOICE_SERIF -> stringResource(R.string.font_serif)
-                AppFonts.CHOICE_ROUNDED -> stringResource(R.string.font_rounded)
-                AppFonts.CHOICE_CUSTOM -> stringResource(R.string.font_custom)
-                else -> stringResource(R.string.font_default)
-            }
-            row(fontsTitle, "typeface", "face", "font") {
-                SettingsRow(
-                    icon = Icons.Rounded.TextFields,
-                    title = fontsTitle,
-                    value = fontValue,
-                    onClick = { sheets.showFontSheet = true },
-                )
-            }
-            val scriptFontsTitle = stringResource(R.string.custom_script_fonts)
-            row(scriptFontsTitle, "arabic", "urdu", "hebrew", "script") {
-                SettingsRow(
-                    icon = Icons.Rounded.Language,
-                    title = scriptFontsTitle,
-                    subtitle = stringResource(R.string.custom_script_fonts_help),
-                    trailing = {
-                        Switch(
-                            checked = scriptFonts,
-                            onCheckedChange = AppSettings::setScriptFonts,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setScriptFonts(!scriptFonts) },
-                )
-            }
-        }
+            AppearanceSettings(
+                search = search,
+                sheets = sheets,
+            )
         }
         if (openCategory == SettingsCategory.PERFORMANCE || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.PERFORMANCE) {
@@ -1050,15 +813,6 @@ private fun Context.countOfMonths(months: Int): String = if (months == 0) {
 } else {
     resources.getQuantityString(R.plurals.listening_month_count, months, months)
 }
-
-@Composable
-private fun ThemeMode.localizedLabel(): String = stringResource(
-    when (this) {
-        ThemeMode.SYSTEM -> R.string.system
-        ThemeMode.LIGHT -> R.string.light
-        ThemeMode.DARK -> R.string.dark
-    },
-)
 
 /** Above this, the cache limit slider's subtitle warns rather than reassures. */
 private const val CACHE_WARNING_MB = 2048
