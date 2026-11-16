@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,12 +92,19 @@ internal fun PortraitCredits(
             // than reading the new song and changing under its own
             // fade. See [CreditsKey].
             val creditsKey = CreditsKey(song, isAiTrack)
+            // The newest payload drawn for each set of words, so an
+            // outgoing instance fades out what was last on screen rather
+            // than the first cut the crossfade happened to key it with.
+            // Recorded after the pass that drew it, which is before any
+            // later pass can make it outgoing.
+            val payloads = remember { CreditsPayloads() }
+            SideEffect { payloads.record(creditsKey) }
             Crossfade(
                 targetState = creditsKey,
                 animationSpec = tween(durationMillis = 300),
                 label = "playerCredits",
             ) { key ->
-                val drawn = key.shownFor(current = creditsKey)
+                val drawn = payloads.shown(key, current = creditsKey)
                 val shown = drawn.song
                 val scrolling = scrolls()
                 // The title wears the ink, like everything else on
@@ -259,10 +267,34 @@ internal class CreditsKey(val song: Song, val aiTrack: Boolean) {
 }
 
 /**
- * What an instance of the crossfade draws. The instance that is the current
- * target draws [current], made from the newest song, so a cut that shares its
- * words still shows its own album link and badges; an outgoing one draws what
- * it was keyed with.
+ * The newest payload drawn for each set of credits words.
+ *
+ * The crossfade holds on to the first key of each set of words it sees: a cut
+ * that shares them (same title and artist, new album link or AI mark) is equal
+ * to it and replaces nothing. So when the words change, the outgoing instance
+ * is handed that first key. This keeps the payload last drawn for those words,
+ * so the outgoing instance fades out what was actually on screen.
+ *
+ * A handful of entries is plenty: only the instances still fading can ask.
  */
-internal fun CreditsKey.shownFor(current: CreditsKey): CreditsKey =
-    if (this == current) current else this
+internal class CreditsPayloads(private val capacity: Int = 8) {
+    private val latest = object : LinkedHashMap<CreditsKey, CreditsKey>(capacity, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<CreditsKey, CreditsKey>): Boolean =
+            size > capacity
+    }
+
+    /** [current] is what is on screen now for its words. */
+    fun record(current: CreditsKey) {
+        latest[current] = current
+    }
+
+    /**
+     * What an instance of the crossfade keyed with [key] draws. The current
+     * target draws [current], made from the newest song, so a cut that shares
+     * its words still shows its own album link and badges; an outgoing one
+     * draws the payload last drawn for its words, or [key] itself if none was
+     * recorded.
+     */
+    fun shown(key: CreditsKey, current: CreditsKey): CreditsKey =
+        if (key == current) current else latest[key] ?: key
+}
