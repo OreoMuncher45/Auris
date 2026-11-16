@@ -61,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -444,9 +445,15 @@ private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): Scr
     // offset its content has not got yet, so asking for it before the first
     // layout would land on zero — which is exactly what the page did before
     // this, every time it was opened.
-    LaunchedEffect(scrollState, scrollPage, searchQuery) {
-        if (restoredOffset <= 0 || searchQuery.isNotBlank()) return@LaunchedEffect
+    //
+    // Once per page, not per query: a cleared search restores the page's
+    // place itself, below, from the offset saved since. If a search starts
+    // while the page is still being measured, the search's list wins.
+    val currentQuery by rememberUpdatedState(searchQuery)
+    LaunchedEffect(scrollState, scrollPage) {
+        if (restoredOffset <= 0 || currentQuery.isNotBlank()) return@LaunchedEffect
         snapshotFlow { scrollState.maxValue }.first { it > 0 }
+        if (currentQuery.isNotBlank()) return@LaunchedEffect
         scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
     }
     // Written out as the listener scrolls, so the place survives the app
@@ -469,38 +476,56 @@ private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): Scr
             if (!searchActive) AppSettings.saveSettingsScrollOffset(scrollPage, scrollState.value)
         }
     }
-    var isFirstSearchComposition by remember { mutableStateOf(true) }
+    // The query this page last acted on; null until its first composition,
+    // and again after Activity recreation, when rememberSaveable has already
+    // put the scroll position back.
+    var lastQuery by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(searchQuery, scrollState, scrollPage) {
-        // Blank, not empty, as everywhere else: a query of spaces filters
-        // nothing (see [SettingsSearch]), so it must not scroll the page to
-        // the top either, or the scroll saver would then store that top.
-        if (isFirstSearchComposition && searchQuery.isBlank()) {
-            // Skip the initial composition during Activity recreation:
-            // rememberSaveable already restored the scroll position.
-            isFirstSearchComposition = false
-        } else {
-            isFirstSearchComposition = false
-            if (searchQuery.isBlank()) {
-                // The page's own list is back, so its own place in it applies.
-                // Not before that list has been laid out: until then maxValue
-                // is still the filtered list's, often 0, and clamping to it
-                // would land on the top (which the scroll saver would then
-                // store). So wait a frame for the full list's layout, and for
-                // a height to scroll in, as the restore on opening does.
+        val action = searchScrollFor(lastQuery, searchQuery)
+        lastQuery = searchQuery
+        when (action) {
+            SearchScroll.STAY -> Unit
+            // What is left after a keystroke is a different list, and the
+            // offset the last one was scrolled to means nothing in it.
+            SearchScroll.TOP -> scrollState.scrollTo(0)
+            SearchScroll.RESTORE -> {
+                // The page's own list is back, so its own place in it
+                // applies. Not before that list has been laid out: until
+                // then maxValue is still the filtered list's, often 0, and
+                // clamping to it would land on the top (which the scroll
+                // saver would then store). So wait a frame for the full
+                // list's layout, and for a height to scroll in. A full list
+                // that fits the screen never gets one, and stays at the top,
+                // which is then the only place there is.
                 val saved = AppSettings.settingsScrollOffset(scrollPage)
                 if (saved > 0) {
                     withFrameNanos { }
                     snapshotFlow { scrollState.maxValue }.first { it > 0 }
                 }
                 scrollState.scrollTo(saved.coerceAtMost(scrollState.maxValue))
-            } else {
-                // What is left after a keystroke is a different list, and the
-                // offset the last one was scrolled to means nothing in it.
-                scrollState.scrollTo(0)
             }
         }
     }
     return scrollState
+}
+
+/** What a change of search query does to a settings page's scroll position. */
+internal enum class SearchScroll { STAY, TOP, RESTORE }
+
+/**
+ * Blank, not empty, as everywhere else: a query of spaces filters nothing
+ * (see [SettingsSearch]), so it neither scrolls the page to the top nor counts
+ * as a search being cleared. [previous] is the query the page last acted on,
+ * or null on its first composition.
+ */
+internal fun searchScrollFor(previous: String?, current: String): SearchScroll = when {
+    // A filtered list: its top, whatever the last list was scrolled to.
+    current.isNotBlank() -> SearchScroll.TOP
+    // First composition, or blank to blank: nothing was filtered, so the
+    // page is where it should be.
+    previous == null || previous.isBlank() -> SearchScroll.STAY
+    // A search was cleared: back to the page's own place.
+    else -> SearchScroll.RESTORE
 }
 
 /** The Auris Pass page: the card itself, under the name it was made for. */
