@@ -75,6 +75,8 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -538,6 +540,19 @@ private fun SettingsColophon(version: String) {
     )
 }
 
+
+/**
+ * The language the app itself is set to, or null for the system's.
+ *
+ * Remembered per configuration: on Android 13 and later the answer comes
+ * from the system's LocaleManager, a call across processes, and a change of
+ * app language always arrives as a new configuration.
+ */
+@Composable
+internal fun rememberAppLocale(): Locale? {
+    val configuration = LocalConfiguration.current
+    return remember(configuration) { AppCompatDelegate.getApplicationLocales().get(0) }
+}
 /** "3 months of listening" — the unit a backup is actually measured in. */
 private fun Context.countOfMonths(months: Int): String = if (months == 0) {
     getString(R.string.no_listening_history)

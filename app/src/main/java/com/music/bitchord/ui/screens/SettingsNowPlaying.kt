@@ -1,7 +1,6 @@
 package com.music.bitchord.ui.screens
 
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -471,7 +470,7 @@ internal fun NowPlayingSettings(
                     } else {
                         translationLanguageName(
                             translationLanguage,
-                            AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault(),
+                            rememberAppLocale() ?: Locale.getDefault(),
                         )
                     },
                     trailing = { Chevron() },

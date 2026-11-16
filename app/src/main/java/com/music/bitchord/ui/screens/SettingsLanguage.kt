@@ -1,6 +1,5 @@
 package com.music.bitchord.ui.screens
 
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.runtime.Composable
@@ -18,7 +17,7 @@ internal fun LanguageSettings(
     SearchableSettingsGroup(search, SettingsCategory.LANGUAGE) {
         val appLanguageTitle = stringResource(R.string.app_language)
         row(appLanguageTitle, "locale", "translate") {
-            val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
+            val selectedLanguage = rememberAppLocale()?.language
                 ?: Locale.getDefault().language
             SettingsRow(
                 icon = Icons.Rounded.Language,
