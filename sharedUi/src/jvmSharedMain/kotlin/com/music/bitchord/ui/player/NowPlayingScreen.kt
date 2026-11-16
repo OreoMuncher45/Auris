@@ -533,8 +533,8 @@ private const val HERO_FADE_FRACTION = 0.42f
  */
 private const val ART_FADE_END_FRACTION = 1.0f
 /** Black at the very top of the player, fading out over [TOP_SCRIM_FRACTION]. */
-private const val TOP_SCRIM_ALPHA = 0.40f
-private const val TOP_SCRIM_FRACTION = 0.14f
+internal const val TOP_SCRIM_ALPHA = 0.40f
+internal const val TOP_SCRIM_FRACTION = 0.14f
 
 /**
  * The player's ink, as a state.
@@ -926,7 +926,7 @@ private val TileShape = RoundedCornerShape(8.dp)
  * one caption or one line of stats coming or going.
  */
 @Composable
-private fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
+internal fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
     if (shown()) content()
 }
 
@@ -1372,7 +1372,6 @@ fun NowPlayingScreen(
     }
     val hideVolumeBar by PlayerSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by PlayerSettings.hideSongStatus.collectAsStateWithLifecycle()
-    val closeLabel = stringResource(Res.string.close_player)
 
     // Animated cover art: the looping video some labels publish alongside a
     // release, laid over the sleeve. A miss is the normal answer — see
@@ -3064,19 +3063,6 @@ fun NowPlayingScreen(
             }
         }
 
-        // The top of the screen is always shaded, whatever the cover: 40% black
-        // at the very top, gone by 14% of the screen. It keeps the system icons
-        // and the "Playing from..." line readable over a bright sleeve, and it
-        // is the same treatment on every cover so the player does not flicker
-        // brighter when the album changes.
-        val topScrimBrush = remember {
-            Brush.verticalGradient(
-                0f to Color.Black.copy(alpha = TOP_SCRIM_ALPHA),
-                1f to Color.Transparent,
-            )
-        }
-        // Painted by the handle strip rather than laid out here — see there.
-
         if (canvasFirstPortrait && canvasRendered) {
             // The image remains visible through the controls; a plain scrim
             // protects text and touch targets without erasing the video.
@@ -3198,103 +3184,22 @@ fun NowPlayingScreen(
                 .then(skipSwipeGesture),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // The only strip that passes drags through to the sheet, so the
-            // player closes from the handle and the space around it — not from
-            // a stray downward swipe on the artwork or the controls.
-            //
-            // Drawn above the column under it, and the status-bar scrim with
-            // it: the full-bleed sleeve lives in that column and runs up behind
-            // both, and the handle, the caption and the scrim all belong on
-            // top of the artwork. The scrim reaches up past the strip's own
-            // top to the screen's, the band it always covered.
-            Box(
-                modifier = Modifier
-                    .zIndex(1f)
-                    .fillMaxWidth()
-                    .height(topStrip)
-                    .drawBehind {
-                        // Translated rather than offset: the gradient is laid
-                        // out from the canvas origin, not from the rect's. It
-                        // runs past this strip to 14% of the player, over the
-                        // top of the artwork, which is what the caption and
-                        // the system icons actually sit on.
-                        //
-                        // Up by the whole top inset rather than by the status
-                        // bar alone: the strip now starts below the cutout as
-                        // well, and the scrim still has to reach the screen's
-                        // own top edge to darken the camera's corner.
-                        val above = statusBarTop.toPx()
-                        val scrimHeight = playerBounds.height
-                            .takeIf { it > 0 }
-                            ?.let { it * TOP_SCRIM_FRACTION }
-                            ?: (size.height + above)
-                        translate(top = -above) {
-                            drawRect(
-                                brush = topScrimBrush,
-                                size = Size(size.width, scrimHeight),
-                            )
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                // The way out, at the top left where the reference player puts
-                // it: a chevron that reads as "down to the rest of the app".
-                // It replaces the grab handle — a pill says "drag me", and a
-                // mark that looks like a button should do what a button does.
-                // The strip still hands drags to the sheet, so the gesture is
-                // untouched; the chevron is simply the tap for it.
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        // Centred on the caption block rather than the strip's
-                        // top: the reference player draws it level with the
-                        // two caption lines, not floating above them.
-                        .offset(x = PLAYER_GUTTER - 10.dp, y = 24.dp)
-                        .size(44.dp)
-                        .graphicsLayer { alpha = spotifyChromeAlpha }
-                        .clip(CircleShape)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            haptics.play(Haptic.Tap)
-                            onClose()
-                        }
-                        .semantics { contentDescription = closeLabel },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = PlayerIcons.ChevronDown.painter(),
-                        contentDescription = null,
-                        tint = LocalPlayerInk.current.value.copy(alpha = 0.92f),
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                // [p] is the shared album-to-panel transition. Keeping this in
-                // composition until its final frame gives the caption a real
-                // fade on both entry and exit, but removes its click target
-                // entirely once lyrics or the queue owns the player.
-                if (!hideSongStatus) {
-                    WhileShown({ !collapseAlmostDone }) {
-                        PlaybackOriginCaptionStacked(
-                            label = if (playedBy != null) {
-                                stringResource(Res.string.played_by_label)
-                            } else {
-                                stringResource(Res.string.playing_from_label)
-                            },
-                            title = playedBy
-                                ?: song.radioName
-                                ?: song.playbackSource
-                                ?: song.albumName
-                                ?: stringResource(Res.string.queue),
-                            onClick = openPlaybackOrigin,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .graphicsLayer { alpha = (1f - p()) * spotifyChromeAlpha },
-                        )
-                    }
-                }
-            }
+            PlayerTopStrip(
+                height = topStrip,
+                statusBarTop = statusBarTop,
+                playerHeight = { playerBounds.height },
+                chromeAlpha = { spotifyChromeAlpha },
+                onClose = {
+                    haptics.play(Haptic.Tap)
+                    onClose()
+                },
+                caption = !hideSongStatus,
+                captionShown = { !collapseAlmostDone },
+                captionAlpha = { 1f - p() },
+                song = song,
+                playedBy = playedBy,
+                onOpenCaption = openPlaybackOrigin,
+            )
 
             Column(
                 modifier = Modifier
