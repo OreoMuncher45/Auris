@@ -85,6 +85,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.BufferOverflow
@@ -5057,13 +5058,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Placed after every Flow val on purpose: init blocks run in textual
     // order, and this one reads _flowQueue/_flowSaved, which must exist.
     init {
-        FlowStore.readSnapshot()?.let { (songs, builtAt) ->
-            if (System.currentTimeMillis() - builtAt < FlowStore.FLOW_TTL_MS) {
-                val visible = songs.withoutBlockedArtists()
-                if (visible.isNotEmpty()) _flowQueue.value = UiState.Success(visible)
+        viewModelScope.launch {
+            // Decoded on IO: the snapshot is a JSON list of every song in the
+            // mix, and this init runs inside the app's first composition, so
+            // on the main thread it was a parse ahead of the first frame for a
+            // page that is not on screen at launch.
+            val restored = withContext(Dispatchers.IO) {
+                FlowStore.readSnapshot()?.let { (songs, builtAt) ->
+                    if (System.currentTimeMillis() - builtAt < FlowStore.FLOW_TTL_MS) {
+                        songs.withoutBlockedArtists().takeIf { it.isNotEmpty() }
+                    } else {
+                        null
+                    }
+                }
             }
+            // Only into the empty mix the view model starts with: a mix built
+            // in the moment before this landed is newer than the snapshot.
+            if (restored != null) {
+                _flowQueue.compareAndSet(UiState.Success(emptyList()), UiState.Success(restored))
+            }
+            maybeAutoRefreshFlow()
         }
-        maybeAutoRefreshFlow()
         viewModelScope.launch {
             while (true) {
                 delay(FlowStore.FLOW_AUTO_REFRESH_MS)
