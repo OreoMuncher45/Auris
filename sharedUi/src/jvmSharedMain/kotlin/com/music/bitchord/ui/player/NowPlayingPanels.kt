@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -119,6 +121,39 @@ internal class PlayerPanelState(restored: LastPlayerScreen) {
         queueOpen = false
         closeLyrics()
     }
+}
+
+/**
+ * How far the portrait sleeve has collapsed into the header, 0 to 1, and the
+ * handful of thresholds composition is allowed to ask of it.
+ *
+ * A queue tap/drag already owns a 420ms progress value ([PlayerPanelState.queueSlide]).
+ * Reusing it avoids driving this large layout from two independent animations
+ * on every frame. Lyrics retain the ordinary collapse animation ([animated]);
+ * switching queue -> lyrics stays at one because its target never changed.
+ */
+@Stable
+internal class PlayerCollapse(panels: PlayerPanelState, animated: State<Float>) {
+    /**
+     * A function rather than a value. It moves on every frame of a 420ms
+     * collapse and of a finger dragging the queue, and read as a value it
+     * recomposed the whole player on each of those frames — the sleeve, the
+     * credits, both panels and the controls, just to move a few of them. Layout
+     * and draw lambdas call it where they place or paint; composition only asks
+     * the thresholds below, each of which changes once per collapse.
+     */
+    val p: () -> Float = {
+        val queueOwnsCollapse = !panels.lyricsOpen &&
+            (panels.queueOpen || panels.queueDragging || panels.queueSlide.floatValue > 0.001f)
+        if (queueOwnsCollapse) panels.queueSlide.floatValue else animated.value
+    }
+    val started by derivedStateOf { p() > 0f }
+    val atRest by derivedStateOf { p() == 0f }
+    val pastSettling by derivedStateOf { p() >= 0.01f }
+    val pastHalf by derivedStateOf { p() >= 0.5f }
+    val almostDone by derivedStateOf { p() >= 0.999f }
+    val done by derivedStateOf { p() >= 1f }
+    val queueShowing by derivedStateOf { panels.queueSlide.floatValue > 0.01f }
 }
 
 /**

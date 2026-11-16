@@ -1666,29 +1666,9 @@ fun NowPlayingScreen(
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
-    // A queue tap/drag already owns a 420ms progress value. Reusing it avoids
-    // driving this large layout from two independent animations on every frame.
-    // Lyrics retain the ordinary collapse animation; switching queue -> lyrics
-    // stays at one because its target never changed.
-    //
-    // A function rather than a value. It moves on every frame of a 420ms
-    // collapse and of a finger dragging the queue, and read here as a value it
-    // recomposed this whole function on each of those frames — the sleeve, the
-    // credits, both panels and the controls, just to move a few of them. Layout
-    // and draw lambdas call it where they place or paint; composition only asks
-    // the thresholds below, each of which changes once per collapse.
-    val p: () -> Float = {
-        val queueOwnsCollapse = !panels.lyricsOpen &&
-            (panels.queueOpen || panels.queueDragging || panels.queueSlide.floatValue > 0.001f)
-        if (queueOwnsCollapse) panels.queueSlide.floatValue else animatedCollapse.value
-    }
-    val collapseStarted by remember { derivedStateOf { p() > 0f } }
-    val collapseAtRest by remember { derivedStateOf { p() == 0f } }
-    val collapsePastSettling by remember { derivedStateOf { p() >= 0.01f } }
-    val collapsePastHalf by remember { derivedStateOf { p() >= 0.5f } }
-    val collapseAlmostDone by remember { derivedStateOf { p() >= 0.999f } }
-    val collapseDone by remember { derivedStateOf { p() >= 1f } }
-    val queueShowing by remember { derivedStateOf { panels.queueSlide.floatValue > 0.01f } }
+    // How far the sleeve has collapsed, and the thresholds composition asks
+    // of it — see [PlayerCollapse].
+    val collapse = remember { PlayerCollapse(panels, animatedCollapse) }
 
     // Whether the sleeve has finished getting out of the way, and how far the
     // panel that replaces it has faded up since.
@@ -1718,10 +1698,10 @@ fun NowPlayingScreen(
     val panelFade = remember {
         // Already up for a player opened onto a panel, as the animated value
         // this replaces started at its first target.
-        Animatable(if (Snapshot.withoutReadObservation { collapseDone }) 1f else 0f)
+        Animatable(if (Snapshot.withoutReadObservation { collapse.done }) 1f else 0f)
     }
     LaunchedEffect(Unit) {
-        snapshotFlow { collapseDone }.collectLatest { settled ->
+        snapshotFlow { collapse.done }.collectLatest { settled ->
             panelFade.animateTo(
                 if (settled) 1f else 0f,
                 tween(durationMillis = 200, easing = FastOutSlowInEasing),
@@ -1799,7 +1779,7 @@ fun NowPlayingScreen(
     // its opacity on exactly what is mounted here: both are decided in the same
     // composition pass, so the still art is whole again in the very frame the
     // clip goes, rather than a frame later with no artwork anywhere.
-    val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
+    val heroClip = canvas?.takeIf { heroMode && !collapse.pastHalf }
     val spotifyCanvasFullscreen = spotifyCanvasOnPhone &&
         heroClip?.source == CanvasSource.SPOTIFY
     val spotifyCanvasPresentation = spotifyCanvasFullscreen && canvasRendered
@@ -1820,7 +1800,7 @@ fun NowPlayingScreen(
     // off that, its last few frames would resize the view and rebuild its
     // fade for a picture nobody can see.
     val heroClipMounted = canvas?.takeIf {
-        heroMode && (!(panels.lyricsOpen || panels.queueOpen) || !collapseDone)
+        heroMode && (!(panels.lyricsOpen || panels.queueOpen) || !collapse.done)
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
         heroClipMounted?.source == CanvasSource.SPOTIFY
@@ -2408,7 +2388,7 @@ fun NowPlayingScreen(
                     // artwork for the whole of the open, and the title and
                     // artist slid out from behind the cover when it settled.
                     creditsLayer.alpha = 1f
-                    val inPlace = 1f - 0.2f * p()
+                    val inPlace = 1f - 0.2f * collapse.p()
                     translate(dockFrame.creditsLeft, dockFrame.creditsTop) {
                         scale(inPlace, inPlace, pivot = Offset.Zero) { drawLayer(creditsLayer) }
                     }
@@ -2839,7 +2819,7 @@ fun NowPlayingScreen(
                     // has settled. Upstream BitChord holds the clip still
                     // through the movement for the same reason.
                     pausedForTransition = panels.lyricsOpen || panels.queueOpen || panels.queueDragging ||
-                        collapseStarted || dockMoving || !sheetSettled,
+                        collapse.started || dockMoving || !sheetSettled,
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
@@ -2858,7 +2838,7 @@ fun NowPlayingScreen(
                     // And with the rest of the player as it docks: a
                     // TextureView doesn't reliably take the fade from a
                     // Compose layer around it.
-                    presentationAlpha = { (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() },
+                    presentationAlpha = { (1f - 2f * collapse.p()).coerceIn(0f, 1f) * dockFade() },
                     onRenderedChanged = { canvasRendered = it },
                     onFrameCaptured = { frame ->
                         // The clip's own colours, read as it plays. The ink
@@ -2957,8 +2937,8 @@ fun NowPlayingScreen(
                     onClose()
                 },
                 caption = !hideSongStatus,
-                captionShown = { !collapseAlmostDone },
-                captionAlpha = { 1f - p() },
+                captionShown = { !collapse.almostDone },
+                captionAlpha = { 1f - collapse.p() },
                 song = song,
                 playedBy = playedBy,
                 onOpenCaption = openPlaybackOrigin,
@@ -3235,7 +3215,7 @@ fun NowPlayingScreen(
                 // The panels asked about first, so a collapse on its way in
                 // — whose sleeve leaves rest on its first frame — isn't
                 // listened for here at all.
-                if (!panels.lyricsOpen && !panels.queueOpen && !panels.queueDragging && collapseAtRest && controlDeckIsMeasured) {
+                if (!panels.lyricsOpen && !panels.queueOpen && !panels.queueDragging && collapse.atRest && controlDeckIsMeasured) {
                     val target = with(density) {
                         val half = slack
                             .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
@@ -3349,12 +3329,12 @@ fun NowPlayingScreen(
                 // and draw lambdas that hold it are the same lambdas from one
                 // pass to the next.
                 val geometry = remember(
-                    density, p, dockT, docking, dock, dockFrame, fullArt, groupTop, playerWidth,
+                    density, collapse.p, dockT, docking, dock, dockFrame, fullArt, groupTop, playerWidth,
                     boxInset, creditsDrop, spotifyTitleRange, bannerTopPx, boxWidthPx, boxLeftPx,
                 ) {
                     SleeveGeometry(
                         density = density,
-                        p = p,
+                        p = collapse.p,
                         dockT = dockT,
                         docking = docking,
                         dock = dock,
@@ -3378,7 +3358,7 @@ fun NowPlayingScreen(
 
                 PortraitSleeve(
                     geometry = geometry,
-                    p = p,
+                    p = collapse.p,
                     dockT = dockT,
                     docking = docking,
                     dock = dock,
@@ -3402,8 +3382,8 @@ fun NowPlayingScreen(
                     canvas = canvas,
                     isPlaying = isPlaying,
                     panels = panels,
-                    collapseStarted = { collapseStarted },
-                    collapsePastHalf = { collapsePastHalf },
+                    collapseStarted = { collapse.started },
+                    collapsePastHalf = { collapse.pastHalf },
                     dockMoving = { dockMoving },
                     sheetSettled = sheetSettled,
                     tabletArtworkBackdrop = tabletArtworkBackdrop,
@@ -3436,7 +3416,7 @@ fun NowPlayingScreen(
                                 x = 0,
                                 y = (
                                     geometry.currentTitleTop() -
-                                        lerp(0.dp, (HEADER_HEIGHT - THUMB_SIZE) / 2, p())
+                                        lerp(0.dp, (HEADER_HEIGHT - THUMB_SIZE) / 2, collapse.p())
                                 ).roundToPx(),
                             )
                         }
@@ -3502,7 +3482,7 @@ fun NowPlayingScreen(
                             // operation. Animating fontSize forced both marquee
                             // texts through shaping and measurement every frame.
                             .graphicsLayer {
-                                val scale = 1f - 0.2f * p()
+                                val scale = 1f - 0.2f * collapse.p()
                                 scaleX = scale
                                 scaleY = scale
                                 transformOrigin = TransformOrigin(0f, 0.5f)
@@ -3511,7 +3491,7 @@ fun NowPlayingScreen(
                     isAiTrack = isAiTrack,
                     textGlow = textGlow,
                     scrolls = {
-                        !(panels.lyricsOpen || panels.queueOpen || panels.queueDragging) && !collapsePastSettling
+                        !(panels.lyricsOpen || panels.queueOpen || panels.queueDragging) && !collapse.pastSettling
                     },
                     signedIn = signedIn,
                     likeStatus = likeStatus,
@@ -3526,7 +3506,7 @@ fun NowPlayingScreen(
                 // [lyricsOpen] asked first: a close has already hidden the
                 // panel, and doesn't then listen for the sleeve leaving the
                 // header — which is its first frame of moving.
-                val lyricsPanelVisible = panels.lyricsOpen && collapseDone
+                val lyricsPanelVisible = panels.lyricsOpen && collapse.done
                 if (lyricsPanelVisible || playerPrewarmStage >= 2) {
                     PortraitLyricsPane(
                         visible = lyricsPanelVisible,
@@ -3560,7 +3540,7 @@ fun NowPlayingScreen(
                 // than a frame later when the sleeve first moves: listening
                 // for that frame was a recomposition on it.
                 val queuePanelVisible = !panels.lyricsOpen &&
-                    (panels.queueDragging || (panels.queueOpen && queueShowing && collapseDone))
+                    (panels.queueDragging || (panels.queueOpen && collapse.queueShowing && collapse.done))
                 if (queuePanelVisible || playerPrewarmStage >= 3) {
                     PortraitQueuePane(
                         visible = queuePanelVisible,
@@ -3600,7 +3580,7 @@ fun NowPlayingScreen(
                 // the deck has to hold its full height from the first frame.
                 // Asked when the deck is shown rather than read here — [p]
                 // read in this scope recomposes the whole player with it.
-                fadeIn = { !panels.lyricsOpen && !panels.queueOpen && p() > 0f },
+                fadeIn = { !panels.lyricsOpen && !panels.queueOpen && collapse.p() > 0f },
             ) {
             PortraitControlDeck(
                 panels = panels,
