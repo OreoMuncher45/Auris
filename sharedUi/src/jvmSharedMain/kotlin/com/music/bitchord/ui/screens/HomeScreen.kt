@@ -1520,7 +1520,6 @@ internal fun ShelfCard(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
-    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     // Tapping this card lifts its cover and flies it into the page it opens —
     // see ArtworkFlight. The card is the departure and the page's sleeve is the
     // arrival; neither knows about the other, and the flight is one picture
@@ -1563,6 +1562,11 @@ internal fun ShelfCard(
                     // Off with the animated-canvas switch: a tile is decoration,
                     // and a looping decoder per tile is the first thing to go on
                     // a device that cannot afford it.
+                    //
+                    // Collected here, in the one tile that uses it, rather than
+                    // at the top of every card: a shelf of twenty covers held
+                    // twenty lifecycle-aware collectors on the same flow.
+                    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
                     if (animatedCanvas) rememberFlowVideo(square = true)?.let { clip ->
                         CanvasArtworkPlayer(
                             canvas = clip,
