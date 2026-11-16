@@ -100,7 +100,8 @@ object PerfMonitor {
         val threadShares: List<ThreadShare> = emptyList(),
     )
 
-    private val samples = ArrayDeque<Sample>()
+    /** Written by the sampling loop, read by [report] from any thread; see [SampleWindow]. */
+    private val window = SampleWindow<Sample>(KEEP)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var watcher: Job? = null
 
@@ -127,7 +128,7 @@ object PerfMonitor {
                     _eventsPerSecond.value = 0f
                     return@collectLatest
                 }
-                samples.clear()
+                window.clear()
                 runLoop(app)
             }
         }
@@ -169,8 +170,7 @@ object PerfMonitor {
                 perSecond = perSecond,
                 threadShares = threadShares,
             )
-            samples.addLast(sample)
-            while (samples.size > KEEP) samples.removeFirst()
+            window.add(sample)
 
             _cpuPercent.value = cpu
             _eventsPerSecond.value = perSecond.sum()
@@ -187,6 +187,9 @@ object PerfMonitor {
     fun report(context: Context): String {
         val counters = PerfCounters.Counter.entries
         val format = SimpleDateFormat("HH:mm:ss", Locale.US)
+        // One moment's window for the whole report: the sampler keeps adding
+        // while this runs, and every line below has to describe the same set.
+        val samples = window.snapshot()
         val started = samples.firstOrNull()?.atMillis
         val lines = StringBuilder()
 
@@ -264,7 +267,7 @@ object PerfMonitor {
                     ),
                 )
             }
-            val threads = threadRollup()
+            val threads = threadRollup(samples)
             if (threads.isNotEmpty()) {
                 lines.appendLine()
                 lines.appendLine("top threads (share of one core, over this window)")
@@ -362,7 +365,7 @@ object PerfMonitor {
      * sample — so a thread that ran hot for one sample out of ten reads as a
      * tenth of its spike, not as its spike.
      */
-    private fun threadRollup(): List<Rollup> {
+    private fun threadRollup(samples: List<Sample>): List<Rollup> {
         if (samples.isEmpty()) return emptyList()
         val byName = LinkedHashMap<String, MutableList<Float>>()
         samples.forEach { sample ->
