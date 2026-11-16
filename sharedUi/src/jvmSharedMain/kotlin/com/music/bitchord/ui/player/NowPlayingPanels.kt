@@ -299,7 +299,13 @@ internal fun BoxScope.PortraitLyricsPane(
     // it is an instruction over the words, and one that has to
     // be legible the instant it is on. Anything that animated
     // would be over the reader's first pick anyway.
-    if (lyricPicker.picking) {
+    //
+    // Only while the panel it belongs to is open: the pick is cancelled
+    // once the panel closes, and this keeps the bar off the sleeve for the
+    // frame that takes. Asked of the panel rather than of [visible], which
+    // also waits on the collapse, so the bar can never hide while a pick
+    // is still live.
+    if (panels.lyricsOpen && lyricPicker.picking) {
         LyricsPickBar(
             shareEnabled = lyricPicker.picks.isNotEmpty() &&
                 !lyricPicker.overBudget,

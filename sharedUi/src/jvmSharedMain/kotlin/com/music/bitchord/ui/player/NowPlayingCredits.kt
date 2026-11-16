@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,11 +86,26 @@ internal fun PortraitCredits(
             // ("… (Live)") dissolves into the new one instead of
             // snapping while the rest of the switch moves around
             // it.
+            //
+            // Each instance draws the song it was keyed with: the
+            // outgoing one keeps the words it is fading out, rather
+            // than reading the new song and changing under its own
+            // fade. See [CreditsKey].
+            val creditsKey = CreditsKey(song, isAiTrack)
+            // The newest payload drawn for each set of words, so an
+            // outgoing instance fades out what was last on screen rather
+            // than the first cut the crossfade happened to key it with.
+            // Recorded after the pass that drew it, which is before any
+            // later pass can make it outgoing.
+            val payloads = remember { CreditsPayloads() }
+            SideEffect { payloads.record(creditsKey) }
             Crossfade(
-                targetState = song.title to song.artist,
+                targetState = creditsKey,
                 animationSpec = tween(durationMillis = 300),
                 label = "playerCredits",
-            ) {
+            ) { key ->
+                val drawn = payloads.shown(key, current = creditsKey)
+                val shown = drawn.song
                 val scrolling = scrolls()
                 // The title wears the ink, like everything else on
                 // the screen — unless the listener pinned a colour
@@ -109,7 +125,7 @@ internal fun PortraitCredits(
                 }
                 Column {
                     MarqueeText(
-                        text = song.title,
+                        text = shown.title,
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontSize = CREDITS_TITLE_SIZE,
                             lineHeight = 27.sp,
@@ -118,21 +134,21 @@ internal fun PortraitCredits(
                         ),
                         color = ink,
                         enabled = scrolling,
-                        leading = if (song.isExplicit == true) {
+                        leading = if (shown.isExplicit == true) {
                             { ExplicitBadge(color = ink) }
                         } else {
                             null
                         },
                         onOverflowChange = { titleOverflowing = it },
-                        rtl = isRtlText(song.title),
+                        rtl = isRtlText(shown.title),
                         // Only the tracks YouTube hands us a browse id for
                         // lead anywhere; the rest stay plain text.
-                        modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
+                        modifier = Modifier.opensPage(shown.albumId, onOpenAlbum),
                     )
                     ArtistCreditsMarquee(
-                        text = song.artist,
-                        credits = remember(song.artist, song.artists, song.artistId) {
-                            artistCredits(song.artist, song.artists, song.artistId)
+                        text = shown.artist,
+                        credits = remember(shown.artist, shown.artists, shown.artistId) {
+                            artistCredits(shown.artist, shown.artists, shown.artistId)
                         },
                         style = MaterialTheme.typography.bodyLarge.copy(
                             fontSize = CREDITS_ARTIST_SIZE,
@@ -151,10 +167,10 @@ internal fun PortraitCredits(
                         // waits a beat before it joins in.
                         startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
                         onOpenArtist = onOpenArtist,
-                        rtl = isRtlText(song.artist),
+                        rtl = isRtlText(shown.artist),
                     )
-                    if (isAiTrack ||
-                        song.genAi != com.music.bitchord.data.model.GenAiDisclosure.NONE
+                    if (drawn.aiTrack ||
+                        shown.genAi != com.music.bitchord.data.model.GenAiDisclosure.NONE
                     ) {
                         // Deliberately a small outline chip rather than a
                         // button: the listener asked for transparency, not
@@ -171,7 +187,7 @@ internal fun PortraitCredits(
                                 .padding(horizontal = 7.dp, vertical = 2.dp),
                         ) {
                             Text(
-                                text = if (song.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY) {
+                                text = if (shown.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY) {
                                     "AI · partly"
                                 } else {
                                     "AI"
@@ -232,4 +248,53 @@ internal fun PortraitCredits(
             modifier = Modifier.reportMenuAnchor(onMenuAnchor),
         )
     }
+}
+
+/**
+ * What the credits crossfade is keyed on: the words, not the track.
+ *
+ * Two cuts that share a title and an artist are one key, so switching between
+ * them crossfades nothing and leaves the marquee where it was. The key still
+ * carries what the credits were drawn from — the song and whether it is known
+ * to be AI-generated — so an outgoing instance goes on drawing its own title,
+ * artist and badges while it fades.
+ */
+internal class CreditsKey(val song: Song, val aiTrack: Boolean) {
+    override fun equals(other: Any?): Boolean =
+        other is CreditsKey && other.song.title == song.title && other.song.artist == song.artist
+
+    override fun hashCode(): Int = 31 * song.title.hashCode() + song.artist.hashCode()
+}
+
+/**
+ * The newest payload drawn for each set of credits words.
+ *
+ * The crossfade holds on to the first key of each set of words it sees: a cut
+ * that shares them (same title and artist, new album link or AI mark) is equal
+ * to it and replaces nothing. So when the words change, the outgoing instance
+ * is handed that first key. This keeps the payload last drawn for those words,
+ * so the outgoing instance fades out what was actually on screen.
+ *
+ * A handful of entries is plenty: only the instances still fading can ask.
+ */
+internal class CreditsPayloads(private val capacity: Int = 8) {
+    private val latest = object : LinkedHashMap<CreditsKey, CreditsKey>(capacity, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<CreditsKey, CreditsKey>): Boolean =
+            size > capacity
+    }
+
+    /** [current] is what is on screen now for its words. */
+    fun record(current: CreditsKey) {
+        latest[current] = current
+    }
+
+    /**
+     * What an instance of the crossfade keyed with [key] draws. The current
+     * target draws [current], made from the newest song, so a cut that shares
+     * its words still shows its own album link and badges; an outgoing one
+     * draws the payload last drawn for its words, or [key] itself if none was
+     * recorded.
+     */
+    fun shown(key: CreditsKey, current: CreditsKey): CreditsKey =
+        if (key == current) current else latest[key] ?: key
 }

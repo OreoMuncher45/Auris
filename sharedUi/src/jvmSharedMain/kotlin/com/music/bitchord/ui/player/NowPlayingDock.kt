@@ -130,10 +130,7 @@ internal fun Modifier.playerDockHost(
                     // over the last stretch of the trip.
                     val travel = creditsTravel(progress)
                     val from = Offset(dockFrame.creditsLeft, dockFrame.creditsTop)
-                    val to = Offset(
-                        target.left - anchor.x - offset,
-                        target.top - anchor.y - offset,
-                    )
+                    val to = creditsDockTarget(target, anchor, offset)
                     val at = Offset(
                         from.x + (to.x - from.x) * travel,
                         from.y + (to.y - from.y) * travel,
@@ -293,3 +290,15 @@ internal fun Modifier.skipSwipeGesture(
             },
         )
     }
+
+/**
+ * Where the flying credits land, in the player's own box: the mini player's
+ * title, [target], found on screen.
+ *
+ * [anchor] is where the player's top-left sits on screen with the sheet fully
+ * open, and the sheet is [offset] below that this frame. The sheet only moves
+ * down, so the offset comes off the vertical coordinate alone — as it does for
+ * the sleeve's own trip to the cover.
+ */
+internal fun creditsDockTarget(target: Rect, anchor: Offset, offset: Float): Offset =
+    Offset(target.left - anchor.x, target.top - anchor.y - offset)
