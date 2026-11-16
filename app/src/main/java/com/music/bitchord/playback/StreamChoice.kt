@@ -64,7 +64,8 @@ object StreamChoice {
     fun of(videoId: String): SourceStream? {
         val choice = chosen[videoId] ?: return null
         if (SystemClock.elapsedRealtime() - choice.at > TTL_MS) {
-            chosen.remove(videoId)
+            // By value: a fresh pin made since the read above is not this one.
+            chosen.remove(videoId, choice)
             return null
         }
         return choice.stream
@@ -122,7 +123,7 @@ object StreamChoice {
             // entries, and the blunt version became reachable.
             chosen.entries.removeIf { now - it.value.at > TTL_MS }
             if (chosen.size >= MAX_REMEMBERED) {
-                chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
+                chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key, it.value) }
             }
         }
         // The check above is only a fast path. Two opens of one track (the
@@ -179,7 +180,7 @@ object StreamChoice {
      * cache entry it filled may hold that source's bytes and may still be
      * written by a reader that opened earlier. The cache purge hands these
      * tracks over instead, for tracks away from the playhead: their entry is
-     * dropped first, then [forgetAll] releases the pin.
+     * dropped first, then [handOver] releases the pin.
      */
     fun inactivePins(enabled: Set<String>, youtubeEnabled: Boolean, keep: Set<String>): Map<String, Boolean> =
         buildMap {
@@ -220,12 +221,14 @@ object StreamChoice {
         window: () -> Set<String>,
     ): Set<String> {
         if (stale.isEmpty()) return emptySet()
+        // The pins as they stand now. Only these are released, so a track that
+        // is pinned afresh while the drop runs keeps its new pin.
+        val seen = stale.keys.mapNotNull { id -> chosen[id]?.let { id to it } }.toMap()
         val dropped = stale.entries.groupBy({ it.value }, { it.key })
             .flatMap { (youtube, ids) -> drop(ids.toSet(), youtube) }
             .toSet()
-        val released = dropped - window()
-        forgetAll(released)
-        return released
+        return (dropped - window())
+            .filterTo(mutableSetOf()) { id -> seen[id]?.let { chosen.remove(id, it) } == true }
     }
 
     /**

@@ -62,6 +62,25 @@ class StreamChoiceHandOverTest {
     }
 
     @Test
+    fun aTrackPinnedAfreshDuringTheDropKeepsItsNewPin() = runTest {
+        pin("handover-free")
+
+        val released = StreamChoice.handOver(
+            mapOf("handover-free" to false),
+            drop = { asked, _ ->
+                // The old pin goes and a new one is made while the bytes are dropped.
+                StreamChoice.forget("handover-free")
+                StreamChoice.remember("handover-free", SourceStream("https://example.invalid/new"), substituted = true)
+                asked
+            },
+            window = { emptySet() },
+        )
+
+        assertEquals(emptySet<String>(), released)
+        assertEquals("https://example.invalid/new", StreamChoice.of("handover-free")?.url)
+    }
+
+    @Test
     fun eachSourceIsDroppedOnItsOwnSide() = runTest {
         pin("handover-free")
         StreamChoice.remember("handover-yt", SourceStream("https://example.invalid/yt"), substituted = false)

@@ -5,6 +5,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -31,7 +32,7 @@ class StreamChoiceConcurrentPinTest {
                 val start = CountDownLatch(1)
                 val done = CountDownLatch(THREADS)
                 val winners = AtomicInteger()
-                val winningUrl = java.util.concurrent.atomic.AtomicReference<String>()
+                val winningUrl = AtomicReference<String>()
                 repeat(THREADS) { n ->
                     pool.execute {
                         start.await()
