@@ -470,13 +470,16 @@ private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): Scr
     }
     var isFirstSearchComposition by remember { mutableStateOf(true) }
     LaunchedEffect(searchQuery, scrollState, scrollPage) {
-        if (isFirstSearchComposition && searchQuery.isEmpty()) {
+        // Blank, not empty, as everywhere else: a query of spaces filters
+        // nothing (see [SettingsSearch]), so it must not scroll the page to
+        // the top either, or the scroll saver would then store that top.
+        if (isFirstSearchComposition && searchQuery.isBlank()) {
             // Skip the initial composition during Activity recreation:
             // rememberSaveable already restored the scroll position.
             isFirstSearchComposition = false
         } else {
             isFirstSearchComposition = false
-            if (searchQuery.isEmpty()) {
+            if (searchQuery.isBlank()) {
                 // The page's own list is back, so its own place in it applies.
                 scrollState.scrollTo(
                     AppSettings.settingsScrollOffset(scrollPage)
