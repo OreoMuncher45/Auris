@@ -439,7 +439,10 @@ private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): Scr
     // A fresh scroll state per page, so one page's offset never carries into
     // another.
     val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
-    // Where this page was left the last time it was closed.
+    // Where this page was left the last time it was closed. Read once, when
+    // the page opens, on purpose: the restore below may wait for a first
+    // layout, and meanwhile the scroll saver can already have written the
+    // unrestored top (0) back, which a fresh read would then restore.
     val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
     // Restored once the page has been measured: a scroll state cannot hold an
     // offset its content has not got yet, so asking for it before the first
