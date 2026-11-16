@@ -184,10 +184,9 @@ on:
           - Spotify still knows you: your top tracks and what you played there lately
             are read and matched to something playable, and they seed the mix whichever
             catalogue is chosen — signed in.
-          - Your likes are yours. The mix asks the catalogue for songs like the ones
-            you liked only when "similar liked songs" is on; with it off, the radio is
-            seeded from what you are playing instead, and your saved songs are left
-            out of it.
+          - Your likes are yours. The radio is seeded from the songs you liked only
+            when "similar liked songs" is on; with it off, it is seeded from what you
+            are playing elsewhere. Spotify's Liked Songs are never read into the mix.
           - Flow no longer repeats itself: the tracks just played are evidence for
             ranking, not content for the mix, and the radio is closed to them too.
           - A mix built by the old algorithm is dropped rather than restored, so the
