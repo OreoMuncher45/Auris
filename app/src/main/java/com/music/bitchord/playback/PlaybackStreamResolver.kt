@@ -164,16 +164,23 @@ internal class PlaybackStreamResolver(
             QualityUpgrade.forcedStream(dataSpec.uri)?.let { upgraded ->
                 val upgradedName = upgraded.sourceConfigId
                     ?.let { SourceRegistry.config(it)?.displayName } ?: "Upgrade"
+                // An audition opens this stream before the swap is committed,
+                // as it does on the YouTube path: see [serveUpgraded]. Recording
+                // it here would describe a stream the listener is not hearing
+                // and may never hear.
+                val proving = QualityUpgrade.isAuditioning(fullMediaId)
                 TrackLog.d(
                     "BitChord",
-                    "serving upgraded ${fullMediaId ?: trackParam} " +
+                    "${if (proving) "auditioning" else "serving"} upgraded ${fullMediaId ?: trackParam} " +
                         "from ${Uri.parse(upgraded.url).host} " +
                         "at ${dataSpec.position} (${upgraded.format.summary})",
                     about = fullMediaId ?: trackParam,
                 )
-                NerdStats.onSourceStream(fullMediaId ?: trackParam, upgraded.format, upgradedName)
-                if (fullMediaId != null) NerdStats.recordSource(fullMediaId, upgradedName)
-                NerdStats.recordSource(trackParam, upgradedName)
+                if (!proving) {
+                    NerdStats.onSourceStream(fullMediaId ?: trackParam, upgraded.format, upgradedName)
+                    if (fullMediaId != null) NerdStats.recordSource(fullMediaId, upgradedName)
+                    NerdStats.recordSource(trackParam, upgradedName)
+                }
                 return dataSpec.buildUpon()
                     .setUri(Uri.parse(upgraded.url))
                     .setHttpRequestHeaders(upgraded.headers)
