@@ -14,7 +14,7 @@ import org.junit.Test
  */
 class StreamChoiceInactivePinsTest {
 
-    private val ids = listOf("inactive-off", "inactive-on", "inactive-kept", "inactive-youtube")
+    private val ids = listOf("inactive-off", "inactive-on", "inactive-kept", "inactive-youtube", "inactive-yt-config")
 
     @After
     fun tearDown() = ids.forEach(StreamChoice::forget)
@@ -58,6 +58,29 @@ class StreamChoiceInactivePinsTest {
 
         assertEquals(emptyMap<String, Boolean>(), inside.filterKeys { it in ids })
         assertEquals(mapOf("inactive-youtube" to true), outside.filterKeys { it in ids })
+    }
+
+    @Test
+    fun aPinCarryingYouTubesConfigIdIsHandedOverAsYouTube() {
+        // A source-backed track that fell back to YouTube: YouTube's own config id.
+        pin("inactive-yt-config", "yt-config")
+
+        val off = StreamChoice.inactivePins(
+            enabled = emptySet(),
+            youtubeEnabled = false,
+            keep = emptySet(),
+            youtubeConfigIds = setOf("yt-config"),
+        )
+        val on = StreamChoice.inactivePins(
+            enabled = setOf("yt-config"),
+            youtubeEnabled = true,
+            keep = emptySet(),
+            youtubeConfigIds = setOf("yt-config"),
+        )
+
+        // Classified as YouTube, so its YouTube-origin cache entry is the one dropped.
+        assertEquals(mapOf("inactive-yt-config" to true), off.filterKeys { it in ids })
+        assertEquals(emptyMap<String, Boolean>(), on.filterKeys { it in ids })
     }
 
     @Test

@@ -182,12 +182,22 @@ object StreamChoice {
      * tracks over instead, for tracks away from the playhead: their entry is
      * dropped first, then [handOver] releases the pin.
      */
-    fun inactivePins(enabled: Set<String>, youtubeEnabled: Boolean, keep: Set<String>): Map<String, Boolean> =
+    fun inactivePins(
+        enabled: Set<String>,
+        youtubeEnabled: Boolean,
+        keep: Set<String>,
+        youtubeConfigIds: Set<String> = emptySet(),
+    ): Map<String, Boolean> =
         buildMap {
             for ((id, choice) in chosen) {
                 if (id in keep) continue
                 val source = choice.stream.sourceConfigId
                 when {
+                    // YouTube's own row in the source list: a source-backed
+                    // track that fell back to YouTube carries its id. The bytes
+                    // are YouTube's, so they are dropped as YouTube's.
+                    source != null && source in youtubeConfigIds ->
+                        if (!youtubeEnabled || source !in enabled) put(id, true)
                     source != null -> if (source !in enabled) put(id, false)
                     !choice.substituted -> if (!youtubeEnabled) put(id, true)
                 }

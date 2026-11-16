@@ -7209,7 +7209,8 @@ class PlaybackService : MediaLibraryService() {
     private suspend fun retireInactivePins(keep: Set<String>) {
         val configs = SourceRegistry.configs.value
         val enabled = configs.filter { it.enabled }.mapTo(mutableSetOf()) { it.id }
-        val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep)
+        val youtubeIds = configs.filter { it.kind == SourceKind.YOUTUBE }.mapTo(mutableSetOf()) { it.id }
+        val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep, youtubeIds)
         StreamChoice.handOver(stale, AudioCache::dropEntriesOf, ::playheadWindow)
     }
 
