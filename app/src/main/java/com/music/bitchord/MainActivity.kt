@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +22,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -94,7 +92,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -119,7 +116,11 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -262,8 +263,6 @@ import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
-import com.music.bitchord.ui.components.GlassActionMenu
-import com.music.bitchord.ui.components.heldMenuUsesGlass
 import com.music.bitchord.ui.components.HeldContextMenu
 import com.music.bitchord.ui.components.HeldItem
 import androidx.media3.session.MediaController
@@ -331,30 +330,15 @@ import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.player.PlayerSheetMotion
+import com.music.bitchord.ui.player.PlayerPanelHost
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.Density
-import androidx.compose.material3.SheetState
-import androidx.compose.material3.SheetValue
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.offset
 import com.music.bitchord.ui.components.MiniPlayerPull
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInWindow
-import com.music.bitchord.ui.player.LocalPlayerDock
 import com.music.bitchord.ui.player.PlayerDock
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.AudiobookScreen
@@ -382,7 +366,6 @@ import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
 import com.music.bitchord.data.canvas.keyColors
 import com.music.bitchord.ui.theme.SystemBarIcons
-import com.music.bitchord.ui.utils.guardSheetFromContentTouches
 import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
@@ -676,30 +659,6 @@ class MainActivity : AppCompatActivity() {
  * and crossed the JVM's 64 KB limit. The wrapper does the same layout, but a
  * non-inline lambda is compiled separately, which keeps the caller small.
  */
-
-/**
- * The window of the dialog a Compose view is drawn in, if it is in one.
- *
- * Compose hosts a dialog's content in a view whose parent is not always the
- * [DialogWindowProvider] directly, so walking the parent chain is the reliable
- * route; the context chain is the fallback for the arrangements where it is
- * not. This matters for the player sheet: its status-bar and edge-to-edge
- * setup has to be applied to *that* window, and looking in only one place
- * found nothing, which is why the bar stayed up and the sheet stayed inset.
- */
-private fun dialogWindowOf(view: View): android.view.Window? {
-    var parent = view.parent
-    while (parent != null) {
-        if (parent is DialogWindowProvider) return parent.window
-        parent = parent.parent
-    }
-    var context = view.context
-    while (context is android.content.ContextWrapper) {
-        if (context is android.app.Dialog) return context.window
-        context = context.baseContext
-    }
-    return null
-}
 
 /**
  * Runs [content] as a restart scope of its own.
@@ -3998,30 +3957,55 @@ private fun BitChordApp(
         // the feed, the frosted bars, the tab row — becomes the left half of
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
-        val pageCoveredByPlayer by remember(showNowPlaying, playerDock) {
-            derivedStateOf { showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f }
+        // The player is drawn over the page in this same window, so while it
+        // is up the page leaves the semantics tree: TalkBack must not walk or
+        // activate the song rows and buttons the player covers.
+        val pageCoveredByPlayer = showNowPlaying && playerSong != null
+        // Opening the player from search would otherwise leave the field
+        // focused and the keyboard up over the player.
+        val pageFocusManager = LocalFocusManager.current
+        val pageKeyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(pageCoveredByPlayer) {
+            if (pageCoveredByPlayer) {
+                pageFocusManager.clearFocus(force = true)
+                pageKeyboard?.hide()
+            }
+        }
+        // Whether the panel is all the way up over a portrait page, read from
+        // the panel's own dock. Derived, as Zenith does it: the open fraction
+        // moves on every frame of the panel's travel, and read straight in the
+        // page's draw it invalidated the page root on each of them. The flag
+        // only flips twice per open or close.
+        val pageHiddenByPlayer by remember(pageCoveredByPlayer, playerDock) {
+            derivedStateOf { pageCoveredByPlayer && playerDock.attached && playerDock.openFraction() >= 1f }
         }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .then(
+                        if (pageCoveredByPlayer) Modifier.clearAndSetSemantics {} else Modifier,
+                    )
+                    // Semantics hide the page from TalkBack only. A hardware
+                    // keyboard's Tab could still walk out of the player into
+                    // the covered search field and tabs, so focus may not
+                    // enter the page while the player is over it.
+                    .focusProperties {
+                        onEnter = { if (pageCoveredByPlayer) cancelFocusChange() }
+                    }
+                    .focusGroup()
                     // Nothing of the page under a portrait player that is fully
-                    // up: that player is its own window, opaque from edge to
-                    // edge, and this one drawing on behind it — the page, the
-                    // glass bar and the blurs that sample it, a now-playing
-                    // row's bars — is GPU time taken from the player on every
-                    // frame for nothing anyone can see. The same test the
-                    // player's own dim skips itself on. Composition and layout
-                    // carry on, so the page is current the moment the player
-                    // starts to come down and this draws again.
-                    //
-                    // Derived, as Zenith does it: the open fraction moves on
-                    // every frame of the sheet's travel, and read straight in
-                    // this draw it invalidated the page root on each of them.
-                    // The flag only flips twice per open or close.
+                    // up: the panel is opaque from edge to edge, and the page
+                    // drawing on behind it — the glass bar and the blurs that
+                    // sample it, a now-playing row's bars — is GPU time taken
+                    // from the player on every frame for nothing anyone can
+                    // see. The same test the panel's own dim skips itself on.
+                    // Composition and layout carry on, so the page is current
+                    // the moment the panel starts to come down and this draws
+                    // again.
                     .drawWithContent {
-                        if (!pageCoveredByPlayer) drawContent()
+                        if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
                 // Which page is on screen, as one name. The transition runs
@@ -4714,21 +4698,34 @@ private fun BitChordApp(
 
         }
 
-        val playerRaised = showNowPlaying && playerSong != null
-
-        if (playerRaised) {
-            PlayerSheetHost(
-                song = playerSong,
-                sheets = sheets,
-                playerSheetMotion = playerSheetMotion,
-                playerDock = playerDock,
-                activeDock = activeDock,
-                reducePlayerMotion = { reducePlayerMotion },
-                reduceDynamicBlur = reduceDynamicBlur,
-                nowPlaying = nowPlaying,
-                songMenuBody = songMenuBody,
-                onDismiss = { showNowPlaying = false },
-            )
+        if (pageCoveredByPlayer) {
+            // Its own restart scope, as for the mini player: the panel reads
+            // play/pause and buffering, and read here they would recompose
+            // the whole root on every flip while the player is up.
+            IsolatedScope {
+                PlayerPanelHost(
+                    song = playerSong,
+                    motion = playerSheetMotion,
+                    dock = playerDock,
+                    reducePlayerMotion = reducePlayerMotion,
+                    reduceDynamicBlur = reduceDynamicBlur,
+                    glassPill = glassActive,
+                    hazeState = hazeState,
+                    isPlaying = player.isPlaying,
+                    isLoading = playPauseBusy,
+                    controlsLocked = controlsLocked,
+                    onBlockedControl = showHostOnlyNotice,
+                    onPlayPause = { togglePlayPause() },
+                    onNext = { controller?.seekToNextMediaItem() },
+                    onPrevious = { controller?.seekToPrevious() },
+                    menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
+                    menuAnchor = sheets.playerMenuAnchor,
+                    onDismissMenu = { sheets.songMenu.song = null },
+                    songMenuBody = songMenuBody,
+                    nowPlaying = nowPlaying,
+                    onDismiss = { showNowPlaying = false },
+                )
+            }
         }
 
         // ---- Replay stories ----
@@ -4815,243 +4812,6 @@ private fun BitChordApp(
     }
 }
 
-
-/**
- * The player, raised: the modal sheet it rides in, the dim behind it, and
- * the track menu its three-dot button opens, drawn in the sheet's own window.
- *
- * Its own composable rather than a branch of [BitChordApp]'s content lambda,
- * which is already as wide as dex can comfortably call (see [RootOverlays]).
- *
- * "Reduce animation" comes in as `() -> Boolean`, reading the root's own
- * collected State, rather than as a Boolean: the sheet state keeps the
- * `confirmValueChange` it was built with, and that has to read the setting
- * when the sheet asks, not when the sheet was made.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PlayerSheetHost(
-    song: Song,
-    sheets: RootSheets,
-    playerSheetMotion: PlayerSheetMotion,
-    playerDock: PlayerDock,
-    activeDock: PlayerDock?,
-    reducePlayerMotion: () -> Boolean,
-    reduceDynamicBlur: Boolean,
-    nowPlaying: @Composable (Song) -> Unit,
-    songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit,
-    onDismiss: () -> Unit,
-) {
-
-    // What rememberModalBottomSheetState builds, but able to start open,
-    // and with every hide routed through [playerSheetMotion] — a drag
-    // released low, a back press, a tap on the scrim. Refused here and
-    // carried out there, on a curve slow enough to watch the artwork
-    // fly home on, rather than on the sheet's own.
-    val sheetDensity = LocalDensity.current
-    val confirmSheetValue: (SheetValue) -> Boolean = { value ->
-        // Read when asked, not when the sheet was made: the setting
-        // can change while the player is up.
-        if (value == SheetValue.Hidden && !reducePlayerMotion()) {
-            playerSheetMotion.close()
-            false
-        } else {
-            true
-        }
-    }
-    val nowPlayingSheetState = rememberSaveable(
-        saver = SheetState.Saver(
-            skipPartiallyExpanded = true,
-            confirmValueChange = confirmSheetValue,
-            density = sheetDensity,
-            skipHiddenState = false,
-        ),
-    ) {
-        SheetState(
-            skipPartiallyExpanded = true,
-            density = sheetDensity,
-            // Already open when the app is the one raising it: its
-            // content is held down, and slid up, by the motion.
-            initialValue = if (playerSheetMotion.holding) SheetValue.Expanded else SheetValue.Hidden,
-            confirmValueChange = confirmSheetValue,
-        )
-    }
-    DisposableEffect(nowPlayingSheetState) {
-        playerSheetMotion.sheet = nowPlayingSheetState
-        playerDock.sheetOffset = playerSheetMotion::position
-        onDispose {
-            playerDock.sheetOffset = null
-            playerSheetMotion.onSheetGone()
-        }
-    }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = nowPlayingSheetState,
-        // None of M3's: it follows the sheet's own animation, which is
-        // no longer what moves the player. The player draws its own,
-        // off where the player actually is — see the content below.
-        scrimColor = if (reducePlayerMotion()) BottomSheetDefaults.ScrimColor else Color.Transparent,
-        // The player fills the screen and paints its own background to
-        // the very top, so the sheet's default 28.dp top corners would
-        // only cut two notches out of the artwork behind the status bar.
-        // Square, and not clipped along its top — see [PlayerSheetShape].
-        shape = PlayerSheetShape,
-        containerColor = Color.Transparent,
-        dragHandle = null,
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-        // M3 caps a bottom sheet at [BottomSheetDefaults.SheetMaxWidth]
-        // (640.dp) and centres it once the window is wider than that —
-        // built for a sheet that's meant to look like a sheet next to
-        // visible content either side. This one is the whole player;
-        // capped at 640dp on a tablet it renders as a narrow card with
-        // the page it's supposed to be covering visible down both
-        // sides. Unspecified opts out of the cap entirely, so the
-        // sheet always spans the full window this app draws it for.
-        sheetMaxWidth = Dp.Unspecified,
-        // Back is the app's to carry out, like every other close — see
-        // the handler below. Left to M3, a back press is the one close
-        // that never asks `confirmValueChange`: the sheet hides itself
-        // straight away on its own curve, then the window leaves on its
-        // exit animation with the artwork still drawn in it.
-        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = reducePlayerMotion()),
-    ) {
-        // With M3's own back off, the dialog's dispatcher ends here.
-        // Composed ahead of the player, so the player's own handlers —
-        // the lyrics and the queue putting themselves away first — are
-        // newer and are asked before this one.
-        BackHandler(enabled = !reducePlayerMotion()) { playerSheetMotion.close() }
-        // Keeps a sheet still "settling" after a lyrics or queue
-        // scroll from taking the next touch meant for that list.
-        // See [PlayerSheetMotion.attachWindow].
-        val sheetWindow = dialogWindowOf(LocalView.current)
-        DisposableEffect(sheetWindow, reducePlayerMotion()) {
-            if (!reducePlayerMotion()) playerSheetMotion.attachWindow(sheetWindow)
-            // The sheet is a dialog window of its own, and it does not
-            // inherit the activity's edge-to-edge setup: left alone it
-            // is letterboxed around the cutout, which on a phone with a
-            // punch-hole camera leaves a strip of the page showing at
-            // the top corner. Draw under the cutout and behind the
-            // bars, so the player's scrim reaches every edge.
-            //
-            // The status bar itself is not touched here: it is the
-            // player's own business, and it is taken off and put back
-            // from inside the player — see
-            // [com.music.bitchord.ui.theme.HideStatusBar]. Doing it
-            // from out here meant the bar was shown again on the way
-            // out, while the window was still on screen: a flash of
-            // clock and battery on the way to the page.
-            sheetWindow?.let { window ->
-                WindowCompat.setDecorFitsSystemWindows(window, false)
-                window.attributes = window.attributes.apply {
-                    layoutInDisplayCutoutMode =
-                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                }
-            }
-            onDispose { }
-        }
-        // Where the sheet's content starts in the window, so the
-        // button's window coordinates can be turned into the menu's.
-        var sheetContentOrigin by remember { mutableStateOf(Offset.Zero) }
-        // The sheet's own backdrop, for the glass menu below.
-        //
-        // A sheet is a window of its own, and a window cannot read
-        // another window's pixels. The glass in the menu samples the
-        // app's backdrop layer — which is recorded in the *activity's*
-        // window and holds the page behind the sheet — so the menu
-        // drew the home screen through the player: a hole punched in
-        // the middle of it, with the player visible around the edges.
-        // The player is recorded into a layer of its own, in this
-        // window, and the menu samples that instead.
-        //
-        // Recorded only while the menu is up. The layer costs a draw
-        // pass of the whole player every frame, and the player is not
-        // cheap to record — its artwork is animated — while nothing
-        // samples the layer at all while the menu is closed.
-        val sheetBackdrop = rememberLayerBackdrop()
-        val playerMenuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer }
-        Box(
-            Modifier
-                // Where the app is holding the player, if it is — see
-                // [PlayerSheetMotion.contentOffsetPx]. Placement only.
-                .offset { IntOffset(0, playerSheetMotion.contentOffsetPx()) }
-                // The dim behind the player, from the window's top to
-                // its bottom whatever the player's offset, and as deep
-                // as the player is open.
-                .drawBehind {
-                    val open = playerDock.openFraction()
-                    // Not at all under a portrait player that is fully up:
-                    // its own background is opaque, and a full-screen
-                    // blend behind it is paid on every frame the window
-                    // draws for nothing anyone can see.
-                    if (!reducePlayerMotion() && open > 0f && !(open >= 1f && playerDock.attached)) {
-                        val top = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
-                        drawRect(
-                            color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * open),
-                            topLeft = Offset(0f, -top.toInt().toFloat()),
-                            size = Size(size.width, size.height),
-                        )
-                    }
-                }
-                .guardSheetFromContentTouches(nowPlayingSheetState)
-                .onGloballyPositioned { sheetContentOrigin = it.positionInWindow() }
-                // The sheet fills the window, so its height is the
-                // whole of its travel: hidden sits that far down.
-                .onSizeChanged {
-                    playerDock.sheetTravel = it.height.toFloat()
-                    playerSheetMotion.laidOut = true
-                },
-        ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    // What the menu's glass samples — see
-                    // [sheetBackdrop]. The same gate the menu's own
-                    // material uses: a menu that is not glass has
-                    // nothing to sample, and a layer recorded for
-                    // nothing is a draw pass paid for free.
-                    .then(
-                        if (playerMenuSong != null && heldMenuUsesGlass(reduceDynamicBlur)) {
-                            Modifier.layerBackdrop(sheetBackdrop)
-                        } else {
-                            Modifier
-                        },
-                    ),
-            ) {
-                CompositionLocalProvider(LocalPlayerDock provides activeDock) {
-                    nowPlaying(song)
-                }
-            }
-            // The track menu, hung off the three-dot button. Same
-            // surface and same rows as the long-press menu; it is
-            // drawn in the sheet's own window so it sits over the
-            // player, and anchored to the button rather than lifted
-            // out of a held row.
-            if (playerMenuSong != null) {
-                val anchor = sheets.playerMenuAnchor
-                if (anchor != null) {
-                    val local = androidx.compose.ui.unit.IntRect(
-                        left = anchor.left - sheetContentOrigin.x.toInt(),
-                        top = anchor.top - sheetContentOrigin.y.toInt(),
-                        right = anchor.right - sheetContentOrigin.x.toInt(),
-                        bottom = anchor.bottom - sheetContentOrigin.y.toInt(),
-                    )
-                    // The glass in the panel samples the player
-                    // recorded above, not the app's page backdrop:
-                    // the sheet is another window, and the page layer
-                    // holds the home screen — see [sheetBackdrop].
-                    CompositionLocalProvider(LocalAppBackdrop provides sheetBackdrop) {
-                        GlassActionMenu(
-                            anchor = local,
-                            onDismiss = { sheets.songMenu.song = null },
-                        ) {
-                            songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 /**
  * One of the root's pages, as AnimatedContent lays it out for `key`.
@@ -8260,25 +8020,6 @@ private val DETAIL_TITLE_DROP = 320.dp
  * the distance it covered.
  */
 private val PLAYER_PULL_FLING_VELOCITY = 400.dp
-
-/** M3's own scrim strength, which the player's dim stands in for. */
-private const val PLAYER_SCRIM_ALPHA = 0.32f
-
-/**
- * The player sheet's shape: square, as [RectangleShape] was, but reaching a
- * whole sheet's height above the sheet's top edge.
- *
- * The sheet's Surface clips its content to this shape, and on the way down to
- * the mini player the artwork travels ahead of the sheet carrying it — up
- * above the sheet's top edge, where a plain rectangle cut it off mid-air,
- * leaving only its lower part to arrive in the bar. Nothing else is drawn
- * outside the sheet (its background is transparent and it casts no shadow),
- * so at rest this is the rectangle it replaces.
- */
-private object PlayerSheetShape : Shape {
-    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
-        Outline.Rectangle(Rect(0f, -size.height, size.width, size.height))
-}
 
 @Composable
 private fun AppGlassNav(
