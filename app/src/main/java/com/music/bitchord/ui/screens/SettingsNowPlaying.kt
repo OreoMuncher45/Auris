@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +44,9 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The Now Playing category: the player's look, its artwork and its lyrics. */
 @Composable
@@ -75,6 +79,7 @@ internal fun NowPlayingSettings(
     val showLosslessBadge by AppSettings.showLosslessBadge.collectAsStateWithLifecycle()
     val showHiResBadge by AppSettings.showHiResBadge.collectAsStateWithLifecycle()
     val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
+    val saveScope = rememberCoroutineScope()
     SearchableSettingsGroup(search, SettingsCategory.NOW_PLAYING) {
         val nowPlayingColorsTitle = stringResource(R.string.custom_now_playing)
         row(nowPlayingColorsTitle, "colour", "color", "buttons", "seekbar", "text", "lyrics", "artwork") {
@@ -236,12 +241,18 @@ internal fun NowPlayingSettings(
                         perfCpu.roundToInt(),
                     ),
                     onClick = {
-                        val file = com.music.bitchord.perf.PerfMonitor.save(context)
-                        android.widget.Toast.makeText(
-                            context,
-                            file.absolutePath,
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
+                        // Writing the report is file I/O, so not on the main
+                        // thread; the toast with its path waits for it.
+                        saveScope.launch {
+                            val file = withContext(Dispatchers.IO) {
+                                com.music.bitchord.perf.PerfMonitor.save(context)
+                            }
+                            android.widget.Toast.makeText(
+                                context,
+                                file.absolutePath,
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
                     },
                 )
             }
