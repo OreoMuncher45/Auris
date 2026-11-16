@@ -2874,49 +2874,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         partySyncHolder[0]?.onLocalIntent()
     }
 
-    // What the page area may ask of the window; see DesktopPageActions.
-    val pageActions = DesktopPageActions(
-        playSong = { song, source -> playSong(song, source = source) },
-        playSongs = { songs, index, source -> playSongs(songs, index, source) },
-        playNext = { song -> playNext(song) },
-        addToQueue = ::addToQueue,
-        addToPlaylist = { library.playlistTarget = it },
-        toggleLike = { song -> toggleLike(song) },
-        downloadSong = ::downloadSong,
-        downloadAll = ::downloadAll,
-        removeFromOpenPlaylist = ::removeFromOpenPlaylist,
-        shareCollection = ::shareCollection,
-        toggleSubscription = ::toggleSubscription,
-        openArtist = ::openArtist,
-        openArtistByName = ::openArtistByName,
-        openBrowseItem = ::openBrowseItem,
-        openShelfItem = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
-        openLibraryItem = ::openLibraryItem,
-        openMoodGenre = ::openMoodGenre,
-        openPodcastShow = ::openPodcastShow,
-        playRadioSeed = ::playRadioSeed,
-        selectDestination = ::selectDestination,
-        loadHome = ::loadHome,
-        loadMoreHome = ::loadMoreHome,
-        reloadLibrary = ::reloadLibrary,
-        loadMoreCollectionSongs = ::loadMoreCollectionSongs,
-        editQuery = ::editQuery,
-        search = ::search,
-        runSearch = ::runSearch,
-        recordSongSearch = { song -> recordSongSearch(song) },
-        recordBrowseSearch = { item -> recordBrowseSearch(item) },
-        songMenu = { song -> songMenu(song) },
-    )
-    val pageLists = DesktopPageListStates(
-        home = homeListState,
-        explore = exploreListState,
-        radio = radioListState,
-        moodGenre = moodGenreListState,
-        search = searchListState,
-        library = libraryListState,
-        libraryGrid = libraryGridState,
-        podcasts = podcastListState,
-    )
+
 
     MaterialTheme(
         colorScheme = desktopColorScheme(),
@@ -3112,179 +3070,47 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                 },
                 overlay = {
-                    DesktopPlayerSheet(
-                        visible = overlays.nowPlaying && selectedSong != null,
-                        onDismiss = {
-                            DesktopWindowMode.exit()
-                            overlays.nowPlaying = false
-                        },
-                    ) { windowWidth, windowHeight ->
-                        val current = selectedSong ?: return@DesktopPlayerSheet
-                        val playerSong = trackLinks?.takeIf { it.videoId == current.videoId }
-                            ?.let { extra ->
-                                current.copy(
-                                    artistId = current.artistId ?: extra.artistId,
-                                    // Same as on the phone: the watch-queue lookup
-                                    // is what carries a channel per credited
-                                    // artist, so it is what makes every name in
-                                    // the credit line openable.
-                                    artists = current.artists.ifEmpty { extra.artists },
-                                    albumId = current.albumId ?: extra.albumId,
-                                    albumName = current.albumName ?: extra.albumName,
-                                )
-                            }
-                            ?: current
-                        NowPlayingScreen(
-                            song = playerSong,
-                            isPlaying = playback.isPlaying,
-                            isLoading = playback.isLoading,
-                            position = playerPosition,
-                            durationMs = playback.durationMs,
-                            audioVersionSwitching = false,
-                            qualityUpgraded = false,
-                            queue = liveQueue.songs,
-                            queueIndex = liveQueue.index,
-                            hasPrevious = liveQueue.hasPrevious,
-                            hasNext = liveQueue.hasNext,
-                            repeatMode = when (settings.repeatMode) {
-                                DesktopRepeatMode.OFF -> RepeatModes.OFF
-                                DesktopRepeatMode.ONE -> RepeatModes.ONE
-                                DesktopRepeatMode.ALL -> RepeatModes.ALL
-                            },
-                            shuffleEnabled = settings.shuffle,
-                            autoplayEnabled = DesktopAutoplay.enabled(partyState, settings.autoplay),
-                            signedIn = account.youtubeSignedIn,
-                            accountName = activeAccount?.name?.takeIf(String::isNotBlank),
-                            likeStatus = when (current.videoId) {
-                                in library.likedIds -> LikeStatus.LIKE
-                                in library.dislikedIds -> LikeStatus.DISLIKE
-                                else -> LikeStatus.INDIFFERENT
-                            },
-                            onToggleLike = { toggleLike(current) },
-                            onPlayPause = ::togglePlayPauseFromUser,
-                            onNext = ::playNext,
-                            onPrevious = ::playPrevious,
-                            onBlockedControl = {
-                                DesktopPlayerHost.showMessage("Only the party host can change playback")
-                            },
-                            onSeek = ::seekPlayer,
-                            onSeekFraction = { fraction ->
-                                val duration = playbackEngine.state.value.durationMs
-                                if (duration > 0) seekPlayer((fraction * duration).toLong())
-                            },
-                            onToggleShuffle = { setShuffle(!settings.shuffle) },
-                            // The phone's order: off, all, one.
-                            onCycleRepeat = {
-                                settings.repeatMode = when (settings.repeatMode) {
-                                    DesktopRepeatMode.OFF -> DesktopRepeatMode.ALL
-                                    DesktopRepeatMode.ALL -> DesktopRepeatMode.ONE
-                                    DesktopRepeatMode.ONE -> DesktopRepeatMode.OFF
-                                }
-                                persistence.saveString("repeat_mode", settings.repeatMode.name)
-                            },
-                            onToggleAutoplay = {
-                                setAutoplay(!DesktopAutoplay.enabled(DesktopListenTogether.state.value, settings.autoplay))
-                            },
-                            onJumpTo = ::playQueueIndex,
-                            onRemoveFromQueue = ::removeFromQueue,
-                            onMoveInQueue = ::moveInQueue,
-                            onClearQueue = ::clearQueue,
-                            onOpenMenu = { playerMenuOpen = true },
-                            onOpenAlbum = { id ->
-                                overlays.nowPlaying = false
-                                openAlbum(id)
-                            },
-                            // The lead credit carries the track's own channel
-                            // id and opens straight away; anyone else on the
-                            // line has no id, so the page is found from the
-                            // name — and only when the answer is that name
-                            // exactly, so a fragment like "2115" opens nothing
-                            // rather than White 2115.
-                            onOpenArtist = { id, name ->
-                                overlays.nowPlaying = false
-                                if (id != null) {
-                                    openArtist(id, name)
-                                } else {
-                                    scope.launch {
-                                        YtMusicRepository.findArtistPageId(name).getOrNull()
-                                            ?.let { found -> openArtist(found, name) }
-                                    }
-                                }
-                            },
-                            onOpenPlaybackSource = {
-                                val id = playerSong.playbackSourceId
-                                overlays.nowPlaying = false
-                                if (playerSong.playbackSourceType == PlaybackSourceType.BROWSE && id != null) {
-                                    openAlbum(id)
-                                }
-                            },
-                            onListenTogether = {
-                                overlays.nowPlaying = false
-                                overlays.listenTogether = true
-                            },
-                            lyrics = sharedLyrics,
-                            lyricsSource = sharedLyricsSource,
-                            lyricsProviderStates = providerStates,
-                            onSelectLyricsProvider = { source -> lyricsOnly = source.label },
-                            lyricsUnavailable = sharedLyricsUnavailable,
-                            lyricsOffsetOpen = false,
-                            onDismissLyricsOffset = {},
-                            windowWidth = windowWidth,
-                            windowHeight = windowHeight,
-                        )
-                        if (playerMenuOpen) {
-                            // Where the player's "…" sits: the right column's credits row, at
-                            // the right edge of the centred two-column layout.
-                            val columnEdge = minOf(windowWidth, 1100.dp) / 2 - 47.dp
-                            Box(
-                                Modifier
-                                    .align(Alignment.Center)
-                                    .offset(x = columnEdge)
-                                    .size(34.dp),
-                            ) {
-                                DesktopSongMenuFor(
-                                    song = playerSong,
-                                    liked = current.videoId in library.likedIds,
-                                    actions = playerSongActions(current),
-                                    onToggleLike = { toggleLike(current) },
-                                    onRevertToOriginal = {
-                                        DesktopOriginalVersion.pin(current.videoId)
-                                        playbackEngine.reloadCurrent()
-                                    }.takeIf {
-                                        playback.streamSourceId != null &&
-                                            playback.streamSourceId != "youtube" &&
-                                            DesktopMusicSources.hasYouTubeOriginal(current) &&
-                                            !DesktopOriginalVersion.isPinned(current.videoId)
-                                    },
-                                    onUpgradeQuality = {
-                                        DesktopOriginalVersion.clear(current.videoId)
-                                        playbackEngine.reloadCurrent(forceSourceRefresh = true)
-                                    }.takeIf { DesktopOriginalVersion.isPinned(current.videoId) },
-                                    onDismiss = { playerMenuOpen = false },
-                                )
-                            }
-                        }
-                        val message by DesktopPlayerHost.messages.collectAsState()
-                        LaunchedEffect(message) {
-                            if (message != null) {
-                                delay(2_500)
-                                DesktopPlayerHost.messages.value = null
-                            }
-                        }
-                        message?.let { text ->
-                            Text(
-                                text = text,
-                                color = Color.White,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(bottom = 36.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(Color.Black.copy(alpha = 0.72f))
-                                    .padding(horizontal = 18.dp, vertical = 10.dp),
-                            )
-                        }
-                    }
+                    // What the player sheet may ask of the window; see DesktopPlayerActions.
+                    val playerActions = DesktopPlayerActions(
+                        toggleLike = { song -> toggleLike(song) },
+                        togglePlayPauseFromUser = ::togglePlayPauseFromUser,
+                        playNext = { playNext() },
+                        playPrevious = ::playPrevious,
+                        seekPlayer = ::seekPlayer,
+                        setShuffle = ::setShuffle,
+                        setAutoplay = ::setAutoplay,
+                        playQueueIndex = ::playQueueIndex,
+                        removeFromQueue = ::removeFromQueue,
+                        moveInQueue = ::moveInQueue,
+                        clearQueue = ::clearQueue,
+                        openAlbum = { id -> openAlbum(id) },
+                        openArtist = ::openArtist,
+                        playerSongActions = ::playerSongActions,
+                    )
+                    DesktopPlayerShell(
+                        selectedSong = selectedSong,
+                        trackLinks = trackLinks,
+                        overlays = overlays,
+                        settings = settings,
+                        persistence = persistence,
+                        scope = scope,
+                        account = account,
+                        library = library,
+                        activeAccount = activeAccount,
+                        liveQueue = liveQueue,
+                        partyState = partyState,
+                        playback = playback,
+                        playbackEngine = playbackEngine,
+                        playerPosition = playerPosition,
+                        sharedLyrics = sharedLyrics,
+                        sharedLyricsSource = sharedLyricsSource,
+                        providerStates = providerStates,
+                        sharedLyricsUnavailable = sharedLyricsUnavailable,
+                        onSelectLyricsProvider = { source -> lyricsOnly = source.label },
+                        playerMenuOpen = playerMenuOpen,
+                        onPlayerMenuOpenChange = { playerMenuOpen = it },
+                        actions = playerActions,
+                    )
                     if (overlays.accounts) {
                         DesktopAccountSelector(
                             accounts = account.accounts,
@@ -3430,6 +3256,49 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                 },
             ) { contentPadding ->
+                // What the page area may ask of the window; see DesktopPageActions.
+                val pageActions = DesktopPageActions(
+                    playSong = { song, source -> playSong(song, source = source) },
+                    playSongs = { songs, index, source -> playSongs(songs, index, source) },
+                    playNext = { song -> playNext(song) },
+                    addToQueue = ::addToQueue,
+                    addToPlaylist = { library.playlistTarget = it },
+                    toggleLike = { song -> toggleLike(song) },
+                    downloadSong = ::downloadSong,
+                    downloadAll = ::downloadAll,
+                    removeFromOpenPlaylist = ::removeFromOpenPlaylist,
+                    shareCollection = ::shareCollection,
+                    toggleSubscription = ::toggleSubscription,
+                    openArtist = ::openArtist,
+                    openArtistByName = ::openArtistByName,
+                    openBrowseItem = ::openBrowseItem,
+                    openShelfItem = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
+                    openLibraryItem = ::openLibraryItem,
+                    openMoodGenre = ::openMoodGenre,
+                    openPodcastShow = ::openPodcastShow,
+                    playRadioSeed = ::playRadioSeed,
+                    selectDestination = ::selectDestination,
+                    loadHome = ::loadHome,
+                    loadMoreHome = ::loadMoreHome,
+                    reloadLibrary = ::reloadLibrary,
+                    loadMoreCollectionSongs = ::loadMoreCollectionSongs,
+                    editQuery = ::editQuery,
+                    search = ::search,
+                    runSearch = ::runSearch,
+                    recordSongSearch = { song -> recordSongSearch(song) },
+                    recordBrowseSearch = { item -> recordBrowseSearch(item) },
+                    songMenu = { song -> songMenu(song) },
+                )
+                val pageLists = DesktopPageListStates(
+                    home = homeListState,
+                    explore = exploreListState,
+                    radio = radioListState,
+                    moodGenre = moodGenreListState,
+                    search = searchListState,
+                    library = libraryListState,
+                    libraryGrid = libraryGridState,
+                    podcasts = podcastListState,
+                )
                 CompositionLocalProvider(
                     LocalPullToRefreshEnabled provides false,
                     LocalShelfRowChrome provides DesktopShelfRowChrome,
