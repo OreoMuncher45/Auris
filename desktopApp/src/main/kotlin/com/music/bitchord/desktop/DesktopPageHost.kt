@@ -140,6 +140,9 @@ internal fun DesktopPageHost(
     val libraryListState = lists.library
     val libraryGridState = lists.libraryGrid
     val podcastListState = lists.podcasts
+    // The mark on a downloaded row. Worked out once per change to the downloads rather than once
+    // per composition of the page, for the album and History pages alike.
+    val downloadedIds = remember(downloads) { downloads.map(Song::videoId).toSet() }
 
     fun playSong(song: Song, source: DesktopQueueSource? = null) = actions.playSong(song, source)
     fun playSongs(songs: List<Song>, startIndex: Int, source: DesktopQueueSource?) =
@@ -240,7 +243,7 @@ internal fun DesktopPageHost(
             },
             onAddToPlaylist = actions.addToPlaylist,
             onDownload = ::downloadSong,
-            downloadedIds = downloads.map(Song::videoId).toSet(),
+            downloadedIds = downloadedIds,
             downloadInProgress = downloadInProgress,
             contentPadding = contentPadding,
         )
@@ -506,7 +509,7 @@ internal fun DesktopPageHost(
             onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["history", "History"], PlaybackSourceType.HISTORY)) },
             onDownload = ::downloadSong,
             onAddToPlaylist = actions.addToPlaylist,
-            downloadedIds = downloads.map(Song::videoId).toSet(),
+            downloadedIds = downloadedIds,
             downloadInProgress = downloadInProgress,
             contentPadding = contentPadding,
             menu = { song -> songMenu(song) },
