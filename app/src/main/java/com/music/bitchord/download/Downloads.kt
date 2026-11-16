@@ -139,6 +139,9 @@ object Downloads {
     private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
     private val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
 
+    /** The list of tracks deleted by hand; a plain list of ids. */
+    private val deletedSerializer = kotlinx.serialization.builtins.ListSerializer(String.serializer())
+
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
 
@@ -192,6 +195,93 @@ object Downloads {
      */
     val collections: StateFlow<Map<String, SavedCollection>> = _collections.asStateFlow()
 
+    /**
+     * The tracks the listener deleted by hand, and nothing else.
+     *
+     * A deletion is an instruction, and the only kind that outranks every
+     * automatic path in the app: the played-song download, the
+     * downloaded-playlist sync, anything else that would put the file back.
+     * Without a record of it, the next pass over the playlist fetched the
+     * track again — which is the exact complaint this exists to answer.
+     *
+     * Written down rather than remembered in memory, because the paths that
+     * would act on it are the ones that run when the app was not looking: the
+     * sync's pass happens half an hour later, and a fresh process knows
+     * nothing.
+     *
+     * Cleared when the listener asks for the track again by hand. The later
+     * instruction wins.
+     */
+    private val _deletedByHand = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Whether [videoId] was deleted by the listener, and must not come back on
+     * its own.
+     */
+    fun deletedByHand(videoId: String): Boolean = videoId in _deletedByHand.value
+
+    /** The ids themselves, for callers that ask about a whole batch. */
+    fun deletedByHandIds(): Set<String> = _deletedByHand.value
+
+    /** Guards the mark-and-write pair, so two deletions cannot race. */
+    private val deletedLock = Any()
+
+    /**
+     * Records that the listener deleted [videoId] by hand.
+     *
+     * Called from [delete] — the one door every explicit deletion comes
+     * through, whether it was one track or a whole release — so no path can
+     * delete a file and leave the app free to fetch it again.
+     *
+     * Committed rather than applied: a mark that is still in memory when the
+     * process dies is a mark that is gone, and the thing it protects is a
+     * file the listener asked not to have.
+     */
+    fun markDeletedByHand(videoId: String) {
+        if (videoId.isBlank()) return
+        synchronized(deletedLock) {
+            val updated = _deletedByHand.value + videoId
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
+    /**
+     * Forgets the mark on [videoId], because the listener asked for it again.
+     *
+     * The later instruction wins: a track deleted by hand and then downloaded
+     * by hand is a track they want.
+     */
+    fun clearDeletedByHand(videoId: String) {
+        if (videoId.isBlank()) return
+        synchronized(deletedLock) {
+            val current = _deletedByHand.value
+            if (videoId !in current) return
+            val updated = current - videoId
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
+    /** Writes the marks down. Called with the lock held. */
+    private fun persistDeletedByHand(ids: Set<String>) {
+        if (!::prefs.isInitialized) return
+        prefs.edit()
+            .putString(KEY_DELETED_BY_HAND, json.encodeToString(deletedSerializer, ids.toList()))
+            .commit()
+    }
+
+    /** Reads the marks back. A blob that will not parse means no marks. */
+    private fun readDeletedByHand(): Set<String> {
+        if (!::prefs.isInitialized) return emptySet()
+        val raw = prefs.getString(KEY_DELETED_BY_HAND, null) ?: return emptySet()
+        return runCatching { json.decodeFromString(deletedSerializer, raw).toSet() }
+            .getOrElse {
+                Log.w(TAG, "the deleted-by-hand list is unreadable (${it.message}); treating it as empty")
+                emptySet()
+            }
+    }
+
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
 
@@ -231,6 +321,11 @@ object Downloads {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
         val legacy = context.getSharedPreferences(LEGACY_PREFS_FILE, Context.MODE_PRIVATE)
+        // The marks are read here rather than with the rest of the index: they
+        // are small, and they have to be known before the first track is
+        // played — the played-song download asks about them the moment a
+        // track starts.
+        _deletedByHand.value = readDeletedByHand()
         // Moved out of the shared settings file. It was three JSON blobs, the
         // largest of which reached ~700 KB for a 1,600-track library, living in
         // the same XML as every setting the app has — so each completed download
@@ -340,9 +435,14 @@ object Downloads {
      * @param from what release this track was asked for as part of, when it was
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
+     * @param automatic whether this is the app asking rather than the listener.
+     *   An automatic ask never clears a [deletedByHand] mark: the listener
+     *   deleted the track, and the app noticing that the track is playing is
+     *   not permission to put it back.
      */
-    fun enqueue(context: Context, song: Song, from: String? = null) {
+    fun enqueue(context: Context, song: Song, from: String? = null, automatic: Boolean = false) {
         val id = song.videoId
+        if (!automatic) clearDeletedByHand(id)
         if (!AppSettings.downloadsAllowedNow) {
             // Distinct from the duplicate-tap no-op below: nothing is in flight
             // here to leave alone, and a refusal nobody is told about reads as a
@@ -388,12 +488,16 @@ object Downloads {
      *
      * The service is started once, the maps are copied once, and the work
      * happens where it should: off the screen.
+     *
+     * @param automatic whether this is the app asking rather than the listener.
+     *   See [enqueue]: an automatic ask never clears a [deletedByHand] mark.
      */
-    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null) {
+    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false) {
         if (songs.isEmpty()) return
         val app = context.applicationContext
         val accepted = mutableListOf<Song>()
         val refused = mutableListOf<Song>()
+        if (!automatic) songs.forEach { clearDeletedByHand(it.videoId) }
         synchronized(lock) {
             for (song in songs) {
                 val id = song.videoId
@@ -575,6 +679,10 @@ object Downloads {
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
         val deleted = DownloadStore.delete(context, uri)
+        // The mark is written even when the file was already gone: the
+        // listener asked for this track not to be here, and that is worth
+        // remembering whether or not there was anything left to remove.
+        markDeletedByHand(videoId)
         forget(videoId)
         deleted
     }
@@ -1927,6 +2035,9 @@ object Downloads {
     }
 
     private const val KEY_SAVED = "downloaded_tracks"
+
+    /** The tracks the listener deleted by hand; see [deletedByHand]. */
+    private const val KEY_DELETED_BY_HAND = "deleted_by_hand"
 }
 
 @kotlinx.serialization.Serializable
