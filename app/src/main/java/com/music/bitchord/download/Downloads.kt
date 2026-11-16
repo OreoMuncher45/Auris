@@ -8,6 +8,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -881,6 +882,67 @@ object Downloads {
             .map { record -> record.copy(videoIds = record.videoIds.filter { it in onDisk }) }
             .filter { record -> record.videoIds.isNotEmpty() }
             .sortedBy { it.title.lowercase(Locale.ROOT) }
+    }
+
+    /**
+     * The downloaded playlists whose switch is on: the ones the sync keeps
+     * whole.
+     *
+     * Deliberately not [savedReleases]. That one prunes each record to the
+     * files still on the disk, which is right for a shelf and wrong for a
+     * promise: a playlist the listener cleared by hand would drop out of it
+     * entirely, and the next song they add would never be noticed. Here the
+     * record is read as written, and what is actually on the disk is a
+     * separate question the sync asks about each track.
+     *
+     * Albums are left out on purpose: an album is a fixed release that never
+     * gains a track, so there is nothing to keep up with.
+     */
+    fun syncableCollections(): List<SavedCollection> =
+        _collections.value.values.filter { it.autoDownload && isMovingCollection(it) }
+
+    /**
+     * Whether a collection can gain tracks: a playlist, or Liked Music, which
+     * is an auto-playlist under another id.
+     *
+     * An album cannot — it is a fixed release — so it has nothing to keep up
+     * with and is left alone.
+     */
+    fun isMovingCollection(record: SavedCollection): Boolean =
+        record.playlist || record.id == YtMusicRepository.LIKED_MUSIC
+
+    /**
+     * The record a page id names, whether it is the downloaded playlist's own
+     * page (`local:playlist:<id>`) or the catalogue page it was downloaded
+     * from.
+     *
+     * The two differ by the `VL` YouTube puts on a playlist's page id and the
+     * record does not always carry, so the comparison ignores it — the same
+     * rule [DownloadedPlaylistSync] uses to match a refresh request.
+     */
+    fun collectionFor(
+        browseId: String,
+        collections: Map<String, SavedCollection> = _collections.value,
+    ): SavedCollection? {
+        recordIdOf(browseId)?.let { id -> collections[id]?.let { return it } }
+        val bare = browseId.removePrefix("VL")
+        return collections.values.firstOrNull { it.id.removePrefix("VL") == bare }
+    }
+
+    /**
+     * Turns the per-playlist switch on [id].
+     *
+     * Written down with the record: the sync runs in a later process than the
+     * tap, and a switch that lived only in memory would be off again by then.
+     * Switching it off leaves the files where they are; switching it on makes
+     * the next pass fetch what was added while it was off.
+     */
+    fun setAutoDownloadNewSongs(id: String, enabled: Boolean) {
+        recordCollections { current ->
+            val record = current[id] ?: return@recordCollections current
+            if (record.autoDownload == enabled) current
+            else current + (id to record.copy(autoDownload = enabled))
+        }
     }
 
     /**
@@ -2154,6 +2216,19 @@ data class SavedCollection(
     val playlist: Boolean = false,
     /** In the order the page listed them, which is the order to play them in. */
     val videoIds: List<String> = emptyList(),
+    /**
+     * Whether songs added to this playlist are downloaded too.
+     *
+     * The switch the listener sets, per playlist, when they ask for a playlist
+     * to live on the device. On by default: downloading a playlist whole is a
+     * promise about a moving thing, and the point of it is that the copy keeps
+     * up. Records written before this existed read as on, which is what those
+     * playlists were already being kept to — see [Downloads.syncableCollections].
+     *
+     * It says nothing about the files already here. Switching it off stops the
+     * next song from arriving; it does not delete anything.
+     */
+    val autoDownload: Boolean = true,
 )
 
 /** A [SavedCollection] with its surviving tracks attached, ready to draw. */

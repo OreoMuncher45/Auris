@@ -102,56 +102,6 @@ half4 main(float2 coord) {
     return content.eval(refractedCoord);
 }"""
 
-/** Upper bound of glass surfaces [MultiRefractionShaderString] refracts in one pass. */
-internal const val MultiRefractionMaxShapes = 8
-
-/**
- * [RoundedRectRefractionShaderString] for up to [MultiRefractionMaxShapes] rounded rects in ONE
- * pass over the shared glass pool, so each bar surface no longer needs its own offscreen layer
- * plus its own lens pass. Same per-pixel math as the single-shape shader; `lens` packs
- * (refractionHeight, refractionAmount (negative = inward), depthEffect, unused).
- */
-@Language("AGSL")
-internal val MultiRefractionShaderString = """
-uniform shader content;
-
-uniform float4 rects[$MultiRefractionMaxShapes];
-uniform float4 radii[$MultiRefractionMaxShapes];
-uniform float4 lens[$MultiRefractionMaxShapes];
-uniform int count;
-
-$RoundedRectSDF
-
-float circleMap(float x) {
-    return 1.0 - sqrt(1.0 - x * x);
-}
-
-half4 main(float2 coord) {
-    for (int i = 0; i < $MultiRefractionMaxShapes; i++) {
-        if (i >= count) break;
-        float4 r = rects[i];
-        if (coord.x >= r.x && coord.y >= r.y && coord.x <= r.z && coord.y <= r.w) {
-            float2 halfSize = (r.zw - r.xy) * 0.5;
-            float2 centeredCoord = coord - (r.xy + halfSize);
-            float radius = radiusAt(centeredCoord, radii[i]);
-            float refractionHeight = lens[i].x;
-            float sd = sdRoundedRect(centeredCoord, halfSize, radius);
-            if (-sd >= refractionHeight) {
-                return content.eval(coord);
-            }
-            sd = min(sd, 0.0);
-            float d = circleMap(1.0 - -sd / refractionHeight) * lens[i].y;
-            float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-            float2 grad = gradSdRoundedRect(centeredCoord, halfSize, gradRadius);
-            if (lens[i].z > 0.5) {
-                grad = normalize(grad + normalize(centeredCoord));
-            }
-            return content.eval(coord + d * grad);
-        }
-    }
-    return content.eval(coord);
-}"""
-
 @Language("AGSL")
 internal val RoundedRectRefractionWithDispersionShaderString = """
 uniform shader content;

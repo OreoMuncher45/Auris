@@ -181,6 +181,21 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val resolver by lazy { context.contentResolver }
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
+
+    /**
+     * When the system asks for memory back, keep the waveform only on the two
+     * newest results (the track playing and the next one) and keep only four
+     * results in memory. The rest are on disk and are restored when a track
+     * comes round again, as after an ordinary eviction. Unregistered in
+     * [release].
+     */
+    private val onMemoryPressure: () -> Unit = {
+        trimResults(peaksKept = PRESSURE_PEAKS_KEPT, memoryMax = PRESSURE_MEMORY_MAX)
+    }
+
+    init {
+        com.music.bitchord.util.MemoryPressure.register(onMemoryPressure)
+    }
     private val running = ConcurrentHashMap.newKeySet<String>()
 
     /**
@@ -199,11 +214,34 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * Registered on first use rather than at construction, for the reason
      * [resolver] gives: there is no base context to ask for a service yet.
      */
-    private val thermalWatch by lazy {
+    private val thermalRegistration = lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             context.getSystemService(PowerManager::class.java)?.let { power ->
                 thermalStatus = power.currentThermalStatus
-                power.addThermalStatusListener(Runnable::run) { thermalStatus = it }
+                val listener = PowerManager.OnThermalStatusChangedListener { thermalStatus = it }
+                power.addThermalStatusListener(Runnable::run, listener)
+                power to listener
+            }
+        } else {
+            null
+        }
+    }
+    private val thermalWatch by thermalRegistration
+
+    /**
+     * Takes the thermal listener back off the system in [release].
+     *
+     * The system holds the listener, the listener holds this analyser, and the
+     * analyser holds the playback service it was built with. Left registered,
+     * every service that the system stopped and started again in the same
+     * process stayed reachable from system_server: the old service, the old
+     * analyser and every result still cached in it.
+     */
+    private fun stopThermalWatch() {
+        if (!thermalRegistration.isInitialized()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            thermalWatch?.let { (power, listener) ->
+                runCatching { power.removeThermalStatusListener(listener) }
             }
         }
     }
@@ -472,22 +510,27 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      *   still on disk, so a track that comes round again is restored rather
      *   than measured a second time.
      */
-    private fun trimResults() {
-        val order = resultOrder.toList()
+    private fun trimResults(
+        peaksKept: Int = ANALYSIS_PEAKS_KEPT,
+        memoryMax: Int = ANALYSIS_MEMORY_MAX,
+    ) {
+        // Newest first, so the index counts back from the track most recently
+        // touched. The queue itself is oldest first (touchResult appends and
+        // the eviction below polls the head); reading it in that order kept
+        // the waveform on the oldest results and stripped it from the ones
+        // being looked at.
+        val order = resultOrder.toList().asReversed()
         order.forEachIndexed { index, trackId ->
-            if (index < ANALYSIS_PEAKS_KEPT) return@forEachIndexed
-            results[trackId]?.let { current ->
-                val stripped = current.withoutPeaks()
-                if (stripped !== current) results[trackId] = stripped
-            }
-            partials[trackId]?.let { current ->
-                val stripped = current.withoutPeaks()
-                if (stripped !== current) partials[trackId] = stripped
-            }
+            if (index < peaksKept) return@forEachIndexed
+            // One atomic update per key, so a result the worker publishes
+            // meanwhile is not overwritten by a stripped stale copy, and a
+            // partial it has removed does not come back.
+            results.computeIfPresent(trackId) { _, current -> current.withoutPeaks() }
+            partials.computeIfPresent(trackId) { _, current -> current.withoutPeaks() }
         }
         var guard = 0
         while (
-            (results.size > ANALYSIS_MEMORY_MAX || partials.size > ANALYSIS_MEMORY_MAX) &&
+            (results.size > memoryMax || partials.size > memoryMax) &&
             guard < ANALYSIS_MEMORY_MAX * 8
         ) {
             guard++
@@ -2198,6 +2241,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     )
 
     fun release() {
+        com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
+        stopThermalWatch()
         fastExecutor.shutdownNow()
         wholeExecutor.shutdownNow()
         headAttempts.clear()
@@ -2362,6 +2407,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * to it and stays there.
          */
         const val ANALYSIS_MEMORY_MAX = 24
+
+        /** [ANALYSIS_PEAKS_KEPT] while the system is short of memory. */
+        const val PRESSURE_PEAKS_KEPT = 2
+
+        /** [ANALYSIS_MEMORY_MAX] while the system is short of memory. */
+        const val PRESSURE_MEMORY_MAX = 4
 
         /**
          * Stand-in bitrate for a rendition whose real length isn't recorded yet,

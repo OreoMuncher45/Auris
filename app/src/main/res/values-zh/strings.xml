@@ -142,8 +142,8 @@
     <string name="widget_preview_pill">歌曲标题 - 艺人</string>
     <string name="download_quality">下载质量</string>
     <string name="download_wifi_only">仅通过 Wi-Fi 下载</string>
-    <string name="auto_download_songs">自动下载播放过的歌曲</string>
-    <string name="auto_download_songs_subtitle">你听过的歌曲会自动保存。你手动删除的下载不会再次下载。</string>
+    <string name="auto_download_songs">自动下载新增歌曲</string>
+    <string name="auto_download_songs_subtitle">添加到此歌单的新歌曲会自动下载。你手动删除的下载不会再次下载。</string>
     <string name="spatial_audio">空间音频</string>
     <string name="spatial_audio_subtitle">拓宽立体声音轨，带来更沉浸的体验</string>
     <string name="spatial_audio_atmos_subtitle">此曲目已暂停 — Dolby Atmos 本身就是空间音频</string>

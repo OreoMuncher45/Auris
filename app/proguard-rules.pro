@@ -38,12 +38,20 @@
 -keep class com.dokar.quickjs.** { *; }
 
 # ---- Native and crypto --------------------------------------------------------
-# ONNX Runtime and QuickJS are called from JNI, which R8 cannot see. SMBJ picks
-# its BouncyCastle providers and event bus handlers reflectively.
+# ONNX Runtime and QuickJS are called from JNI, which R8 cannot see. SMBJ wires
+# its event bus handlers reflectively.
 -keep class ai.onnxruntime.** { *; }
 -keep class com.hierynomus.** { *; }
 -keep class net.engio.mbassy.** { *; }
--keep class org.bouncycastle.** { *; }
+# BouncyCastle is here only for SMBJ, and SMBJ uses it through its default
+# BCSecurityProvider, which builds the lightweight engines directly (MD4, MD5,
+# SHA-256/512, AES, DES, RC4, HMAC, CMAC, CCM, GCM, KDF counter). It does not go
+# through the JCA provider or load anything by name. So only the packages it
+# touches are kept whole, and R8 drops the rest: the post-quantum schemes, the
+# JCA/JCE provider, x509 and cert. Keeping all of org.bouncycastle.** was 4.2 MB
+# of dex, about a quarter of the app's.
+-keep class org.bouncycastle.crypto.** { *; }
+-keep class org.bouncycastle.util.** { *; }
 -keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }
 # The vendored FFmpeg extension's JNI calls back into this by name to grow
 # its output buffer (native/ffmpeg/ffmpeg_jni.cc, JNI_OnLoad).

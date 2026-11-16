@@ -37,6 +37,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -68,6 +72,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -318,6 +323,17 @@ fun DetailScreen(
      */
     songSort: SongSort = SongSort.DEFAULT,
     /**
+     * Whether this playlist keeps itself downloaded: songs added to it are
+     * fetched by themselves, and a song deleted by hand stays deleted.
+     *
+     * Null on everything that is not a downloaded playlist, which is what
+     * hides the switch. Non-null on both the playlist's catalogue page and the
+     * downloaded copy's page, so the answer is where the tracks are either way.
+     */
+    autoDownloadSongs: Boolean? = null,
+    /** Flips [autoDownloadSongs]. Null in the same places it is. */
+    onToggleAutoDownloadSongs: (() -> Unit)? = null,
+    /**
      * Asks for the next page of an endless mix — a Super Mix, an artist radio.
      *
      * Those pages have no last one, so the list grows as the listener reaches
@@ -553,6 +569,15 @@ fun DetailScreen(
                 }
             }
 
+            if (autoDownloadSongs != null && onToggleAutoDownloadSongs != null) {
+                item(key = "auto-download") {
+                    KeepPlaylistWholeRow(
+                        checked = autoDownloadSongs,
+                        onCheckedChange = { onToggleAutoDownloadSongs() },
+                    )
+                }
+            }
+
             if (searching) {
                 item(key = "search") {
                     DetailSearchField(
@@ -630,12 +655,17 @@ fun DetailScreen(
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
-                is UiState.Error -> item { MessageState(state.message) }
+                is UiState.Error -> item(key = "error", contentType = LazyContent.MESSAGE) {
+                    MessageState(state.message)
+                }
                 is UiState.Success -> if (isArtist) {
                     // An artist's full song list would bury the album shelves, so
                     // it pages sideways four at a time and stops at twenty.
-                    item {
-                        val top = state.data.take(MAX_ARTIST_SONGS)
+                    item(key = "top-songs", contentType = LazyContent.SHELF) {
+                        // Paged once per list, not on every recomposition of the row.
+                        val top = remember(state.data) { state.data.take(MAX_ARTIST_SONGS) }
+                        val topColumns = remember(top) { top.chunked(SONGS_PER_COLUMN) }
+                        val topKeys = remember(topColumns) { uniqueKeys(topColumns) { it.first().videoId } }
                         SectionHeading(
                             title = stringResource(R.string.top_songs),
                             palette = palette,
@@ -647,7 +677,11 @@ fun DetailScreen(
                                 contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                items(top.chunked(SONGS_PER_COLUMN)) { column ->
+                                itemsIndexed(
+                                    topColumns,
+                                    key = { index, _ -> topKeys[index] },
+                                    contentType = { _, _ -> LazyContent.TRACK_COLUMN },
+                                ) { _, column ->
                                     Column(Modifier.width(columnWidth)) {
                                         column.forEach { song ->
                                             CompactSongRow(
@@ -678,15 +712,22 @@ fun DetailScreen(
                     itemsIndexed(
                         items = matches,
                         key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                        contentType = { _, _ -> LazyContent.SONG_ROW },
                     ) { position, entry ->
                         val song = entry.value
                         val isCurrent = song.isSameTrackAs(currentSong)
-                        SongRow(
-                            song = if (numbered) {
+                        // Made once per row rather than on every recomposition of
+                        // it: a fresh copy each time is a new Song for the row to
+                        // compare, and an allocation per row per frame of scroll.
+                        val rowSong = remember(song, numbered, page.thumbnailUrl) {
+                            if (numbered || song.thumbnailUrl != null) {
                                 song
                             } else {
-                                song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
-                            },
+                                song.copy(thumbnailUrl = page.thumbnailUrl)
+                            }
+                        }
+                        SongRow(
+                            song = rowSong,
                             onClick = {
                                 onSongClick(queue, position)
                             },
@@ -725,6 +766,7 @@ fun DetailScreen(
                 itemsIndexed(
                     suggested,
                     key = { _, song -> "suggested-${song.videoId}" },
+                    contentType = { _, _ -> LazyContent.SONG_ROW },
                 ) { index, song ->
                     SuggestedSongRow(
                         song = song,
@@ -747,11 +789,16 @@ fun DetailScreen(
             }
 
             // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf ->
+            itemsIndexed(
+                page.sections,
+                key = { index, shelf -> "section:$index:${shelf.title}" },
+                contentType = { _, _ -> LazyContent.SHELF },
+            ) { _, shelf ->
                 val canShowAll = shelf.items.size > ARTIST_ROW_MAX_ITEMS
                 val displayItems = remember(shelf.items) {
                     if (canShowAll) shelf.items.take(ARTIST_ROW_MAX_ITEMS) else shelf.items
                 }
+                val displayKeys = rememberShelfKeys(displayItems)
                 Column(Modifier.padding(top = 22.dp)) {
                     SectionHeading(
                         title = shelf.title,
@@ -763,7 +810,11 @@ fun DetailScreen(
                         contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(displayItems) { item ->
+                        itemsIndexed(
+                            displayItems,
+                            key = { index, _ -> displayKeys[index] },
+                            contentType = { _, _ -> LazyContent.CARD },
+                        ) { _, item ->
                             SectionCard(
                                 item = item,
                                 palette = palette,
@@ -975,6 +1026,46 @@ private fun ReleaseHeader(
                 }
             }
         }
+    }
+}
+
+/**
+ * The switch that keeps a downloaded playlist whole.
+ *
+ * On the playlist's own page, under its header, because that is where the
+ * promise lives: the tracks below it are the playlist's, and this is what
+ * says the next ones will be here too.
+ *
+ * Turning it off stops the next song from arriving and leaves the files that
+ * are here where they are. A song the listener deleted by hand is never
+ * fetched again either way — see
+ * [com.music.bitchord.download.Downloads.deletedByHand].
+ */
+@Composable
+private fun KeepPlaylistWholeRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 22.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.auto_download_songs),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = stringResource(R.string.auto_download_songs_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -2203,6 +2294,7 @@ private fun ArtistShelfGridPage(
     // ranking where it gave one, and the catalogue's order everywhere else.
     var sort by rememberSaveable(shelf.title) { mutableStateOf(ShelfSort.RELEASE_DATE) }
     val items = remember(shelf.items, sort) { shelf.items.sortedForShelf(sort) }
+    val keys = rememberShelfKeys(items)
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         Column(Modifier.fillMaxSize()) {
@@ -2220,7 +2312,11 @@ private fun ArtistShelfGridPage(
                     .fillMaxSize()
                     .padding(horizontal = PAGE_GUTTER),
             ) {
-                items(items, key = { it.browseId ?: it.title }) { item ->
+                gridItemsIndexed(
+                    items,
+                    key = { index, _ -> keys[index] },
+                    contentType = { _, _ -> LazyContent.CARD },
+                ) { _, item ->
                     SectionCard(
                         item = item,
                         palette = palette,

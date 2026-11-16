@@ -61,6 +61,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
         CrashLog.install(this)
+        // Before anything reaches for the shared client, which builds once. No
+        // disk I/O here: OkHttp opens the cache on the first request, on that
+        // request's own thread. See Http.installCache.
+        com.music.bitchord.data.Http.installCache(cacheDir.resolve("http_cache"))
         // Every preference file read before the first frame, set loading now
         // and all at once. Each init below opens its file and reads it straight
         // away, and a read blocks until that file's XML is parsed — so the
@@ -315,6 +319,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         initLastfm()
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
+        // The app's own caches let go when the system asks; see MemoryPressure.
+        com.music.bitchord.util.MemoryPressure.install(this)
     }
 
     /**
@@ -374,8 +380,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 add(SmbCoverFetcher.Factory())
             }
             .memoryCache {
+                // A fifth of the heap, as before, except on a phone that calls
+                // itself low on RAM. Coil's own default already allows for
+                // that (15% there), and a hard-coded 0.20 overrode it on the
+                // devices that can least spare it. Those phones usually have a
+                // 96–128 MB heap, so this is about 5–6 MB of decoded covers
+                // that the low-memory killer no longer counts against the app.
+                val lowRam = getSystemService(android.app.ActivityManager::class.java)
+                    ?.isLowRamDevice == true
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.20)
+                    .maxSizePercent(context, if (lowRam) 0.15 else 0.20)
                     .build()
             }
             .diskCache {

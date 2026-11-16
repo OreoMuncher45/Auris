@@ -142,8 +142,8 @@
     <string name="widget_preview_pill">Judul lagu - Artis</string>
     <string name="download_quality">Kualitas unduhan</string>
     <string name="download_wifi_only">Unduh hanya lewat Wi-Fi</string>
-    <string name="auto_download_songs">Unduh otomatis lagu yang diputar</string>
-    <string name="auto_download_songs_subtitle">Lagu yang kamu dengarkan disimpan dengan sendirinya. Unduhan yang kamu hapus sendiri tidak pernah diambil lagi.</string>
+    <string name="auto_download_songs">Unduh otomatis lagu baru</string>
+    <string name="auto_download_songs_subtitle">Lagu yang ditambahkan ke playlist ini diunduh dengan sendirinya. Lagu yang kamu hapus sendiri tidak pernah diambil lagi.</string>
     <string name="spatial_audio">Audio spasial</string>
     <string name="spatial_audio_subtitle">Melebarkan trek stereo untuk pengalaman yang lebih imersif</string>
     <string name="spatial_audio_atmos_subtitle">Dijeda untuk lagu ini — Dolby Atmos sudah spasial</string>

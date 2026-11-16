@@ -107,10 +107,8 @@ object GlassMotion {
  *
  * Why a plain clock, and neither `mutableStateOf` nor a `MutableStateFlow`:
  * `frozen` is consulted in the *draw* phase, where a snapshot read
- * registers a draw dependency and every write re-invalidates every frame —
- * the trap documented at the top of the vendored
- * [com.music.bitchord.ui.components.backdrop.backdrops.BackdropFreeze],
- * whose scroll freeze this mirrors on purpose. Nothing collects this
+ * registers a draw dependency and every write re-invalidates every frame.
+ * Nothing collects this
  * state; the backdrop node polls it and polls its way back out, so
  * observable state would only have added invalidations to a mechanism
  * that wants none.

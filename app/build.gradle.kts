@@ -208,12 +208,24 @@ android {
         resources {
             // SMBJ's BouncyCastle and jspecify both ship this descriptor.
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            // Data files for BouncyCastle code that R8 now removes (see
+            // proguard-rules.pro): the Picnic post-quantum tables (1.2 MB
+            // stored) and the x509 cert-path reviewer's message bundles.
+            // Nothing that SMBJ reaches reads them.
+            excludes += "org/bouncycastle/pqc/**"
+            excludes += "org/bouncycastle/x509/*.properties"
         }
         jniLibs {
             // Compress .so inside the APK (extractNativeLibs=true) so the
             // download is far smaller; they are extracted once at install.
             // The big win is libonnxruntime.so (~27 MB stored -> ~10 MB).
             useLegacyPackaging = true
+            // 32-bit x86 is not a target: the splits above leave it out and
+            // our own native code (FFmpeg, JamesDSP, analysis, DSD) is not
+            // built for it, so the app cannot start there. Only libraries'
+            // prebuilt copies (ONNX Runtime, QuickJS, androidx graphics) were
+            // reaching the universal APK for that ABI, about 13 MB of it.
+            excludes += "lib/x86/**"
         }
     }
     androidResources {

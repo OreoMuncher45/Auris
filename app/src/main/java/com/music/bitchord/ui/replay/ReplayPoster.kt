@@ -753,6 +753,11 @@ internal class Fonts(context: Context) {
 internal suspend fun loadBitmap(context: Context, url: String): Bitmap? = runCatching {
     val request = ImageRequest.Builder(context)
         .data(url.artworkAt(CARD_ART_PX))
+        // The same size the URL asks for. A remote cover already arrives at
+        // it; a local one (content://…, no size in its address) has nothing
+        // else to bound it, and Coil decodes a request with no target at the
+        // file's full size: a 3000px embedded cover was 36 MB per card.
+        .size(CARD_ART_PX)
         // Palette needs pixel access, and a hardware bitmap cannot be drawn
         // into a software canvas at all — which is the whole of this file.
         .allowHardware(false)

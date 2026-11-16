@@ -618,6 +618,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     private val searchCache = LruCache<String, SearchCacheEntry>(SEARCH_CACHE_ENTRIES)
+
+    /**
+     * Up to a hundred pages of results is a few megabytes the system can have
+     * back when it asks. The newest few are kept, so the search on screen
+     * still pages on from where it is. Unregistered in [onCleared].
+     */
+    private val onMemoryPressure: () -> Unit = { searchCache.trimToSize(SEARCH_CACHE_TRIMMED) }
     private var searchSession: SearchSession? = null
 
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
@@ -2029,6 +2036,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!libraryStale) return
         libraryStale = false
         if (_library.value is UiState.Success) refresh(Feed.LIBRARY)
+    }
+
+    init {
+        com.music.bitchord.util.MemoryPressure.register(onMemoryPressure)
+    }
+
+    override fun onCleared() {
+        com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
+        super.onCleared()
     }
 
     init {
@@ -3586,6 +3602,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         const val TYPEAHEAD_MAX_RESULTS = 15
 
         const val SEARCH_CACHE_ENTRIES = 100
+        const val SEARCH_CACHE_TRIMMED = 8
 
         /**
          * How long any one source gets to answer a search.

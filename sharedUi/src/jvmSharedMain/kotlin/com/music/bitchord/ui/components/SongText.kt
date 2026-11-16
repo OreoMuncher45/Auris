@@ -12,7 +12,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
@@ -21,13 +20,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 
-fun Modifier.thumbnailBorder(shape: Shape): Modifier = composed {
-    this.border(
-        width = 1.dp,
-        color = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f),
-        shape = shape
-    )
-}
+/**
+ * The hairline round a piece of artwork, light on a dark theme and dark on a
+ * light one.
+ *
+ * A composable factory rather than `composed {}`. A composed modifier is a new
+ * object on every pass, so every recomposition of a row or card re-ran its
+ * factory and re-materialised the chain around it, for each of the artworks on
+ * screen. Built directly, the border element compares equal from one pass to
+ * the next and the node is left alone.
+ */
+@Composable
+fun Modifier.thumbnailBorder(shape: Shape): Modifier = border(
+    width = 1.dp,
+    color = if (isSystemInDarkTheme()) THUMBNAIL_BORDER_DARK else THUMBNAIL_BORDER_LIGHT,
+    shape = shape,
+)
+
+private val THUMBNAIL_BORDER_DARK = Color.White.copy(alpha = 0.15f)
+private val THUMBNAIL_BORDER_LIGHT = Color.Black.copy(alpha = 0.15f)
 
 /**
  * A song title with the catalogue-standard outlined E for explicit audio.

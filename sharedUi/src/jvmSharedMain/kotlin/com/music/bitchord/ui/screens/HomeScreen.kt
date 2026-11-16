@@ -34,6 +34,11 @@ import com.music.bitchord.ui.components.artworkDeparture
 import com.music.bitchord.ui.components.rememberArtworkTap
 import com.music.bitchord.ui.components.ShelfRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.lazyKey
+import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -234,12 +239,12 @@ fun HomeScreen(
             // "Listen now" above that would be two headings for one page.
             val greeting = header?.greeting?.takeIf { it.isNotBlank() }
             if (greeting != null) {
-                item(key = "home:greeting") { HomeGreeting(greeting) }
+                item(key = "home:greeting", contentType = LazyContent.HEADER) { HomeGreeting(greeting) }
             } else if (title != null) {
-                item { HomeTitle(title) }
+                item(key = "home:title", contentType = LazyContent.HEADER) { HomeTitle(title) }
             }
             if (!signedIn && onSignIn != null && !signInBannerDismissed) {
-                item {
+                item(key = "home:sign-in", contentType = LazyContent.MESSAGE) {
                     SignInBanner(
                         onSignIn = onSignIn,
                         onDismiss = onDismissSignInBanner,
@@ -272,7 +277,7 @@ fun HomeScreen(
                         feedSkeleton(firstIsHero = leadHero)
                     }
                 }
-                is UiState.Error -> item {
+                is UiState.Error -> item(key = "home:error", contentType = LazyContent.MESSAGE) {
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
@@ -412,13 +417,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     // card stopped being a card and became a poster.
     val quickPicksFound = shelves.any { isQuickPicksShelf(it.title) }
     if (!quickPicksFound && topPickLeading != null) {
-        item(key = "auris:leading-cards") {
+        item(key = "auris:leading-cards", contentType = LazyContent.SHELF) {
             Column(Modifier.padding(bottom = 26.dp)) {
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    item(key = "leading") { topPickLeading() }
+                    item(key = "leading", contentType = LazyContent.LEADING_CARD) { topPickLeading() }
                 }
             }
         }
@@ -448,7 +453,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
             ?: shelf.items.firstOrNull()?.browseId ?: index)
         val seen = keyCounts.getOrDefault(base, 0)
         keyCounts[base] = seen + 1
-        item(key = if (seen == 0) base else "$base#$seen") {
+        val kind = when {
+            isQuickPicksShelf(shelf.title) -> LazyContent.SHELF
+            shelf.title.equals(RECENTS_TITLE, ignoreCase = true) -> LazyContent.RECENT_SHELF
+            index == heroIndex && firstIsHero -> LazyContent.HERO_SHELF
+            else -> LazyContent.SHELF
+        }
+        item(key = if (seen == 0) base else "$base#$seen", contentType = kind) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             val quickPicks = isQuickPicksShelf(shelf.title)
             if (quickPicks) {
@@ -516,13 +527,20 @@ private fun RecentShelf(
             onViewTypeToggle = onViewTypeToggle,
         )
         if (viewType == LibraryViewType.LIST) {
+            // Paged once per list rather than on every recomposition of the shelf.
+            val columns = remember(shelf.items) { shelf.items.chunked(RECENT_TRACKS_PER_COLUMN) }
+            val columnKeys = remember(columns) { uniqueKeys(columns) { it.first().lazyKey() } }
             BoxWithConstraints {
                 val columnWidth = trackColumnWidth(maxWidth)
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                    itemsIndexed(
+                        columns,
+                        key = { index, _ -> columnKeys[index] },
+                        contentType = { _, _ -> LazyContent.TRACK_COLUMN },
+                    ) { _, column ->
                         Column(Modifier.width(columnWidth)) {
                             column.forEach { item ->
                                 RecentTrackRow(
@@ -538,13 +556,18 @@ private fun RecentShelf(
                 }
             }
         } else {
+            val keys = rememberShelfKeys(shelf.items)
             BoxWithConstraints {
                 val cardWidth = heroCardWidth(maxWidth)
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    items(shelf.items) { item ->
+                    itemsIndexed(
+                        shelf.items,
+                        key = { index, _ -> keys[index] },
+                        contentType = { _, _ -> LazyContent.HERO_CARD },
+                    ) { _, item ->
                         HeroCard(
                             item = item,
                             onClick = { onItemClick(item) },
@@ -1218,6 +1241,7 @@ private fun HeroShelf(
         // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
         // width is also the only one of the two the aspect ratio below can turn
         // into a height, so the card keeps its shape however it was arrived at.
+        val keys = rememberShelfKeys(shelf.items)
         BoxWithConstraints {
             val cardWidth = heroCardWidth(maxWidth)
             ShelfRow(
@@ -1225,7 +1249,11 @@ private fun HeroShelf(
                 contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(shelf.items) { item ->
+                itemsIndexed(
+                    shelf.items,
+                    key = { index, _ -> keys[index] },
+                    contentType = { _, _ -> LazyContent.HERO_CARD },
+                ) { _, item ->
                     HeroCard(
                         item = item,
                         onClick = { onItemClick(item) },
@@ -1327,12 +1355,19 @@ internal fun Shelf(
             icon = headerIcon,
             onNavigate = onHeaderNavigate,
         )
+        val keys = rememberShelfKeys(shelf.items)
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            leadingCard?.let { card -> item(key = "leading") { card() } }
-            items(shelf.items) { item ->
+            leadingCard?.let { card ->
+                item(key = "leading", contentType = LazyContent.LEADING_CARD) { card() }
+            }
+            itemsIndexed(
+                shelf.items,
+                key = { index, _ -> keys[index] },
+                contentType = { _, _ -> LazyContent.CARD },
+            ) { _, item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
@@ -1520,7 +1555,6 @@ internal fun ShelfCard(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
-    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     // Tapping this card lifts its cover and flies it into the page it opens —
     // see ArtworkFlight. The card is the departure and the page's sleeve is the
     // arrival; neither knows about the other, and the flight is one picture
@@ -1563,6 +1597,11 @@ internal fun ShelfCard(
                     // Off with the animated-canvas switch: a tile is decoration,
                     // and a looping decoder per tile is the first thing to go on
                     // a device that cannot afford it.
+                    //
+                    // Collected here, in the one tile that uses it, rather than
+                    // at the top of every card: a shelf of twenty covers held
+                    // twenty lifecycle-aware collectors on the same flow.
+                    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
                     if (animatedCanvas) rememberFlowVideo(square = true)?.let { clip ->
                         CanvasArtworkPlayer(
                             canvas = clip,

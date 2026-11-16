@@ -20,22 +20,15 @@ import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.InspectorInfo
 import com.music.bitchord.ui.components.backdrop.internal.recordLayer
 
-/**
- * @param frozen no longer read by the source (see [LayerBackdropNode.draw]); kept so
- *   callers need not change. Samplers still take their own `frozen`.
- */
-fun Modifier.layerBackdrop(
-    backdrop: LayerBackdrop,
-    frozen: () -> Boolean = { false }
-): Modifier = this then LayerBackdropElement(backdrop, frozen)
+fun Modifier.layerBackdrop(backdrop: LayerBackdrop): Modifier =
+    this then LayerBackdropElement(backdrop)
 
 private class LayerBackdropElement(
-    val backdrop: LayerBackdrop,
-    val frozen: () -> Boolean
+    val backdrop: LayerBackdrop
 ) : ModifierNodeElement<LayerBackdropNode>() {
 
     override fun create(): LayerBackdropNode {
-        return LayerBackdropNode(backdrop, frozen)
+        return LayerBackdropNode(backdrop)
     }
 
     override fun update(node: LayerBackdropNode) {
@@ -43,7 +36,6 @@ private class LayerBackdropElement(
             node.backdrop.layerCoordinates = null
             node.backdrop = backdrop
         }
-        node.frozen = frozen
         node.invalidateDraw()
     }
 
@@ -57,26 +49,20 @@ private class LayerBackdropElement(
         if (other !is LayerBackdropElement) return false
 
         if (backdrop != other.backdrop) return false
-        if (frozen != other.frozen) return false
 
         return true
     }
 
     override fun hashCode(): Int {
-        return 31 * backdrop.hashCode() + frozen.hashCode()
+        return backdrop.hashCode()
     }
 }
 
 private class LayerBackdropNode(
-    var backdrop: LayerBackdrop,
-    var frozen: () -> Boolean
+    var backdrop: LayerBackdrop
 ) : DrawModifierNode, GlobalPositionAwareModifierNode, Modifier.Node() {
 
     override fun ContentDrawScope.draw() {
-        // Cleared every generation, before children (backdropStaticRegion among
-        // them) redraw and repopulate it below — see LayerBackdrop.staticRegions.
-        backdrop.staticRegions.clear()
-
         // Record once and composite to the screen; glass samplers reuse this layer.
         recordLayer(this@LayerBackdropNode, backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }
         drawLayer(backdrop.graphicsLayer)

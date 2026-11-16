@@ -50,4 +50,14 @@ internal class ShapeProvider(val shapeBlock: () -> Shape) {
             return _outline!!
         }
     }
+
+    // Vendored change: two providers over the same shape block are the same provider.
+    // A new one is built on every `drawBackdrop` call, so without this every
+    // recomposition of a glass host made its modifier elements unequal: the surface
+    // re-recorded its backdrop, rebuilt its RenderEffect chain and lost its cached
+    // outline even though nothing it draws had changed.
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is ShapeProvider && other.shapeBlock === shapeBlock)
+
+    override fun hashCode(): Int = System.identityHashCode(shapeBlock)
 }

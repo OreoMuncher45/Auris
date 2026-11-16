@@ -214,10 +214,11 @@ on:
           - The playlists shelf can be read as a list, and Spotify comes in from
             Settings.
           - The next download is prepared ahead of the next track.
-          - Songs you listen to are downloaded by themselves now. It is a setting,
-            and it is on by default.
+          - A downloaded playlist keeps itself whole: songs added to it are
+            downloaded by themselves. There is a switch for it on the playlist's
+            own page, and it is on unless you turn it off.
           - A download you delete by hand is never fetched again — not by the
-            automatic download, and not by the playlist sync.
+            playlist sync, and not by anything else.
           
           First run
           - A first-run flow, with a row to see it again, and the real Spotify mark in

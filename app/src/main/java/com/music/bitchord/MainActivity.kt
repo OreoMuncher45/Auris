@@ -701,6 +701,17 @@ private fun dialogWindowOf(view: View): android.view.Window? {
     return null
 }
 
+/**
+ * Runs [content] as a restart scope of its own.
+ *
+ * State read directly in a big composable's body invalidates the whole body.
+ * Read inside this lambda, it invalidates the lambda alone — which is how a
+ * value that flips often (play/pause, buffering) is kept from recomposing
+ * everything around the one widget that shows it.
+ */
+@Composable
+private fun IsolatedScope(content: @Composable () -> Unit) = content()
+
 @Composable
 private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -3987,6 +3998,9 @@ private fun BitChordApp(
         // the feed, the frosted bars, the tab row — becomes the left half of
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
+        val pageCoveredByPlayer by remember(showNowPlaying, playerDock) {
+            derivedStateOf { showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f }
+        }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -4001,10 +4015,13 @@ private fun BitChordApp(
                     // player's own dim skips itself on. Composition and layout
                     // carry on, so the page is current the moment the player
                     // starts to come down and this draws again.
+                    //
+                    // Derived, as Zenith does it: the open fraction moves on
+                    // every frame of the sheet's travel, and read straight in
+                    // this draw it invalidated the page root on each of them.
+                    // The flag only flips twice per open or close.
                     .drawWithContent {
-                        val coveredByPlayer =
-                            showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f
-                        if (!coveredByPlayer) drawContent()
+                        if (!pageCoveredByPlayer) drawContent()
                     },
             ) {
                 // Which page is on screen, as one name. The transition runs
@@ -4652,30 +4669,38 @@ private fun BitChordApp(
                             .onSizeChanged { floatingBarsHeight.intValue = it.height },
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        QueueActionNoticeHost(queueNotice)
-                        player.song?.let { song ->
-                            MiniPlayer(
-                                song = song,
-                                isPlaying = player.isPlaying,
-                                isLoading = playPauseBusy,
-                                hazeState = hazeState,
-                                onPlayPause = {
-                                    togglePlayPause()
-                                },
-                                onNext = { controller?.seekToNextMediaItem() },
-                                onPrevious = { controller?.seekToPrevious() },
-                                onExpand = if (reducePlayerMotion) {
-                                    { showNowPlaying = true }
-                                } else {
-                                    playerSheetMotion::open
-                                },
-                                controlsLocked = controlsLocked,
-                                onBlockedControl = showHostOnlyNotice,
-                                dock = activeDock,
-                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
+                        // Its own restart scope. The song, play/pause, buffering
+                        // and queue-notice reads below change many times a
+                        // session; made directly in this Column they invalidated
+                        // the whole root content lambda — every page, sheet and
+                        // bar under AppRootBox — on each play/pause and each
+                        // buffering flip. In here they re-run the mini player.
+                        IsolatedScope {
+                            QueueActionNoticeHost(queueNotice)
+                            player.song?.let { song ->
+                                MiniPlayer(
+                                    song = song,
+                                    isPlaying = player.isPlaying,
+                                    isLoading = playPauseBusy,
+                                    hazeState = hazeState,
+                                    onPlayPause = {
+                                        togglePlayPause()
+                                    },
+                                    onNext = { controller?.seekToNextMediaItem() },
+                                    onPrevious = { controller?.seekToPrevious() },
+                                    onExpand = if (reducePlayerMotion) {
+                                        { showNowPlaying = true }
+                                    } else {
+                                        playerSheetMotion::open
+                                    },
+                                    controlsLocked = controlsLocked,
+                                    onBlockedControl = showHostOnlyNotice,
+                                    dock = activeDock,
+                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                         }
                         FloatingBottomBar(
                             tabs = tabs,
@@ -5679,6 +5704,13 @@ private fun RootPage(
                 song
             }
         }
+        // The playlist behind this page, if it was downloaded whole. Only a
+        // playlist can keep itself up to date: an album is a fixed release
+        // that never gains a track.
+        val downloadedCollection = remember(savedCollections, page.browseId) {
+            Downloads.collectionFor(page.browseId, savedCollections)
+                ?.takeIf { Downloads.isMovingCollection(it) }
+        }
         DetailScreen(
             page = page,
             currentSong = player.song,
@@ -5686,6 +5718,15 @@ private fun RootPage(
             listState = pageDetailListState,
             activeShelf = sheets.detailActiveShelf,
             onActiveShelfChange = { sheets.detailActiveShelf = it },
+            // Keeping the playlist whole is asked for here, on the playlist's
+            // own page: the switch turns the promise on and off for this
+            // playlist alone.
+            autoDownloadSongs = downloadedCollection?.autoDownload,
+            onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
+                {
+                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                }
+            },
             // A Super Mix has no last page: it grows a page at a
             // time as the listener reaches the end of the list.
             onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
