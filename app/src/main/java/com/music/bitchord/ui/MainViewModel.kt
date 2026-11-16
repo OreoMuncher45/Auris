@@ -4849,10 +4849,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * retries next hour. The player holds its own queue, so swapping this
      * list never interrupts what is playing.
      */
-    private fun maybeAutoRefreshFlow() {
+    /**
+     * [snapshotAgeMs] is the stored mix's age when the caller has already read
+     * it — the launch restore does, on IO, so the check does not decode the
+     * snapshot a second time on the main thread. Null means read it here.
+     */
+    private fun maybeAutoRefreshFlow(snapshotAgeMs: Long? = null) {
         if (flowAutoRefreshing || _flowSaved.value) return
         if ((_flowQueue.value as? UiState.Success)?.data.isNullOrEmpty()) return
-        if ((FlowStore.snapshotAgeMs() ?: return) < FlowStore.FLOW_AUTO_REFRESH_MS) return
+        val age = snapshotAgeMs ?: FlowStore.snapshotAgeMs() ?: return
+        if (age < FlowStore.FLOW_AUTO_REFRESH_MS) return
         flowAutoRefreshing = true
         viewModelScope.launch {
             runCatching { buildFlowQueue() }.fold(
@@ -5051,6 +5057,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var flowAutoRefreshing = false
 
+    /**
+     * The launch restore of the saved mix, which [ensureFlowTracks] waits for
+     * so a play in the moment after launch resumes that mix rather than
+     * building a new one over it. Declared before the init that sets it.
+     */
+    private var flowRestore: Job? = null
+
     // Yesterday's mix, restored: Flow opens resumed, never re-rolled, until
     // the snapshot is a day old — at which point the next use rebuilds.
     // One mix stays for the day and refreshes itself every hour (see
@@ -5059,26 +5072,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Placed after every Flow val on purpose: init blocks run in textual
     // order, and this one reads _flowQueue/_flowSaved, which must exist.
     init {
-        viewModelScope.launch {
+        flowRestore = viewModelScope.launch {
             // Decoded on IO: the snapshot is a JSON list of every song in the
             // mix, and this init runs inside the app's first composition, so
             // on the main thread it was a parse ahead of the first frame for a
             // page that is not on screen at launch.
-            val restored = withContext(Dispatchers.IO) {
+            // The age comes back with it, for the refresh check below.
+            val snapshot = withContext(Dispatchers.IO) {
                 FlowStore.readSnapshot()?.let { (songs, builtAt) ->
-                    if (System.currentTimeMillis() - builtAt < FlowStore.FLOW_TTL_MS) {
+                    val age = System.currentTimeMillis() - builtAt
+                    val visible = if (age < FlowStore.FLOW_TTL_MS) {
                         songs.withoutBlockedArtists().takeIf { it.isNotEmpty() }
                     } else {
                         null
                     }
+                    visible to age
                 }
             }
+            val (restored, age) = snapshot ?: return@launch
             // Only into the empty mix the view model starts with: a mix built
             // in the moment before this landed is newer than the snapshot.
             if (restored != null) {
                 _flowQueue.compareAndSet(UiState.Success(emptyList()), UiState.Success(restored))
             }
-            maybeAutoRefreshFlow()
+            maybeAutoRefreshFlow(snapshotAgeMs = age)
         }
         viewModelScope.launch {
             while (true) {
@@ -5098,6 +5115,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * BACK never rebuilds: reopening resumes this list until New mix.
      */
     suspend fun ensureFlowTracks(limit: Int = FlowEngine.INITIAL_TRACKS): List<Song> {
+        flowRestore?.join()
         ((_flowQueue.value as? UiState.Success)?.data?.takeIf { it.isNotEmpty() })?.let { return it }
         val built = buildFlowQueue(limit)
         _flowQueue.value = UiState.Success(built)
