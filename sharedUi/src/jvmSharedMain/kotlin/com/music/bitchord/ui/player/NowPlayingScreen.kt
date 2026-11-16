@@ -638,65 +638,6 @@ private fun PlayerColors(
 }
 
 /**
- * The player's backdrop, in a scope of its own.
- *
- * The mesh is re-read whenever a playing clip produces a frame, and the read
- * lands in a state. Read in the player's own scope, that state change
- * recomposes the whole player — every control on it — once a frame; read in
- * a scope of its own, it recomposes the backdrop and nothing else.
- *
- * Upstream BitChord does the same thing, and for the same reason: see
- * `PlayerMeshBackdrop` in its [NowPlayingScreen].
- */
-@Composable
-private fun PlayerMeshBackdrop(
-    trackKey: String,
-    imageUrl: String?,
-    liveFrames: Flow<ImageBitmap?>?,
-    seam: () -> Dp,
-    modifier: Modifier = Modifier,
-    lift: () -> Dp = { 0.dp },
-    liftFrom: () -> Dp = { 0.dp },
-) {
-    val mesh = key(trackKey) {
-        rememberArtworkMesh(imageUrl, artPx = ART_PX, liveFrames = liveFrames)
-    }
-    ArtworkMeshBackdrop(
-        mesh = mesh,
-        seam = seam,
-        modifier = modifier,
-        lift = lift,
-        liftFrom = liftFrom,
-    )
-}
-
-/**
- * The legacy theme's backdrop, in a scope of its own for the same reason.
- *
- * The legacy backdrop drifts through the colours of whatever is on screen, and
- * a playing clip changes those colours as it plays. The re-read stays here,
- * so it costs the backdrop and not the player.
- */
-@Composable
-private fun LegacyMeshBackdrop(
-    imageUrl: String?,
-    liveFrames: Flow<ImageBitmap?>?,
-    trackKey: String,
-    modifier: Modifier = Modifier,
-) {
-    // One frame at a time: the legacy backdrop takes a picture, not a stream.
-    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(liveFrames) {
-        liveFrames?.collectLatest { frame = it }
-    }
-    MeshGradientBackground(
-        palette = rememberArtworkColors(imageUrl, frame),
-        trackKey = trackKey,
-        modifier = modifier,
-    )
-}
-
-/**
  * How often a playing cover is read with "live blur" on.
  *
  * Eight a second. It used to be thirty, which is as often as the screen
@@ -1038,16 +979,16 @@ private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 /** Default Spotify Canvas delay before its optional automatic collapse. */
 private const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
 /** One shared travel time keeps the deck, credits and stats moving as a unit. */
-private const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
+internal const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
 /** The deck's fade back in on returning from lyrics or the queue. */
 private const val PLAYER_DECK_FADE_IN_MS = 700
 /** Shared top-only scrim transition for the Canvas lower deck. */
-private const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
+internal const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
 
 // The lower glass and the controls use one piece of motion. Keeping the slide
 // specification here prevents a busy frame from exposing slightly different
 // timings between the surface and the player drawn over it.
-private fun playerDeckSlideIn() = slideInVertically(
+internal fun playerDeckSlideIn() = slideInVertically(
     animationSpec = tween(
         SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
         easing = FastOutSlowInEasing,
@@ -1055,7 +996,7 @@ private fun playerDeckSlideIn() = slideInVertically(
     initialOffsetY = { it },
 )
 
-private fun playerDeckSlideOut() = slideOutVertically(
+internal fun playerDeckSlideOut() = slideOutVertically(
     animationSpec = tween(
         SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
         easing = FastOutSlowInEasing,
@@ -2842,130 +2783,36 @@ fun NowPlayingScreen(
             lyricsSource = lyricsSourceInk,
             alphas = nowPlayingPalette.alphas,
         ) {
-        // Anchored to the sleeve's bottom edge, so the screen carries on in the
-        // colours the artwork ended in rather than in a quantiser's idea of what
-        // the artwork was about. Position ticks recompose this screen twice a
-        // second and must not drag a full-screen blur along with them, which is
-        // why the mesh is passed as one immutable value.
-        //
-        // The seam is the *expanded* banner's bottom edge and is left there as
-        // the player collapses, rather than following the sleeve down: it is
-        // the anchor for a blurred layer, and moving it would re-blur the whole
-        // screen on every frame of the drag. Above it the mesh holds one colour,
-        // so a seam left behind a collapsed sleeve shows nothing at all.
-        // Both phone backgrounds stay mounted for the entire song. Only these
-        // retained layers' alpha changes when a panel opens, so the full-cover
-        // blur is neither rebuilt nor switched in on a hard frame boundary.
-        // The tablet has no mirrored main-player treatment to crossfade from.
-        // Legacy mesh is the whole backdrop on every page, so the lyrics and
-        // queue panels must not crossfade the blurred artwork over it.
-        // The legacy backdrop is the mesh's own older cousin — settled above,
-        // where the landscape and tablet answers were known.
-        val fullArtworkBackdropAlpha by animateFloatAsState(
-            targetValue = if (
-                !legacyMeshBackdrop &&
-                (tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen) &&
-                (tabletArtworkBackdrop || fullArtworkBlurImage != null)
-            ) 1f else 0f,
-            animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-            label = "fullArtworkBackdropCrossfade",
+        PortraitBackdrop(
+            legacyMesh = legacyMeshBackdrop,
+            tablet = tabletArtworkBackdrop,
+            panelOpen = panels.lyricsOpen || panels.queueOpen,
+            blurReady = fullArtworkBlurImage != null,
+            spotifyCanvasPresentation = spotifyCanvasPresentation,
+            trackKey = song.videoId,
+            imageUrl = remoteArt,
+            meshLiveFrames = meshLiveFrames,
+            // Asked for at draw time: the line the wash hangs from moves
+            // while the picture grows into its banner and comes back
+            // out of it, and a value read in composition would take the
+            // whole player with it on every frame of that.
+            seam = {
+                if (canvasFirstPortrait) {
+                    renderedCanvasBottom
+                } else {
+                    lerp(0.dp, heroHeight + MESH_SEAM_NUDGE, heroT.value)
+                }
+            },
+            // The wash under a card is lifted, so the colour that sat
+            // right under the picture rides up behind it and the
+            // controls stand on a calmer band. A banner has its own
+            // wash under it and is not lifted.
+            lift = { BACKDROP_LIFT * (1f - heroT.value) },
+            liftFrom = { cardBottom },
+            fullArtworkBlur = fullArtworkBlurContent,
+            heroHeight = heroHeight,
+            heroWash = { heroT.value },
         )
-        if (legacyMeshBackdrop) {
-            // v1.5's backdrop, restored verbatim: no seam, because the blobs
-            // are not anchored to anything on screen — they fill the player and
-            // the artwork simply sits on top of them. Keyed on the track, so
-            // they drift when the player opens and on every skip, then rest.
-            // Position ticks recompose this screen twice a second and must not
-            // drag a full-screen blur along with them, which is why the palette
-            // is passed as one immutable value.
-            //
-            // In a scope of its own, for the same reason the mesh is: a clip's
-            // frame re-reads the colours, and a re-read in this scope would
-            // recompose the whole player.
-            LegacyMeshBackdrop(
-                imageUrl = remoteArt,
-                liveFrames = meshLiveFrames,
-                trackKey = song.videoId,
-                modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
-            )
-        } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
-            // Not drawn once the full-cover blur has taken the screen: a
-            // backdrop at zero alpha is still a full-screen draw — a stretched
-            // texture, a gradient and, on a still cover, a full-screen
-            // `RenderEffect` — paid for on every frame the screen redraws.
-            if (fullArtworkBackdropAlpha < 0.999f) {
-                PlayerMeshBackdrop(
-                    trackKey = song.videoId,
-                    imageUrl = remoteArt,
-                    liveFrames = meshLiveFrames,
-                    // Asked for at draw time: the line the wash hangs from moves
-                    // while the picture grows into its banner and comes back
-                    // out of it, and a value read in composition would take the
-                    // whole player with it on every frame of that.
-                    seam = {
-                        if (canvasFirstPortrait) {
-                            renderedCanvasBottom
-                        } else {
-                            lerp(0.dp, heroHeight + MESH_SEAM_NUDGE, heroT.value)
-                        }
-                    },
-                    // The wash under a card is lifted, so the colour that sat
-                    // right under the picture rides up behind it and the
-                    // controls stand on a calmer band. A banner has its own
-                    // wash under it and is not lifted.
-                    lift = { BACKDROP_LIFT * (1f - heroT.value) },
-                    liftFrom = { cardBottom },
-                    modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
-                )
-            }
-        }
-        // The same, the other way round: the full-cover blur is only drawn
-        // while it is on the screen.
-        if (fullArtworkBackdropAlpha > 0.001f) {
-            fullArtworkBlurContent(
-                Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
-            )
-        }
-
-        // The wash the controls stand on, from the art's bottom edge down.
-        //
-        // ArchiveTune's Immersive theme grades the region under the stage
-        // rather than leaving the backdrop bare. This is now only a hint of
-        // depth: the palette already tone-maps every backdrop cell to hold
-        // text contrast, so a heavier grade would only make the blur darker
-        // than the sleeve it came from.
-        //
-        // The gradient is drawn from the stage's bottom edge, not the screen's
-        // top, so it moves with the art.
-        //
-        // Faded by the picture's own journey rather than switched on and off
-        // with it: the artwork grows into its banner and comes back out of it
-        // when the listener taps it, and a wash that appeared all at once at
-        // the end of that movement would be the one thing on screen that did
-        // not move with the picture.
-        if (heroHeight > 0.dp) {
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .drawWithContent {
-                        val wash = heroT.value
-                        if (wash > 0.001f) {
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.Transparent,
-                                        0.38f to Color.Transparent,
-                                        0.68f to Color.Black.copy(alpha = 0.04f * wash),
-                                        1f to Color.Black.copy(alpha = 0.12f * wash),
-                                    ),
-                                    startY = heroHeight.toPx(),
-                                    endY = size.height,
-                                ),
-                            )
-                        }
-                    },
-            )
-        }
 
         // Mount once, behind the controls. A known portrait aspect changes the
         // invisible view to full-player bounds before its first frame is shown.
@@ -3079,95 +2926,11 @@ fun NowPlayingScreen(
             )
         }
 
-        // Spotify Canvas keeps its pixels sharp across the whole phone. Pure
-        // glass blur belongs only under the temporary lower control deck,
-        // above the video. When the deck slides away this layer leaves with
-        // it as well.
-        AnimatedVisibility(
-            visible = spotifyCanvasPresentation && spotifyCanvasControlsOpen,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(0.56f),
-            enter = fadeIn(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideIn(),
-            exit = fadeOut(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideOut(),
-        ) {
-            // Subscribe only while Spotify's glass layer exists. Static art and
-            // non-Spotify motion covers do not observe this new state at all.
-            val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (reduceDynamicBlur || !renderEffectBlurSupported) {
-                            // A real backdrop RenderEffect is unavailable on
-                            // older Android versions and intentionally skipped
-                            // when dynamic blur is reduced. Retain the deck's
-                            // contrast without paying for a fake blur path,
-                            // while keeping the same progressive top edge as
-                            // the live glass surface.
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black.copy(alpha = 0.40f),
-                                    1.00f to Color.Black.copy(alpha = 0.40f),
-                                ),
-                            )
-                        } else {
-                            Modifier.optimizedHazeEffect(
-                                state = playerHaze,
-                                // Do not use HazeMaterials with Transparent:
-                                // that preset treats transparent RGB as black
-                                // and replaces its alpha with a dark 0.8 tint.
-                                style = HazeStyle(
-                                    backgroundColor = Color.Transparent,
-                                    tints = emptyList(),
-                                    // Canvas stays sharp above the deck; the
-                                    // lower glass needs stronger separation
-                                    // from a moving video than static artwork.
-                                    blurRadius = 48.dp,
-                                    noiseFactor = 0f,
-                                    fallbackTint = HazeTint(Color.Transparent),
-                                ),
-                            ) {
-                                // This is a continuously changing video, so a
-                                // full third-resolution backdrop is still more
-                                // detail than a 48dp blur can preserve. At 18%
-                                // this processes roughly 30% of the pixels used
-                                // by optimizedHazeEffect's normal 33% path.
-                                inputScale = HazeInputScale.Fixed(0.18f)
-                                canDrawArea = { true }
-                                mask = Brush.verticalGradient(
-                                    0.00f to Color.Transparent,
-                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black,
-                                    1.00f to Color.Black,
-                                )
-                            }
-                        },
-                    ),
-            )
-        }
-
-        // While the control deck is up, the whole Canvas sits under a flat 50%
-        // dim so the buttons and text read against any clip. It fades out as
-        // the deck collapses to the full-screen video, and back in with the
-        // deck, on the deck's own timing. Alpha is read in the draw phase, so
-        // the fade never recomposes the player. Drawn above the glass deck, not
-        // under it: the deck's blur samples the video layer itself, so a dim
-        // beneath it never reached the glass and the deck stayed bright.
-        val spotifyCanvasDim = animateFloatAsState(
-            targetValue = if (spotifyCanvasPresentation && spotifyCanvasControlsOpen) 0.5f else 0f,
-            animationSpec = tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS),
-            label = "spotifyCanvasDim",
+        SpotifyCanvasChrome(
+            deckShown = spotifyCanvasPresentation && spotifyCanvasControlsOpen,
+            presentation = spotifyCanvasPresentation,
+            hazeState = playerHaze,
         )
-        val spotifyCanvasDimShowing by remember { derivedStateOf { spotifyCanvasDim.value > 0f } }
-        if (spotifyCanvasPresentation || spotifyCanvasDimShowing) {
-            Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = spotifyCanvasDim.value }
-                    .background(Color.Black),
-            )
-        }
 
         Column(
             modifier = Modifier
