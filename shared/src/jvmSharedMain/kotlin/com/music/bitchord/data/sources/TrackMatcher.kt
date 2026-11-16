@@ -411,7 +411,11 @@ object TrackMatcher {
         // nothing, and the song stayed on YouTube's Opus. Taken out before any
         // bracket or dash is read, so every shape of it goes the same way.
         // Never down to nothing: a title that is only the label keeps it.
-        text.replace(IMMERSIVE_LABEL, " ").takeIf { it.isNotBlank() }?.let { text = it }
+        // At the end it goes with the separators in front of it; with more
+        // after it only the two words go, so a dash or bracket that leads on
+        // to a version ("Song - Eclipsa Audio Live") is still read as one.
+        text.replace(IMMERSIVE_LABEL_AT_END, "").replace(IMMERSIVE_LABEL, " ")
+            .takeIf { it.isNotBlank() }?.let { text = it }
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -860,13 +864,15 @@ object TrackMatcher {
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
 
+    /** YouTube's immersive-upload label, wherever a title carries it; see [parseTitle]. */
+    private val IMMERSIVE_LABEL = Regex("""(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+
     /**
-     * YouTube's immersive-upload label, wherever a title carries it, with the
-     * separators in front of it ("봄날·Eclipsa Audio") but never a bracket:
-     * "(Eclipsa Audio Live)" has to stay an aside for "live" to be read as a
-     * version. See [parseTitle].
+     * The label as the last words of a title, with the separators in front of
+     * it ("봄날·Eclipsa Audio") but never a bracket, which belongs to an aside.
      */
-    private val IMMERSIVE_LABEL = Regex("""[\s\p{P}\p{S}&&[^()\[\]]]*(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+    private val IMMERSIVE_LABEL_AT_END =
+        Regex("""[\s\p{P}\p{S}&&[^()\[\]]]*(?<![\p{L}\p{N}])eclipsa\s+audio(?=[^\p{L}\p{N}]*$)""")
     /** The last word of a title and the separators around it; see the CJK core in [parseTitle]. */
     private val TRAILING_LABEL = Regex("""[\s\p{P}\p{S}]+([\p{L}\p{N}]+)[\s\p{P}\p{S}]*$""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
