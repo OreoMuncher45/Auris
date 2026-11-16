@@ -3351,7 +3351,9 @@ private fun BitChordApp(
         BackHandler(enabled = nav.itunesPodcastId != null) {
             nav.itunesPodcastId = null
         }
-        BackHandler(enabled = nav.showGenres) {
+        // Not while a detail page is open over Genres: that page's own back
+        // closes first, as with the Library grid below.
+        BackHandler(enabled = nav.showGenres && detail == null) {
             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
         BackHandler(enabled = nav.showSettings && !sheets.showSpotify && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay) {
@@ -4006,37 +4008,7 @@ private fun BitChordApp(
             ) {
                 // Which page is on screen, as one name. The transition runs
                 // on the difference between two of these.
-                val pageKey = when {
-                    sheets.showSpotify && detail == null -> "spotify"
-                    sheets.showDiscord -> "discord"
-                    sheets.showHistory -> "history"
-                    sheets.showFlow -> "flow"
-                    sheets.showQuickPicks -> "quick_picks"
-                    podcastUi.showContinueListening -> "continue_listening"
-                    // `&& detail == null`: a card opened from the grid
-                    // stacks a detail page over it exactly as one opened
-                    // from the Library tab does — see
-                    // [onLibraryItemClick] — so with both set this must
-                    // give way to the `detail != null` branch below it
-                    // rather than keep showing the grid underneath.
-                    sheets.libraryShowAll != null && detail == null -> "library_show_all"
-                    nav.showAccountScrobbling -> "account_scrobbling"
-                    nav.showSources -> "sources"
-                    nav.showListenTogether -> "listen_together"
-                    nav.showEqualizer -> "equalizer"
-                    // Above Replay, not below it. The top bar's account
-                    // button sets `showSettings` from every page including
-                    // this one, so with Replay winning the tie the button
-                    // was live, hit, and changed nothing on screen.
-                    nav.showSettings -> "settings"
-                    nav.showGenres -> "genres"
-                    sheets.openAudiobook != null -> "audiobook"
-                    nav.showAudiobooks -> "audiobooks"
-                    nav.itunesPodcastId != null -> "itunespodcast"
-                    nav.showReplay -> "replay"
-                    detail != null -> detail.browseId
-                    else -> "$TAB_KEY${nav.selectedTab}"
-                }
+                val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
                 // A page change moves the content the glass samples. The
                 // clock tells every glass surface to hold its capture for the
                 // length of the slide rather than re-record it per frame —
@@ -4222,7 +4194,7 @@ private fun BitChordApp(
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
                             ?: stringResource(R.string.settings)
-                        nav.showGenres -> stringResource(R.string.explore)
+                        nav.showGenres && detail == null -> stringResource(R.string.explore)
                         sheets.openAudiobook != null -> sheets.openAudiobook?.title.orEmpty()
                         nav.showAudiobooks -> stringResource(R.string.audiobooks)
                         nav.showReplay -> stringResource(R.string.replay)
@@ -4285,7 +4257,7 @@ private fun BitChordApp(
                         sheets.openAudiobook != null -> ({ sheets.openAudiobook = null })
                         nav.showAudiobooks -> ({ nav.showAudiobooks = false })
                         nav.itunesPodcastId != null -> ({ nav.itunesPodcastId = null })
-                        nav.showGenres -> ({
+                        nav.showGenres && detail == null -> ({
                             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
                         })
                         nav.settingsSubScreen != null -> ({ nav.settingsSubScreen = null })
@@ -7634,6 +7606,54 @@ private class PodcastUiState {
 }
 
 /**
+ * Which page the root's AnimatedContent shows, as one name; the page
+ * transition runs on the difference between two of these. Pages that open
+ * over the feed win over the tab, in this order; a detail page wins over
+ * the pages it can be opened from (the Library grid, Genres).
+ */
+internal fun rootPageKey(
+    nav: RootNav,
+    sheets: RootSheets,
+    showContinueListening: Boolean,
+    detail: DetailPage?,
+): String {
+    return when {
+        sheets.showSpotify && detail == null -> "spotify"
+        sheets.showDiscord -> "discord"
+        sheets.showHistory -> "history"
+        sheets.showFlow -> "flow"
+        sheets.showQuickPicks -> "quick_picks"
+        showContinueListening -> "continue_listening"
+        // `&& detail == null`: a card opened from the grid
+        // stacks a detail page over it exactly as one opened
+        // from the Library tab does — see
+        // [onLibraryItemClick] — so with both set this must
+        // give way to the `detail != null` branch below it
+        // rather than keep showing the grid underneath.
+        sheets.libraryShowAll != null && detail == null -> "library_show_all"
+        nav.showAccountScrobbling -> "account_scrobbling"
+        nav.showSources -> "sources"
+        nav.showListenTogether -> "listen_together"
+        nav.showEqualizer -> "equalizer"
+        // Above Replay, not below it. The top bar's account
+        // button sets `showSettings` from every page including
+        // this one, so with Replay winning the tie the button
+        // was live, hit, and changed nothing on screen.
+        nav.showSettings -> "settings"
+        // `&& detail == null` for the same reason as the grid above: a
+        // playlist opened from a genre stacks a detail page over Genres,
+        // and with both set the detail page is the one on screen.
+        nav.showGenres && detail == null -> "genres"
+        sheets.openAudiobook != null -> "audiobook"
+        nav.showAudiobooks -> "audiobooks"
+        nav.itunesPodcastId != null -> "itunespodcast"
+        nav.showReplay -> "replay"
+        detail != null -> detail.browseId
+        else -> "$TAB_KEY${nav.selectedTab}"
+    }
+}
+
+/**
  * Where the app root is: the selected tab, and which of the pages that open
  * over it (Settings and its categories and sub-screens, Sources, Listen
  * Together, the equalizer, Replay and its stories, genres, audiobooks, an
@@ -7755,7 +7775,7 @@ internal class RootNav {
  * flags that are restored after process death stay `rememberSaveable` in
  * [BitChordApp].
  */
-private class RootSheets {
+internal class RootSheets {
     /**
      * What the in-app browser is open for, or null while it is closed —
      * signing in, or picking a channel in YouTube Music's own Accounts list.
