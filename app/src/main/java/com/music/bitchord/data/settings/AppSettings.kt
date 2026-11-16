@@ -813,9 +813,13 @@ object AppSettings {
      * clip's texture off the GPU, and thirty of those a second is a real cost
      * on every frame the artwork plays — so this is the switch for the
      * listener who wants the cover followed and the battery kept. Off, the
-     * backdrop and the ink still follow it, once a second.
+     * backdrop and the ink still follow it, every few seconds.
+     *
+     * Off by default, as Zenith (a sibling BitChord fork) ships it: a still
+     * of the cover, re-read now and then, is most of the look for a fraction
+     * of the GPU readbacks. The live wash is the opt-in.
      */
-    val liveBlur = MutableStateFlow(true)
+    val liveBlur = MutableStateFlow(false)
     /**
      * Sample this process's CPU and the player's per-frame counters, and keep
      * a log that can be written out. Off by default and off in every sense:
@@ -1720,7 +1724,7 @@ object AppSettings {
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
         glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
-        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, true)
+        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, false)
         perfMonitor.value = prefs.getBoolean(KEY_PERF_MONITOR, false)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)

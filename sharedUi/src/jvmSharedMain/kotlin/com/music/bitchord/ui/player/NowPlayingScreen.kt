@@ -660,14 +660,13 @@ private const val LIVE_REFRESH_LIVE_MS = 125L
  * The backdrop and the ink both follow the clip, so this is the rate at which
  * the screen changes colour.
  *
- * It is a second, and it was a hundred milliseconds before: the read is a copy
- * of the clip's texture off the GPU, taken on the thread that draws the
- * screen, and it stalls the GPU's pipeline while it happens. Ten of those a
- * second is ten stalls a second. A second is still faster than the picture
- * under the ink changes noticeably, and the wash it paints is blurred past the
- * point where a step would show.
+ * Three seconds, as Zenith (a sibling BitChord fork) refreshes its mesh: the
+ * read is a copy of the clip's texture off the GPU, taken on the thread that
+ * draws the screen, and it stalls the GPU's pipeline while it happens. The ink
+ * and the mesh ease from one read to the next, and the wash is blurred past
+ * the point where a step would show, so a slower read costs nothing visible.
  */
-private const val LIVE_REFRESH_MS = 1_000L
+private const val LIVE_REFRESH_MS = 3_000L
 
 /**
  * The same read, for a device that has asked for less motion.
