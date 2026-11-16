@@ -187,6 +187,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val homeHeader: StateFlow<HomeHeader?> = _homeHeader.asStateFlow()
 
     /**
+     * The chip the Spotify home is narrowed by.
+     *
+     * Kept here rather than in the screen, because the chip is part of the
+     * *request*: Spotify's feed is asked for again with the chip in force,
+     * and the answer replaces the page rather than filtering it.
+     */
+    private val homeFacet = MutableStateFlow("")
+
+    /**
      * The quick-picks row's own songs, kept whether the row is on the page
      * or not.
      *
@@ -2469,8 +2478,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The header is *kept* while the page reloads. The chips in it are the
         // way back to the whole feed: a page that hid them while it loaded —
         // and again when the load failed — left a listener who had narrowed the
-        // page stuck in the narrowed page.
-        _homeHeader.value = null
+        // page stuck in the narrowed page. Only a change of provider clears
+        // it, because only then is it another provider's header.
+        if (AppSettings.homeProvider.value != HomeProvider.SPOTIFY) {
+            _homeHeader.value = null
+        }
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2478,11 +2490,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
 
-        // One feed, whichever catalogue the listener browses: YouTube Music's
-        // own home, paged as it always was. A provider's own feed was read
-        // here once, and it was the wrong page — Spotify's home repeats the
-        // same track across its rows and is built from the listener's likes
-        // whether they asked for that or not.
+        // The catalogue decides what the page *is*: Spotify's own rows when
+        // Spotify is chosen, YouTube Music's feed when it is. The YouTube
+        // fan-out below is not something to run and then discard — a Spotify
+        // home is built from Spotify's own rows, matched to playable tracks,
+        // and pages no further. The two above counters are set for requests
+        // this path never makes, so they are cleared rather than left to draw
+        // skeletons that never fill.
+        //
+        // What plays next is not decided here: Flow, AutoPlay and "more like
+        // this" are YouTube Music's whichever catalogue is chosen.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            _homePendingShelves.value = 0
+            _homeRecentlyPlayedLoading.value = false
+            loadSpotifyHome(identity, generation)
+            return
+        }
         viewModelScope.launch {
             launch {
                 try {
@@ -2530,14 +2553,65 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * [loadHome]'s Spotify half.
+     *
+     * Not a branch inside the YouTube fan-out, because the two catalogues
+     * share none of it — not a request, not a continuation, not a shelf shape.
+     * What they do share is the *page*: [publishHomeShelves] and everything
+     * under it draw both, so a Spotify home gets the same skeleton, the same
+     * blocked-artist filtering and the same cards as a YouTube one.
+     *
+     * Nothing here pages. YouTube's home is an endless continuation; Spotify's
+     * is a fixed set of rows read once, so [homeContinuation] stays null and
+     * scrolling to the bottom simply stops.
+     */
+    private fun loadSpotifyHome(identity: String?, generation: Long) {
+        homeContinuation = null
+        val facet = homeFacet.value
+        viewModelScope.launch {
+            val outcome = runCatching { SpotifyHomeSource.page(facet) }.getOrNull()
+            if (!isCurrentHomeLoad(identity, generation)) return@launch
+            if (outcome == null || outcome.isEmpty) {
+                // The catalogue's own words for it. An empty Spotify home has
+                // several unrelated causes — no token, a refused endpoint, a
+                // feed read and found to hold no cards — and they need opposite
+                // fixes, so the message names the one that happened instead of
+                // saying "nothing to show" to all of them.
+                _home.value = UiState.Error(outcome?.reason ?: "Spotify returned nothing to show")
+                return@launch
+            }
+            _homeHeader.value = outcome.header
+            publishHomeShelves(outcome.shelves)
+        }
+    }
+
+    /**
      * The chip the listener picked.
      *
-     * The chips belonged to the provider's own feed, and there is one feed
-     * now: YouTube Music's. The call is kept so the screen's wiring does not
-     * have to know that, and it does nothing.
+     * Spotify's feed is asked for again with the chip in force and the answer
+     * replaces the page: the chip is not a filter over the shelves already
+     * drawn, it is a different question to Spotify.
+     *
+     * Picking the chip that is already in force does nothing. The way back to
+     * the whole page is the close button beside the chip, which is where
+     * Spotify puts it — a chip that undid itself on a second tap would make
+     * the row a toggle nobody could read the state of.
      */
     fun selectHomeChip(chip: String) {
-        // Nothing to narrow: the page is the page.
+        if (AppSettings.homeProvider.value != HomeProvider.SPOTIFY) return
+        if (homeFacet.value == chip) return
+        homeFacet.value = chip
+        loadHome()
+    }
+
+    /** [refreshHome]'s Spotify half: the rows, read again rather than carried on. */
+    private suspend fun refreshSpotifyHome(identity: String?) {
+        val outcome = runCatching { SpotifyHomeSource.page(homeFacet.value) }.getOrNull() ?: return
+        if (identity != listenerKey() || outcome.isEmpty) return
+        homeSeenTitles.clear()
+        _homeHeader.value = outcome.header
+        _homeRaw.value = outcome.shelves
+        publishHome()
     }
 
     /**
@@ -2645,6 +2719,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
+        // Spotify's rows are read rather than continued, so a refresh is the
+        // whole of what it does — see [refreshSpotifyHome].
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+            refreshSpotifyHome(identity)
+            return@coroutineScope
+        }
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         YtMusicRepository.home().onSuccess { feed ->
             if (identity != listenerKey()) return@onSuccess

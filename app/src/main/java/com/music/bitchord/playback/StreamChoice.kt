@@ -3,6 +3,9 @@ package com.music.bitchord.playback
 import android.os.SystemClock
 import com.music.bitchord.data.sources.SourceStream
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 
 /**
  * Which copy of a track is being served, remembered for as long as the track
@@ -123,6 +126,7 @@ object StreamChoice {
             }
         }
         chosen[videoId] = Choice(stream, now, substituted)
+        preparationChanged()
         return true
     }
 
@@ -166,13 +170,17 @@ object StreamChoice {
 
     /** Announces that [videoId]'s prepared stream is being looked up. */
     fun beginPreparing(videoId: String) {
-        if (preparing.size >= MAX_REMEMBERED) preparing.clear()
+        if (preparing.size >= MAX_REMEMBERED) {
+            preparing.clear()
+            preparationChanged()
+        }
         preparing += videoId
     }
 
     /** Withdraws [beginPreparing]'s claim — with a pin if it found one, without if it didn't. */
     fun endPreparing(videoId: String) {
         preparing -= videoId
+        preparationChanged()
     }
 
     /**
@@ -183,6 +191,29 @@ object StreamChoice {
      */
     fun isAwaitingPreparation(videoId: String): Boolean =
         videoId in preparing && of(videoId) == null
+
+    /**
+     * Bumped after every change that can end a wait in [awaitPreparation]: a
+     * pin being made, or a preparation being withdrawn. Its value means
+     * nothing; that it changed is what wakes the waiter.
+     */
+    private val preparationChanges = MutableStateFlow(0L)
+
+    private fun preparationChanged() {
+        preparationChanges.update { it + 1 }
+    }
+
+    /**
+     * Suspends while [isAwaitingPreparation] holds for [videoId], and returns
+     * as soon as it doesn't. Returns at once if there is nothing to wait for.
+     *
+     * The resolver used to ask [isAwaitingPreparation] every 25ms instead,
+     * which woke its thread up to sixty times per wait and answered up to
+     * 25ms after the pin had already landed. The caller bounds the wait.
+     */
+    suspend fun awaitPreparation(videoId: String) {
+        preparationChanges.first { !isAwaitingPreparation(videoId) }
+    }
 
     /**
      * Tracks whose substituted stream refused to serve its bytes, and when.
