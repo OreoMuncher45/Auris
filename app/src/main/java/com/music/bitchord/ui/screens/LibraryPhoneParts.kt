@@ -11,6 +11,7 @@ import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -57,57 +58,82 @@ fun libraryLinks(): List<LibraryLink> {
         ),
         icon = icon,
     )
-    return listOfNotNull(
-        link(
-            Icons.Rounded.Download,
-            stringResource(R.string.downloads),
-            stringResource(R.string.downloaded_songs),
-            "local:downloads",
-        ),
-        link(
-            Icons.Rounded.Folder,
-            stringResource(R.string.local_music),
-            stringResource(R.string.audio_files_on_device),
-            "local:all",
-        ),
-        // Public-domain books, read aloud. A library of long things that are
-        // not songs — the one shelf a music library is otherwise missing.
-        link(
-            Icons.Rounded.MenuBook,
-            stringResource(R.string.audiobooks),
-            stringResource(R.string.audiobooks_subtitle),
-            AUDIOBOOKS_BROWSE_ID,
-        ),
-        // Opt-in from Settings → Storage: what the song cache is holding from
-        // YouTube and JioSaavn. See [com.music.bitchord.playback.AudioCache.cachedSongs].
-        link(
-            Icons.Rounded.Storage,
-            stringResource(R.string.cached_songs),
-            stringResource(R.string.cached_songs_subtitle),
-            CACHE_FOLDER_BROWSE_ID,
-        ).takeIf { showCacheFolder },
-        // Only once set up in Sources; unconfigured, they'd just be dead ends.
-        link(
-            Icons.Rounded.Cloud,
-            stringResource(R.string.webdav),
-            stringResource(R.string.webdav_subtitle),
-            com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
-        ).takeIf { webdavConfigured.isNotBlank() },
-        link(
-            Icons.Rounded.Lan,
-            stringResource(R.string.smb),
-            stringResource(R.string.smb_subtitle),
-            com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
-        ).takeIf { smbHost.isNotBlank() && smbShare.isNotBlank() },
-        // Only while signed in to Spotify in Settings → Accounts; it opens that
-        // account's playlists rather than a browse page.
-        link(
-            Icons.Rounded.Cloud,
-            stringResource(R.string.spotify),
-            stringResource(R.string.spotify_library_subtitle),
-            SPOTIFY_BROWSE_ID,
-        ).takeIf { spotifyConnected.isNotBlank() }?.copy(logo = Res.drawable.spotify_logo),
-    )
+    val downloadsLabel = stringResource(R.string.downloads)
+    val downloadedSongsLabel = stringResource(R.string.downloaded_songs)
+    val localMusicLabel = stringResource(R.string.local_music)
+    val audioFilesOnDeviceLabel = stringResource(R.string.audio_files_on_device)
+    val audiobooksLabel = stringResource(R.string.audiobooks)
+    val audiobooksSubtitleLabel = stringResource(R.string.audiobooks_subtitle)
+    val cachedSongsLabel = stringResource(R.string.cached_songs)
+    val cachedSongsSubtitleLabel = stringResource(R.string.cached_songs_subtitle)
+    val webdavLabel = stringResource(R.string.webdav)
+    val webdavSubtitleLabel = stringResource(R.string.webdav_subtitle)
+    val smbLabel = stringResource(R.string.smb)
+    val smbSubtitleLabel = stringResource(R.string.smb_subtitle)
+    val spotifyLabel = stringResource(R.string.spotify)
+    val spotifyLibrarySubtitleLabel = stringResource(R.string.spotify_library_subtitle)
+    // Remembered, so the Library is handed the same list until something on
+    // it changes: a list is compared by identity, and a fresh one on every
+    // call kept LibraryScreen from ever skipping.
+    return remember(
+        showCacheFolder, webdavConfigured, smbHost, smbShare, spotifyConnected,
+        downloadsLabel, downloadedSongsLabel, localMusicLabel, audioFilesOnDeviceLabel,
+        audiobooksLabel, audiobooksSubtitleLabel, cachedSongsLabel, cachedSongsSubtitleLabel,
+        webdavLabel, webdavSubtitleLabel, smbLabel, smbSubtitleLabel,
+        spotifyLabel, spotifyLibrarySubtitleLabel,
+    ) {
+        listOfNotNull(
+            link(
+                Icons.Rounded.Download,
+                downloadsLabel,
+                downloadedSongsLabel,
+                "local:downloads",
+            ),
+            link(
+                Icons.Rounded.Folder,
+                localMusicLabel,
+                audioFilesOnDeviceLabel,
+                "local:all",
+            ),
+            // Public-domain books, read aloud. A library of long things that are
+            // not songs — the one shelf a music library is otherwise missing.
+            link(
+                Icons.Rounded.MenuBook,
+                audiobooksLabel,
+                audiobooksSubtitleLabel,
+                AUDIOBOOKS_BROWSE_ID,
+            ),
+            // Opt-in from Settings → Storage: what the song cache is holding from
+            // YouTube and JioSaavn. See [com.music.bitchord.playback.AudioCache.cachedSongs].
+            link(
+                Icons.Rounded.Storage,
+                cachedSongsLabel,
+                cachedSongsSubtitleLabel,
+                CACHE_FOLDER_BROWSE_ID,
+            ).takeIf { showCacheFolder },
+            // Only once set up in Sources; unconfigured, they'd just be dead ends.
+            link(
+                Icons.Rounded.Cloud,
+                webdavLabel,
+                webdavSubtitleLabel,
+                com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
+            ).takeIf { webdavConfigured.isNotBlank() },
+            link(
+                Icons.Rounded.Lan,
+                smbLabel,
+                smbSubtitleLabel,
+                com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
+            ).takeIf { smbHost.isNotBlank() && smbShare.isNotBlank() },
+            // Only while signed in to Spotify in Settings → Accounts; it opens that
+            // account's playlists rather than a browse page.
+            link(
+                Icons.Rounded.Cloud,
+                spotifyLabel,
+                spotifyLibrarySubtitleLabel,
+                SPOTIFY_BROWSE_ID,
+            ).takeIf { spotifyConnected.isNotBlank() }?.copy(logo = Res.drawable.spotify_logo),
+        )
+    }
 }
 
 /**
@@ -119,20 +145,23 @@ fun libraryLinks(): List<LibraryLink> {
 @Composable
 fun libraryDeviceItems(downloadedReleases: List<SavedCollection>): List<ShelfItem> {
     val downloadedPlaylist = stringResource(R.string.downloaded_playlist)
-    return downloadedReleases.map { release ->
-        ShelfItem(
-            title = release.title,
-            // The credit the release was downloaded with, because this is also
-            // what the page it opens bills itself by — see `headerLines`, which
-            // reads the kind and the owner back out of it. Saying "Downloaded
-            // playlist" here instead would make that header read "Downloaded
-            // playlist" over "PLAYLIST • 12 SONGS", and the shelf this card is on
-            // already says where it lives.
-            subtitle = release.subtitle.ifBlank { if (release.playlist) downloadedPlaylist else "" },
-            thumbnailUrl = release.thumbnailUrl,
-            videoId = null,
-            browseId = Downloads.pageIdFor(release.id),
-        )
+    // Remembered for the same reason as [libraryLinks]: one list per change.
+    return remember(downloadedReleases, downloadedPlaylist) {
+        downloadedReleases.map { release ->
+            ShelfItem(
+                title = release.title,
+                // The credit the release was downloaded with, because this is also
+                // what the page it opens bills itself by — see `headerLines`, which
+                // reads the kind and the owner back out of it. Saying "Downloaded
+                // playlist" here instead would make that header read "Downloaded
+                // playlist" over "PLAYLIST • 12 SONGS", and the shelf this card is on
+                // already says where it lives.
+                subtitle = release.subtitle.ifBlank { if (release.playlist) downloadedPlaylist else "" },
+                thumbnailUrl = release.thumbnailUrl,
+                videoId = null,
+                browseId = Downloads.pageIdFor(release.id),
+            )
+        }
     }
 }
 

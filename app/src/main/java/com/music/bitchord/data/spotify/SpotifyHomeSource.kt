@@ -57,6 +57,14 @@ import java.util.concurrent.ConcurrentHashMap
  * feed, read through this app's own GraphQL client and drawn with this app's
  * own cards — and when the feed cannot be read, the page says why instead of
  * showing nothing.
+ *
+ * ## And what it is not either
+ *
+ * This is a *catalogue*, not an algorithm. What plays next — Flow, AutoPlay,
+ * "more like this" — is YouTube Music's, whichever catalogue is chosen here.
+ * What Spotify contributes to that mix is [listens]: what the listener is
+ * playing over there, which is material for one engine rather than a second
+ * engine of its own.
  */
 internal object SpotifyHomeSource {
 
@@ -86,8 +94,15 @@ internal object SpotifyHomeSource {
     /** How many matches may be in flight at once; each one is a search. */
     private const val MATCH_CONCURRENCY = 4
 
-    /** How many of the listener's top tracks and recent plays seed a Flow mix. */
-    private const val FLOW_SEEDS = 24
+    /**
+     * How many Spotify tracks are read as the listener's listening.
+     *
+     * Bounded: each one is matched on YouTube Music before it can be played,
+     * and a mix is not worth a hundred searches. Twelve is enough to seed the
+     * radio from and to fill a pool with, and the matches are remembered, so
+     * the next mix costs nothing.
+     */
+    private const val LISTEN_SEEDS = 12
 
     /**
      * Spotify track id to the track this app will play for it.
@@ -97,17 +112,6 @@ internal object SpotifyHomeSource {
      * once in a session loads instantly; a fresh process asks again.
      */
     private val matches = ConcurrentHashMap<String, Song>()
-
-    /**
-     * The other way round: this app's track id to the Spotify track it came
-     * from.
-     *
-     * Needed because a station is asked for by a Spotify URI, and the queue
-     * holds this app's own ids — the track that is playing was matched from
-     * Spotify, and without the other direction the station it seeds could
-     * only be guessed at.
-     */
-    private val spotifyIds = ConcurrentHashMap<String, String>()
 
     /** Whether a listener's session can be read. */
     fun isSignedIn(): Boolean = AppSettings.spotifySpdcToken.value.isNotBlank()
@@ -350,60 +354,6 @@ internal object SpotifyHomeSource {
     }
 
     /**
-     * Flow's seeds, read from whichever backend will answer.
-     *
-     * Signed in, the listener's own taste. The web player's own library is
-     * asked first: Liked Songs is the closest thing to "top tracks" the
-     * library has, and it is the one collection that is unambiguously the
-     * listener's own. The `/v1` history calls come after it because they are
-     * *better* evidence - months of listening rather than one shelf - but a
-     * rate-limited client refuses them, and a refused call is one source of
-     * seeds not answering rather than a reason to build nothing.
-     */
-    private suspend fun ownedSeeds(): List<SpotifyTrack> {
-        val liked = runCatching { SpotifyLibrary.preview(SpotifyLibrary.LIKED_ID, FLOW_SEEDS) }
-            .onFailure { Log.w(TAG, "the Spotify library could not be read for Flow: ${it.message}") }
-            .getOrDefault(emptyList())
-        if (liked.isNotEmpty()) return liked
-        val top = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
-        if (top.isNotEmpty()) return top
-        val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
-        if (recent.isNotEmpty()) return recent
-        return emptyList()
-    }
-
-    /**
-     * Seeds for a listener who has not signed in.
-     *
-     * There is no history to read, so the public catalogue stands in: the
-     * home feed's own playlists - the editorial ones the web player shows a
-     * visitor - and their tracks. The public API's featured list is the
-     * fallback, and it is rate limited per client, so it is asked last.
-     */
-    private suspend fun publicSeeds(): List<SpotifyTrack> {
-        val feed = runCatching { homeFeed("") }.getOrNull()
-        val playlistIds = feed?.sections.orEmpty()
-            .flatMap { section -> section.cards }
-            .filter { card -> card.kind == SpotifyCard.Kind.PLAYLIST }
-            .map { card -> card.id }
-            .distinct()
-            .take(2)
-        val tracks = playlistIds.flatMap { id ->
-            runCatching { SpotifyLibrary.preview(id, TRACKS_PER_ROW) }
-                .onFailure { Log.w(TAG, "the public playlist '$id' could not be read for Flow: ${it.message}") }
-                .getOrDefault(emptyList())
-        }
-        if (tracks.isNotEmpty()) return tracks
-        val featured = runCatching { SpotifyWebApi.featuredPlaylists(limit = 2) }
-            .onFailure { Log.w(TAG, "featured playlists could not be read for Flow: ${it.message}") }
-            .getOrDefault(emptyList())
-        return featured.flatMap { playlist ->
-            runCatching { SpotifyWebApi.playlistTracks(playlist.id, limit = TRACKS_PER_ROW) }
-                .getOrDefault(emptyList())
-        }
-    }
-
-    /**
      * One row of tracks, matched, or null when nothing in it could be matched.
      *
      * Null means the row is dropped rather than drawn as a heading over an
@@ -425,19 +375,23 @@ internal object SpotifyHomeSource {
     }
 
     /**
-     * The provider's contribution to a Flow mix.
+     * The listener's Spotify listening, as playable tracks.
      *
-     * Signed in, that is the listener's own taste: their top tracks and what
-     * they played lately. Signed out there is no history to read, so Spotify's
-     * public featured list stands in.
+     * Their top tracks and what they played lately — what they *listen* to,
+     * not what they saved. Their liked songs are not read here: the mix asks
+     * the catalogue for songs like the ones they liked only when they say so,
+     * and a shelf of liked songs read on its own puts their likes back into
+     * every mix whether they asked for them or not.
+     *
+     * Empty without a session: there is nobody's listening to read, and the
+     * public catalogue's editorial playlists are not a listener's listening.
      */
-    suspend fun flowSeeds(): FlowSeeds = withContext(Dispatchers.IO) {
-        if (isSignedIn()) {
-            val owned = ownedSeeds()
-            FlowSeeds(top = songs(owned), recent = emptyList())
-        } else {
-            FlowSeeds(top = emptyList(), recent = songs(publicSeeds()))
-        }
+    suspend fun listens(limit: Int = LISTEN_SEEDS): List<Song> = withContext(Dispatchers.IO) {
+        if (!isSignedIn()) return@withContext emptyList()
+        val top = runCatching { SpotifyWebApi.topTracks(limit = limit) }.getOrNull().orEmpty()
+        val recent = runCatching { SpotifyWebApi.recentlyPlayed(limit = limit) }.getOrNull().orEmpty()
+        val tracks = (top + recent).distinctBy { it.id }.take(limit)
+        songs(tracks)
     }
 
     /**
@@ -462,7 +416,6 @@ internal object SpotifyHomeSource {
                     .getOrNull()
                 matched?.let {
                     matches[track.id] = it
-                    rememberSpotifyId(it.videoId, track.id)
                     track to it
                 }
             }
@@ -471,18 +424,6 @@ internal object SpotifyHomeSource {
 
     /** The playable songs behind [tracks], for a seed pool. */
     private suspend fun songs(tracks: List<SpotifyTrack>): List<Song> =
-        matched(tracks).map { (_, song) -> song }
-
-    /**
-     * The playable songs behind [tracks], for a search.
-     *
-     * A Spotify track is metadata: the audio comes from YouTube Music and the
-     * addons, so a Spotify row is worth showing only once it has been matched
-     * to something that can play. The match is remembered both ways, so a
-     * station can later be asked for by the Spotify id behind the track that
-     * is playing.
-     */
-    internal suspend fun matchTracks(tracks: List<SpotifyTrack>): List<Song> =
         matched(tracks).map { (_, song) -> song }
 
     /**
@@ -498,7 +439,6 @@ internal object SpotifyHomeSource {
      */
     internal fun songFor(track: SpotifyTrack): Song {
         val key = "$SPOTIFY_KEY_PREFIX${track.id}"
-        rememberSpotifyId(key, track.id)
         return Song(
             videoId = key,
             title = track.title,
@@ -515,103 +455,6 @@ internal object SpotifyHomeSource {
     /** The prefix that marks a row as Spotify's own, with no playable id behind it. */
     const val SPOTIFY_KEY_PREFIX = "spotify:"
 
-    /**
-     * The next tracks AutoPlay should queue, from Spotify's own algorithm.
-     *
-     * The seed is the song that is playing, and what comes next is Spotify's
-     * answer to it: the station Spotify would start for that song, or the
-     * artists Spotify puts beside that song's artist. Then the catalogue's own
-     * lists. Not the listener's liked list — that is what this used to serve,
-     * and a queue that repeats the songs you already loved is not AutoPlay, it
-     * is a shuffle of your library.
-     */
-    suspend fun autoplayTracks(
-        exclude: Set<String>,
-        limit: Int,
-        seed: Song? = null,
-        station: Boolean = false,
-    ): List<Song> = withContext(Dispatchers.IO) {
-        if (limit <= 0) return@withContext emptyList()
-
-        if (seed != null) {
-            // An explicit station is Spotify's own mix of the track and
-            // nothing else; a queue top-up takes the same answer, because
-            // Spotify's station is the best thing this provider can say. The
-            // artist graph behind it is still Spotify's algorithm, so an
-            // unknown seed falls through to it rather than to the library.
-            val algorithmic = SpotifyAlgorithm.more(seed, limit)
-                .distinctBy { it.videoId }
-                .filterNot { it.videoId in exclude }
-                .filterNot(AppSettings::isSongBlocked)
-                .take(limit)
-            if (algorithmic.isNotEmpty()) return@withContext algorithmic
-        }
-
-        // Nothing from the algorithm. An explicit station says so, rather than
-        // becoming a shuffle of the liked list: that substitution is the fault
-        // this path exists to end — a "radio" that was really the songs the
-        // listener had already saved, wearing another provider's name.
-        if (station) {
-            Log.w(TAG, "Spotify's own station answered nothing; leaving the radio empty rather than filling it from the library")
-            return@withContext emptyList()
-        }
-
-        // A top-up keeps going from the catalogue instead of stopping. See
-        // [catalogueSeeds] for why it is not [flowSeeds].
-        catalogueSeeds(exclude, limit)
-    }
-
-    /**
-     * The catalogue's own seeds for a queue Spotify's algorithm could not
-     * answer: the listener's most-played, then what they played lately, then
-     * the public lists.
-     *
-     * Deliberately not [flowSeeds]. That pool starts with Liked Songs on
-     * purpose — they are the most unambiguous evidence of taste a library
-     * holds, and a *mix* built from them is the listener's own. A queue
-     * top-up is not a mix: falling back onto the liked list is how "next
-     * up" became a replay of what was already saved.
-     */
-    private suspend fun catalogueSeeds(exclude: Set<String>, limit: Int): List<Song> {
-        val tracks = runCatching { SpotifyWebApi.topTracks(limit = FLOW_SEEDS) }.getOrNull().orEmpty()
-            .ifEmpty { runCatching { SpotifyWebApi.recentlyPlayed(limit = FLOW_SEEDS) }.getOrNull().orEmpty() }
-            .ifEmpty { publicSeeds() }
-        if (tracks.isEmpty()) return emptyList()
-        return songs(tracks)
-            .distinctBy { it.videoId }
-            .filterNot { it.videoId in exclude }
-            .filterNot(AppSettings::isSongBlocked)
-            .take(limit)
-    }
-
-    /**
-     * Remembers which Spotify track [videoId] came from, so a station can later
-     * be asked for by the Spotify id behind the row that is playing.
-     *
-     * Filled from every path that turns a Spotify track into a row or a match —
-     * including the playlist and collection pages, which match through
-     * [SpotifyImporter] directly and used to leave this map empty. An empty map
-     * is what made "start radio" fall back to the listener's liked list: the
-     * station was never asked, because the id behind the seed was unknown.
-     */
-    internal fun rememberSpotifyId(videoId: String, trackId: String) {
-        if (videoId.isBlank() || trackId.isBlank()) return
-        spotifyIds[videoId] = trackId
-    }
-
-    /**
-     * The Spotify track id behind [song], or null.
-     *
-     * Known for a track that was matched from Spotify in this process, and
-     * recovered from the id itself for a row that carries one — `spotify:<id>`
-     * says where it came from, and a queue restored from disk has no map left
-     * to say it a second time. See [SPOTIFY_KEY_PREFIX].
-     */
-    internal fun spotifyIdOf(song: Song): String? =
-        spotifyIds[song.videoId]
-            ?: song.videoId.removePrefix(SPOTIFY_KEY_PREFIX)
-                .takeIf { song.videoId.startsWith(SPOTIFY_KEY_PREFIX) && it.isNotBlank() && it != song.videoId }
-
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
         matched(tracks).map { (track, song) ->
@@ -623,16 +466,6 @@ internal object SpotifyHomeSource {
                 browseId = null,
             )
         }
-
-    /**
-     * Songs to seed Flow with, split the way the flow engine reads them.
-     *
-     * Two lists rather than one, because the engine weighs "what this listener
-     * keeps coming back to" differently from "what they put on lately".
-     */
-    internal data class FlowSeeds(val top: List<Song>, val recent: List<Song>) {
-        val isEmpty: Boolean get() = top.isEmpty() && recent.isEmpty()
-    }
 }
 
 /** The card on a shelf, as this app draws one. */

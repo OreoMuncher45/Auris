@@ -276,7 +276,7 @@ internal object SpotifyWebApi {
                 }
                 if (answered.code != 401 || attempt == 1) {
                     // The status, by name, because the three causes of an empty
-                    // Spotify home need opposite fixes and "nothing to show"
+                    // Spotify answer need opposite fixes and "nothing to show"
                     // cannot tell them apart: a 403 is Spotify refusing this
                     // token or endpoint, a 429 is being throttled, and anything
                     // with a body is a request this app got wrong.

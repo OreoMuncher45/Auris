@@ -8,10 +8,14 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.structuralEqualityPolicy
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -38,6 +42,7 @@ import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -333,11 +338,63 @@ fun MediaController.setQueueDragActive(active: Boolean) {
     )
 }
 
-/** Mirrors the controller into Compose state, polling position while playing. */
+/**
+ * [PlayerState], read one property at a time.
+ *
+ * The controller's state is one [PlayerState] value, replaced whenever any
+ * field of it changes. Read as that value — `player.isPlaying` in a
+ * composable body — every read subscribes to all of it: a buffering flip or
+ * a duration settling recomposed everything that had only asked for the
+ * track. Each property here is its own derived state, compared
+ * structurally, so a reader is invalidated only when the property it read
+ * changes. The names are [PlayerState]'s, so `player.song` reads the same
+ * at a call site either way.
+ *
+ * The [structuralEqualityPolicy] is spelled out rather than left to the
+ * runtime's default for derived state (which is the same), because it is the
+ * whole point: [PlayerReadsTest] pins the counts.
+ *
+ * Reads made outside composition (a click handler, an effect after a
+ * suspension) see the current value, not the value at the last recomposition.
+ */
+@Stable
+class PlayerReads internal constructor(
+    private val source: State<PlayerState>,
+    /** The playhead. Its identity never changes — see [PlaybackPosition]. */
+    val position: PlaybackPosition,
+) {
+    private fun <T> derived(read: (PlayerState) -> T): State<T> =
+        derivedStateOf(structuralEqualityPolicy()) { read(source.value) }
+
+    /**
+     * The whole snapshot, for a reader that really takes all of it (the
+     * Classipod shell). Reading this subscribes to every field.
+     */
+    val snapshot: PlayerState get() = source.value
+
+    val song: Song? by derived { it.song }
+    val isPlaying: Boolean by derived { it.isPlaying }
+    val durationMs: Long by derived { it.durationMs }
+    val error: String? by derived { it.error }
+    val isLoading: Boolean by derived { it.isLoading }
+    val repeatMode: Int by derived { it.repeatMode }
+    val queue: List<Song> by derived { it.queue }
+    val queueIndex: Int by derived { it.queueIndex }
+    val hasPrevious: Boolean by derived { it.hasPrevious }
+    val hasNext: Boolean by derived { it.hasNext }
+    val isQualityUpgraded: Boolean by derived { it.isQualityUpgraded }
+}
+
+/**
+ * Mirrors the controller into Compose state, polling position while playing,
+ * and hands it out as [PlayerReads].
+ */
 @Composable
-fun rememberPlayerState(controller: MediaController?): PlayerState {
+fun rememberPlayerReads(controller: MediaController?): PlayerReads {
     val position = remember { PlaybackPosition() }
-    var state by remember { mutableStateOf(PlayerState(position = position)) }
+    val stateHolder = remember { mutableStateOf(PlayerState(position = position)) }
+    var state by stateHolder
+    val reads = remember { PlayerReads(stateHolder, position) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
@@ -440,18 +497,47 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
     // Nothing is lost by stopping: `sync` above runs on the controller's own
     // events, and the first thing that happens on the way back is a fresh read.
     val foreground = rememberIsForeground()
-    LaunchedEffect(controller, state.isPlaying, foreground) {
-        while (controller != null && state.isPlaying && foreground) {
+    //
+    // Whether it is playing is watched inside the effect, not read as a key:
+    // this composable returns a value, so a read here belongs to the caller's
+    // scope, and the caller (the app root) would recompose on every play and
+    // pause just to restart this loop. collectLatest restarts it the same
+    // way — the running loop is cancelled when playback stops or starts.
+    LaunchedEffect(controller, foreground) {
+        if (controller == null || !foreground) return@LaunchedEffect
+        pollWhilePlaying(isPlaying = { state.isPlaying }, intervalMs = 500) {
             position.report(controller.currentPosition.coerceAtLeast(0L))
             val duration = playbackDurationMs(
                 controller.duration,
                 controller.currentMediaItem?.claimedDurationMs() ?: 0L,
             )
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
-            delay(500)
         }
     }
-    return state
+    return reads
+}
+
+/**
+ * Runs [tick] every [intervalMs] for as long as [isPlaying] reads true, and
+ * starts again when it next turns true. [isPlaying] is read as snapshot
+ * state: a change cancels the running loop (collectLatest) and starts or
+ * stops it, the same as a LaunchedEffect keyed on it — without the read
+ * landing in a composable's scope. Never returns; cancel its coroutine.
+ *
+ * Only the flow stops the loop. The loop does not read [isPlaying] itself:
+ * a pause and a resume that both land between two looks of the flow emit
+ * nothing, and a loop that had noticed the pause on its own would have
+ * stopped with nothing left to start it again. A real pause is an emission
+ * of false, which cancels the loop at its next delay.
+ */
+internal suspend fun pollWhilePlaying(isPlaying: () -> Boolean, intervalMs: Long, tick: () -> Unit) {
+    snapshotFlow(isPlaying).collectLatest { playing ->
+        if (!playing) return@collectLatest
+        while (true) {
+            tick()
+            delay(intervalMs)
+        }
+    }
 }
 
 /**
