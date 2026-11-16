@@ -1207,7 +1207,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.LIKE) LikeStatus.INDIFFERENT else LikeStatus.LIKE
-        rateRow(song, previous, target)
+        rateRow(song, target)
     }
 
     /**
@@ -1225,6 +1225,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val rowRatingVersion = HashMap<String, Int>()
     private val rowRatingConfirmed = HashMap<String, LikeStatus>()
+
+    /**
+     * Per row with taps in flight: the row's own override before the first of
+     * them, or null if it had none. An unconfirmed run settles back to this,
+     * not to the fallback the tap toggled from: an unresolved row reads as
+     * INDIFFERENT only because its recording isn't known yet, and writing
+     * that down would mask the recording's real rating once it resolves.
+     */
+    private val rowRatingBefore = HashMap<String, LikeStatus?>()
+
+    /** What an in-flight row settles to: the server-confirmed rating, else its state before the taps. */
+    private fun settleRow(rowId: String) {
+        val confirmed = rowRatingConfirmed.remove(rowId)
+        val before = rowRatingBefore.remove(rowId)
+        if (confirmed != null) LikeState.set(rowId, confirmed) else LikeState.restore(rowId, before)
+    }
 
     /**
      * Parent of every queued row rating, so that switching listener can cancel
@@ -1251,12 +1267,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun cancelRowRatings() {
         // A cancelled tap was never sent: put each row back to what the server
         // has, rather than leave its optimistic heart behind.
-        for ((rowId, confirmed) in rowRatingConfirmed) LikeState.set(rowId, confirmed)
+        for (rowId in rowRatingBefore.keys.toList()) settleRow(rowId)
         rowRatingJobs.cancel()
         rowRatingJobs = SupervisorJob(viewModelScope.coroutineContext[Job])
         rowRatingLocks.clear()
         rowRatingVersion.clear()
         rowRatingConfirmed.clear()
+        rowRatingBefore.clear()
         recordingRatingVersion.clear()
     }
 
@@ -1271,15 +1288,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * touches the screen: an older one finishing while a newer tap is still
      * queued would otherwise put back a rating the user already tapped past,
      * and the next tap would toggle from the wrong state. When the latest
-     * finishes, the heart shows the last rating the server confirmed, which is
-     * [previous] from the first of the run of taps if none got through.
+     * finishes, the heart shows the last rating the server confirmed, or, if
+     * none got through, the row's own state before the first tap (see
+     * [rowRatingBefore]).
      */
-    private fun rateRow(song: Song, previous: LikeStatus, target: LikeStatus) {
+    private fun rateRow(song: Song, target: LikeStatus) {
         val rowId = song.videoId
         val listener = listenerKey()
         val version = (rowRatingVersion[rowId] ?: 0) + 1
         // The first tap of a run: what the screen shows is what the server has.
-        if (version == 1) rowRatingConfirmed[rowId] = previous
+        if (version == 1) rowRatingBefore[rowId] = LikeState.overrides.value[rowId]
         rowRatingVersion[rowId] = version
         LikeState.set(rowId, target)
         viewModelScope.launch(rowRatingJobs) {
@@ -1307,7 +1325,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (rowRatingVersion[rowId] == version) {
                     rowRatingVersion.remove(rowId)
-                    LikeState.set(rowId, rowRatingConfirmed.remove(rowId) ?: previous)
+                    settleRow(rowId)
                 }
             }
         }
@@ -1340,7 +1358,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!RatingTarget.isRowId(song.videoId)) return toggleDislike(song.videoId)
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.DISLIKE) LikeStatus.INDIFFERENT else LikeStatus.DISLIKE
-        rateRow(song, previous, target)
+        rateRow(song, target)
         return previous
     }
 
