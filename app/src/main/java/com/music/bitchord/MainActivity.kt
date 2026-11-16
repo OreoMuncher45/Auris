@@ -172,6 +172,7 @@ import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.HomeProvider
 import com.music.bitchord.ui.components.ArtworkFlightLayer
 import com.music.bitchord.ui.components.SflxInstallDialog
 import com.music.bitchord.ui.components.SflxSettingsDialog
@@ -3222,9 +3223,12 @@ private fun BitChordApp(
         val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
         val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
         // What the home page says above its shelves: a greeting, a row of chips
-        // and the quick-access grid. One feed has none of them, and the page
-        // does not ask for what it cannot use.
+        // and the quick-access grid. Spotify's home has all three; YouTube's has
+        // none of them.
         val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
+        // Which catalogue is drawing the page. Spotify's shelves are cards of
+        // collections, and the full-bleed hero treatment is for a row of tracks.
+        val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
         val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
         val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
         val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
@@ -4712,11 +4716,12 @@ private fun BitChordApp(
                             title = stringResource(R.string.home),
                             header = homeHeader,
                             onChipSelected = viewModel::selectHomeChip,
-                            // One feed, and it is a row of tracks: the
-                            // full-bleed hero treatment is for that. Spotify's
-                            // shelves were cards of collections, which a hero
-                            // card is not, and there are none of them here.
-                            leadHero = true,
+                            // Spotify's shelves are cards of collections —
+                            // albums, playlists, artists — and the full-bleed
+                            // hero treatment is for a row of tracks. A hero
+                            // card is a cover with a title laid over it, which
+                            // is not what a Spotify card is.
+                            leadHero = homeProvider != HomeProvider.SPOTIFY,
                             signedIn = signedIn,
                             onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
                             signInBannerDismissed = signInBannerDismissed,
