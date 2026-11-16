@@ -36,7 +36,7 @@ import com.music.bitchord.util.AppRelaunch
 @Stable
 internal class SettingsSheets {
     /** The connection whose quality ceiling is being picked, or null. */
-    var picking by mutableStateOf<QualityTarget?>(null)
+    var pickingQuality by mutableStateOf<QualityTarget?>(null)
     var pickingDownloadQuality by mutableStateOf(false)
     var pickingAutomixPerformance by mutableStateOf(false)
     var pickingHomeProvider by mutableStateOf(false)
@@ -93,11 +93,11 @@ internal fun SettingsDialogs(
         JamesDspSheet(onDismiss = { sheets.showJamesDsp = false })
     }
 
-    sheets.picking?.let { target ->
+    sheets.pickingQuality?.let { target ->
         val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
         val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
         ModalBottomSheet(
-            onDismissRequest = { sheets.picking = null },
+            onDismissRequest = { sheets.pickingQuality = null },
             containerColor = MaterialTheme.colorScheme.background,
         ) {
             QualitySheet(
@@ -119,7 +119,7 @@ internal fun SettingsDialogs(
                         QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
                         QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
                     }
-                    sheets.picking = null
+                    sheets.pickingQuality = null
                 },
             )
         }

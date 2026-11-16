@@ -110,7 +110,7 @@ internal fun AudioSettings(
                 title = onWifiTitle,
                 badge = stringResource(R.string.in_use).takeIf { metered == false },
                 value = wifiQuality.localizedLabel(),
-                onClick = { sheets.picking = QualityTarget.WIFI },
+                onClick = { sheets.pickingQuality = QualityTarget.WIFI },
             )
         }
         val onMobileDataTitle = stringResource(R.string.on_mobile_data)
@@ -120,7 +120,7 @@ internal fun AudioSettings(
                 title = onMobileDataTitle,
                 badge = stringResource(R.string.in_use).takeIf { metered == true },
                 value = cellularQuality.localizedLabel(),
-                onClick = { sheets.picking = QualityTarget.CELLULAR },
+                onClick = { sheets.pickingQuality = QualityTarget.CELLULAR },
             )
         }
         val outputPrecisionTitle = stringResource(R.string.output_precision)
