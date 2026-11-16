@@ -6,11 +6,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -43,7 +51,6 @@ internal fun DesktopSettingsHost(
     playbackClock: State<DesktopPlaybackState>,
     sleepTimerMinutes: Int?,
     sleepAfterTrack: Boolean,
-    sleepRemainingMs: Long?,
     sourceConfigs: List<DesktopSourceConfig>,
     sourceStatus: Map<String, String>,
     onSourceConfigsChange: (List<DesktopSourceConfig>) -> Unit,
@@ -54,6 +61,19 @@ internal fun DesktopSettingsHost(
     onLocalMusicChanged: () -> Unit,
     onBack: () -> Unit,
 ) {
+    // The countdown under the sleep timer row, the only place it is drawn. It ticks here, while
+    // Settings is open, rather than in the window, where a running timer recomposed everything
+    // once a second whatever page was showing.
+    var sleepTimerTick by remember { mutableStateOf(0L) }
+    LaunchedEffect(sleepTimerMinutes) {
+        while (sleepTimerMinutes != null && currentCoroutineContext().isActive) {
+            delay(1_000L)
+            sleepTimerTick++
+        }
+    }
+    val sleepRemainingMs = remember(sleepTimerMinutes, sleepTimerTick) {
+        DesktopSleepTimer.remainingMs()
+    }
     Box(
         Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
     ) {

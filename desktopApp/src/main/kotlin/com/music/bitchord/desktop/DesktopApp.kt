@@ -657,16 +657,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
     val sleepTimerMinutes by DesktopSleepTimer.minutes.collectAsState()
     val sleepAfterTrack by DesktopSleepTimer.afterTrack.collectAsState()
-    var sleepTimerTick by remember { mutableStateOf(0L) }
-    LaunchedEffect(sleepTimerMinutes) {
-        while (sleepTimerMinutes != null && currentCoroutineContext().isActive) {
-            delay(1_000L)
-            sleepTimerTick++
-        }
-    }
-    val sleepRemainingMs = remember(sleepTimerMinutes, sleepTimerTick) {
-        DesktopSleepTimer.remainingMs()
-    }
     // The artist page is its own destination rather than a collection with a different header.
 
     fun canonicalSong(song: Song): Song {
@@ -3220,7 +3210,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             playbackClock = playbackClock,
                             sleepTimerMinutes = sleepTimerMinutes,
                             sleepAfterTrack = sleepAfterTrack,
-                            sleepRemainingMs = sleepRemainingMs,
                             sourceConfigs = sourceConfigs,
                             sourceStatus = sourceStatus,
                             onSourceConfigsChange = { sourceConfigs = it },
