@@ -4,21 +4,13 @@ package com.music.bitchord.perf
  * The last [keep] samples, shared between the thread that takes them and the
  * thread that reports on them.
  *
- * [PerfMonitor] samples on `Dispatchers.Default` and writes its report from
- * whichever thread asked for it. The two used to share a bare `ArrayDeque`,
- * so a report could walk the window while the sampler was adding to its end
- * and dropping from its front. A report then mixed two windows, and could
- * throw: `last()` on a deque the sampler had just emptied.
- *
- * Every access now holds one lock, and a reader never walks the live window:
- * it takes a [snapshot], a copy of the window as it stood at a single moment,
- * and works from that.
+ * [PerfMonitor] samples on `Dispatchers.Default` and builds its report on
+ * whichever thread asks for it. Every access holds one lock, and a reader
+ * never walks the live window: it takes a [snapshot], a copy of the window at
+ * a single moment, so a report describes one set of samples from its first
+ * line to its last.
  */
 internal class SampleWindow<T>(private val keep: Int) {
-    init {
-        require(keep > 0) { "keep must be positive, was $keep" }
-    }
-
     private val lock = Any()
     private val samples = ArrayDeque<T>(keep + 1)
 
