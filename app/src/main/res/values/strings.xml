@@ -144,11 +144,11 @@
     <string name="spotify_empty_playlists">No playlists on this account</string>
     <string name="spotify_empty_tracks">This playlist has no tracks</string>
     <string name="spotify_track_unavailable">Couldn\'t find that song on YouTube Music</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">Catalogue</string>
+    <string name="home_provider_subtitle">Where the homepage and the search come from. Flow, Autoplay and "more like this" come from YouTube Music either way.</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">Spotify\'s own home and catalogue. Signed in, Flow also takes from what you play there.</string>
+    <string name="home_provider_youtube_subtitle">YouTube Music\'s own home and catalogue, and its feed for Flow.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="account_scrobbling">Account &amp; scrobbling</string>
     <string name="rich_presence">Rich presence</string>
@@ -216,6 +216,8 @@
     <string name="widget_preview_pill">Song title - Artist</string>
     <string name="download_quality">Download quality</string>
     <string name="download_wifi_only">Download over Wi-Fi only</string>
+    <string name="auto_download_songs">Auto-download played songs</string>
+    <string name="auto_download_songs_subtitle">Songs you listen to are saved by themselves. A download you delete by hand is never fetched again.</string>
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>
     <string name="converting_to_audio">Converting to audio…</string>

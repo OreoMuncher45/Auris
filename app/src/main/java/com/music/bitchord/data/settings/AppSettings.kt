@@ -282,6 +282,26 @@ object AppSettings {
      */
     val exportDownloads = MutableStateFlow(false)
 
+    /**
+     * Whether the songs the listener plays are downloaded by themselves.
+     *
+     * On by default, and the default is the point: a song that has been played
+     * is a song they will want again, and a stream is a thing that can be gone
+     * by the time they want it. The app's own history said the same thing for
+     * years — "keep what you listen to" — and the switch is here so that
+     * somebody who would rather not spend the data can say no.
+     *
+     * The other download rules still apply to it: a phone set to Wi-Fi only
+     * downloads nothing over mobile data, and offline mode downloads nothing
+     * at all. This switch says *whether* a played song is kept, not *how* or
+     * *when*.
+     *
+     * A track the listener deleted by hand is never downloaded again by this
+     * path, whatever this says — the deletion is the more specific instruction,
+     * and it is the one that was made later.
+     */
+    val autoDownloadSongs = MutableStateFlow(true)
+
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
@@ -1571,6 +1591,7 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
+        autoDownloadSongs.value = prefs.getBoolean(KEY_AUTO_DOWNLOAD_SONGS, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
@@ -2103,6 +2124,20 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
+    }
+
+    /**
+     * Records the listener's answer about keeping the songs they play.
+     *
+     * Turned off here means the same thing everywhere: the player stops asking
+     * for a track to be saved the moment it starts, and nothing that is
+     * already on the device is touched. The tracks already downloaded stay
+     * downloaded — a switch that deleted files would be a switch nobody could
+     * use without reading the label three times.
+     */
+    fun setAutoDownloadSongs(value: Boolean) {
+        autoDownloadSongs.value = value
+        prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_SONGS, value).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -3238,6 +3273,7 @@ object AppSettings {
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
+    private const val KEY_AUTO_DOWNLOAD_SONGS = "auto_download_songs"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

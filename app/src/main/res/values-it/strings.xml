@@ -174,6 +174,8 @@
     <string name="widget_preview_pill">Titolo brano - Artista</string>
     <string name="download_quality">Qualità download</string>
     <string name="download_wifi_only">Scarica solo via Wi-Fi</string>
+    <string name="auto_download_songs">Scarica automaticamente i brani ascoltati</string>
+    <string name="auto_download_songs_subtitle">I brani che ascolti vengono salvati da soli. Un download che elimini a mano non viene più scaricato.</string>
     <string name="convert_to_audio">Converti in audio</string>
     <string name="convert_to_video">Converti in video</string>
     <string name="converting_to_audio">Conversione in audio…</string>
@@ -1341,11 +1343,11 @@
     <string name="quick_picks_offline_empty">Non è stato ancora scaricato nulla</string>
     <string name="quick_picks_play_all">Riproduci tutto</string>
     <string name="quick_picks_shuffle">Casuale</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">Catalogo</string>
+    <string name="home_provider_subtitle">Da dove vengono Home e la ricerca. Flow, Autoplay e \"altri così\" arrivano da YouTube Music in ogni caso.</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">La home e il catalogo di Spotify. Con l\'accesso attivo, Flow prende anche quello che ascolti lì.</string>
+    <string name="home_provider_youtube_subtitle">La home e il catalogo di YouTube Music, e il suo feed per Flow.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="upgrade_quality_started">Ricerca di una copia migliore…</string>
     <string name="upgrade_quality_offline">Modalità offline attiva: gli aggiornamenti richiedono la rete</string>

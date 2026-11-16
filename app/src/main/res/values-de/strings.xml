@@ -147,6 +147,8 @@
     <string name="widget_preview_pill">Songtitel - Künstler</string>
     <string name="download_quality">Download-Qualität</string>
     <string name="download_wifi_only">Nur über WLAN herunterladen</string>
+    <string name="auto_download_songs">Gespielte Songs automatisch herunterladen</string>
+    <string name="auto_download_songs_subtitle">Songs, die du hörst, werden von selbst gespeichert. Ein Download, den du von Hand löschst, wird nie wieder geholt.</string>
     <string name="spatial_audio">Räumliches Audio</string>
     <string name="spatial_audio_subtitle">Verbreitert Stereo-Tracks für ein intensiveres Klangerlebnis</string>
     <string name="spatial_audio_atmos_subtitle">Für diesen Titel pausiert – Dolby Atmos ist bereits räumlich</string>
@@ -1402,11 +1404,11 @@
     <string name="quick_picks_offline_empty">Noch nichts heruntergeladen</string>
     <string name="quick_picks_play_all">Alle abspielen</string>
     <string name="quick_picks_shuffle">Zufällig</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">Katalog</string>
+    <string name="home_provider_subtitle">Woher Startseite und Suche kommen. Flow, Autoplay und \"mehr davon\" kommen in beiden Fällen von YouTube Music.</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">Spotifys eigene Startseite und Katalog. Angemeldet nimmt Flow auch auf, was du dort hörst.</string>
+    <string name="home_provider_youtube_subtitle">YouTube Musics eigene Startseite und Katalog, und sein Feed für Flow.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="upgrade_quality_started">Suche nach einer besseren Kopie…</string>
     <string name="upgrade_quality_offline">Offline-Modus ist an – Upgrades brauchen das Netz</string>
