@@ -47,7 +47,6 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -96,7 +95,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.AurisSlider
-import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.DonationRow
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.SupportDonations
@@ -468,19 +466,10 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.LANGUAGE || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.LANGUAGE) {
-            val appLanguageTitle = stringResource(R.string.app_language)
-            row(appLanguageTitle, "locale", "translate") {
-                val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
-                    ?: Locale.getDefault().language
-                SettingsRow(
-                    icon = Icons.Rounded.Language,
-                    title = appLanguageTitle,
-                    subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
-                    onClick = onAppLanguage,
-                )
-            }
-        }
+            LanguageSettings(
+                search = search,
+                onAppLanguage = onAppLanguage,
+            )
         }
         if (openCategory == SettingsCategory.ADVANCED || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.ADVANCED) {
