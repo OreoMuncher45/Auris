@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -54,5 +56,18 @@ class CreditsHandoverTest {
         assertTrue(quarter in 0.05f..0.35f, "it should have started moving")
         assertTrue(half in 0.35f..0.75f, "it should be under way")
         assertTrue(threeQuarter in 0.75f..1f, "it should be most of the way home")
+    }
+
+    @Test
+    fun theSheetsOffsetMovesTheTargetDownOnly() {
+        // The mini player's title at (40, 900) on screen; the player open with
+        // its top-left at (0, 100); the sheet 200 px further down this frame.
+        val to = creditsDockTarget(
+            target = Rect(40f, 900f, 240f, 920f),
+            anchor = Offset(0f, 100f),
+            offset = 200f,
+        )
+        assertEquals(40f, to.x, 1e-6f)
+        assertEquals(600f, to.y, 1e-6f)
     }
 }
