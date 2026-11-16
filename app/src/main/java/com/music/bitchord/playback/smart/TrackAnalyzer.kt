@@ -491,7 +491,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         peaksKept: Int = ANALYSIS_PEAKS_KEPT,
         memoryMax: Int = ANALYSIS_MEMORY_MAX,
     ) {
-        val order = resultOrder.toList()
+        // Newest first, so the index counts back from the track most recently
+        // touched. The queue itself is oldest first (touchResult appends and
+        // the eviction below polls the head); reading it in that order kept
+        // the waveform on the oldest results and stripped it from the ones
+        // being looked at.
+        val order = resultOrder.toList().asReversed()
         order.forEachIndexed { index, trackId ->
             if (index < peaksKept) return@forEachIndexed
             results[trackId]?.let { current ->
