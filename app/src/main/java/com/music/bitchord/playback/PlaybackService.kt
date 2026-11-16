@@ -1405,6 +1405,44 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
 
+        // The order of these steps is load-bearing: each one assumes the ones
+        // above it have run. Keep it when moving anything (issue #5).
+        startFresh()
+        installNotificationProvider()
+        observeCustomLayoutInputs()
+        startOutputTracking()
+        installMediaSources()
+        val (exoPlayer, sparePlayer) = createPlayers()
+
+        AppSettings.audioSessionId.value = exoPlayer.audioSessionId
+        applySettings(exoPlayer)
+        applySettings(sparePlayer)
+        observeSettings()
+        observeScrobbling()
+        observeDiscord()
+        watchSleepTimer()
+        restoreQueueOnCreate(exoPlayer)
+        attachPlaybackListener(exoPlayer)
+        // After the player exists and before the session is built: the
+        // session's wrapper reports the user's actions to it.
+        partySync = PartySync(scope) { player }.also { it.start() }
+        startPartyAutoplay()
+
+        // Only the analytics listener reports the format the audio renderer was
+        // configured with. Treated as a trigger rather than a source: the
+        // publisher reads the format off the player, so it can't go stale
+        // against the track the bitrate is looked up for.
+        exoPlayer.addAnalyticsListener(formatListener)
+
+        startMediaSession(exoPlayer)
+        attachCast()
+    }
+
+    /**
+     * Resets what a previous service in this process left behind and starts the
+     * process-wide hooks the service depends on. First thing in [onCreate].
+     */
+    private fun startFresh() {
         // The Discord gateway has no playback event to key its teardown on when
         // the listener pauses and then leaves; ProcessLifecycleOwner does.
         ProcessLifecycleOwner.get().lifecycle.addObserver(discordIdleObserver)
@@ -1438,7 +1476,12 @@ class PlaybackService : MediaLibraryService() {
         // app is being *used*, and a listener who left the app open all day
         // is the one whose playlist would otherwise go stale.
         com.music.bitchord.download.DownloadedPlaylistSync.schedule(this)
+    }
 
+    /**
+     * Sets the provider that builds the playback notification.
+     */
+    private fun installNotificationProvider() {
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
                 .setChannelId(CHANNEL_ID)
@@ -1446,7 +1489,13 @@ class PlaybackService : MediaLibraryService() {
                 .build()
                 .apply { setSmallIcon(R.drawable.ic_notification_logo) },
         )
+    }
 
+    /**
+     * Keeps the notification's custom buttons and the widget in step with
+     * Shuffle and the current track's like.
+     */
+    private fun observeCustomLayoutInputs() {
         // Both the player screen and notification route their Shuffle command
         // here. Observe its state so either surface's icon follows the queue
         // edit once that single service-side transaction has completed.
@@ -1466,14 +1515,27 @@ class PlaybackService : MediaLibraryService() {
                     publishWidgetState()
                 }
         }
+    }
 
+    /**
+     * Starts [bluetoothTracker] and re-applies the output route whenever it reports.
+     */
+    private fun startOutputTracking() {
         bluetoothTracker.start()
         scope.launch {
             bluetoothTracker.telemetry.collect {
                 applyOutputRoute()
             }
         }
+    }
 
+    /**
+     * Builds the data-source chain every player and read-ahead loads through:
+     * [PlaybackStreamResolver] at the bottom, then chunking, SMB routing and
+     * [AudioCache] on top. Sets [streamResolver] and [mediaSourceFactory], both
+     * of which [buildPlayer] and Cast read.
+     */
+    private fun installMediaSources() {
         val streamResolver = PlaybackStreamResolver(::resolveWithModulePriority)
         this.streamResolver = streamResolver
 
@@ -1518,7 +1580,14 @@ class PlaybackService : MediaLibraryService() {
             DsdExtractorsFactory(),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
+    }
 
+    /**
+     * Builds the active and spare players on [mediaSourceFactory], stores them in
+     * [player] and [spare], shares the audio session between them and applies
+     * the output route. Returns (active, spare).
+     */
+    private fun createPlayers(): Pair<ExoPlayer, ExoPlayer> {
         configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(
             singProcessorA,
@@ -1549,14 +1618,14 @@ class PlaybackService : MediaLibraryService() {
         sparePlayer.audioSessionId = exoPlayer.audioSessionId
         audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null)
         applyOutputRoute()
+        return exoPlayer to sparePlayer
+    }
 
-        AppSettings.audioSessionId.value = exoPlayer.audioSessionId
-        applySettings(exoPlayer)
-        applySettings(sparePlayer)
-        observeSettings()
-        observeScrobbling()
-        observeDiscord()
-        watchSleepTimer()
+    /**
+     * Puts back the queue a party stashed, or else the last one played, and tells
+     * the widget.
+     */
+    private fun restoreQueueOnCreate(exoPlayer: ExoPlayer) {
         val restored = if (PartyPersonalQueueStash.hasStash()) {
             val stashed = PartyPersonalQueueStash.load()
             PartyPersonalQueueStash.clear()
@@ -1576,13 +1645,23 @@ class PlaybackService : MediaLibraryService() {
             MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
             MediaWidget.refresh(this)
         }
+    }
+
+    /**
+     * Hooks [playbackListener] to the active player.
+     */
+    private fun attachPlaybackListener(exoPlayer: ExoPlayer) {
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
         lastRepeatMode = exoPlayer.repeatMode
         exoPlayer.addListener(playbackListener)
-        // After the player exists and before the session is built: the
-        // session's wrapper reports the user's actions to it.
-        partySync = PartySync(scope) { player }.also { it.start() }
+    }
+
+    /**
+     * Follows the party's AutoPlay supplier election, then loads AutoPlay for
+     * the restored track.
+     */
+    private fun startPartyAutoplay() {
         // AutoPlay has one shared supplier in a party. The host supplies it
         // while connected; if they disappear, the lowest stable connected member
         // ID takes over. That election is deterministic on every phone, so two
@@ -1601,13 +1680,14 @@ class PlaybackService : MediaLibraryService() {
                 }
         }
         loadAutoplayForCurrentTrack()
+    }
 
-        // Only the analytics listener reports the format the audio renderer was
-        // configured with. Treated as a trigger rather than a source: the
-        // publisher reads the format off the player, so it can't go stale
-        // against the track the bitrate is looked up for.
-        exoPlayer.addAnalyticsListener(formatListener)
-
+    /**
+     * Starts the crossfade controller and builds the media session around both.
+     * From here the notification, lock screen, media buttons and Android Auto
+     * can reach the player.
+     */
+    private fun startMediaSession(exoPlayer: ExoPlayer) {
         val controller = createCrossfadeController()
         crossfade = controller
         controller.start()
@@ -1621,7 +1701,12 @@ class PlaybackService : MediaLibraryService() {
             .setSessionActivity(sessionActivity())
             .build()
         refreshCustomLayouts()
+    }
 
+    /**
+     * Starts Cast.
+     */
+    private fun attachCast() {
         // Last, so a receiver that outlived the app is adopted by a service
         // whose queue is already restored.
         CastController.ensureStarted(this)
