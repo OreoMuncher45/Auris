@@ -168,7 +168,7 @@ internal class PlaybackStreamResolver(
                 // as it does on the YouTube path: see [serveUpgraded]. Recording
                 // it here would describe a stream the listener is not hearing
                 // and may never hear.
-                val proving = QualityUpgrade.isAuditioning(fullMediaId)
+                val proving = QualityUpgrade.isAuditioning(fullMediaId) || AudioCache.isSpeculative(dataSpec)
                 TrackLog.d(
                     "BitChord",
                     "${if (proving) "auditioning" else "serving"} upgraded ${fullMediaId ?: trackParam} " +
@@ -360,7 +360,7 @@ internal class PlaybackStreamResolver(
         // and may never. Recording it here would light "Lossless" over
         // the lossy stream still coming out of the speaker. The real
         // open, moments later, records it.
-        val proving = QualityUpgrade.isAuditioning(videoId)
+        val proving = QualityUpgrade.isAuditioning(videoId) || AudioCache.isSpeculative(dataSpec)
         val sourceName = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
             ?: "Upgrade"
         if (!proving) {

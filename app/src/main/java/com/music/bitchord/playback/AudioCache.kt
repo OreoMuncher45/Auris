@@ -1716,10 +1716,24 @@ object AudioCache {
         return "$key holds ${total / 1024}kB in ${spans.size} spans: $ranges"
     }
 
-    suspend fun warmRange(uri: Uri, position: Long, length: Long) {
+    /**
+     * Fetches [position, position + length) of [uri] into the cache.
+     *
+     * [speculative] marks a fetch made for a stream that is not playing yet
+     * and may never play, such as an upgrade's opening fetched before its swap
+     * commits. The resolver sees the mark ([isSpeculative]) and does not record
+     * what it serves as the stream being heard.
+     */
+    suspend fun warmRange(uri: Uri, position: Long, length: Long, speculative: Boolean = false) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        fetch(key, uri, position, length)
+        fetch(key, uri, position, length, speculative = speculative)
     }
+
+    /** What [warmRange] tags a speculative request with; see [isSpeculative]. */
+    private object SpeculativeOpen
+
+    /** Whether [dataSpec] belongs to a speculative [warmRange] rather than playback. */
+    fun isSpeculative(dataSpec: DataSpec): Boolean = dataSpec.customData === SpeculativeOpen
 
     /**
      * Video ids whose analysis copy has already been asked for this session.
@@ -3529,6 +3543,7 @@ object AudioCache {
         length: Long,
         pinKey: Boolean = false,
         headers: Map<String, String> = emptyMap(),
+        speculative: Boolean = false,
     ) {
         if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
@@ -3548,7 +3563,7 @@ object AudioCache {
         // the cost, and only a probe that actually lands is worth following
         // with the rest of the range.
         if (length > LOCK_PROBE_BYTES) {
-            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, headers)
+            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, headers, speculative)
             // A shortfall here is either a lost race or a resource shorter
             // than the probe — a DASH index is a few kilobytes and the probe
             // asks for sixty-four of them. Either way there is nothing more
@@ -3556,7 +3571,7 @@ object AudioCache {
             // a file that has already been fetched whole.
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
-        pull(cacheKey, uri, position, length, pinKey, headers)
+        pull(cacheKey, uri, position, length, pinKey, headers, speculative)
     }
 
     /**
@@ -3781,6 +3796,7 @@ object AudioCache {
         length: Long,
         pinKey: Boolean,
         headers: Map<String, String> = emptyMap(),
+        speculative: Boolean = false,
     ) {
         val upstream = upstreamFactory ?: return
 
@@ -3810,6 +3826,7 @@ object AudioCache {
             // through the resolver, so it is the one request that has to
             // carry them itself.
             .apply { if (headers.isNotEmpty()) setHttpRequestHeaders(headers) }
+            .apply { if (speculative) setCustomData(SpeculativeOpen) }
             .build()
         val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
 

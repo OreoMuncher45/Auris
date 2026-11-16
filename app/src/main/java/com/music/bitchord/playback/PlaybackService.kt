@@ -5607,7 +5607,8 @@ class PlaybackService : MediaLibraryService() {
             !ListenTogether.state.value.inParty
         ) {
             scope.launch(Dispatchers.IO) {
-                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+                // Speculative: the swap has not committed and may not.
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES, speculative = true)
             }
         }
 
