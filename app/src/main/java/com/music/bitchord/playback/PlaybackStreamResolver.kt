@@ -15,10 +15,6 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
-import com.music.bitchord.playback.PlaybackService.Companion.PREPARED_PIN_POLL_MS
-import com.music.bitchord.playback.PlaybackService.Companion.PREPARED_PIN_WAIT_MS
-import com.music.bitchord.playback.PlaybackService.Companion.RESOLVE_TIMEOUT_MS
-import com.music.bitchord.playback.PlaybackService.Companion.SUBSTITUTE_TIMEOUT_MS
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -26,6 +22,48 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
+
+/**
+ * Outer cap on stream resolution. Individual client calls and probes
+ * have their own timeouts, but iterating all seven plus the NewPipe
+ * fallback can accumulate far beyond what a listener should wait.
+ *
+ * The NewPipe fallback alone — a scrape of the watch page, shaped
+ * harder than anything else this app asks Google for — routinely
+ * takes 45-90s on its own when every player client is bot-checked, a
+ * state that has become the common case rather than the rare one. A
+ * cap shorter than that doesn't bound the wait; it cancels the
+ * resolve just as it was about to succeed, and the retry that
+ * follows restarts the same slow walk from zero, so the listener
+ * waits *longer* under a tighter cap than a looser one.
+ */
+private const val RESOLVE_TIMEOUT_MS = 120_000L
+
+/**
+ * Cap on offering a YouTube track to a higher-ranked source.
+ *
+ * Nothing like [RESOLVE_TIMEOUT_MS], because the two are not the same
+ * kind of wait: that one bounds the only way to hear the track, this
+ * one bounds an optional upgrade over a stream YouTube will serve
+ * anyway. Generous enough for a cold module — index fetch, JS
+ * download, engine init, search, then the stream URL — and short
+ * enough that a dead server costs a pause rather than a stall.
+ */
+internal const val SUBSTITUTE_TIMEOUT_MS = 20_000L
+
+/**
+ * How long a track's first open may wait for a read-ahead pin that is
+ * still being looked up — see the resolving data source.
+ *
+ * This runs on the loader thread for the *next* item while the current
+ * one is still playing, so it costs preload time rather than sound.
+ * Long enough for a preparation that is nearly done, short enough that
+ * a track the sources have never heard of is not held at the hand-over.
+ */
+private const val PREPARED_PIN_WAIT_MS = 1_500L
+
+/** How often the wait above re-asks whether the pin has landed. */
+private const val PREPARED_PIN_POLL_MS = 25L
 
 /** Prefix of a queue id that exists only in Spotify's catalogue. */
 private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSource.SPOTIFY_KEY_PREFIX
@@ -36,7 +74,7 @@ private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSour
  * data-source chain, run on ExoPlayer's loader thread for every open of a
  * track, read-ahead and Cast included.
  *
- * Lifted out of [PlaybackService.onCreate] as it was (issue #5). The one piece
+ * Lifted out of [PlaybackService.onCreate] as it was. The one piece
  * of the service it still needs is the module race, handed in as
  * [resolveWithModulePriority] because it runs in the service's scope.
  */
@@ -97,7 +135,7 @@ internal class PlaybackStreamResolver(
         }
         // A track queued from YouTube may be held by a source the user
         // ranked above it — see [SourceResolver.substituteForYouTube] and
-        // [raceYouTubeOrModule]. Only worth the extra lookup when
+        // [PlaybackService.resolveWithModulePriority]. Only worth the extra lookup when
         // something actually outranks YouTube; otherwise this is the
         // plain resolve every build before this one made.
         if (!SourceResolver.canSubstituteForYouTube()) {
@@ -304,7 +342,7 @@ internal class PlaybackStreamResolver(
     /** The stream [QualityUpgrade] already found for [videoId]. */
     private fun serveUpgraded(dataSpec: DataSpec, videoId: String, upgraded: SourceStream): DataSpec {
         // An audition opens this same stream before a note of the one
-        // playing has been touched — see [auditionUpgrade] — so what it
+        // playing has been touched — see [PlaybackService.auditionUpgrade] — so what it
         // is about to be handed describes a swap that has not happened
         // and may never. Recording it here would light "Lossless" over
         // the lossy stream still coming out of the speaker. The real

@@ -1757,7 +1757,7 @@ object Downloads {
      * `ModuleSource.SEARCH_PATIENT_MS`) and does that once per query the matcher
      * offers. For a track no module holds, that is the whole queue stopped for
      * the better part of a minute on the way to a download that was always
-     * going to be YouTube's. `PlaybackService.SUBSTITUTE_TIMEOUT_MS` bounds the
+     * going to be YouTube's. `SUBSTITUTE_TIMEOUT_MS` bounds the
      * same search for the same reason.
      *
      * The [DownloadStore.storable] check belongs here rather than inside the
@@ -1867,7 +1867,7 @@ object Downloads {
      * have the recording.
      *
      * The comparison with playback is no longer the right one and is worth
-     * stating plainly: `PlaybackService.SUBSTITUTE_TIMEOUT_MS` is short because
+     * stating plainly: `SUBSTITUTE_TIMEOUT_MS` is short because
      * a listener is staring at a paused player. Nothing is waiting here, the
      * answer becomes a permanent file, and re-fetching it later costs the whole
      * download again.

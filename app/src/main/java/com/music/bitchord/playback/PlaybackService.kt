@@ -1406,7 +1406,7 @@ class PlaybackService : MediaLibraryService() {
         super.onCreate()
 
         // The order of these steps is load-bearing: each one assumes the ones
-        // above it have run. Keep it when moving anything (issue #5).
+        // above it have run. Keep it when moving anything.
         startFresh()
         installNotificationProvider()
         observeCustomLayoutInputs()
@@ -1421,7 +1421,7 @@ class PlaybackService : MediaLibraryService() {
         observeScrobbling()
         observeDiscord()
         watchSleepTimer()
-        restoreQueueOnCreate(exoPlayer)
+        restoreQueue(exoPlayer)
         attachPlaybackListener(exoPlayer)
         // After the player exists and before the session is built: the
         // session's wrapper reports the user's actions to it.
@@ -1478,9 +1478,7 @@ class PlaybackService : MediaLibraryService() {
         com.music.bitchord.download.DownloadedPlaylistSync.schedule(this)
     }
 
-    /**
-     * Sets the provider that builds the playback notification.
-     */
+    /** Sets the provider that builds the playback notification. */
     private fun installNotificationProvider() {
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
@@ -1517,9 +1515,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    /**
-     * Starts [bluetoothTracker] and re-applies the output route whenever it reports.
-     */
+    /** Starts [bluetoothTracker] and re-applies the output route whenever it reports. */
     private fun startOutputTracking() {
         bluetoothTracker.start()
         scope.launch {
@@ -1625,7 +1621,7 @@ class PlaybackService : MediaLibraryService() {
      * Puts back the queue a party stashed, or else the last one played, and tells
      * the widget.
      */
-    private fun restoreQueueOnCreate(exoPlayer: ExoPlayer) {
+    private fun restoreQueue(exoPlayer: ExoPlayer) {
         val restored = if (PartyPersonalQueueStash.hasStash()) {
             val stashed = PartyPersonalQueueStash.load()
             PartyPersonalQueueStash.clear()
@@ -1647,9 +1643,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    /**
-     * Hooks [playbackListener] to the active player.
-     */
+    /** Hooks [playbackListener] to the active player. */
     private fun attachPlaybackListener(exoPlayer: ExoPlayer) {
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
@@ -1703,9 +1697,7 @@ class PlaybackService : MediaLibraryService() {
         refreshCustomLayouts()
     }
 
-    /**
-     * Starts Cast.
-     */
+    /** Starts Cast and adopts a receiver that outlived the app. Last in [onCreate]. */
     private fun attachCast() {
         // Last, so a receiver that outlived the app is adopted by a service
         // whose queue is already restored.
@@ -10621,7 +10613,7 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    internal companion object {
+    private companion object {
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"
@@ -10735,34 +10727,6 @@ class PlaybackService : MediaLibraryService() {
         const val RESUME_PLAYBACK_MS = 2_000
 
         /**
-         * Outer cap on stream resolution. Individual client calls and probes
-         * have their own timeouts, but iterating all seven plus the NewPipe
-         * fallback can accumulate far beyond what a listener should wait.
-         *
-         * The NewPipe fallback alone — a scrape of the watch page, shaped
-         * harder than anything else this app asks Google for — routinely
-         * takes 45-90s on its own when every player client is bot-checked, a
-         * state that has become the common case rather than the rare one. A
-         * cap shorter than that doesn't bound the wait; it cancels the
-         * resolve just as it was about to succeed, and the retry that
-         * follows restarts the same slow walk from zero, so the listener
-         * waits *longer* under a tighter cap than a looser one.
-         */
-        const val RESOLVE_TIMEOUT_MS = 120_000L
-
-        /**
-         * Cap on offering a YouTube track to a higher-ranked source.
-         *
-         * Nothing like [RESOLVE_TIMEOUT_MS], because the two are not the same
-         * kind of wait: that one bounds the only way to hear the track, this
-         * one bounds an optional upgrade over a stream YouTube will serve
-         * anyway. Generous enough for a cold module — index fetch, JS
-         * download, engine init, search, then the stream URL — and short
-         * enough that a dead server costs a pause rather than a stall.
-         */
-        const val SUBSTITUTE_TIMEOUT_MS = 20_000L
-
-        /**
          * How long a YouTube-queued track waits for the sources ranked above
          * YouTube before its own walk starts — see [resolveWithModulePriority].
          *
@@ -10772,20 +10736,6 @@ class PlaybackService : MediaLibraryService() {
          * under it. The wait ends early whenever the lookup does.
          */
         const val MODULE_HEAD_START_MS = 1_500L
-
-        /**
-         * How long a track's first open may wait for a read-ahead pin that is
-         * still being looked up — see the resolving data source.
-         *
-         * This runs on the loader thread for the *next* item while the current
-         * one is still playing, so it costs preload time rather than sound.
-         * Long enough for a preparation that is nearly done, short enough that
-         * a track the sources have never heard of is not held at the hand-over.
-         */
-        const val PREPARED_PIN_WAIT_MS = 1_500L
-
-        /** How often the wait above re-asks whether the pin has landed. */
-        internal const val PREPARED_PIN_POLL_MS = 25L
 
         /**
          * How much of a track has to be left for a mid-track quality swap to
