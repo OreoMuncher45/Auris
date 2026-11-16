@@ -49,6 +49,14 @@ class TrackMatcherSameArtistFallbackTest {
     }
 
     @Test
+    fun aLongerTitleContainingTheRequestedOneIsNotPlayed() {
+        val short = TrackMatcher.Target("Love", "River Lane", durationSec = 200)
+        val rows = listOf(song("Lovesick", "River Lane", "9:59"))
+
+        assertNull(TrackMatcher.bestOrSameArtist(rows, short))
+    }
+
+    @Test
     fun aSameTitledRowByAnotherArtistIsNotPlayed() {
         val rows = listOf(song("Morning Light", "Someone Else", "9:59"))
 

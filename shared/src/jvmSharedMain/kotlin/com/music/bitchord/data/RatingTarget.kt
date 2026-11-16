@@ -109,8 +109,7 @@ object RatingTarget {
             // the same artist. The same pair the player uses when it plays a
             // Spotify row, so the recording the heart likes is the recording
             // that was playing.
-            val best = TrackMatcher.best(songs, target)
-                ?: songs.firstOrNull { TrackMatcher.sharesArtist(target.artist, it.artist) }
+            val best = TrackMatcher.bestOrSameArtist(songs, target)
             if (best != null) {
                 remember(song.videoId, best.videoId)
                 return best.videoId

@@ -137,20 +137,25 @@ object TrackMatcher {
      *
      * The second chance is for a row [score] refused over its runtime, its
      * album or its version marker: still the right artist and the right
-     * song, so it plays. It is not for a different song by that artist. The
-     * title is compared exactly as [score] compares it, so this never plays
-     * one recording under another's name.
+     * song, so it plays. It is not for a different song by that artist, so
+     * the title has to match outright: see [sameTitle].
      */
     fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? =
         best(candidates, target)
             ?: candidates.firstOrNull { sharesArtist(target.artist, it.artist) && sameTitle(it, target) }
 
-    /** Whether [candidate]'s title is [target]'s, as [score] judges titles. */
+    /**
+     * Whether [candidate]'s title is [target]'s: the same core, or the same in
+     * another script. Stricter than [score]'s title check, which also accepts
+     * one title containing the other ("Love" in "Lovesick"). [score] can
+     * afford that because its runtime and version checks back it up, and this
+     * check stands alone.
+     */
     fun sameTitle(candidate: Song, target: Target): Boolean {
-        val wanted = parseTitle(target.title, target.artist)
-        val got = parseTitle(candidate.title, candidate.artist)
-        if (wanted.core.isBlank() || got.core.isBlank()) return false
-        return titleCoresMatch(wanted.core, got.core)
+        val wanted = parseTitle(target.title, target.artist).core
+        val got = parseTitle(candidate.title, candidate.artist).core
+        if (wanted.isBlank() || got.isBlank()) return false
+        return wanted == got || romajiOf(wanted) == romajiOf(got)
     }
 
     /**
@@ -217,13 +222,6 @@ object TrackMatcher {
             .sortedByDescending { it.second }
             .map { it.first }
 
-    /**
-     * How confident this is the same recording, or null when it is not one.
-     *
-     * Null is the common answer and the safe one: it costs a source its turn,
-     * and the next source — ultimately YouTube, which by definition has the
-     * track — still plays what the user asked for.
-     */
     /** Whether two parsed title cores name the same song; see [score]. */
     private fun titleCoresMatch(wanted: String, got: String): Boolean = when {
         wanted == got -> true
@@ -232,6 +230,13 @@ object TrackMatcher {
         else -> wanted.contains(got) || got.contains(wanted)
     }
 
+    /**
+     * How confident this is the same recording, or null when it is not one.
+     *
+     * Null is the common answer and the safe one: it costs a source its turn,
+     * and the next source — ultimately YouTube, which by definition has the
+     * track — still plays what the user asked for.
+     */
     fun score(candidate: Song, target: Target): Int? {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
