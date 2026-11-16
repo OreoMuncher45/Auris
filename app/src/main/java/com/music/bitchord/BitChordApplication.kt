@@ -326,6 +326,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
      * longer exists loads as empty and is dropped with this call's result.
      */
     private fun prefetchPreferences() {
+        // AuthStore's files first. onCreate joins the auth-store open before it
+        // returns, so its own load must not queue behind the others on a
+        // platform that runs these loads in submission order.
+        getSharedPreferences("bitchord_auth", MODE_PRIVATE)
+        getSharedPreferences("bitchord_auth_plain", MODE_PRIVATE)
         for (name in STARTUP_PREFERENCE_FILES) getSharedPreferences(name, MODE_PRIVATE)
     }
 
