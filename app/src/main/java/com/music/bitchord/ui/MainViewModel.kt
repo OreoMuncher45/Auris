@@ -1205,23 +1205,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.LIKE) LikeStatus.INDIFFERENT else LikeStatus.LIKE
-        // Written to the screen first, under the row's own id, so the heart
-        // fills on the tap rather than after the lookup.
-        LikeState.set(song.videoId, target)
-        viewModelScope.launch {
-            withRowRating(song.videoId) {
-                val videoId = RatingTarget.resolve(song)
-                if (videoId == null) {
-                    // No YouTube recording behind the row: there is nothing to
-                    // rate, and the heart goes back rather than claiming a rating
-                    // that was never written.
-                    LikeState.set(song.videoId, previous)
-                    return@withRowRating
-                }
-                val written = writeLike(videoId, target, likeStatusOf(videoId))
-                LikeState.set(song.videoId, if (written) target else previous)
-            }
-        }
+        rateRow(song, previous, target)
     }
 
     /**
@@ -1233,8 +1217,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val rowRatingLocks = ConcurrentHashMap<String, Mutex>()
 
-    private suspend inline fun withRowRating(rowId: String, block: () -> Unit) =
-        rowRatingLocks.getOrPut(rowId) { Mutex() }.withLock(action = block)
+    /**
+     * Per row: the latest tap's number, and the last rating the server took.
+     * Main-thread only, like every caller of [rateRow].
+     */
+    private val rowRatingVersion = HashMap<String, Int>()
+    private val rowRatingConfirmed = HashMap<String, LikeStatus>()
+
+    /**
+     * Rates a row that is rated through the recording behind it.
+     *
+     * The heart shows [target] at once, under the row's own id, so it fills on
+     * the tap rather than after the lookup. Only the latest tap's completion
+     * touches the screen: an older one finishing while a newer tap is still
+     * queued would otherwise put back a rating the user already tapped past,
+     * and the next tap would toggle from the wrong state. When the latest
+     * finishes, the heart shows the last rating the server confirmed, which is
+     * [previous] from the first of the run of taps if none got through.
+     */
+    private fun rateRow(song: Song, previous: LikeStatus, target: LikeStatus) {
+        val rowId = song.videoId
+        val version = (rowRatingVersion[rowId] ?: 0) + 1
+        // The first tap of a run: what the screen shows is what the server has.
+        if (version == 1) rowRatingConfirmed[rowId] = previous
+        rowRatingVersion[rowId] = version
+        LikeState.set(rowId, target)
+        viewModelScope.launch {
+            rowRatingLocks.getOrPut(rowId) { Mutex() }.withLock {
+                // No YouTube recording behind the row means nothing to rate,
+                // and nothing written: the confirmed rating stands.
+                val videoId = RatingTarget.resolve(song)
+                if (videoId != null && writeLike(videoId, target, likeStatusOf(videoId))) {
+                    rowRatingConfirmed[rowId] = target
+                }
+                if (rowRatingVersion[rowId] == version) {
+                    rowRatingVersion.remove(rowId)
+                    LikeState.set(rowId, rowRatingConfirmed.remove(rowId) ?: previous)
+                }
+            }
+        }
+    }
 
     /** As [toggleLike], for the thumb-down. */
     fun toggleDislike(videoId: String): LikeStatus? {
@@ -1263,18 +1285,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!RatingTarget.isRowId(song.videoId)) return toggleDislike(song.videoId)
         val previous = likeStatusOf(song)
         val target = if (previous == LikeStatus.DISLIKE) LikeStatus.INDIFFERENT else LikeStatus.DISLIKE
-        LikeState.set(song.videoId, target)
-        viewModelScope.launch {
-            withRowRating(song.videoId) {
-                val videoId = RatingTarget.resolve(song)
-                if (videoId == null) {
-                    LikeState.set(song.videoId, previous)
-                    return@withRowRating
-                }
-                val written = writeLike(videoId, target, likeStatusOf(videoId))
-                LikeState.set(song.videoId, if (written) target else previous)
-            }
-        }
+        rateRow(song, previous, target)
         return previous
     }
 
