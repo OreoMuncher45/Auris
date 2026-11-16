@@ -64,7 +64,8 @@ object StreamChoice {
     fun of(videoId: String): SourceStream? {
         val choice = chosen[videoId] ?: return null
         if (SystemClock.elapsedRealtime() - choice.at > TTL_MS) {
-            chosen.remove(videoId)
+            // By value: a fresh pin made since the read above is not this one.
+            chosen.remove(videoId, choice)
             return null
         }
         return choice.stream
@@ -122,10 +123,23 @@ object StreamChoice {
             // entries, and the blunt version became reachable.
             chosen.entries.removeIf { now - it.value.at > TTL_MS }
             if (chosen.size >= MAX_REMEMBERED) {
-                chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
+                chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key, it.value) }
             }
         }
-        chosen[videoId] = Choice(stream, now, substituted)
+        // The check above is only a fast path. Two opens of one track (the
+        // player's and read-ahead's, say) can both pass it, so the decision
+        // that counts is this one, made atomically per track: an unexpired
+        // pin that arrived in between wins, and only one caller gets true.
+        var won = false
+        chosen.compute(videoId) { _, current ->
+            if (current != null && now - current.at <= TTL_MS) {
+                current
+            } else {
+                won = true
+                Choice(stream, now, substituted)
+            }
+        }
+        if (!won) return false
         preparationChanged()
         return true
     }
@@ -166,14 +180,24 @@ object StreamChoice {
      * cache entry it filled may hold that source's bytes and may still be
      * written by a reader that opened earlier. The cache purge hands these
      * tracks over instead, for tracks away from the playhead: their entry is
-     * dropped first, then [forgetAll] releases the pin.
+     * dropped first, then [handOver] releases the pin.
      */
-    fun inactivePins(enabled: Set<String>, youtubeEnabled: Boolean, keep: Set<String>): Map<String, Boolean> =
+    fun inactivePins(
+        enabled: Set<String>,
+        youtubeEnabled: Boolean,
+        keep: Set<String>,
+        youtubeConfigIds: Set<String>,
+    ): Map<String, Boolean> =
         buildMap {
             for ((id, choice) in chosen) {
                 if (id in keep) continue
                 val source = choice.stream.sourceConfigId
                 when {
+                    // YouTube's own row in the source list: a source-backed
+                    // track that fell back to YouTube carries its id. The bytes
+                    // are YouTube's, so they are dropped as YouTube's.
+                    source != null && source in youtubeConfigIds ->
+                        if (!youtubeEnabled || source !in enabled) put(id, true)
                     source != null -> if (source !in enabled) put(id, false)
                     !choice.substituted -> if (!youtubeEnabled) put(id, true)
                 }
@@ -183,6 +207,77 @@ object StreamChoice {
     /** Releases the pins of [videoIds]; see [inactivePins]. */
     fun forgetAll(videoIds: Set<String>) {
         videoIds.forEach(chosen::remove)
+    }
+
+    /**
+     * Hands the [stale] tracks from [inactivePins] over: drops their cached
+     * bytes, then releases the pins whose bytes are all gone and whose track
+     * is still outside the playhead window. Returns the released ids.
+     *
+     * [drop] removes the cache entries one source filled (YouTube's when its
+     * flag is true) and returns the ids whose entries are all gone. A removal
+     * that fails leaves bytes behind, and that track's pin stays.
+     *
+     * Removal failing is not what protects a track being read: Media3's
+     * `SimpleCache.removeResource` ignores readers' locks. The playhead window
+     * protects it. It is excluded before the drop, and [window] is read again
+     * after it, because the playhead can move onto a track while the drop
+     * runs. A track that did keeps its pin, so its reader and every later open
+     * agree on the source. Both cases are left for a later purge.
+     */
+    suspend fun handOver(
+        stale: Map<String, Boolean>,
+        drop: suspend (ids: Set<String>, youtube: Boolean) -> Set<String>,
+        window: () -> Set<String>,
+        writers: WriterGate = WriterGate.NONE,
+    ): Set<String> {
+        if (stale.isEmpty()) return emptySet()
+        // A track something is still writing is left alone entirely: removing
+        // its committed bytes would not stop the writer committing more.
+        val tokens = stale.keys.mapNotNull { id -> writers.token(id)?.let { id to it } }.toMap()
+        // The pins as they stand now. Only these are released, so a track that
+        // is pinned afresh while the drop runs keeps its new pin.
+        val seen = tokens.keys.mapNotNull { id -> chosen[id]?.let { id to it } }.toMap()
+        val dropped = stale.filterKeys { it in tokens }.entries.groupBy({ it.value }, { it.key })
+            .flatMap { (youtube, ids) -> drop(ids.toSet(), youtube) }
+            .toSet()
+        return (dropped - window()).filterTo(mutableSetOf()) { id ->
+            val pin = seen[id] ?: return@filterTo false
+            writers.releaseIf(id, tokens.getValue(id)) { chosen.remove(id, pin) }
+        }
+    }
+
+    /**
+     * What [handOver] asks before it touches a track's cache entry and again
+     * before it releases the pin: whether anything is writing that entry.
+     *
+     * Needed because Media3's `SimpleCache.removeResource` neither refuses an
+     * entry that is being written nor stops the writer, so a writer still
+     * running would commit old bytes after the drop. Implemented by
+     * [AudioCache.writerGate], which counts the fetches its cache makes.
+     */
+    interface WriterGate {
+        /**
+         * A token for [videoId]'s writers, or null while one is fetching or
+         * has only just finished (its last span may not be committed yet).
+         */
+        fun token(videoId: String): Long?
+
+        /**
+         * Runs [release] only if no writer for [videoId] has started since
+         * [token] was taken, atomically with writers starting: a writer that
+         * starts after this either sees the pin still in force, which means
+         * this did not run, or finds it gone and resolves afresh.
+         */
+        fun releaseIf(videoId: String, token: Long, release: () -> Boolean): Boolean
+
+        companion object {
+            /** No writers to wait for. */
+            val NONE: WriterGate = object : WriterGate {
+                override fun token(videoId: String): Long = 0L
+                override fun releaseIf(videoId: String, token: Long, release: () -> Boolean) = release()
+            }
+        }
     }
 
     /**

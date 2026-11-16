@@ -5607,7 +5607,8 @@ class PlaybackService : MediaLibraryService() {
             !ListenTogether.state.value.inParty
         ) {
             scope.launch(Dispatchers.IO) {
-                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+                // Speculative: the swap has not committed and may not.
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES, speculative = true)
             }
         }
 
@@ -7209,13 +7210,9 @@ class PlaybackService : MediaLibraryService() {
     private suspend fun retireInactivePins(keep: Set<String>) {
         val configs = SourceRegistry.configs.value
         val enabled = configs.filter { it.enabled }.mapTo(mutableSetOf()) { it.id }
-        val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep)
-        if (stale.isEmpty()) return
-        val dropped = stale.entries.groupBy({ it.value }, { it.key })
-            .flatMap { (youtube, ids) -> AudioCache.dropEntriesOf(ids.toSet(), youtube) }
-            .toSet()
-        val nowKept = playheadWindow()
-        StreamChoice.forgetAll(dropped - nowKept)
+        val youtubeIds = configs.filter { it.kind == SourceKind.YOUTUBE }.mapTo(mutableSetOf()) { it.id }
+        val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep, youtubeIds)
+        StreamChoice.handOver(stale, AudioCache::dropEntriesOf, ::playheadWindow, AudioCache.writerGate)
     }
 
     /**

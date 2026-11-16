@@ -168,7 +168,7 @@ internal class PlaybackStreamResolver(
                 // as it does on the YouTube path: see [serveUpgraded]. Recording
                 // it here would describe a stream the listener is not hearing
                 // and may never hear.
-                val proving = QualityUpgrade.isAuditioning(fullMediaId)
+                val proving = QualityUpgrade.isAuditioning(fullMediaId) || AudioCache.isSpeculative(dataSpec)
                 TrackLog.d(
                     "BitChord",
                     "${if (proving) "auditioning" else "serving"} upgraded ${fullMediaId ?: trackParam} " +
@@ -223,14 +223,24 @@ internal class PlaybackStreamResolver(
                     .build()
             }
         }
-        val stream = runBlocking(about) {
-            withTimeout(RESOLVE_TIMEOUT_MS) {
-                if (directYouTube) {
-                    SourceResolver.youtubeFallback(SourceResolver.targetIn(dataSpec.uri))
-                } else {
-                    SourceResolver.resolve(dataSpec.uri)
+        // A timeout leaves as an IOException, as at every other resolve here.
+        // Left as TimeoutCancellationException, it escapes the data source as
+        // something Media3 doesn't expect, which is fatal and never retried.
+        val stream = try {
+            runBlocking(about) {
+                withTimeout(RESOLVE_TIMEOUT_MS) {
+                    if (directYouTube) {
+                        SourceResolver.youtubeFallback(SourceResolver.targetIn(dataSpec.uri))
+                    } else {
+                        SourceResolver.resolve(dataSpec.uri)
+                    }
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            throw java.io.IOException(
+                "Source resolution timed out for ${dataSpec.uri.getQueryParameter("n")}",
+                e,
+            )
         } ?: throw java.io.IOException(
             if (directYouTube) {
                 "No YouTube audio fallback matched ${dataSpec.uri.getQueryParameter("n")}"
@@ -350,7 +360,7 @@ internal class PlaybackStreamResolver(
         // and may never. Recording it here would light "Lossless" over
         // the lossy stream still coming out of the speaker. The real
         // open, moments later, records it.
-        val proving = QualityUpgrade.isAuditioning(videoId)
+        val proving = QualityUpgrade.isAuditioning(videoId) || AudioCache.isSpeculative(dataSpec)
         val sourceName = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
             ?: "Upgrade"
         if (!proving) {
@@ -448,7 +458,10 @@ internal class PlaybackStreamResolver(
                 // Only substituted, non-lossless choices need this. A pinned
                 // YouTube URL has no source result to promote, and a lossless
                 // module result already satisfies the request.
-                if (StreamChoice.isSubstitute(videoId) &&
+                // A Spotify row's YouTube fallback is pinned as YouTube's, not
+                // as a substitute, but it still deserves a later look: a source
+                // may answer for the row after all.
+                if ((StreamChoice.isSubstitute(videoId) || videoId.startsWith(SPOTIFY_ROW_PREFIX)) &&
                     serving.format.isLossless != true &&
                     QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
                 ) {
@@ -494,6 +507,17 @@ internal class PlaybackStreamResolver(
                 .build()
         }
         val target = SourceResolver.targetIn(dataSpec.uri)
+        // Set when the answer is YouTube's own stream rather than a source's.
+        // That stream is pinned as YouTube's, not as a substitute, so the pin
+        // follows the YouTube switch like any other YouTube pin: the purge
+        // hands it over when YouTube is off, away from the playhead. Near the
+        // playhead the row keeps playing from its pin, whichever path serves it.
+        var viaYouTube = false
+        // Why the YouTube match gave no stream, if it didn't. Carried as the
+        // cause of the failure below, so the load-error policy and
+        // [PlaybackService.permanentReason] can see a permanent one (an
+        // age-gated or removed match) instead of retrying it.
+        var fallbackFailure: Throwable? = null
         val resolved = runBlocking(about) {
             val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
                 SourceResolver.substituteForYouTube(target)
@@ -509,6 +533,8 @@ internal class PlaybackStreamResolver(
                 .joinToString(" ")
             val rows: List<SearchResult> = try {
                 YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull().orEmpty()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
             } catch (error: Exception) {
                 emptyList()
             }
@@ -522,10 +548,10 @@ internal class PlaybackStreamResolver(
             // somebody else's recording under it is the wrong answer
             // dressed as a working one. A row the matcher refused for
             // a duration or an album disagreement is still the right
-            // artist, so it plays; a row by a different artist does
-            // not, and the row says so instead.
-            val best = TrackMatcher.best(songs, target)
-                ?: songs.firstOrNull { TrackMatcher.sharesArtist(target.artist, it.artist) }
+            // artist and the right song, so it plays. A different song
+            // by that artist, or a row by a different artist, does not,
+            // and the row says so instead.
+            val best = TrackMatcher.bestOrSameArtist(songs, target)
             best?.let { song ->
                 // The recording this row was matched to, kept for the
                 // rating: a Spotify row has no YouTube id of its own,
@@ -533,16 +559,32 @@ internal class PlaybackStreamResolver(
                 // is already in hand here, so the tap does not have to
                 // ask for it again.
                 RatingTarget.remember(videoId, song.videoId)
-                runCatching { StreamResolver.resolve(song.videoId) }
-                    .getOrNull()
-                    ?.let { url -> SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)) }
+                // Bounded like every other resolve here.
+                val streamUrl = try {
+                    withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(song.videoId) }
+                } catch (e: TimeoutCancellationException) {
+                    fallbackFailure = e
+                    null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    fallbackFailure = e
+                    null
+                }
+                streamUrl
+                    ?.let { url ->
+                        viaYouTube = true
+                        SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
+                    }
             }
         } ?: throw java.io.IOException(
             "no enabled source could serve '${target.title}'",
+            fallbackFailure,
         )
-        val serving = pinOrPinned(videoId, resolved, substituted = true)
+        val serving = pinOrPinned(videoId, resolved, substituted = !viaYouTube)
         val sourceName = serving.sourceConfigId
-            ?.let { SourceRegistry.config(it)?.displayName } ?: "Module"
+            ?.let { SourceRegistry.config(it)?.displayName }
+            ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
         NerdStats.onSourceStream(videoId, serving.format, sourceName)
         NerdStats.recordSource(videoId, sourceName)
         return dataSpec.buildUpon()

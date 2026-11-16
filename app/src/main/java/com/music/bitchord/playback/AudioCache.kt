@@ -899,13 +899,14 @@ object AudioCache {
     /**
      * Drops the cache entries of [mediaIds] that one source filled: YouTube's
      * when [youtube] is true, everyone else's when it is false. Returns the ids
-     * whose entries are all gone. An entry still held is left in place, and so
-     * is its id, so the caller keeps that track's pin.
+     * whose entries are all gone. An entry that fails to remove stays, and so
+     * does its id, so the caller keeps that track's pin.
      *
-     * For handing a track over to a different source: see
-     * [StreamChoice.inactivePins]. Its callers pass only tracks away from the
-     * playhead. The other source's copies stay: they are not the bytes that
-     * would be mixed with a new answer.
+     * Removal does not check whether something is reading or writing the
+     * entry: `SimpleCache.removeResource` ignores locks. Callers must pass only
+     * tracks nothing is using. [StreamChoice.handOver] passes tracks away from
+     * the playhead that [writerGate] reports no writer for. The other source's
+     * copies stay: they are not the bytes that would be mixed with a new answer.
      */
     suspend fun dropEntriesOf(mediaIds: Set<String>, youtube: Boolean): Set<String> {
         if (mediaIds.isEmpty()) return emptySet()
@@ -961,6 +962,13 @@ object AudioCache {
 
     private const val META_ORIGIN = "bc_origin"
     private const val META_MEDIA_ID = "bc_media_id"
+
+    /**
+     * How long after a track's last fetch closes before [writerGate] lets its
+     * entry be dropped. CacheDataSource commits the fetched span as it closes,
+     * just after the upstream does, and this covers that.
+     */
+    private const val WRITER_SETTLE_MS = 2_000L
     private const val META_TITLE = "bc_title"
     private const val META_ARTIST = "bc_artist"
     private const val META_ALBUM = "bc_album"
@@ -1047,7 +1055,7 @@ object AudioCache {
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
-        .setUpstreamDataSourceFactory(upstream)
+        .setUpstreamDataSourceFactory(counted(upstream))
         .setCacheKeyFactory(keyFactory)
         // A cache write that fails (full disk, evicted mid-write) should drop
         // to streaming, not surface as a playback error.
@@ -1073,8 +1081,96 @@ object AudioCache {
      */
     private fun readAheadCacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
-        .setUpstreamDataSourceFactory(upstream)
+        .setUpstreamDataSourceFactory(counted(upstream))
         .setCacheKeyFactory(keyFactory)
+
+    /**
+     * Per track, the fetches this cache's writers have running upstream, how
+     * many have ever started, and when the last one finished. Every write
+     * into the cache fetches through [counted], so a track with nothing
+     * running here has nothing about to commit, give or take the moment
+     * after a fetch closes: see [WRITER_SETTLE_MS].
+     */
+    private class Writers(val running: Int, val started: Long, val lastClosedAt: Long)
+
+    private val writers = ConcurrentHashMap<String, Writers>()
+
+    /**
+     * [upstream], with every fetch it makes counted in [writers] against its
+     * track. [NoUpstream] fetches nothing, so it is not counted.
+     */
+    private fun counted(upstream: DataSource.Factory): DataSource.Factory =
+        if (upstream === NoUpstream) upstream else countedFetches(upstream)
+
+    private fun countedFetches(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
+        val inner = upstream.createDataSource()
+        object : DataSource {
+            private var counting: String? = null
+
+            override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) =
+                inner.addTransferListener(transferListener)
+
+            override fun open(dataSpec: DataSpec): Long {
+                // Counted before the open, so before the resolver reads the
+                // pin: see [writerGate]'s releaseIf.
+                mediaIdIn(dataSpec.uri)?.let { id ->
+                    writers.compute(id) { _, w ->
+                        Writers((w?.running ?: 0) + 1, (w?.started ?: 0L) + 1, w?.lastClosedAt ?: 0L)
+                    }
+                    counting = id
+                }
+                return try {
+                    inner.open(dataSpec)
+                } catch (e: Throwable) {
+                    // Not every caller closes after a failed open, and a count
+                    // left behind would hold the track's entry for good.
+                    uncount()
+                    throw e
+                }
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = inner.read(buffer, offset, length)
+
+            override fun getUri(): Uri? = inner.uri
+
+            override fun getResponseHeaders(): Map<String, List<String>> = inner.responseHeaders
+
+            override fun close() {
+                try {
+                    inner.close()
+                } finally {
+                    uncount()
+                }
+            }
+
+            private fun uncount() {
+                val id = counting ?: return
+                counting = null
+                writers.compute(id) { _, w ->
+                    w?.let { Writers((it.running - 1).coerceAtLeast(0), it.started, SystemClock.elapsedRealtime()) }
+                }
+            }
+        }
+    }
+
+    /** [StreamChoice.handOver]'s view of [writers]. */
+    val writerGate: StreamChoice.WriterGate = object : StreamChoice.WriterGate {
+        override fun token(videoId: String): Long? {
+            val w = writers[videoId] ?: return 0L
+            if (w.running > 0) return null
+            if (SystemClock.elapsedRealtime() - w.lastClosedAt < WRITER_SETTLE_MS) return null
+            return w.started
+        }
+
+        override fun releaseIf(videoId: String, token: Long, release: () -> Boolean): Boolean {
+            var released = false
+            writers.compute(videoId) { _, w ->
+                if ((w?.running ?: 0) == 0 && (w?.started ?: 0L) == token) released = release()
+                w
+            }
+            return released
+        }
+    }
 
     /** Set once the player exists; read-ahead resolves streams the same way. */
     private var upstreamFactory: DataSource.Factory? = null
@@ -1335,7 +1431,13 @@ object AudioCache {
                 // pinned over it could write one server's bytes at the offsets
                 // another server had filled.
                 val alreadyPinned = StreamChoice.of(next)
-                    ?.takeIf { !pinnedToYouTube && StreamChoice.isSubstitute(next) }
+                    // A Spotify row pinned to its YouTube fallback is not a
+                    // substitute, but it is answered: searching again would
+                    // only find the same nothing.
+                    ?.takeIf {
+                        !pinnedToYouTube &&
+                            (StreamChoice.isSubstitute(next) || next.startsWith(SPOTIFY_ROW_PREFIX))
+                    }
                 val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
                     // Announced before the search, not after: the player opens
                     // a queue's next item before it is reached, and that open
@@ -1709,10 +1811,24 @@ object AudioCache {
         return "$key holds ${total / 1024}kB in ${spans.size} spans: $ranges"
     }
 
-    suspend fun warmRange(uri: Uri, position: Long, length: Long) {
+    /**
+     * Fetches [position, position + length) of [uri] into the cache.
+     *
+     * [speculative] marks a fetch made for a stream that is not playing yet
+     * and may never play, such as an upgrade's opening fetched before its swap
+     * commits. The resolver sees the mark ([isSpeculative]) and does not record
+     * what it serves as the stream being heard.
+     */
+    suspend fun warmRange(uri: Uri, position: Long, length: Long, speculative: Boolean = false) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        fetch(key, uri, position, length)
+        fetch(key, uri, position, length, speculative = speculative)
     }
+
+    /** What [warmRange] tags a speculative request with; see [isSpeculative]. */
+    private object SpeculativeOpen
+
+    /** Whether [dataSpec] belongs to a speculative [warmRange] rather than playback. */
+    fun isSpeculative(dataSpec: DataSpec): Boolean = dataSpec.customData === SpeculativeOpen
 
     /**
      * Video ids whose analysis copy has already been asked for this session.
@@ -3522,6 +3638,7 @@ object AudioCache {
         length: Long,
         pinKey: Boolean = false,
         headers: Map<String, String> = emptyMap(),
+        speculative: Boolean = false,
     ) {
         if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
@@ -3541,7 +3658,7 @@ object AudioCache {
         // the cost, and only a probe that actually lands is worth following
         // with the rest of the range.
         if (length > LOCK_PROBE_BYTES) {
-            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, headers)
+            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, headers, speculative)
             // A shortfall here is either a lost race or a resource shorter
             // than the probe — a DASH index is a few kilobytes and the probe
             // asks for sixty-four of them. Either way there is nothing more
@@ -3549,7 +3666,7 @@ object AudioCache {
             // a file that has already been fetched whole.
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
-        pull(cacheKey, uri, position, length, pinKey, headers)
+        pull(cacheKey, uri, position, length, pinKey, headers, speculative)
     }
 
     /**
@@ -3774,6 +3891,7 @@ object AudioCache {
         length: Long,
         pinKey: Boolean,
         headers: Map<String, String> = emptyMap(),
+        speculative: Boolean = false,
     ) {
         val upstream = upstreamFactory ?: return
 
@@ -3803,6 +3921,7 @@ object AudioCache {
             // through the resolver, so it is the one request that has to
             // carry them itself.
             .apply { if (headers.isNotEmpty()) setHttpRequestHeaders(headers) }
+            .apply { if (speculative) setCustomData(SpeculativeOpen) }
             .build()
         val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
 
