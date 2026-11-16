@@ -93,9 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.AurisSlider
-import com.music.bitchord.ui.components.DonationRow
 import com.music.bitchord.ui.components.MessageState
-import com.music.bitchord.ui.components.SupportDonations
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.onboarding.AurisPass
@@ -480,21 +478,9 @@ fun SettingsScreen(
             MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
         if (openCategory == SettingsCategory.SUPPORT || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.SUPPORT) {
-            row("donate", "donation", "crypto", "support", "tip", "money") {
-                SettingsRow(
-                    icon = Icons.Rounded.Favorite,
-                    title = stringResource(R.string.support),
-                    subtitle = stringResource(R.string.support_donate_subtitle),
-                    onClick = null,
-                )
-            }
-            SupportDonations.rails.forEach { rail ->
-                row(rail.label, "donate", "donation", "crypto", "address", "copy") {
-                    DonationRow(rail)
-                }
-            }
-        }
+            SupportSettings(
+                search = search,
+            )
         }
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
