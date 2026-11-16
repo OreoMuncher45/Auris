@@ -494,7 +494,9 @@ object TrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // The same immersive suffix comes off the raw core too, or
+            // "봄날 Eclipsa Audio" would still miss a stereo row named "봄날".
+            text.replace(IMMERSIVE_SUFFIX, "").replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -849,6 +851,8 @@ object TrackMatcher {
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
 
+    /** YouTube's immersive-upload label at the end of a title; see [parseTitle]. */
+    private val IMMERSIVE_SUFFIX = Regex("""\s+eclipsa\s+audio\s*$""", RegexOption.IGNORE_CASE)
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")

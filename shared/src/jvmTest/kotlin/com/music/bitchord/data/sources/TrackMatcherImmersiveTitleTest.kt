@@ -37,6 +37,14 @@ class TrackMatcherImmersiveTitleTest {
     }
 
     @Test
+    fun aCjkEclipsaAudioUploadMatchesTheStereoTrack() {
+        val target = TrackMatcher.Target("봄날 Eclipsa Audio", "River Lane", durationSec = 200)
+        val rows = listOf(song("봄날", "River Lane", "3:20"))
+
+        assertEquals("봄날", TrackMatcher.best(rows, target)?.title)
+    }
+
+    @Test
     fun theSearchDoesNotAskForTheFormatName() {
         val target = TrackMatcher.Target("Morning Light Eclipsa Audio", "River Lane", durationSec = 200)
 
