@@ -220,6 +220,12 @@ android {
             // download is far smaller; they are extracted once at install.
             // The big win is libonnxruntime.so (~27 MB stored -> ~10 MB).
             useLegacyPackaging = true
+            // 32-bit x86 is not a target: the splits above leave it out and
+            // our own native code (FFmpeg, JamesDSP, analysis, DSD) is not
+            // built for it, so the app cannot start there. Only libraries'
+            // prebuilt copies (ONNX Runtime, QuickJS, androidx graphics) were
+            // reaching the universal APK for that ABI, about 13 MB of it.
+            excludes += "lib/x86/**"
         }
     }
     androidResources {
