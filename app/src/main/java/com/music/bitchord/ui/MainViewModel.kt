@@ -2254,7 +2254,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // ahead of the first frame, for a tab nobody has opened yet.
         viewModelScope.launch(Dispatchers.IO) {
             val cached = PodcastShelfCache.load(getApplication()) ?: return@launch
-            cached.forEach { shelf -> shelf.shows.forEach { itunesShows[it.collectionId] = it } }
+            // putIfAbsent: a show the fresh fetch has already stored is newer.
+            cached.forEach { shelf -> shelf.shows.forEach { itunesShows.putIfAbsent(it.collectionId, it) } }
             val shelves = cached.toHomeShelves()
             if (shelves.isEmpty()) return@launch
             // Only into a page still waiting. The fresh fetch is started beside
