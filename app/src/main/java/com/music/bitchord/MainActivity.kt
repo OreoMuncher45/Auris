@@ -116,7 +116,9 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -3942,11 +3944,28 @@ private fun BitChordApp(
         // the feed, the frosted bars, the tab row — becomes the left half of
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
+        // The player is drawn over the page in this same window, so while it
+        // is up the page leaves the semantics tree: TalkBack must not walk or
+        // activate the song rows and buttons the player covers.
+        val pageCoveredByPlayer = showNowPlaying && playerSong != null
+        // Opening the player from search would otherwise leave the field
+        // focused and the keyboard up over the player.
+        val pageFocusManager = LocalFocusManager.current
+        val pageKeyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(pageCoveredByPlayer) {
+            if (pageCoveredByPlayer) {
+                pageFocusManager.clearFocus(force = true)
+                pageKeyboard?.hide()
+            }
+        }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .then(
+                        if (pageCoveredByPlayer) Modifier.clearAndSetSemantics {} else Modifier,
+                    )
                     // Nothing of the page under a portrait player that is fully
                     // up: that player is its own window, opaque from edge to
                     // edge, and this one drawing on behind it — the page, the
@@ -4644,9 +4663,7 @@ private fun BitChordApp(
 
         }
 
-        val playerRaised = showNowPlaying && playerSong != null
-
-        if (playerRaised) {
+        if (pageCoveredByPlayer) {
             PlayerPanelHost(
                 song = playerSong,
                 motion = playerSheetMotion,
