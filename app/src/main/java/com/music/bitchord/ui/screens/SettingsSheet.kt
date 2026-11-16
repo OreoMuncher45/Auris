@@ -396,16 +396,21 @@ fun SettingsScreen(
                 search = search,
             )
         }
-        // Read after every group above has had its turn at the query, which is
-        // what makes this an accurate "nothing here" rather than a guess. Not
-        // on the index: nothing has been asked there, so nothing has missed.
-        if (!search.anyMatch && (openCategory != null || searchActive)) {
-            MessageState(stringResource(R.string.settings_search_empty, searchQuery))
-        }
         if (shows(SettingsCategory.SUPPORT)) {
             SupportSettings(
                 search = search,
             )
+        }
+        // Only for a search that found nothing. Without a query there is no
+        // search to have missed: the Auris Pass page has no searchable rows at
+        // all, and the Support page's rows used to be asked only after this
+        // check, so both showed "No settings match" under an empty field.
+        //
+        // Read after every group, Support included, so the answer covers all
+        // of them. When it shows, no group drew anything, so the message is
+        // still the last thing above the colophon.
+        if (searchActive && !search.anyMatch) {
+            MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
