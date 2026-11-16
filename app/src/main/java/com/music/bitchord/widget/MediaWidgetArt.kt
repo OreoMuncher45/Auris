@@ -723,6 +723,13 @@ internal object MediaWidgetArt {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
 
+    // Up to 8 MB of bitmaps that the next update can rebuild from Coil's disk
+    // cache. Let go of when the system asks; the launcher keeps its own copy
+    // of what is on screen.
+    init {
+        com.music.bitchord.util.MemoryPressure.register { composites.evictAll() }
+    }
+
     /** When each cover last failed to load. @see isCoolingOff */
     private val failures = ConcurrentHashMap<String, Long>()
 

@@ -483,13 +483,38 @@ object MediaTagger {
             Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@runCatching null
                 val raw = response.body?.bytes() ?: return@runCatching null
-                val bitmap = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return@runCatching null
+                val bitmap = decodeAtLeast(raw, COVER_MAX_SIDE) ?: return@runCatching null
                 val scaled = downscale(bitmap, COVER_MAX_SIDE)
                 val out = ByteArrayOutputStream()
                 scaled.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                // Done with both: the bytes are what gets written. Freed here
+                // rather than left to the GC, because a batch download tags
+                // one track after another and each decode is megabytes.
+                if (scaled !== bitmap) scaled.recycle()
+                bitmap.recycle()
                 Artwork(out.toByteArray(), "image/jpeg")
             }
         }.onFailure { Log.d(TAG, "no cover saved for $logId: ${it.message}") }.getOrNull()
+    }
+
+    /**
+     * Decodes [raw] subsampled by the largest power of two that still leaves
+     * its longest side at or above [maxSide], so [downscale] makes the same
+     * size of cover from it.
+     *
+     * Sources do not always honour the size in the URL: a local or addon cover
+     * can be 3000px square, which decoded whole is 36 MB of ARGB to make a
+     * 1000px JPEG. Subsampled first, the same cover decodes at 1500px, about
+     * 9 MB.
+     */
+    private fun decodeAtLeast(raw: ByteArray, maxSide: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+        val longest = max(bounds.outWidth, bounds.outHeight)
+        var sample = 1
+        while (longest / (sample * 2) >= maxSide) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(raw, 0, raw.size, options)
     }
 
     private fun downscale(bitmap: Bitmap, maxSide: Int): Bitmap {
