@@ -980,7 +980,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (overrides[rowId] == null) next[rowId] = status
             }
             next
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+        }
+            // Built off Main: the library's liked songs can run to thousands,
+            // and this map is rebuilt for every liked-music page that is seeded
+            // and every Spotify row that is resolved. Readers of `.value` only
+            // need the latest known map; the combine already delivered it
+            // after a dispatch before this moved.
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     fun likeStatusOf(videoId: String): LikeStatus =
         likeStatuses.value[videoId] ?: LikeStatus.INDIFFERENT
@@ -4823,7 +4830,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 favTrackCount = favTracks,
                 favArtistCount = favArtists,
             )
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, FlowStatus(false, 0, 0))
+        }
+            // Counts the whole like map; off Main for the same reason as [likeStatuses].
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, FlowStatus(false, 0, 0))
 
     private val _flowQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Success(emptyList()))
     val flowQueue: StateFlow<UiState<List<Song>>> = _flowQueue.asStateFlow()
