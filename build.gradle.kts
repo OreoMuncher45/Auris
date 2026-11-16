@@ -56,6 +56,8 @@ plugins {
 subprojects {
     plugins.withId("org.jetbrains.kotlin.plugin.compose") {
         extensions.configure<org.jetbrains.kotlin.compose.compiler.gradle.ComposeCompilerGradlePluginExtension> {
+            // See the file for which types it declares stable and why.
+            stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability.conf"))
             if (providers.gradleProperty("auris.composeReports").orNull == "true") {
                 reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
                 metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
