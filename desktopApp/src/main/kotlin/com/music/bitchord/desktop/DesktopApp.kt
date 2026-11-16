@@ -542,13 +542,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
     val searchState = remember { DesktopSearchState() }
+    val pages = remember { DesktopPagesState(persistence) }
     // What has been searched before.
     val searchHistory by DesktopSearchHistory.recent.collectAsState()
-    var homeState by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
 
     // Radio's seed row: what was played recently, so a station can be started from something the
     // listener already chose rather than a cold suggestion — the phone's own rule.
-    val radioSeeds: List<ShelfItem> = (homeState as? UiState.Success)?.data
+    val radioSeeds: List<ShelfItem> = (pages.homeState as? UiState.Success)?.data
         ?.firstOrNull { shelf ->
             shelf.title.trim().let { title ->
                 title.equals("Recents", ignoreCase = true) ||
@@ -561,26 +561,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         ?.filter { it.videoId != null }
         ?.take(10)
         .orEmpty()
-    // The podcasts page: YouTube Music's own shows, Apple's catalogue shelves, and the search
-    // over Apple's catalogue — the same three sources the phone's page draws on.
-    var podcastShows by remember { mutableStateOf<UiState<List<ShelfItem>>>(UiState.Loading) }
-    var podcastSections by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Success(emptyList())) }
-    var podcastSearchQuery by remember { mutableStateOf("") }
-    var podcastSearchResults by remember { mutableStateOf<UiState<List<ShelfItem>>>(UiState.Success(emptyList())) }
-    var podcastReloads by remember { mutableStateOf(0) }
-    /** The show opened from Apple's catalogue, with its episodes. */
-    var openedPodcastShow by remember { mutableStateOf<DesktopPodcastShow?>(null) }
     val podcastListState = rememberLazyListState()
-    // The home feed is paged: `FEmusic_home` answers with a couple of shelves and a token, and
-    // everything else arrives by following it.
-    var homeContinuation by remember { mutableStateOf<String?>(null) }
-    var homeLoadingMore by remember { mutableStateOf(false) }
     // How many pages of the feed the app fetches on its own. YouTube's Home continuation never runs
     // dry, so following it as far as the scroll goes means another request every time the tail comes
     // into view — the same hammering the phone stopped doing. The rest is the listener's to ask for.
-    // Recently Played has its own request and its own skeleton at the head of the page, as on the
-    // phone; it is only asked for with an account to have played on.
-    var homeRecentsLoading by remember { mutableStateOf(false) }
     // Held out here so a page keeps its place when another is visited and it is come back to.
     val homeListState = rememberLazyListState()
     val exploreListState = rememberLazyListState()
@@ -590,8 +574,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     val searchListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val libraryGridState = rememberLazyGridState()
-    /** A Library shelf's "Show all", open as a grid in place of the page. */
-    var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     /** Where the one back button in the top bar goes: every place visited, oldest first. */
     val navHistory = remember { mutableStateListOf<DesktopNavEntry>() }
     /** Set while [goBack] puts a place back, so that move is not itself recorded as a visit. */
@@ -601,13 +583,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     val homeSeenTitles = remember { HashSet<String>() }
     var homeGeneration by remember { mutableStateOf(0) }
     var homeIdentity by remember { mutableStateOf<String?>(null) }
-    var exploreState by remember { mutableStateOf<UiState<List<MoodGenreSection>>>(UiState.Loading) }
-    var selectedMoodGenre by remember { mutableStateOf<MoodGenre?>(null) }
-    // Bumped by a retry so the loaders below re-run without the state they are keyed on having to
-    // change to something and back again.
-    var exploreReloads by remember { mutableStateOf(0) }
-    var moodGenreReloads by remember { mutableStateOf(0) }
-    var moodGenreShelves by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
     var selectedSong by remember { mutableStateOf<Song?>(null) }
     // The live queue: what is playing, what played before it, what is next.
     var liveQueue by remember {
@@ -623,25 +598,17 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // One party AutoPlay top-up at a time; see topUpPartyAutoplay.
     val partyAutoplayLock = remember { Mutex() }
     val queue = liveQueue.songs
-    // What was played on this computer. The account's own history replaces it
-    // while signed in — see [remoteHistory] — because that is what Android's
-    // History screen is and what makes a phone and a desktop agree.
-    var history by remember { mutableStateOf(persistence.history()) }
-    var remoteHistory by remember { mutableStateOf<List<Song>>(emptyList()) }
     var likedIds by remember { mutableStateOf(persistence.likedIds()) }
     // In-flight tail of the Liked Music chain; replaced whenever the library is fetched again.
     var likedSyncJob by remember { mutableStateOf<Job?>(null) }
     var dislikedIds by remember { mutableStateOf(persistence.dislikedIds()) }
     val overlays = remember { DesktopOverlays() }
     var downloads by remember { mutableStateOf(persistence.downloads()) }
-    var localSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     val downloadQueue by DesktopDownloadQueue.active.collectAsState()
     val downloadInProgress = downloadQueue.keys
     var playlists by remember { mutableStateOf(persistence.playlists()) }
     var statsRevision by remember { mutableStateOf(0L) }
-    var replayPeriod by remember { mutableStateOf(DesktopReplayPeriod.ALL_TIME) }
     val replayHolder = remember { DesktopAccounts.active()?.name.orEmpty() }
-    var replaySummary by remember { mutableStateOf(DesktopListeningStats.summary()) }
     var statsCountedSongs by remember { mutableStateOf<Set<String>>(emptySet()) }
     var playlistTarget by remember { mutableStateOf<Song?>(null) }
     // One busy flag and one message for every playlist edit: only one of them can be in flight,
@@ -669,8 +636,6 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     var browserSignInJob by remember { mutableStateOf<Job?>(null) }
     val interactiveSignInBrowser = remember { DesktopBrowserSignIn.preferred() }
     val activeAccount = accounts.firstOrNull { it.accountId == activeAccountId } ?: accounts.firstOrNull()
-    // The account's own library, fetched once a session is in force.
-    var libraryState by remember { mutableStateOf<UiState<LibraryPage>>(UiState.Loading) }
     // Whether YouTube is actually accepting the session, which is not the same as having an account
     // saved.
     var youtubeSignedIn by remember { mutableStateOf(false) }
@@ -681,8 +646,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     var sessionRevision by remember { mutableStateOf(0) }
     // Read off the library rather than fetched again: the Playlists shelf is the same feed the
     // picker wants, minus the entries no edit can be aimed at.
-    val accountPlaylists = remember(libraryState) {
-        (libraryState as? UiState.Success)?.data?.shelves
+    val accountPlaylists = remember(pages.libraryState) {
+        (pages.libraryState as? UiState.Success)?.data?.shelves
             ?.firstOrNull { it.title == PLAYLISTS_SHELF }
             ?.items
             ?.let(DesktopSearchClient::userPlaylists)
@@ -691,8 +656,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // The add-to-playlist dialog intentionally keeps only playlists owned by the account. The
     // sidebar is a library browser instead, so it shows the complete paged shelf: owned, saved,
     // and YouTube's built-in playlists such as Liked Music.
-    val sidebarAccountPlaylists = remember(libraryState) {
-        (libraryState as? UiState.Success)?.data?.shelves
+    val sidebarAccountPlaylists = remember(pages.libraryState) {
+        (pages.libraryState as? UiState.Success)?.data?.shelves
             ?.firstOrNull { it.title == PLAYLISTS_SHELF }
             ?.items
             ?.filter { it.browseId != null }
@@ -700,13 +665,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
 
     fun reloadLibrary() {
-        libraryState = UiState.Loading
+        pages.libraryState = UiState.Loading
         sessionRevision++
     }
 
     /** Edits the Playlists shelf in place, without re-fetching it. */
     fun editPlaylistShelf(edit: (List<ShelfItem>) -> List<ShelfItem>) {
-        val page = (libraryState as? UiState.Success)?.data ?: return
+        val page = (pages.libraryState as? UiState.Success)?.data ?: return
         val index = page.shelves.indexOfFirst { it.title == PLAYLISTS_SHELF }
         val shelves = if (index >= 0) {
             page.shelves.toMutableList().apply {
@@ -719,7 +684,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             if (items.isEmpty()) return
             listOf(HomeShelf(PLAYLISTS_SHELF, items)) + page.shelves
         }
-        libraryState = UiState.Success(page.copy(shelves = shelves.toList()))
+        pages.libraryState = UiState.Success(page.copy(shelves = shelves.toList()))
     }
 
     // Whoever was signed in last is signed in again, before anything asks YouTube for something
@@ -745,17 +710,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     val sleepRemainingMs = remember(sleepTimerMinutes, sleepTimerTick) {
         DesktopSleepTimer.remainingMs()
     }
-    var openedCollection by remember { mutableStateOf<DesktopCollection?>(null) }
-    var collectionLoadingMore by remember { mutableStateOf(false) }
-    var collectionError by remember { mutableStateOf<String?>(null) }
-    var collectionReloads by remember { mutableStateOf(0) }
     // The artist page is its own destination rather than a collection with a different header.
-    var openedArtist by remember { mutableStateOf<DesktopArtistTarget?>(null) }
-    var artistState by remember { mutableStateOf<UiState<ArtistPage>>(UiState.Loading) }
-    var artistReloads by remember { mutableStateOf(0) }
 
     fun canonicalSong(song: Song): Song {
-        val homeSong = (homeState as? UiState.Success)?.data.orEmpty()
+        val homeSong = (pages.homeState as? UiState.Success)?.data.orEmpty()
             .asSequence()
             .flatMap { it.items.asSequence() }
             .filter { it.videoId == song.videoId }
@@ -788,9 +746,9 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     fun playCurrent(startPlaying: Boolean = true) {
         val song = liveQueue.current ?: return
         selectedSong = song
-        history = (listOf(song) + history.filterNot { it.videoId == song.videoId }).take(50)
+        pages.history = (listOf(song) + pages.history.filterNot { it.videoId == song.videoId }).take(50)
         saveQueue()
-        persistence.saveHistory(history)
+        persistence.saveHistory(pages.history)
         playbackEngine.load(song, startPlaying)
         partySyncHolder[0]?.onLocalIntent(song.videoId)
         scope.launch { DesktopScrobbling.updateNowPlaying(song) }
@@ -1015,11 +973,11 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      * over it, which is how an album opened from an artist once went nowhere.
      */
     fun showCollection(collection: DesktopCollection) {
-        openedArtist = null
+        pages.openedArtist = null
         overlays.replay = false
         overlays.settingsPage = null
-        collectionError = null
-        openedCollection = collection
+        pages.collectionError = null
+        pages.openedCollection = collection
     }
 
     /**
@@ -1028,7 +986,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      * [fallback] is what the card that was clicked already knew.
      */
     fun openCollection(browseId: String, fallback: BrowseItem? = null) {
-        val current = openedCollection
+        val current = pages.openedCollection
         if (current?.browseId == browseId && !current.loading) {
             showCollection(current)
             return
@@ -1044,14 +1002,14 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 loading = true,
             ),
         )
-        collectionReloads++
+        pages.collectionReloads++
     }
 
     // Keyed on the id, so a second page opened before the first answered cancels the first rather
     // than racing it; and a loading page restored by Back fetches again.
-    LaunchedEffect(openedCollection?.browseId, openedCollection?.loading, collectionReloads) {
-        val pending = openedCollection?.takeIf { it.loading } ?: return@LaunchedEffect
-        collectionError = null
+    LaunchedEffect(pages.openedCollection?.browseId, pages.openedCollection?.loading, pages.collectionReloads) {
+        val pending = pages.openedCollection?.takeIf { it.loading } ?: return@LaunchedEffect
+        pages.collectionError = null
         DesktopSearchClient.browse(
             browseId = pending.browseId,
             fallback = BrowseItem(
@@ -1063,9 +1021,9 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             ),
         ).fold(
             onSuccess = { loaded ->
-                if (openedCollection?.browseId == pending.browseId) openedCollection = loaded
+                if (pages.openedCollection?.browseId == pending.browseId) pages.openedCollection = loaded
             },
-            onFailure = { collectionError = it.message ?: "Could not open ${pending.title.ifBlank { "this page" }}" },
+            onFailure = { pages.collectionError = it.message ?: "Could not open ${pending.title.ifBlank { "this page" }}" },
         )
     }
 
@@ -1453,8 +1411,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     liveQueue = liveQueue.afterHandoffTo(song.videoId)
                     saveQueue()
                     selectedSong = song
-                    history = (listOf(song) + history.filterNot { it.videoId == song.videoId }).take(50)
-                    persistence.saveHistory(history)
+                    pages.history = (listOf(song) + pages.history.filterNot { it.videoId == song.videoId }).take(50)
+                    persistence.saveHistory(pages.history)
                     DesktopScrobbling.updateNowPlaying(song)
                     partySyncHolder[0]?.onLocalIntent()
                 }
@@ -1798,7 +1756,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // point of it is that something played elsewhere shows up here.
     LaunchedEffect(destination, youtubeSignedIn, sessionRevision) {
         if (destination != DesktopDestination.HISTORY || !youtubeSignedIn) return@LaunchedEffect
-        DesktopSearchClient.history().onSuccess { remoteHistory = it }
+        DesktopSearchClient.history().onSuccess { pages.remoteHistory = it }
     }
     LaunchedEffect(selectedSong?.videoId, overlays.nowPlaying) {
         trackLinks = null
@@ -1856,7 +1814,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         }
     }
     LaunchedEffect(statsRevision) {
-        replaySummary = withContext(Dispatchers.IO) { DesktopListeningStats.summary(replayPeriod) }
+        pages.replaySummary = withContext(Dispatchers.IO) { DesktopListeningStats.summary(pages.replayPeriod) }
     }
     DisposableEffect(playbackEngine) {
         onDispose { playbackEngine.release() }
@@ -1865,13 +1823,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     /** Opens an artist's page, from a card, a search row or the player's credit. */
     fun openArtist(browseId: String, name: String) {
         val target = DesktopArtistTarget(browseId, name)
-        if (openedArtist == target && artistState is UiState.Success) return
-        openedCollection = null
+        if (pages.openedArtist == target && pages.artistState is UiState.Success) return
+        pages.openedCollection = null
         overlays.replay = false
         overlays.settingsPage = null
-        openedArtist = target
-        artistState = UiState.Loading
-        artistReloads++
+        pages.openedArtist = target
+        pages.artistState = UiState.Loading
+        pages.artistReloads++
     }
 
     /**
@@ -1927,28 +1885,28 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         }
     }
 
-    LaunchedEffect(openedArtist, artistReloads) {
-        val target = openedArtist ?: return@LaunchedEffect
-        if (artistState !is UiState.Loading) return@LaunchedEffect
+    LaunchedEffect(pages.openedArtist, pages.artistReloads) {
+        val target = pages.openedArtist ?: return@LaunchedEffect
+        if (pages.artistState !is UiState.Loading) return@LaunchedEffect
         DesktopSearchClient.artistPage(target.browseId).fold(
-            onSuccess = { artistState = UiState.Success(it) },
-            onFailure = { artistState = UiState.Error(it.message ?: "Could not open ${target.name}") },
+            onSuccess = { pages.artistState = UiState.Success(it) },
+            onFailure = { pages.artistState = UiState.Error(it.message ?: "Could not open ${target.name}") },
         )
     }
 
     fun toggleSubscription(subscription: SubscriptionState) {
-        val target = openedArtist ?: return
+        val target = pages.openedArtist ?: return
         val next = !subscription.subscribed
         // Painted before the network answers and put back if it refuses.
-        artistState = (artistState as? UiState.Success)?.let { current ->
+        pages.artistState = (pages.artistState as? UiState.Success)?.let { current ->
             UiState.Success(current.data.copy(subscription = subscription.copy(subscribed = next)))
-        } ?: artistState
+        } ?: pages.artistState
         scope.launch {
             DesktopSearchClient.setSubscribed(subscription.channelId, next).onFailure { failure ->
                 DesktopTrackLog.log("subscription: ${target.name} failed: ${failure.message}")
-                artistState = (artistState as? UiState.Success)?.let { current ->
+                pages.artistState = (pages.artistState as? UiState.Success)?.let { current ->
                     UiState.Success(current.data.copy(subscription = subscription))
-                } ?: artistState
+                } ?: pages.artistState
             }
         }
     }
@@ -2111,12 +2069,12 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             libraryStale = false
             reloadLibrary()
         }
-        openedArtist = null
-        openedCollection = null
+        pages.openedArtist = null
+        pages.openedCollection = null
         overlays.replay = false
         overlays.settingsPage = null
-        selectedMoodGenre = null
-        libraryShowAll = null
+        pages.selectedMoodGenre = null
+        pages.libraryShowAll = null
         if (next == DesktopDestination.SEARCH) searchState.focusRequested = true
         destination = next
     }
@@ -2195,16 +2153,16 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      * [prepend]ed and replaces any stale copy the core feed carried.
      */
     fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
-        val existing = (homeState as? UiState.Success)?.data.orEmpty()
+        val existing = (pages.homeState as? UiState.Success)?.data.orEmpty()
         if (prepend) {
             val replacing = shelves.map { it.title.lowercase() }.toSet()
             homeSeenTitles.addAll(replacing)
-            homeState = UiState.Success(shelves + existing.filterNot { it.title.lowercase() in replacing })
+            pages.homeState = UiState.Success(shelves + existing.filterNot { it.title.lowercase() in replacing })
             return
         }
         val added = shelves.withoutRepeatsOf(existing)
             .filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
-        if (added.isNotEmpty()) homeState = UiState.Success(existing + added)
+        if (added.isNotEmpty()) pages.homeState = UiState.Success(existing + added)
     }
 
     /**
@@ -2214,28 +2172,28 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      */
     fun loadHome() {
         if (!youtubeSourceEnabled) {
-            homeState = UiState.Error("YouTube Music is disabled")
+            pages.homeState = UiState.Error("YouTube Music is disabled")
             return
         }
         val generation = ++homeGeneration
         val signedIn = DesktopYouTubeAuth.isSignedIn
         homeIdentity = "$signedIn/${DesktopAccounts.activeAccountId()}"
-        homeState = UiState.Loading
-        homeContinuation = null
+        pages.homeState = UiState.Loading
+        pages.homeContinuation = null
         homeSeenTitles.clear()
-        homeLoadingMore = false
-        homeRecentsLoading = signedIn
+        pages.homeLoadingMore = false
+        pages.homeRecentsLoading = signedIn
         scope.launch {
             launch {
                 DesktopSearchClient.home().fold(
                     onSuccess = { feed ->
                         if (generation != homeGeneration) return@fold
-                        homeContinuation = feed.continuation
+                        pages.homeContinuation = feed.continuation
                         publishHomeShelves(feed.shelves)
                     },
                     onFailure = {
-                        if (generation == homeGeneration && homeState !is UiState.Success) {
-                            homeState = UiState.Error(it.message ?: "Could not load Home")
+                        if (generation == homeGeneration && pages.homeState !is UiState.Success) {
+                            pages.homeState = UiState.Error(it.message ?: "Could not load Home")
                         }
                     },
                 )
@@ -2245,10 +2203,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     YtMusicRepository.homeRecentlyPlayed()
                         .onSuccess { shelf ->
                             if (generation != homeGeneration) return@onSuccess
-                            homeRecentsLoading = false
+                            pages.homeRecentsLoading = false
                             shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
                         }
-                        .onFailure { if (generation == homeGeneration) homeRecentsLoading = false }
+                        .onFailure { if (generation == homeGeneration) pages.homeRecentsLoading = false }
                 }
             }
             DesktopSearchClient.HOME_SUPPLEMENT_BROWSE_IDS.forEach { browseId ->
@@ -2262,10 +2220,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
 
     fun fetchMoreHome() {
-        val token = homeContinuation ?: return
-        if (homeLoadingMore || homeState !is UiState.Success) return
+        val token = pages.homeContinuation ?: return
+        if (pages.homeLoadingMore || pages.homeState !is UiState.Success) return
         val generation = homeGeneration
-        homeLoadingMore = true
+        pages.homeLoadingMore = true
         scope.launch {
             DesktopSearchClient.moreHome(token).fold(
                 onSuccess = { feed ->
@@ -2273,11 +2231,11 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     val before = homeSeenTitles.size
                     publishHomeShelves(feed.shelves)
                     // A page with nothing new is the feed looping back on itself, not running dry.
-                    homeContinuation = feed.continuation.takeIf { homeSeenTitles.size > before }
+                    pages.homeContinuation = feed.continuation.takeIf { homeSeenTitles.size > before }
                 },
-                onFailure = { homeContinuation = null },
+                onFailure = { pages.homeContinuation = null },
             )
-            homeLoadingMore = false
+            pages.homeLoadingMore = false
         }
     }
 
@@ -2354,7 +2312,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         // Unpacks the analyser and its models on first run.
         DesktopAnalysisRuntime.ensureStarted()
         DesktopHorizontalScroll.install()
-        localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
+        pages.localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
         // A download record is a claim about a folder this app does not own, so it can outlive the
         // file it names. Checked once at startup rather than trusted: a stale entry showed the
         // track as downloaded, refused to fetch it again, and then would not play.
@@ -2391,14 +2349,14 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
 
     // The charts are period-filtered at read time, so a different period is a different read.
-    LaunchedEffect(replayPeriod) {
-        replaySummary = withContext(Dispatchers.IO) { DesktopListeningStats.summary(replayPeriod) }
+    LaunchedEffect(pages.replayPeriod) {
+        pages.replaySummary = withContext(Dispatchers.IO) { DesktopListeningStats.summary(pages.replayPeriod) }
     }
 
     // Re-scanned when the filter or the folder changes, never on first composition.
     LaunchedEffect(localMusicRevision) {
         if (localMusicRevision == 0) return@LaunchedEffect
-        localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
+        pages.localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
         DesktopLocalMusicWatcher.restart()
     }
 
@@ -2406,32 +2364,32 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         DesktopLocalMusicWatcher.restart()
         DesktopLocalMusicWatcher.changes.collect {
-            localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
+            pages.localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
         }
     }
 
     suspend fun loadExplore() {
         if (!youtubeSourceEnabled) {
-            exploreState = UiState.Error("YouTube Music is disabled")
+            pages.exploreState = UiState.Error("YouTube Music is disabled")
             return
         }
-        exploreState = UiState.Loading
+        pages.exploreState = UiState.Loading
         DesktopSearchClient.moodAndGenres().fold(
             onSuccess = { sections ->
-                exploreState = if (sections.isEmpty()) {
+                pages.exploreState = if (sections.isEmpty()) {
                     UiState.Error("Nothing to explore right now")
                 } else {
                     UiState.Success(sections)
                 }
             },
-            onFailure = { exploreState = UiState.Error(it.message ?: "Could not load Explore") },
+            onFailure = { pages.exploreState = UiState.Error(it.message ?: "Could not load Explore") },
         )
     }
 
-    LaunchedEffect(destination, exploreReloads) {
+    LaunchedEffect(destination, pages.exploreReloads) {
         // Radio's stations are the explore shelves, so both pages ask for the same thing.
         if ((destination == DesktopDestination.EXPLORE || destination == DesktopDestination.RADIO) &&
-            (exploreState is UiState.Loading || exploreReloads > 0)
+            (pages.exploreState is UiState.Loading || pages.exploreReloads > 0)
         ) {
             loadExplore()
         }
@@ -2439,34 +2397,34 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     // The podcasts page loads its own two things: YouTube Music's shows, and Apple's catalogue
     // shelves. Both are fetched once, when the page is opened.
-    LaunchedEffect(destination, podcastReloads) {
+    LaunchedEffect(destination, pages.podcastReloads) {
         if (destination != DesktopDestination.PODCASTS) return@LaunchedEffect
-        if (podcastShows is UiState.Loading) {
+        if (pages.podcastShows is UiState.Loading) {
             DesktopSearchClient.podcastShows().fold(
                 onSuccess = { shows ->
-                    podcastShows = if (shows.isEmpty()) {
+                    pages.podcastShows = if (shows.isEmpty()) {
                         UiState.Error("No podcasts to show right now")
                     } else {
                         UiState.Success(shows)
                     }
                 },
-                onFailure = { podcastShows = UiState.Error(it.message ?: "Could not load the podcasts") },
+                onFailure = { pages.podcastShows = UiState.Error(it.message ?: "Could not load the podcasts") },
             )
         }
-        if ((podcastSections as? UiState.Success)?.data.isNullOrEmpty()) {
-            fetchPodcastShelves { shelves -> podcastSections = UiState.Success(shelves) }
+        if ((pages.podcastSections as? UiState.Success)?.data.isNullOrEmpty()) {
+            fetchPodcastShelves { shelves -> pages.podcastSections = UiState.Success(shelves) }
         }
     }
 
     // The search on the podcasts page covers Apple's catalogue, which is where the shows are.
-    LaunchedEffect(podcastSearchQuery) {
-        val term = podcastSearchQuery.trim()
+    LaunchedEffect(pages.podcastSearchQuery) {
+        val term = pages.podcastSearchQuery.trim()
         if (term.isBlank()) {
-            podcastSearchResults = UiState.Success(emptyList())
+            pages.podcastSearchResults = UiState.Success(emptyList())
             return@LaunchedEffect
         }
-        podcastSearchResults = UiState.Loading
-        podcastSearchResults = DesktopSearchClient.podcastSearch(term).fold(
+        pages.podcastSearchResults = UiState.Loading
+        pages.podcastSearchResults = DesktopSearchClient.podcastSearch(term).fold(
             onSuccess = { shows -> UiState.Success(shows) },
             onFailure = { UiState.Error(it.message ?: "Could not search the podcasts") },
         )
@@ -2474,8 +2432,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     // Category buttons carry no artwork of their own, so a few are resolved at a time from the
     // shelves they open.
-    LaunchedEffect(exploreState) {
-        val sections = (exploreState as? UiState.Success)?.data ?: return@LaunchedEffect
+    LaunchedEffect(pages.exploreState) {
+        val sections = (pages.exploreState as? UiState.Success)?.data ?: return@LaunchedEffect
         if (sections.all { section -> section.items.all { it.thumbnailUrl != null } }) return@LaunchedEffect
         val limiter = Semaphore(4)
         coroutineScope {
@@ -2486,8 +2444,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         val artwork = limiter.withPermit {
                             DesktopSearchClient.moodGenreArtwork(item.browseId, item.params).getOrNull()
                         } ?: return@launch
-                        val current = (exploreState as? UiState.Success)?.data ?: return@launch
-                        exploreState = UiState.Success(
+                        val current = (pages.exploreState as? UiState.Success)?.data ?: return@launch
+                        pages.exploreState = UiState.Success(
                             current.map { section ->
                                 section.copy(
                                     items = section.items.map { entry ->
@@ -2507,16 +2465,16 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     /** The next page of the open collection, appended in place. */
     fun loadMoreCollectionSongs() {
-        val collection = openedCollection ?: return
+        val collection = pages.openedCollection ?: return
         val token = collection.continuation ?: return
-        if (collectionLoadingMore) return
-        collectionLoadingMore = true
+        if (pages.collectionLoadingMore) return
+        pages.collectionLoadingMore = true
         scope.launch {
             DesktopSearchClient.moreCollectionSongs(token, collection.songs.firstOrNull()?.artist)
                 .onSuccess { (songs, next) ->
-                    val current = openedCollection
+                    val current = pages.openedCollection
                     if (current != null && current.browseId == collection.browseId) {
-                        openedCollection = current.copy(
+                        pages.openedCollection = current.copy(
                             songs = (current.songs + songs).distinctBy(Song::videoId),
                             continuation = next,
                         )
@@ -2524,20 +2482,20 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 }
                 .onFailure {
                     DesktopTrackLog.log("collection: no more rows for ${collection.browseId}: ${it.message}")
-                    val current = openedCollection
+                    val current = pages.openedCollection
                     if (current != null && current.browseId == collection.browseId) {
                         // Dropped rather than retried on scroll for ever: the trailing row is what
                         // asks, and leaving the token in place would have it ask again on every
                         // frame.
-                        openedCollection = current.copy(continuation = null)
+                        pages.openedCollection = current.copy(continuation = null)
                     }
                 }
-            collectionLoadingMore = false
+            pages.collectionLoadingMore = false
         }
     }
 
     fun renameOpenPlaylist(title: String) {
-        val collection = openedCollection ?: return
+        val collection = pages.openedCollection ?: return
         playlistBusy = true
         playlistError = null
         scope.launch {
@@ -2545,10 +2503,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 .onSuccess {
                     // Renamed in place as well as re-fetched: the page that ordered it is still on
                     // screen showing the old name, and the library reload behind it takes a moment.
-                    openedCollection = openedCollection
+                    pages.openedCollection = pages.openedCollection
                         ?.takeIf { it.browseId == collection.browseId }
                         ?.copy(title = title)
-                        ?: openedCollection
+                        ?: pages.openedCollection
                     editPlaylistShelf { items ->
                         items.map { if (it.browseId == collection.browseId) it.copy(title = title) else it }
                     }
@@ -2563,7 +2521,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
 
     fun deleteOpenPlaylist() {
-        val collection = openedCollection ?: return
+        val collection = pages.openedCollection ?: return
         playlistBusy = true
         playlistError = null
         scope.launch {
@@ -2571,7 +2529,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 .onSuccess {
                     closePlaylistDialogs()
                     // Its page is the one open, and a deleted playlist has nothing left to show.
-                    if (openedCollection?.browseId == collection.browseId) openedCollection = null
+                    if (pages.openedCollection?.browseId == collection.browseId) pages.openedCollection = null
                     editPlaylistShelf { items -> items.filterNot { it.browseId == collection.browseId } }
                     libraryStale = true
                 }
@@ -2584,16 +2542,16 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     /** Takes one row back out of the playlist it is being read in. */
     fun removeFromOpenPlaylist(song: Song) {
-        val collection = openedCollection ?: return
+        val collection = pages.openedCollection ?: return
         val setVideoId = song.setVideoId ?: return
         scope.launch {
             DesktopSearchClient.removeFromPlaylist(
                 collection.playlistId,
                 listOf(setVideoId to song.videoId),
             ).onSuccess {
-                val current = openedCollection
+                val current = pages.openedCollection
                 if (current != null && current.browseId == collection.browseId) {
-                    openedCollection = current.copy(
+                    pages.openedCollection = current.copy(
                         songs = current.songs.filterNot { it.setVideoId == setVideoId },
                     )
                 }
@@ -2610,14 +2568,14 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(activeAccountId, activeProfileId, sessionRevision) {
         youtubeSignedIn = DesktopYouTubeAuth.isSignedIn
         if (!DesktopYouTubeAuth.isSignedIn) {
-            libraryState = UiState.Success(LibraryPage(emptyList(), emptyList(), emptyList()))
+            pages.libraryState = UiState.Success(LibraryPage(emptyList(), emptyList(), emptyList()))
             return@LaunchedEffect
         }
-        libraryState = UiState.Loading
+        pages.libraryState = UiState.Loading
         DesktopSearchClient.library().fold(
             onSuccess = { page ->
                 // The continuation is a job to run, not page state — it is consumed below.
-                libraryState = UiState.Success(page.copy(likedContinuation = null))
+                pages.libraryState = UiState.Success(page.copy(likedContinuation = null))
                 DesktopTrackLog.log(
                     "library: ${page.likedSongs.size} liked, ${page.librarySongs.size} added, " +
                         "shelves ${page.shelves.joinToString { "${it.title}=${it.items.size}" }}",
@@ -2648,7 +2606,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                 }
             },
-            onFailure = { libraryState = UiState.Error(it.message ?: "Could not load your library") },
+            onFailure = { pages.libraryState = UiState.Error(it.message ?: "Could not load your library") },
         )
         // A session refused mid-flight is dropped by the request itself, so the answer to "are we
         // signed in" is only settled once the call is over.
@@ -2657,10 +2615,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     fun here() = DesktopNavEntry(
         destination = destination,
-        artist = openedArtist,
-        collection = openedCollection,
-        mood = selectedMoodGenre,
-        showAll = libraryShowAll,
+        artist = pages.openedArtist,
+        collection = pages.openedCollection,
+        mood = pages.selectedMoodGenre,
+        showAll = pages.libraryShowAll,
         replay = overlays.replay,
         settings = overlays.settingsPage,
     )
@@ -2693,25 +2651,25 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         destination = entry.destination
         overlays.replay = entry.replay
         overlays.settingsPage = entry.settings
-        collectionError = null
-        openedCollection = entry.collection
-        libraryShowAll = entry.showAll
-        if (entry.mood != selectedMoodGenre) {
-            selectedMoodGenre = entry.mood
-            moodGenreShelves = UiState.Loading
+        pages.collectionError = null
+        pages.openedCollection = entry.collection
+        pages.libraryShowAll = entry.showAll
+        if (entry.mood != pages.selectedMoodGenre) {
+            pages.selectedMoodGenre = entry.mood
+            pages.moodGenreShelves = UiState.Loading
         }
-        if (entry.artist != openedArtist) {
-            openedArtist = entry.artist
+        if (entry.artist != pages.openedArtist) {
+            pages.openedArtist = entry.artist
             if (entry.artist != null) {
-                artistState = UiState.Loading
-                artistReloads++
+                pages.artistState = UiState.Loading
+                pages.artistReloads++
             }
         }
     }
 
     fun openMoodGenre(item: MoodGenre) {
-        selectedMoodGenre = item
-        moodGenreShelves = UiState.Loading
+        pages.selectedMoodGenre = item
+        pages.moodGenreShelves = UiState.Loading
     }
 
     /**
@@ -2731,7 +2689,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         val browseId = item.browseId
         if (browseId != null && browseId.startsWith("itunes:")) {
             val collectionId = browseId.removePrefix("itunes:")
-            openedPodcastShow = DesktopPodcastShow(
+            pages.openedPodcastShow = DesktopPodcastShow(
                 collectionId = collectionId,
                 name = item.title,
                 artist = item.subtitle,
@@ -2739,7 +2697,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             )
             scope.launch {
                 val loaded = loadPodcastShow(collectionId, item.title, item.subtitle, item.thumbnailUrl)
-                if (openedPodcastShow?.collectionId == collectionId) openedPodcastShow = loaded
+                if (pages.openedPodcastShow?.collectionId == collectionId) pages.openedPodcastShow = loaded
             }
             return
         }
@@ -2778,18 +2736,18 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         }
     }
 
-    LaunchedEffect(selectedMoodGenre, moodGenreReloads) {
-        val item = selectedMoodGenre ?: return@LaunchedEffect
-        if (moodGenreShelves !is UiState.Loading) return@LaunchedEffect
+    LaunchedEffect(pages.selectedMoodGenre, pages.moodGenreReloads) {
+        val item = pages.selectedMoodGenre ?: return@LaunchedEffect
+        if (pages.moodGenreShelves !is UiState.Loading) return@LaunchedEffect
         DesktopSearchClient.moodGenreShelves(item.browseId, item.params).fold(
             onSuccess = { shelves ->
-                moodGenreShelves = if (shelves.isEmpty()) {
+                pages.moodGenreShelves = if (shelves.isEmpty()) {
                     UiState.Error("Nothing to explore here yet")
                 } else {
                     UiState.Success(shelves)
                 }
             },
-            onFailure = { moodGenreShelves = UiState.Error(it.message ?: "Could not load this category") },
+            onFailure = { pages.moodGenreShelves = UiState.Error(it.message ?: "Could not load this category") },
         )
     }
 
@@ -2956,7 +2914,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 // Only Replay dresses itself; everywhere else the chrome sits on the plain surface.
                 backdrop = { transparentBase ->
                     DesktopPageBackdrop(
-                        artworkUrl = replaySummary.songs.firstOrNull()?.song?.thumbnailUrl
+                        artworkUrl = pages.replaySummary.songs.firstOrNull()?.song?.thumbnailUrl
                             .takeIf { overlays.replay },
                         transparentBase = transparentBase,
                     )
@@ -3070,7 +3028,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         settingsOpen = overlays.settingsPage != null,
                         accountPlaylists = sidebarAccountPlaylists,
                         localPlaylists = playlists,
-                        openedCollectionId = openedCollection?.browseId,
+                        openedCollectionId = pages.openedCollection?.browseId,
                         query = searchState.query,
                         onQueryChange = { text ->
                             editQuery(text)
@@ -3402,7 +3360,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                     if (overlays.rename) {
                         DesktopRenamePlaylistDialog(
-                            current = openedCollection?.title.orEmpty(),
+                            current = pages.openedCollection?.title.orEmpty(),
                             busy = playlistBusy,
                             error = playlistError,
                             onRename = ::renameOpenPlaylist,
@@ -3411,7 +3369,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     }
                     if (overlays.delete) {
                         DesktopDeletePlaylistDialog(
-                            title = openedCollection?.title.orEmpty(),
+                            title = pages.openedCollection?.title.orEmpty(),
                             busy = playlistBusy,
                             error = playlistError,
                             onDelete = ::deleteOpenPlaylist,
@@ -3513,26 +3471,26 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onBack = ::goBack,
                         )
                         overlays.replay -> DesktopReplayPage(
-                            summary = replaySummary,
-                            period = replayPeriod,
+                            summary = pages.replaySummary,
+                            period = pages.replayPeriod,
                             holder = replayHolder,
-                            onPeriodChange = { replayPeriod = it },
+                            onPeriodChange = { pages.replayPeriod = it },
                             onPlaySong = { playSong(it) },
                             onOpenArtist = ::openArtistByName,
                             contentPadding = contentPadding,
                         )
-                        openedArtist != null -> DesktopArtistPage(
-                            state = artistState,
-                            fallbackName = openedArtist!!.name,
+                        pages.openedArtist != null -> DesktopArtistPage(
+                            state = pages.artistState,
+                            fallbackName = pages.openedArtist!!.name,
                             onRetry = {
-                                artistState = UiState.Loading
-                                artistReloads++
+                                pages.artistState = UiState.Loading
+                                pages.artistReloads++
                             },
                             onPlaySongs = { songs, index ->
-                                playSongs(songs, index, openedArtist?.let { artistSource(it) })
+                                playSongs(songs, index, pages.openedArtist?.let { artistSource(it) })
                             },
                             onShuffle = { songs ->
-                                playSongs(songs, 0, openedArtist?.let { artistSource(it) })
+                                playSongs(songs, 0, pages.openedArtist?.let { artistSource(it) })
                             },
                             onOpenMenu = { song -> openMenu(song) },
                             onShelfItemClick = ::openShelfItem,
@@ -3541,34 +3499,34 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onToggleSubscription = if (youtubeSignedIn) ::toggleSubscription else null,
                             contentPadding = contentPadding,
                         )
-                        openedCollection?.loading == true -> DesktopPageScaffold(contentPadding) {
+                        pages.openedCollection?.loading == true -> DesktopPageScaffold(contentPadding) {
                             Box(Modifier.fillMaxSize()) {
-                                val error = collectionError
+                                val error = pages.collectionError
                                 if (error != null) {
-                                    DesktopErrorPage(error) { collectionReloads++ }
+                                    DesktopErrorPage(error) { pages.collectionReloads++ }
                                 } else {
-                                    val title = openedCollection?.title.orEmpty()
+                                    val title = pages.openedCollection?.title.orEmpty()
                                     DesktopLoadingPage(if (title.isBlank()) "Loading…" else "Loading $title…")
                                 }
                             }
                         }
-                        openedCollection != null -> DesktopCollectionPage(
-                            collection = openedCollection!!,
-                            loadingMore = collectionLoadingMore,
+                        pages.openedCollection != null -> DesktopCollectionPage(
+                            collection = pages.openedCollection!!,
+                            loadingMore = pages.collectionLoadingMore,
                             onLoadMore = ::loadMoreCollectionSongs,
-                            onRename = { overlays.rename = true }.takeIf { openedCollection?.owned == true },
-                            onShare = openedCollection
+                            onRename = { overlays.rename = true }.takeIf { pages.openedCollection?.owned == true },
+                            onShare = pages.openedCollection
                                 ?.takeIf { it.type == BrowseType.ALBUM || it.type == BrowseType.PLAYLIST }
                                 ?.let { collection -> { shareCollection(collection) } },
-                            onDelete = { overlays.delete = true }.takeIf { openedCollection?.owned == true },
+                            onDelete = { overlays.delete = true }.takeIf { pages.openedCollection?.owned == true },
                             onRemoveFromPlaylist = ::removeFromOpenPlaylist
-                                .takeIf { openedCollection?.owned == true },
+                                .takeIf { pages.openedCollection?.owned == true },
                             likedIds = likedIds,
                             onPlaySongs = { songs, index ->
-                                playSongs(songs, index, openedCollection?.let { collectionSource(it) })
+                                playSongs(songs, index, pages.openedCollection?.let { collectionSource(it) })
                             },
                             onShuffle = { songs ->
-                                playSongs(songs.shuffled(), 0, openedCollection?.let { collectionSource(it) })
+                                playSongs(songs.shuffled(), 0, pages.openedCollection?.let { collectionSource(it) })
                             },
                             onDownloadAll = ::downloadAll,
                             animatedCanvas = settings.animatedCanvas,
@@ -3582,7 +3540,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             contentPadding = contentPadding,
                         )
                         destination == DesktopDestination.LISTEN_NOW -> HomeScreen(
-                            state = homeState,
+                            state = pages.homeState,
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
                             onRetry = ::loadHome,
@@ -3595,31 +3553,31 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onSignIn = { overlays.accounts = true },
                             onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                             onLoadMore = ::loadMoreHome,
-                            loadingMore = homeLoadingMore,
-                            recentlyPlayedLoading = homeRecentsLoading,
+                            loadingMore = pages.homeLoadingMore,
+                            recentlyPlayedLoading = pages.homeRecentsLoading,
                             leadHero = false,
                         )
-                        destination == DesktopDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
+                        destination == DesktopDestination.EXPLORE && pages.selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
                             MoodGenrePlaylistsScreen(
-                                title = selectedMoodGenre!!.title,
-                                state = moodGenreShelves,
+                                title = pages.selectedMoodGenre!!.title,
+                                state = pages.moodGenreShelves,
                                 listState = moodGenreListState,
-                                onItemClick = { item -> openShelfItem(item, selectedMoodGenre?.title) },
+                                onItemClick = { item -> openShelfItem(item, pages.selectedMoodGenre?.title) },
                                 onRetry = {
-                                    moodGenreShelves = UiState.Loading
-                                    moodGenreReloads++
+                                    pages.moodGenreShelves = UiState.Loading
+                                    pages.moodGenreReloads++
                                 },
                                 contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        openedPodcastShow != null -> DesktopPodcastShowPage(
-                            page = openedPodcastShow!!,
+                        pages.openedPodcastShow != null -> DesktopPodcastShowPage(
+                            page = pages.openedPodcastShow!!,
                             onPlay = { episode ->
                                 playSong(
                                     episode,
                                     source = DesktopQueueSource(
-                                        openedPodcastShow?.name ?: "Podcast",
+                                        pages.openedPodcastShow?.name ?: "Podcast",
                                         PlaybackSourceType.EXPLORE,
                                     ),
                                 )
@@ -3629,31 +3587,31 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                     episodes,
                                     0,
                                     DesktopQueueSource(
-                                        openedPodcastShow?.name ?: "Podcast",
+                                        pages.openedPodcastShow?.name ?: "Podcast",
                                         PlaybackSourceType.EXPLORE,
                                     ),
                                 )
                             },
-                            onBack = { openedPodcastShow = null },
+                            onBack = { pages.openedPodcastShow = null },
                             contentPadding = contentPadding,
                         )
                         destination == DesktopDestination.PODCASTS -> PodcastsScreen(
-                            state = podcastShows,
+                            state = pages.podcastShows,
                             listState = podcastListState,
-                            sections = podcastSections,
-                            searchQuery = podcastSearchQuery,
-                            onSearchQueryChange = { podcastSearchQuery = it },
-                            searchResults = podcastSearchResults,
+                            sections = pages.podcastSections,
+                            searchQuery = pages.podcastSearchQuery,
+                            onSearchQueryChange = { pages.podcastSearchQuery = it },
+                            searchResults = pages.podcastSearchResults,
                             onShowClick = ::openPodcastShow,
-                            onRetry = { podcastReloads++ },
+                            onRetry = { pages.podcastReloads++ },
                             refreshing = false,
-                            onRefresh = { podcastReloads++ },
+                            onRefresh = { pages.podcastReloads++ },
                             pullState = rememberPullToRefreshState(),
                             contentPadding = sharedPagePadding,
                             showTitle = false,
                         )
                         destination == DesktopDestination.RADIO -> RadioScreen(
-                            state = exploreState,
+                            state = pages.exploreState,
                             listState = radioListState,
                             // The Flow tile is a community feature the desktop has no account
                             // for; the rest of the page stands on its own.
@@ -3669,19 +3627,19 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             },
                             onStartStation = { selectDestination(DesktopDestination.SEARCH) },
                             onGenresClick = { selectDestination(DesktopDestination.EXPLORE) },
-                            onRetry = { exploreReloads++ },
+                            onRetry = { pages.exploreReloads++ },
                             refreshing = false,
-                            onRefresh = { exploreReloads++ },
+                            onRefresh = { pages.exploreReloads++ },
                             pullState = rememberPullToRefreshState(),
                             contentPadding = sharedPagePadding,
                         )
                         destination == DesktopDestination.EXPLORE -> ExploreScreen(
-                            state = exploreState,
+                            state = pages.exploreState,
                             listState = exploreListState,
                             onCategoryClick = ::openMoodGenre,
-                            onRetry = { exploreReloads++ },
+                            onRetry = { pages.exploreReloads++ },
                             refreshing = false,
-                            onRefresh = { exploreReloads++ },
+                            onRefresh = { pages.exploreReloads++ },
                             pullState = rememberPullToRefreshState(),
                             contentPadding = sharedPagePadding,
                             showTitle = false,
@@ -3775,7 +3733,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             topPadding = 0.dp,
                             showField = false,
                         )
-                        destination == DesktopDestination.LIBRARY && libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
+                        destination == DesktopDestination.LIBRARY && pages.libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
                             // The phone keeps the grid's sort beside it, in the bar above; here it sits
                             // at the end of the row the way back is on.
                             Row(
@@ -3783,29 +3741,29 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 horizontalArrangement = Arrangement.End,
                             ) { DesktopLibrarySortMenu() }
                             LibraryGridPage(
-                                shelf = libraryShowAll!!,
+                                shelf = pages.libraryShowAll!!,
                                 gridState = libraryGridState,
                                 onItemClick = ::openLibraryItem,
                                 onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                                 contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
                                 modifier = Modifier.weight(1f),
                                 onNewPlaylist = { overlays.playlistDialog = true }
-                                    .takeIf { libraryShowAll?.title == PLAYLISTS_SHELF },
+                                    .takeIf { pages.libraryShowAll?.title == PLAYLISTS_SHELF },
                             )
                         }
                         destination == DesktopDestination.LIBRARY -> LibraryScreen(
                             signedIn = youtubeSignedIn,
-                            state = libraryState,
+                            state = pages.libraryState,
                             listState = libraryListState,
                             onShelfItemClick = ::openLibraryItem,
                             onShelfItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                             onNewPlaylist = { overlays.playlistDialog = true },
-                            onShowAll = { shelf -> libraryShowAll = shelf },
+                            onShowAll = { shelf -> pages.libraryShowAll = shelf },
                             replay = {
                                 // The phone's wallet of Replay cards, or nothing until there is
                                 // listening to deal them from.
-                                val cards = remember(replaySummary) { replaySummary.heroCards() }
-                                if (!replaySummary.isEmpty && cards.isNotEmpty()) {
+                                val cards = remember(pages.replaySummary) { pages.replaySummary.heroCards() }
+                                if (!pages.replaySummary.isEmpty && cards.isNotEmpty()) {
                                     ShelfRow(
                                         modifier = Modifier.padding(vertical = 6.dp),
                                         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
@@ -3818,7 +3776,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                                 detail = card.detail,
                                                 artworkUrl = card.artworkUrl,
                                                 holder = replayHolder,
-                                                memberSince = replaySummary.memberSince(),
+                                                memberSince = pages.replaySummary.memberSince(),
                                                 onClick = { overlays.replay = true },
                                                 modifier = Modifier.width(300.dp),
                                             )
@@ -3839,7 +3797,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         destination == DesktopDestination.HISTORY -> DesktopHistoryPage(
                             // The account's history when there is one, and what
                             // this computer played when there is not.
-                            history = remoteHistory.ifEmpty { history },
+                            history = pages.remoteHistory.ifEmpty { pages.history },
                             onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["history", "History"], PlaybackSourceType.HISTORY)) },
                             onDownload = ::downloadSong,
                             onAddToPlaylist = { playlistTarget = it },
@@ -3868,7 +3826,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             }
                         }
                         destination == DesktopDestination.LOCAL_MUSIC -> DesktopLocalMusicPage(
-                            songs = localSongs,
+                            songs = pages.localSongs,
                             onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["local_music", "Local Music"], PlaybackSourceType.BROWSE)) },
                             contentPadding = contentPadding,
                             menu = { song -> songMenu(song) },
@@ -4938,7 +4896,7 @@ private fun Song.withSource(source: DesktopQueueSource?): Song = when {
     )
 }
 
-private data class DesktopArtistTarget(val browseId: String, val name: String)
+internal data class DesktopArtistTarget(val browseId: String, val name: String)
 
 /** One place the window has been: which page, and whatever was open on it. */
 private data class DesktopNavEntry(
