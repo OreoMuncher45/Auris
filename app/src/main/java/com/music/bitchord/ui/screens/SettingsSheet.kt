@@ -64,6 +64,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -481,10 +482,17 @@ private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): Scr
             isFirstSearchComposition = false
             if (searchQuery.isBlank()) {
                 // The page's own list is back, so its own place in it applies.
-                scrollState.scrollTo(
-                    AppSettings.settingsScrollOffset(scrollPage)
-                        .coerceAtMost(scrollState.maxValue),
-                )
+                // Not before that list has been laid out: until then maxValue
+                // is still the filtered list's, often 0, and clamping to it
+                // would land on the top (which the scroll saver would then
+                // store). So wait a frame for the full list's layout, and for
+                // a height to scroll in, as the restore on opening does.
+                val saved = AppSettings.settingsScrollOffset(scrollPage)
+                if (saved > 0) {
+                    withFrameNanos { }
+                    snapshotFlow { scrollState.maxValue }.first { it > 0 }
+                }
+                scrollState.scrollTo(saved.coerceAtMost(scrollState.maxValue))
             } else {
                 // What is left after a keystroke is a different list, and the
                 // offset the last one was scrolled to means nothing in it.
