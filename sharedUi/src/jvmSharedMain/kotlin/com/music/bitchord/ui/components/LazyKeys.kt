@@ -13,8 +13,12 @@ import com.music.bitchord.data.model.Song
  * list around it changes — without one, the index is the key, and a shelf
  * that gains a card at the front re-composes every card after it as if each
  * were new. But the feeds these lists draw do send the same track or album
- * twice in one row, and a key given twice is a crash, so the second and later
- * copies are counted off with a `#n` suffix.
+ * twice in one row, and a key given twice is a crash, so every item is keyed by
+ * its base and which copy of it this is.
+ *
+ * The pair is written length-first (`<length>:<base>#<n>`, `n` from 0), so it
+ * reads back one way only: a plain `#n` suffix let a base that already ended
+ * in `#1` collide with the second copy of another, as `Top`, `Top`, `Top#1`.
  */
 fun <T> uniqueKeys(items: List<T>, base: (T) -> String): List<String> {
     val seen = HashMap<String, Int>(items.size)
@@ -22,7 +26,7 @@ fun <T> uniqueKeys(items: List<T>, base: (T) -> String): List<String> {
         val key = base(item)
         val count = seen.getOrDefault(key, 0)
         seen[key] = count + 1
-        if (count == 0) key else "$key#$count"
+        "${key.length}:$key#$count"
     }
 }
 
