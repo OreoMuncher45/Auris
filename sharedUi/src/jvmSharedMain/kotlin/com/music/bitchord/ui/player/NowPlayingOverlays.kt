@@ -11,10 +11,13 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.layout
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.LyricsProviderState
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.flow.first
 
 /**
  * Which of the drawers and dialogs the player raises over itself are up.
@@ -166,4 +169,70 @@ internal fun PlayerOverlays(
             onPlayNext = onPlayNext,
         )
     }
+}
+
+/**
+ * Back, for everything the player raises over itself.
+ *
+ * The newest enabled handler is the one the next press reaches, so these are
+ * registered bottom layer first: the panels, then the drawers and dialogs
+ * drawn over them. The order here is the order back unwinds them in.
+ */
+@Composable
+internal fun PlayerBackHandlers(
+    panels: PlayerPanelState,
+    overlays: PlayerOverlayState,
+    lyricsOffsetOpen: Boolean,
+    onDismissLyricsOffset: () -> Unit,
+    automixPanelOpen: Boolean,
+    onAutomixPanelOpenChange: (Boolean) -> Unit,
+    lyricPicker: LyricsPicker,
+) {
+    // Back out of the lyrics panel to the player, and only from the player
+    // itself out to the mini player.
+    //
+    // See [PlayerBackHandler] for why this needs more than a BackHandler.
+    // Controls being visible must not insert an extra navigation level. Back
+    // always leaves lyrics in one step, whether it starts over the lyrics list
+    // or over the half-player at the bottom.
+    PlayerBackHandler(enabled = panels.lyricsOpen, onBack = panels.closeLyrics)
+
+    // Back out of the queue to the player.
+    PlayerBackHandler(enabled = panels.queueOpen) { panels.queueOpen = false }
+
+    // Back out of the queue's search to the queue. Registered after the
+    // queue's own handler because that is the order back reads them in: the
+    // newest enabled handler is the one the next press reaches, and the search
+    // is drawn over the queue rather than instead of it.
+    PlayerBackHandler(enabled = overlays.queueSearch) { overlays.queueSearch = false }
+
+    // Registered ahead of the pipeline dialog's own handler below: the
+    // pipeline is now only ever opened from the row at the bottom of this
+    // drawer, so it is always the topmost of the two when both are up, and
+    // back has to close it first rather than taking the drawer out from
+    // under it.
+    PlayerBackHandler(enabled = overlays.audioOutput) { overlays.audioOutput = false }
+
+    PlayerBackHandler(enabled = overlays.lyricsProviders) { overlays.lyricsProviders = false }
+
+    PlayerBackHandler(enabled = overlays.listenTogetherMembers) { overlays.listenTogetherMembers = false }
+
+    PlayerBackHandler(enabled = overlays.audioPipeline) { overlays.audioPipeline = false }
+
+    PlayerBackHandler(enabled = overlays.cast) { overlays.cast = false }
+
+    PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
+
+    PlayerBackHandler(enabled = automixPanelOpen) { onAutomixPanelOpenChange(false) }
+
+    // Both of these sit ahead of [lyricsOpen]'s own handler — see the note on
+    // the queue above — because both are drawn *over* the panel rather than
+    // instead of it: back should take away whichever of them is up and leave the
+    // lyrics underneath exactly where the reader left them.
+    PlayerBackHandler(enabled = overlays.lyricsShare != null) { overlays.lyricsShare = null }
+
+    // Backing out of a pick drops the pick, not the panel: somebody who changed
+    // their mind lands on the same verses they started from rather than having
+    // to open the whole panel again.
+    PlayerBackHandler(enabled = lyricPicker.picking) { lyricPicker.cancel() }
 }

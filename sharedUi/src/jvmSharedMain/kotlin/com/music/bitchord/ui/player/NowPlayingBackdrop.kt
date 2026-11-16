@@ -40,6 +40,7 @@ import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -340,4 +341,58 @@ private fun LegacyMeshBackdrop(
         trackKey = trackKey,
         modifier = modifier,
     )
+}
+
+/**
+ * When Spotify Canvas's control deck stands down over its video and when it
+ * comes back.
+ */
+@Composable
+internal fun SpotifyCanvasDeckEffects(
+    clipState: CanvasClipState,
+    presentation: Boolean,
+    autoHide: Boolean,
+    isPlaying: Boolean,
+    scrubbing: Boolean,
+    volumeDragging: Boolean,
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    mixing: Boolean,
+) {
+    // The setting defaults on, restoring the five-second stand-down, but the
+    // listener can keep the deck open indefinitely from Spotify integration.
+    // Pausing or interacting with a continuous control suspends the countdown;
+    // it starts fresh once playback/interaction resumes.
+    LaunchedEffect(
+        presentation,
+        clipState.spotifyControlsOpen,
+        autoHide,
+        isPlaying,
+        scrubbing,
+        volumeDragging,
+        lyricsOpen,
+        queueOpen,
+        mixing,
+    ) {
+        if (!presentation || !clipState.spotifyControlsOpen ||
+            !autoHide || !isPlaying || scrubbing || volumeDragging ||
+            lyricsOpen || queueOpen || mixing
+        ) return@LaunchedEffect
+        delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
+        clipState.spotifyControlsOpen = false
+    }
+
+    // Returning from a subview, or regaining the TextureView after backgrounding,
+    // is a fresh visit, so show the deck again before any optional countdown.
+    LaunchedEffect(presentation, lyricsOpen, queueOpen) {
+        if (presentation && !lyricsOpen && !queueOpen) {
+            clipState.spotifyControlsOpen = true
+        }
+    }
+    // A transition can begin while Canvas is standing alone. Restore and pin
+    // the compact deck so both the outgoing and incoming song are identified;
+    // normal tap/idle collapsing resumes as soon as the mix finishes.
+    LaunchedEffect(presentation, mixing) {
+        if (presentation && mixing) clipState.spotifyControlsOpen = true
+    }
 }
