@@ -156,8 +156,8 @@
     <string name="widget_preview_pill">Tên bài hát - Nghệ sĩ</string>
     <string name="download_quality">Chất lượng tải xuống</string>
     <string name="download_wifi_only">Chỉ tải xuống qua Wi-Fi</string>
-    <string name="auto_download_songs">Tự động tải các bài đã nghe</string>
-    <string name="auto_download_songs_subtitle">Những bài bạn nghe sẽ được lưu tự động. Bản tải xuống bạn tự xóa sẽ không bao giờ được tải lại.</string>
+    <string name="auto_download_songs">Tự động tải các bài mới</string>
+    <string name="auto_download_songs_subtitle">Những bài thêm vào danh sách phát này sẽ được tải tự động. Bản tải xuống bạn tự xóa sẽ không bao giờ được tải lại.</string>
     <string name="convert_to_audio">Chuyển đổi thành âm thanh</string>
     <string name="convert_to_video">Chuyển đổi thành video</string>
     <string name="converting_to_audio">Đang chuyển đổi thành âm thanh…</string>

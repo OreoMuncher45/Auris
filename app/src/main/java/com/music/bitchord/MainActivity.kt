@@ -5679,6 +5679,13 @@ private fun RootPage(
                 song
             }
         }
+        // The playlist behind this page, if it was downloaded whole. Only a
+        // playlist can keep itself up to date: an album is a fixed release
+        // that never gains a track.
+        val downloadedCollection = remember(savedCollections, page.browseId) {
+            Downloads.collectionFor(page.browseId, savedCollections)
+                ?.takeIf { Downloads.isMovingCollection(it) }
+        }
         DetailScreen(
             page = page,
             currentSong = player.song,
@@ -5686,6 +5693,15 @@ private fun RootPage(
             listState = pageDetailListState,
             activeShelf = sheets.detailActiveShelf,
             onActiveShelfChange = { sheets.detailActiveShelf = it },
+            // Keeping the playlist whole is asked for here, on the playlist's
+            // own page: the switch turns the promise on and off for this
+            // playlist alone.
+            autoDownloadSongs = downloadedCollection?.autoDownload,
+            onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
+                {
+                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                }
+            },
             // A Super Mix has no last page: it grows a page at a
             // time as the listener reaches the end of the list.
             onLoadMore = { viewModel.loadMoreDetail(page.browseId) },

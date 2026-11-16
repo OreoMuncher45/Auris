@@ -149,8 +149,8 @@
     <string name="widget_preview_pill">Título da música - Artista</string>
     <string name="download_quality">Qualidade de download</string>
     <string name="download_wifi_only">Baixar apenas por Wi-Fi</string>
-    <string name="auto_download_songs">Transferir automaticamente as músicas ouvidas</string>
-    <string name="auto_download_songs_subtitle">As músicas que ouve são guardadas sozinhas. Uma transferência que apaga à mão nunca é buscada de volta.</string>
+    <string name="auto_download_songs">Transferir automaticamente as músicas novas</string>
+    <string name="auto_download_songs_subtitle">As músicas adicionadas a esta playlist são transferidas sozinhas. Uma transferência que apaga à mão nunca é buscada de volta.</string>
     <string name="spatial_audio">Áudio espacial</string>
     <string name="spatial_audio_subtitle">Amplia as faixas estéreo para uma experiência mais imersiva</string>
     <string name="spatial_audio_atmos_subtitle">Pausado nesta faixa: o Dolby Atmos já é espacial</string>

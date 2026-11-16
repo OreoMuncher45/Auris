@@ -156,8 +156,8 @@
     <string name="widget_preview_pill">Şarkı adı - Sanatçı</string>
     <string name="download_quality">İndirme kalitesi</string>
     <string name="download_wifi_only">Yalnızca Wi-Fi üzerinden indir</string>
-    <string name="auto_download_songs">Çaldığın şarkıları otomatik indir</string>
-    <string name="auto_download_songs_subtitle">Dinlediğin şarkılar kendiliğinden kaydedilir. Kendin sildiğin bir indirme bir daha asla getirilmez.</string>
+    <string name="auto_download_songs">Yeni şarkıları otomatik indir</string>
+    <string name="auto_download_songs_subtitle">Bu oynaklisteye eklenen şarkılar kendiliğinden indirilir. Kendin sildiğin bir indirme bir daha asla getirilmez.</string>
     <string name="convert_to_audio">Sese dönüştür</string>
     <string name="convert_to_video">Videoya dönüştür</string>
     <string name="converting_to_audio">Sese dönüştürülüyor…</string>

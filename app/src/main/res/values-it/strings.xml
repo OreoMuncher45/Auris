@@ -174,8 +174,8 @@
     <string name="widget_preview_pill">Titolo brano - Artista</string>
     <string name="download_quality">Qualità download</string>
     <string name="download_wifi_only">Scarica solo via Wi-Fi</string>
-    <string name="auto_download_songs">Scarica automaticamente i brani ascoltati</string>
-    <string name="auto_download_songs_subtitle">I brani che ascolti vengono salvati da soli. Un download che elimini a mano non viene più scaricato.</string>
+    <string name="auto_download_songs">Scarica automaticamente i nuovi brani</string>
+    <string name="auto_download_songs_subtitle">I brani aggiunti a questa playlist vengono scaricati da soli. Un brano che elimini a mano non viene più scaricato.</string>
     <string name="convert_to_audio">Converti in audio</string>
     <string name="convert_to_video">Converti in video</string>
     <string name="converting_to_audio">Conversione in audio…</string>

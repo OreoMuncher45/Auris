@@ -147,8 +147,8 @@
     <string name="widget_preview_pill">गाने का शीर्षक - कलाकार</string>
     <string name="download_quality">डाउनलोड क्वालिटी</string>
     <string name="download_wifi_only">केवल Wi-Fi पर डाउनलोड करें</string>
-    <string name="auto_download_songs">सुनी गई गानियाँ अपने आप डाउनलोड करें</string>
-    <string name="auto_download_songs_subtitle">जो गाने आप सुनते हैं, वे अपने आप सहेजे जाते हैं। जिस डाउनलोड को आप खुद हटाते हैं, वह फिर कभी नहीं लाया जाता।</string>
+    <string name="auto_download_songs">नए गाने अपने आप डाउनलोड करें</string>
+    <string name="auto_download_songs_subtitle">इस प्लेलिस्ट में जोड़े गए गाने अपने आप डाउनलोड हो जाते हैं। जिस गाने को आप खुद हटाते हैं, वह फिर कभी नहीं लाया जाता।</string>
     <string name="spatial_audio">स्पेशियल ऑडियो</string>
     <string name="spatial_audio_subtitle">ज़्यादा इमर्सिव अनुभव के लिए स्टीरियो ट्रैक को चौड़ा करता है</string>
     <string name="spatial_audio_atmos_subtitle">इस ट्रैक के लिए रुका हुआ — Dolby Atmos पहले से ही स्पेशियल है</string>

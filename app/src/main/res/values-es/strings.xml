@@ -148,8 +148,8 @@
     <string name="widget_preview_pill">Título de la canción - Artista</string>
     <string name="download_quality">Calidad de descarga</string>
     <string name="download_wifi_only">Descargar solo mediante Wi-Fi</string>
-    <string name="auto_download_songs">Descargar automáticamente las canciones escuchadas</string>
-    <string name="auto_download_songs_subtitle">Las canciones que escuchas se guardan solas. Una descarga que borras a mano no se vuelve a descargar.</string>
+    <string name="auto_download_songs">Descargar automáticamente las canciones nuevas</string>
+    <string name="auto_download_songs_subtitle">Las canciones que se añaden a esta lista se descargan solas. Una canción que borras a mano no se vuelve a descargar.</string>
     <string name="spatial_audio">Audio espacial</string>
     <string name="spatial_audio_subtitle">Amplía las pistas estéreo para una experiencia más inmersiva</string>
     <string name="spatial_audio_atmos_subtitle">En pausa para esta pista: Dolby Atmos ya es espacial</string>

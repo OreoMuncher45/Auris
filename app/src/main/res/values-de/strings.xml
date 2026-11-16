@@ -147,8 +147,8 @@
     <string name="widget_preview_pill">Songtitel - Künstler</string>
     <string name="download_quality">Download-Qualität</string>
     <string name="download_wifi_only">Nur über WLAN herunterladen</string>
-    <string name="auto_download_songs">Gespielte Songs automatisch herunterladen</string>
-    <string name="auto_download_songs_subtitle">Songs, die du hörst, werden von selbst gespeichert. Ein Download, den du von Hand löschst, wird nie wieder geholt.</string>
+    <string name="auto_download_songs">Neue Songs automatisch herunterladen</string>
+    <string name="auto_download_songs_subtitle">Songs, die zu dieser Playlist hinzugefügt werden, werden automatisch heruntergeladen. Ein Song, den du von Hand löschst, wird nie wieder geholt.</string>
     <string name="spatial_audio">Räumliches Audio</string>
     <string name="spatial_audio_subtitle">Verbreitert Stereo-Tracks für ein intensiveres Klangerlebnis</string>
     <string name="spatial_audio_atmos_subtitle">Für diesen Titel pausiert – Dolby Atmos ist bereits räumlich</string>
