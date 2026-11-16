@@ -522,14 +522,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val order = resultOrder.toList().asReversed()
         order.forEachIndexed { index, trackId ->
             if (index < peaksKept) return@forEachIndexed
-            results[trackId]?.let { current ->
-                val stripped = current.withoutPeaks()
-                if (stripped !== current) results[trackId] = stripped
-            }
-            partials[trackId]?.let { current ->
-                val stripped = current.withoutPeaks()
-                if (stripped !== current) partials[trackId] = stripped
-            }
+            // One atomic update per key, so a result the worker publishes
+            // meanwhile is not overwritten by a stripped stale copy, and a
+            // partial it has removed does not come back.
+            results.computeIfPresent(trackId) { _, current -> current.withoutPeaks() }
+            partials.computeIfPresent(trackId) { _, current -> current.withoutPeaks() }
         }
         var guard = 0
         while (

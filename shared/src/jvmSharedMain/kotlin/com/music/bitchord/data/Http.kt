@@ -198,24 +198,29 @@ object Http {
      * write per request for nothing. So a response is kept only when all of
      * these hold:
      *
-     * - It is a plain GET with no credential and no byte range. A personal
+     * - It is a plain GET with no credential (no `Authorization` and no
+     *   `Cookie`) and no byte range. A personal
      *   answer is not written to disk, and a range is part of a stream.
      * - It is text: JSON, JavaScript, XML, HTML or `text/`. Media and images
      *   have caches of their own, and a second copy of an audio stream would
      *   double every write.
-     * - It is no larger than [MAX_STORED_BODY_BYTES].
+     * - It states its length, and that length is no larger than
+     *   [MAX_STORED_BODY_BYTES]. The cache writes a body of unknown length
+     *   in full, so the limit can only be checked up front.
      * - It can be reused, either because it states a freshness lifetime or
      *   because it carries a validator the next request can send back.
      */
     private fun worthStoring(request: okhttp3.Request, response: okhttp3.Response): Boolean {
         if (request.method != "GET") return false
-        if (request.header("Authorization") != null || request.header("Range") != null) return false
+        if (request.header("Authorization") != null || request.header("Cookie") != null ||
+            request.header("Range") != null
+        ) return false
         val type = response.header("Content-Type")?.lowercase() ?: return false
         val text = type.startsWith("text/") ||
             "json" in type || "javascript" in type || "xml" in type
         if (!text) return false
-        val length = response.header("Content-Length")?.toLongOrNull() ?: -1L
-        if (length > MAX_STORED_BODY_BYTES) return false
+        val length = response.header("Content-Length")?.toLongOrNull() ?: return false
+        if (length < 0 || length > MAX_STORED_BODY_BYTES) return false
         val control = response.cacheControl
         val fresh = control.maxAgeSeconds > 0 || control.sMaxAgeSeconds > 0 ||
             response.header("Expires") != null
@@ -224,16 +229,17 @@ object Http {
     }
 
     /**
-     * Marks every 200 that [worthStoring] turns down as `no-store`, so the
+     * Marks every response that [worthStoring] turns down as `no-store`, so the
      * cache leaves it alone. A network interceptor, so the request the
      * server sees is unchanged: only the cache's view of the response is
-     * rewritten. A 304 passes through untouched, because the cache merges
-     * its headers into the stored copy.
+     * rewritten. Every status goes through the policy, since OkHttp also
+     * stores cacheable non-200 responses such as a 404. A 304 passes through
+     * untouched, because the cache merges its headers into the stored copy.
      */
     private val cachePolicyInterceptor = okhttp3.Interceptor { chain ->
         val request = chain.request()
         val response = chain.proceed(request)
-        if (response.code != 200 || worthStoring(request, response)) {
+        if (response.code == 304 || worthStoring(request, response)) {
             response
         } else {
             response.newBuilder().header("Cache-Control", "no-store").build()
