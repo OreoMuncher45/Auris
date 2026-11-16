@@ -269,7 +269,7 @@ import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.rememberMediaController
-import com.music.bitchord.playback.rememberPlayerView
+import com.music.bitchord.playback.rememberPlayerReads
 import com.music.bitchord.playback.setQueueDragActive
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.SearchSource
@@ -1165,7 +1165,7 @@ private fun BitChordApp(
         }
     }
     val controller = rememberMediaController()
-    val player = rememberPlayerView(controller)
+    val player = rememberPlayerReads(controller)
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -6265,7 +6265,7 @@ private class DetailListStates {
  * holders) are not inferred stable; without it the compiler compares the
  * whole value by identity, and a value rebuilt on every root recomposition
  * would recompose the page every time. The contract holds field by field:
- * every field is a val; the holders ([RootNav], [RootSheets], [PlayerView],
+ * every field is a val; the holders ([RootNav], [RootSheets], [PlayerReads],
  * [DetailListStates], ...) are the same instances for the root's lifetime
  * and expose only snapshot state or nothing readable; the lists are
  * remembered against what they are built from; and there are no function
@@ -6281,7 +6281,7 @@ private data class PageInputs(
     val scroll: PageScrollStates,
     val viewModel: MainViewModel,
     val scope: kotlinx.coroutines.CoroutineScope,
-    val player: com.music.bitchord.playback.PlayerView,
+    val player: com.music.bitchord.playback.PlayerReads,
     val nav: RootNav,
     val sheets: RootSheets,
     val podcastUi: PodcastUiState,

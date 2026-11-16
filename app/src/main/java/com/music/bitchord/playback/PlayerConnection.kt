@@ -352,13 +352,13 @@ fun MediaController.setQueueDragActive(active: Boolean) {
  *
  * The [structuralEqualityPolicy] is spelled out rather than left to the
  * runtime's default for derived state (which is the same), because it is the
- * whole point: [PlayerViewTest] pins the counts.
+ * whole point: [PlayerReadsTest] pins the counts.
  *
  * Reads made outside composition (a click handler, an effect after a
  * suspension) see the current value, not the value at the last recomposition.
  */
 @Stable
-class PlayerView internal constructor(
+class PlayerReads internal constructor(
     private val source: State<PlayerState>,
     /** The playhead. Its identity never changes — see [PlaybackPosition]. */
     val position: PlaybackPosition,
@@ -387,14 +387,14 @@ class PlayerView internal constructor(
 
 /**
  * Mirrors the controller into Compose state, polling position while playing,
- * and hands it out as a [PlayerView].
+ * and hands it out as [PlayerReads].
  */
 @Composable
-fun rememberPlayerView(controller: MediaController?): PlayerView {
+fun rememberPlayerReads(controller: MediaController?): PlayerReads {
     val position = remember { PlaybackPosition() }
     val stateHolder = remember { mutableStateOf(PlayerState(position = position)) }
     var state by stateHolder
-    val view = remember { PlayerView(stateHolder, position) }
+    val reads = remember { PlayerReads(stateHolder, position) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
@@ -514,7 +514,7 @@ fun rememberPlayerView(controller: MediaController?): PlayerView {
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
         }
     }
-    return view
+    return reads
 }
 
 /**

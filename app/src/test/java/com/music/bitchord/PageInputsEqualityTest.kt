@@ -87,7 +87,7 @@ class PageInputsEqualityTest {
         "com.music.bitchord.RootSheets",
         "com.music.bitchord.PodcastUiState",
         "com.music.bitchord.DetailListStates",
-        "com.music.bitchord.playback.PlayerView",
+        "com.music.bitchord.playback.PlayerReads",
         "androidx.compose.runtime.State",
         "androidx.compose.runtime.MutableState",
         "androidx.compose.foundation.lazy.LazyListState",

@@ -12,17 +12,17 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * A reader of one [PlayerView] property is invalidated only when that
+ * A reader of one [PlayerReads] property is invalidated only when that
  * property changes, not whenever the [PlayerState] behind it is replaced.
  *
  * [SnapshotStateObserver] applies the same derived-state equivalence check
  * composition does, so the counts here are the invalidations a composable
  * reading these properties would get.
  */
-class PlayerViewTest {
+class PlayerReadsTest {
     private val position = PlaybackPosition()
     private val state = mutableStateOf(PlayerState(position = position))
-    private val view = PlayerView(state, position)
+    private val reads = PlayerReads(state, position)
     private val observer = SnapshotStateObserver { it() }
 
     @Before fun start() = observer.start()
@@ -54,7 +54,7 @@ class PlayerViewTest {
 
     @Test fun `song reader ignores play, pause, buffering and duration`() {
         update { copy(song = track) }
-        val count = invalidations(read = { view.song }) {
+        val count = invalidations(read = { reads.song }) {
             update { copy(isPlaying = true) }
             update { copy(isLoading = true) }
             update { copy(isLoading = false) }
@@ -68,20 +68,20 @@ class PlayerViewTest {
         update { copy(song = track) }
         // sync() converts the current MediaItem again on every event, so the
         // song is a new instance each time; only its contents matter.
-        val count = invalidations(read = { view.song }) { update { copy(song = track.copy()) } }
+        val count = invalidations(read = { reads.song }) { update { copy(song = track.copy()) } }
         assertEquals(0, count)
     }
 
     @Test fun `song reader is invalidated on a track change`() {
         update { copy(song = track) }
-        val count = invalidations(read = { view.song }) {
+        val count = invalidations(read = { reads.song }) {
             update { copy(song = track.copy(videoId = "b", title = "B")) }
         }
         assertEquals(1, count)
     }
 
     @Test fun `isPlaying reader is invalidated on play and on pause, not on buffering`() {
-        val count = invalidations(read = { view.isPlaying }) {
+        val count = invalidations(read = { reads.isPlaying }) {
             update { copy(isPlaying = true) }
             update { copy(isLoading = true) }
             update { copy(isLoading = false) }
@@ -91,7 +91,7 @@ class PlayerViewTest {
     }
 
     @Test fun `reading the whole snapshot is invalidated by every change`() {
-        val count = invalidations(read = { view.snapshot }) {
+        val count = invalidations(read = { reads.snapshot }) {
             update { copy(isPlaying = true) }
             update { copy(isLoading = true) }
             update { copy(durationMs = 1L) }
@@ -101,11 +101,11 @@ class PlayerViewTest {
 
     @Test fun `reads outside composition see the current value`() {
         update { copy(song = track, isPlaying = true) }
-        assertEquals("a", view.song?.videoId)
-        assertEquals(true, view.isPlaying)
+        assertEquals("a", reads.song?.videoId)
+        assertEquals(true, reads.isPlaying)
         update { copy(song = track.copy(videoId = "b"), isPlaying = false) }
-        assertEquals("b", view.song?.videoId)
-        assertEquals(false, view.isPlaying)
+        assertEquals("b", reads.song?.videoId)
+        assertEquals(false, reads.isPlaying)
     }
 
     /**
@@ -116,14 +116,14 @@ class PlayerViewTest {
      */
     @Test fun `root body reads are not invalidated by buffering or duration`() {
         update { copy(song = track) }
-        val count = invalidations(read = { view.song?.videoId }) {
+        val count = invalidations(read = { reads.song?.videoId }) {
             update { copy(isLoading = true) }
             update { copy(durationMs = 180_000L) }
             update { copy(isLoading = false) }
             update { copy(durationMs = 181_000L) }
         }
         assertEquals(0, count)
-        val trackChange = invalidations(read = { view.song?.videoId }) {
+        val trackChange = invalidations(read = { reads.song?.videoId }) {
             update { copy(song = track.copy(videoId = "b")) }
         }
         assertEquals(1, trackChange)
@@ -136,7 +136,7 @@ class PlayerViewTest {
      */
     @Test fun `play-pause busy is invalidated only when the combined answer changes`() {
         val awaitingStart = mutableStateOf(false)
-        val busy = derivedStateOf(structuralEqualityPolicy()) { view.isLoading || awaitingStart.value }
+        val busy = derivedStateOf(structuralEqualityPolicy()) { reads.isLoading || awaitingStart.value }
         val count = invalidations(read = { busy.value }) {
             update { copy(isLoading = true) } // false -> true: 1
             Snapshot.withMutableSnapshot { awaitingStart.value = true } // still true
