@@ -916,13 +916,12 @@ fun SettingsScreen(
                     onClick = { pickingAutomixPerformance = true },
                 )
             }
-            // The provider, next to the other decisions about how the app picks
-            // music for the listener. It sits here rather than with the account
-            // rows because it is a choice about the feed, not about a service
-            // connection — Spotify selected with nobody signed in still shows a
-            // home, from Spotify's public lists.
+            // The catalogue, next to the other decisions about how the app
+            // finds music for the listener. It sits here rather than with the
+            // account rows because it is a choice about where the search
+            // looks, not about a service connection.
             val homeProviderTitle = stringResource(R.string.home_provider)
-            row(homeProviderTitle, "provider", "spotify", "youtube", "algorithm", "flow") {
+            row(homeProviderTitle, "provider", "spotify", "youtube", "search", "library") {
                 SettingsRow(
                     icon = Icons.Rounded.Tune,
                     title = homeProviderTitle,
@@ -2697,16 +2696,16 @@ private fun HomeProvider.localizedLabel(): String = stringResource(
 )
 
 /**
- * Content-provider picker: which service's algorithm builds the homepage,
- * Flow and Autoplay.
+ * Catalogue picker: which service's catalogue the search opens on.
  *
  * Two rows now and room for more, which is why this is a list rather than a
- * switch: a third provider is a row and an enum value, not a redesign.
+ * switch: a third catalogue is a row and an enum value, not a redesign.
  *
  * The note at the top says the app restarts, and it is not a warning to be
- * scrolled past — it is the mechanism. Flow and Autoplay each carry learning
- * trained against whichever provider built them, so the change is applied by
- * starting over rather than by swapping a feed underneath a live session.
+ * scrolled past — it is the mechanism. The search's own state and the pages
+ * it opens belong to the catalogue they were read from, so the change is
+ * applied by starting over rather than by swapping a feed underneath a live
+ * session.
  */
 @Composable
 private fun HomeProviderSheet(
