@@ -214,11 +214,34 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * Registered on first use rather than at construction, for the reason
      * [resolver] gives: there is no base context to ask for a service yet.
      */
-    private val thermalWatch by lazy {
+    private val thermalRegistration = lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             context.getSystemService(PowerManager::class.java)?.let { power ->
                 thermalStatus = power.currentThermalStatus
-                power.addThermalStatusListener(Runnable::run) { thermalStatus = it }
+                val listener = PowerManager.OnThermalStatusChangedListener { thermalStatus = it }
+                power.addThermalStatusListener(Runnable::run, listener)
+                power to listener
+            }
+        } else {
+            null
+        }
+    }
+    private val thermalWatch by thermalRegistration
+
+    /**
+     * Takes the thermal listener back off the system in [release].
+     *
+     * The system holds the listener, the listener holds this analyser, and the
+     * analyser holds the playback service it was built with. Left registered,
+     * every service that the system stopped and started again in the same
+     * process stayed reachable from system_server: the old service, the old
+     * analyser and every result still cached in it.
+     */
+    private fun stopThermalWatch() {
+        if (!thermalRegistration.isInitialized()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            thermalWatch?.let { (power, listener) ->
+                runCatching { power.removeThermalStatusListener(listener) }
             }
         }
     }
@@ -2222,6 +2245,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     fun release() {
         com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
+        stopThermalWatch()
         fastExecutor.shutdownNow()
         wholeExecutor.shutdownNow()
         headAttempts.clear()
