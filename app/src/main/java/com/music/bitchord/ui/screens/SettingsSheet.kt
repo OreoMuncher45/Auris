@@ -26,7 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
@@ -41,7 +40,6 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Podcasts
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
@@ -151,7 +149,6 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
-    val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
     val currentDisplay = LocalView.current.display
     val supportedRefreshRates = remember(currentDisplay) {
@@ -472,47 +469,9 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.ADVANCED || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.ADVANCED) {
-            // The way back into the first-run flow, for anybody who wants to
-            // see it again — a tester, or a listener showing somebody what the
-            // app does on the first launch. It forgets the flow has been seen
-            // and then asks the activity to raise it: settings cannot show a
-            // full-screen flow itself, and the activity is the thing that owns
-            // the composition it would sit on.
-            val replayContext = LocalContext.current
-            val replayOnboardingTitle = "Replay onboarding"
-            row(replayOnboardingTitle, "debug", "onboarding", "setup", "first run") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = replayOnboardingTitle,
-                    subtitle = "Show the first-run flow again",
-                    onClick = {
-                        OnboardingState.reset(replayContext)
-                        OnboardingState.requestReplay()
-                    },
-                )
-            }
-            RowDivider()
-            val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
-            row(showNerdStatsTitle, "debug", "bitrate", "codec") {
-                SettingsRow(
-                    icon = Icons.Rounded.BarChart,
-                    title = showNerdStatsTitle,
-                    subtitle = stringResource(R.string.show_nerd_stats_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = nerdStats,
-                            onCheckedChange = AppSettings::setShowNerdStats,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowNerdStats(!nerdStats) },
-                )
-            }
-        }
+            AdvancedSettings(
+                search = search,
+            )
         }
         // Read after every group above has had its turn at the query, which is
         // what makes this an accurate "nothing here" rather than a guess. Not
