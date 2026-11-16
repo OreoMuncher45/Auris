@@ -154,6 +154,38 @@ object StreamChoice {
     }
 
     /**
+     * Tracks outside [keep] pinned to a source the listener has switched off,
+     * each with whether that source is YouTube: a source whose config id is
+     * not in [enabled], or a plain YouTube pin while [youtubeEnabled] is false.
+     * A substitute pin with no config id names no source and is left alone.
+     *
+     * A pin outlives its source being switched off, and nothing else lets go
+     * of it: [remember] keeps an unexpired pin over any replacement, so every
+     * later open of the track is served from the switched-off source until the
+     * pin expires. It can't simply be dropped where it is found, because the
+     * cache entry it filled may hold that source's bytes and may still be
+     * written by a reader that opened earlier. The cache purge hands these
+     * tracks over instead, for tracks away from the playhead: their entry is
+     * dropped first, then [forgetAll] releases the pin.
+     */
+    fun inactivePins(enabled: Set<String>, youtubeEnabled: Boolean, keep: Set<String>): Map<String, Boolean> =
+        buildMap {
+            for ((id, choice) in chosen) {
+                if (id in keep) continue
+                val source = choice.stream.sourceConfigId
+                when {
+                    source != null -> if (source !in enabled) put(id, false)
+                    !choice.substituted -> if (!youtubeEnabled) put(id, true)
+                }
+            }
+        }
+
+    /** Releases the pins of [videoIds]; see [inactivePins]. */
+    fun forgetAll(videoIds: Set<String>) {
+        videoIds.forEach(chosen::remove)
+    }
+
+    /**
      * Tracks whose read-ahead preparation is still looking for a stream.
      *
      * [AudioCache.prefetchQueue][com.music.bitchord.playback.AudioCache.prefetchQueue]

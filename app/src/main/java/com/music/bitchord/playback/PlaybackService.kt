@@ -7165,24 +7165,57 @@ class PlaybackService : MediaLibraryService() {
      * run of skips collapses into one pass. The tracks around the playhead
      * are kept: they may still be read, seeked through or analysed.
      */
+    /**
+     * The tracks around the playhead, whose bytes may still be read, seeked
+     * through or analysed: the one before the current track, the current one,
+     * [FOREIGN_CACHE_KEEP_AHEAD] after it, and whatever the spare player holds.
+     */
+    private fun playheadWindow(): Set<String> = buildSet {
+        val exoPlayer = player ?: return@buildSet
+        exoPlayer.currentMediaItem?.mediaId?.let(::add)
+        val current = exoPlayer.currentMediaItemIndex
+        if (current != C.INDEX_UNSET) {
+            val window = (current - 1)..(current + FOREIGN_CACHE_KEEP_AHEAD)
+            for (index in window) {
+                if (index in 0 until exoPlayer.mediaItemCount) add(exoPlayer.getMediaItemAt(index).mediaId)
+            }
+        }
+        spare?.currentMediaItem?.mediaId?.let(::add)
+    }
+
     private fun scheduleForeignCachePurge() {
         foreignCachePurgeJob?.cancel()
         foreignCachePurgeJob = scope.launch {
             delay(FOREIGN_CACHE_PURGE_DELAY_MS)
-            val exoPlayer = player ?: return@launch
-            val keep = buildSet {
-                exoPlayer.currentMediaItem?.mediaId?.let(::add)
-                val current = exoPlayer.currentMediaItemIndex
-                if (current != C.INDEX_UNSET) {
-                    val window = (current - 1)..(current + FOREIGN_CACHE_KEEP_AHEAD)
-                    for (index in window) {
-                        if (index in 0 until exoPlayer.mediaItemCount) add(exoPlayer.getMediaItemAt(index).mediaId)
-                    }
-                }
-                spare?.currentMediaItem?.mediaId?.let(::add)
-            }
+            if (player == null) return@launch
+            val keep = playheadWindow()
             AudioCache.dropForeignEntries(keep)
+            retireInactivePins(keep)
         }
+    }
+
+    /**
+     * Lets tracks away from the playhead leave a source that has been switched
+     * off. Their cache entry goes first, then their pin, so the next open
+     * resolves afresh instead of being served the old source's pin by
+     * [StreamChoice.remember]. Tracks near the playhead finish on the source
+     * they started on: their entry may still be read or written, and two
+     * servers' bytes in one entry is the corruption the pin exists to prevent.
+     *
+     * The window is read again after the drop, because the playhead can move
+     * onto one of these tracks while it runs. A track that did, or whose entry
+     * could not be dropped, keeps its pin and is handed over at a later purge.
+     */
+    private suspend fun retireInactivePins(keep: Set<String>) {
+        val configs = SourceRegistry.configs.value
+        val enabled = configs.filter { it.enabled }.mapTo(mutableSetOf()) { it.id }
+        val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep)
+        if (stale.isEmpty()) return
+        val dropped = stale.entries.groupBy({ it.value }, { it.key })
+            .flatMap { (youtube, ids) -> AudioCache.dropEntriesOf(ids.toSet(), youtube) }
+            .toSet()
+        val nowKept = playheadWindow()
+        StreamChoice.forgetAll(dropped - nowKept)
     }
 
     /**
@@ -8214,6 +8247,16 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+        }
+        scope.launch {
+            // A source switched off hands its pinned tracks over at the next
+            // purge, rather than at the next track change; see
+            // [retireInactivePins].
+            SourceRegistry.configs
+                .map { configs -> configs.filter { it.enabled }.map { it.id }.toSet() }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { scheduleForeignCachePurge() }
         }
         scope.launch {
             // Re-evaluate the already queued next track immediately when this
