@@ -2398,9 +2398,6 @@ class PlaybackService : MediaLibraryService() {
                 existing = listOf(radioSeed),
                 seedSong = radioSeed,
                 limit = INITIAL_STATION_TRACKS,
-                // A station, asked for by the track that is playing: on a
-                // Spotify session that is Spotify's own mix of that track.
-                station = true,
             ).getOrElse {
                 TrackLog.w(
                     "BitChord",
