@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.PlaybackPosition
@@ -364,5 +366,27 @@ internal fun PortraitQueuePane(
             onOpenSearch = onOpenSearch,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+/**
+ * The lyrics panel's half player stands down after [LYRICS_CONTROLS_IDLE_MS]
+ * left alone, and never while a finger is on the scrubber or the volume bar.
+ *
+ * A composable of its own so the states it is keyed on are read here: a
+ * scrub or a volume drag starting or ending re-keys this effect and recomposes
+ * nothing else.
+ */
+@Composable
+internal fun LyricsControlsIdleEffect(
+    panels: PlayerPanelState,
+    scrub: PlayerScrub,
+    volume: PlayerVolume,
+) {
+    LaunchedEffect(panels.lyricsOpen, panels.lyricsControlsOpen, scrub.scrubbing, volume.dragging) {
+        if (panels.lyricsOpen && panels.lyricsControlsOpen && !scrub.scrubbing && !volume.dragging) {
+            delay(LYRICS_CONTROLS_IDLE_MS)
+            panels.lyricsControlsOpen = false
+        }
     }
 }

@@ -878,7 +878,7 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
     windowWidth > windowHeight && windowWidth >= LANDSCAPE_PLAYER_MIN_WIDTH
 
 /** How long the player stands under the lyrics untouched before standing down. */
-private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
+internal const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 /** Default Spotify Canvas delay before its optional automatic collapse. */
 internal const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
 /** One shared travel time keeps the deck, credits and stats moving as a unit. */
@@ -1487,12 +1487,11 @@ fun NowPlayingScreen(
     // Never while a finger is on the scrubber or the volume bar: those are the
     // two controls that are *being used* while nothing else on screen moves,
     // and timing out underneath them would take the thing away mid-gesture.
-    LaunchedEffect(panels.lyricsOpen, panels.lyricsControlsOpen, scrub.scrubbing, volume.dragging) {
-        if (panels.lyricsOpen && panels.lyricsControlsOpen && !scrub.scrubbing && !volume.dragging) {
-            delay(LYRICS_CONTROLS_IDLE_MS)
-            panels.lyricsControlsOpen = false
-        }
-    }
+    //
+    // In a scope of its own: the four states it waits on change at the start
+    // and end of every scrub and volume drag, and read here they recomposed
+    // the whole player each time.
+    LyricsControlsIdleEffect(panels = panels, scrub = scrub, volume = volume)
     // How collapsed the sleeve is, whichever surface asked for it — one 420ms
     // ease for the queue and the lyrics both.
     val animatedCollapse = animateFloatAsState(
@@ -1706,8 +1705,8 @@ fun NowPlayingScreen(
         presentation = spotifyCanvasPresentation,
         autoHide = spotifyCanvasAutoHide,
         isPlaying = isPlaying,
-        scrubbing = scrub.scrubbing,
-        volumeDragging = volume.dragging,
+        scrub = scrub,
+        volume = volume,
         lyricsOpen = panels.lyricsOpen,
         queueOpen = panels.queueOpen,
         mixing = mixing,

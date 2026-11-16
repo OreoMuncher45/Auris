@@ -353,8 +353,9 @@ internal fun SpotifyCanvasDeckEffects(
     presentation: Boolean,
     autoHide: Boolean,
     isPlaying: Boolean,
-    scrubbing: Boolean,
-    volumeDragging: Boolean,
+    /** Read inside: a scrub or volume drag starting re-keys only these effects. */
+    scrub: PlayerScrub,
+    volume: PlayerVolume,
     lyricsOpen: Boolean,
     queueOpen: Boolean,
     mixing: Boolean,
@@ -368,14 +369,14 @@ internal fun SpotifyCanvasDeckEffects(
         clipState.spotifyControlsOpen,
         autoHide,
         isPlaying,
-        scrubbing,
-        volumeDragging,
+        scrub.scrubbing,
+        volume.dragging,
         lyricsOpen,
         queueOpen,
         mixing,
     ) {
         if (!presentation || !clipState.spotifyControlsOpen ||
-            !autoHide || !isPlaying || scrubbing || volumeDragging ||
+            !autoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
             lyricsOpen || queueOpen || mixing
         ) return@LaunchedEffect
         delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
