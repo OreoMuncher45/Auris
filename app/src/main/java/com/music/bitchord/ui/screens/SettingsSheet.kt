@@ -26,13 +26,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Notes
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
-import androidx.compose.material.icons.rounded.BlurOn
 import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -45,13 +41,10 @@ import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Fullscreen
-import androidx.compose.material.icons.rounded.Gradient
-import androidx.compose.material.icons.rounded.ZoomOut
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -69,12 +62,10 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewWeek
-import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
-import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -145,7 +136,6 @@ import com.music.bitchord.data.settings.AppUi
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.stats.Backup
-import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -205,21 +195,10 @@ fun SettingsScreen(
     val blockedArtists by AppSettings.blockedArtists.collectAsStateWithLifecycle()
     val blockAi by AppSettings.blockAiMusic.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
-    val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
-    val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
-    val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
-    val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    val zoomOutAlbumArt by AppSettings.zoomOutAlbumArt.collectAsStateWithLifecycle()
-    val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
-    val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
-    val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val appUi by AppSettings.appUi.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
-    val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
-    val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -243,16 +222,6 @@ fun SettingsScreen(
     // The customisation settings that used to live on their own page, read here
     // because their rows sit in the Now Playing, Home & library and Appearance
     // categories now.
-    val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
-    val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
-    val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
-    val perfCpu by com.music.bitchord.perf.PerfMonitor.cpuPercent.collectAsStateWithLifecycle()
-    val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
-    val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
-    val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
-    val showLosslessBadge by AppSettings.showLosslessBadge.collectAsStateWithLifecycle()
-    val showHiResBadge by AppSettings.showHiResBadge.collectAsStateWithLifecycle()
-    val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
     val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val appFont by AppSettings.appFont.collectAsStateWithLifecycle()
@@ -499,444 +468,14 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.NOW_PLAYING || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.NOW_PLAYING) {
-            val nowPlayingColorsTitle = stringResource(R.string.custom_now_playing)
-            row(nowPlayingColorsTitle, "colour", "color", "buttons", "seekbar", "text", "lyrics", "artwork") {
-                SettingsRow(
-                    icon = Icons.Rounded.Palette,
-                    title = nowPlayingColorsTitle,
-                    subtitle = stringResource(R.string.custom_now_playing_help),
-                    onClick = { sheets.showPlayerColors = true },
-                )
-            }
-            val textGlowTitle = stringResource(R.string.custom_text_glow)
-            row(textGlowTitle, "glow", "shadow", "text") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = textGlowTitle,
-                    subtitle = stringResource(R.string.custom_text_glow_help),
-                    trailing = {
-                        Switch(
-                            checked = textGlow,
-                            onCheckedChange = AppSettings::setTextGlow,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setTextGlow(!textGlow) },
-                )
-            }
-            val nowPlayingLyricsTitle = stringResource(R.string.custom_now_playing_lyrics)
-            row(nowPlayingLyricsTitle, "lyrics", "line", "clean") {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Rounded.Notes,
-                    title = nowPlayingLyricsTitle,
-                    subtitle = stringResource(R.string.custom_now_playing_lyrics_help),
-                    trailing = {
-                        Switch(
-                            checked = showNowPlayingLyrics,
-                            onCheckedChange = AppSettings::setShowNowPlayingLyrics,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowNowPlayingLyrics(!showNowPlayingLyrics) },
-                )
-            }
-            val nextTrackStatusTitle = stringResource(R.string.custom_next_track_status)
-            row(nextTrackStatusTitle, "next track", "indicator", "status") {
-                SettingsRow(
-                    icon = Icons.Rounded.PlayArrow,
-                    title = nextTrackStatusTitle,
-                    subtitle = stringResource(R.string.custom_next_track_status_help),
-                    trailing = {
-                        Switch(
-                            checked = showNextTrackStatus,
-                            onCheckedChange = AppSettings::setShowNextTrackStatus,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowNextTrackStatus(!showNextTrackStatus) },
-                )
-            }
-            val upgradeBadgeTitle = stringResource(R.string.custom_upgrade_badge)
-            row(upgradeBadgeTitle, "upgrade", "badge", "indicator") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = upgradeBadgeTitle,
-                    subtitle = stringResource(R.string.custom_upgrade_badge_help),
-                    trailing = {
-                        Switch(
-                            checked = showUpgradeBadge,
-                            onCheckedChange = AppSettings::setShowUpgradeBadge,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowUpgradeBadge(!showUpgradeBadge) },
-                )
-            }
-            val losslessBadgeTitle = stringResource(R.string.custom_lossless_badge)
-            row(losslessBadgeTitle, "lossless", "badge", "indicator") {
-                SettingsRow(
-                    icon = Icons.Rounded.GraphicEq,
-                    title = losslessBadgeTitle,
-                    subtitle = stringResource(R.string.custom_lossless_badge_help),
-                    trailing = {
-                        Switch(
-                            checked = showLosslessBadge,
-                            onCheckedChange = AppSettings::setShowLosslessBadge,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowLosslessBadge(!showLosslessBadge) },
-                )
-            }
-            val hiresBadgeTitle = stringResource(R.string.custom_hires_badge)
-            row(hiresBadgeTitle, "hires", "hi-res", "badge", "indicator") {
-                SettingsRow(
-                    icon = Icons.Rounded.GraphicEq,
-                    title = hiresBadgeTitle,
-                    subtitle = stringResource(R.string.custom_hires_badge_help),
-                    trailing = {
-                        Switch(
-                            checked = showHiResBadge,
-                            onCheckedChange = AppSettings::setShowHiResBadge,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setShowHiResBadge(!showHiResBadge) },
-                )
-            }
-            val transportSmoothnessTitle = stringResource(R.string.custom_transport_smoothness)
-            row(transportSmoothnessTitle, "smoothness", "animation", "controls") {
-                SliderRow(
-                    icon = Icons.Rounded.Tune,
-                    title = transportSmoothnessTitle,
-                    subtitle = stringResource(R.string.custom_transport_smoothness_help),
-                    value = "${(transportSmoothness * 100).roundToInt()}%",
-                    sliderValue = transportSmoothness,
-                    onSliderValue = { AppSettings.setTransportSmoothness(it) },
-                    valueRange = 0f..1f,
-                    steps = 0,
-                )
-            }
-            val liveBlurTitle = stringResource(R.string.custom_live_blur)
-            row(liveBlurTitle, "blur", "artwork", "player", "battery") {
-                SettingsRow(
-                    icon = Icons.Rounded.BlurOn,
-                    title = liveBlurTitle,
-                    subtitle = stringResource(R.string.custom_live_blur_help),
-                    trailing = {
-                        Switch(
-                            checked = liveBlur,
-                            onCheckedChange = AppSettings::setLiveBlur,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setLiveBlur(!liveBlur) },
-                )
-            }
-            val perfMonitorTitle = stringResource(R.string.perf_monitor)
-            row(perfMonitorTitle, "performance", "cpu", "debug", "log") {
-                SettingsRow(
-                    icon = Icons.Rounded.Speed,
-                    title = perfMonitorTitle,
-                    subtitle = stringResource(R.string.perf_monitor_help),
-                    trailing = {
-                        Switch(
-                            checked = perfMonitor,
-                            onCheckedChange = AppSettings::setPerfMonitor,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setPerfMonitor(!perfMonitor) },
-                )
-            }
-            if (perfMonitor) {
-                row(
-                    stringResource(R.string.perf_save_log),
-                    "performance",
-                    "log",
-                    "save",
-                ) {
-                    SettingsRow(
-                        icon = Icons.Rounded.FileDownload,
-                        title = stringResource(R.string.perf_save_log),
-                        subtitle = stringResource(
-                            R.string.perf_save_log_help,
-                            perfCpu.roundToInt(),
-                        ),
-                        onClick = {
-                            val file = com.music.bitchord.perf.PerfMonitor.save(context)
-                            android.widget.Toast.makeText(
-                                context,
-                                file.absolutePath,
-                                android.widget.Toast.LENGTH_LONG,
-                            ).show()
-                        },
-                    )
-                }
-            }
-            // Left out where the player won't honour it: a window too wide for
-            // the player to fill and too narrow to stand a page beside it keeps
-            // the sleeve either way. A docked pane is a phone's width, so it does
-            // honour it — see [fullBleedArtworkAvailable].
-            if (fullBleedArtworkAvailable(windowWidth)) {
-                val fullScreenCoverArtTitle = stringResource(R.string.full_screen_cover_art)
-                row(fullScreenCoverArtTitle, "artwork", "player") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Fullscreen,
-                        title = fullScreenCoverArtTitle,
-                        subtitle = stringResource(R.string.full_screen_cover_art_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = fullBleedArtwork,
-                                onCheckedChange = AppSettings::setFullBleedArtwork,
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        },
-                        onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
-                    )
-                }
-                // The picture inside the card, rather than the card itself: the
-                // other way of looking at a cover that is cropped too tightly.
-                // A row of its own, because it is a choice about the picture
-                // and not about the treatment the picture sits in.
-                val zoomOutAlbumArtTitle = stringResource(R.string.zoom_out_album_art)
-                row(zoomOutAlbumArtTitle, "artwork", "player", "zoom") {
-                    SettingsRow(
-                        icon = Icons.Rounded.ZoomOut,
-                        title = zoomOutAlbumArtTitle,
-                        subtitle = stringResource(R.string.zoom_out_album_art_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = zoomOutAlbumArt,
-                                onCheckedChange = AppSettings::setZoomOutAlbumArt,
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        },
-                        onClick = { AppSettings.setZoomOutAlbumArt(!zoomOutAlbumArt) },
-                    )
-                }
-            }
-            val legacyMeshGradientTitle = stringResource(R.string.legacy_mesh_gradient)
-            row(legacyMeshGradientTitle, "background", "player") {
-                SettingsRow(
-                    icon = Icons.Rounded.Gradient,
-                    title = legacyMeshGradientTitle,
-                    subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = legacyMeshGradient,
-                            onCheckedChange = AppSettings::setLegacyMeshGradient,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
-                )
-            }
-            val animatedCoverArtTitle = stringResource(R.string.animated_cover_art)
-            // Carries the keywords of the rows that only appear once it is on,
-            // so searching "spotify" with animated covers switched off turns up
-            // the switch that brings the Spotify row back rather than nothing.
-            row(animatedCoverArtTitle, "canvas", "video", "spotify") {
-                SettingsRow(
-                    icon = Icons.Rounded.Animation,
-                    title = animatedCoverArtTitle,
-                    subtitle = stringResource(R.string.animated_cover_art_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = animatedCanvas,
-                            onCheckedChange = AppSettings::setAnimatedCanvas,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
-                )
-            }
-            // Reads as part of the Animated cover art option above it, not
-            // as a separate setting. Nothing to narrow while the clip itself
-            // is off. Defaults to off: a clip loops for as long as its track
-            // plays, so on cellular this is not a one-time video cost but
-            // that cost repeated on every loop — see AppSettings.canvasOverCellular.
-            if (animatedCanvas) {
-                val coverCellularTitle = stringResource(R.string.animated_cover_cellular)
-                row(coverCellularTitle, "canvas", "cellular", divided = false) {
-                    SettingsSubRow(
-                        title = coverCellularTitle,
-                        checked = canvasOverCellular,
-                        onCheckedChange = AppSettings::setCanvasOverCellular,
-                    )
-                }
-                val spotifyCanvasTitle = stringResource(R.string.integrate_spotify_canvas)
-                row(spotifyCanvasTitle, "spotify", "canvas", divided = false) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onSpotifyCanvasAuth)
-                            .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = spotifyCanvasTitle,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Chevron()
-                    }
-                }
-            }
-            val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
-            // Same reasoning as Animated cover art above: the lyrics source and
-            // translation rows are only here while this is on.
-            row(syncedLyricsTitle, "lyrics", "translation", "lrclib", "musixmatch") {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Rounded.Notes,
-                    title = syncedLyricsTitle,
-                    subtitle = stringResource(R.string.synced_lyrics_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = syncedLyrics,
-                            onCheckedChange = AppSettings::setSyncedLyrics,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setSyncedLyrics(!syncedLyrics) },
-                )
-            }
-            // Nothing to choose between while the feature is off, and the
-            // sources are third-party services being reached on the user's
-            // connection — which is the part worth being able to narrow.
-            if (syncedLyrics) {
-                val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
-                row(lyricsBlurTitle, "lyrics", "blur") {
-                    SettingsRow(
-                        icon = Icons.Rounded.BlurOn,
-                        title = lyricsBlurTitle,
-                        subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = lyricsBlur,
-                                onCheckedChange = AppSettings::setLyricsBlur,
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        },
-                        onClick = { AppSettings.setLyricsBlur(!lyricsBlur) },
-                    )
-                }
-                val lyricsSourcesTitle = stringResource(R.string.lyrics_sources)
-                row(lyricsSourcesTitle, "lyrics", "lrclib", "musixmatch") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Language,
-                        title = lyricsSourcesTitle,
-                        subtitle = lyricsSources
-                            .sortedBy { it.ordinal }
-                            .joinToString(", ") { it.label }
-                            .ifEmpty { stringResource(R.string.no_lyrics_sources_enabled) },
-                        trailing = { Chevron() },
-                        onClick = onLyricsSources,
-                    )
-                }
-                val translationLanguageTitle = stringResource(R.string.translation_language)
-                row(translationLanguageTitle, "lyrics", "translate") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Translate,
-                        title = translationLanguageTitle,
-                        subtitle = if (translationLanguage.isBlank()) {
-                            stringResource(R.string.translation_language_subtitle)
-                        } else {
-                            translationLanguageName(
-                                translationLanguage,
-                                AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault(),
-                            )
-                        },
-                        trailing = { Chevron() },
-                        onClick = onTranslationLanguage,
-                    )
-                }
-            }
-            val hideVolumeBarTitle = stringResource(R.string.hide_volume_bar)
-            row(hideVolumeBarTitle, "volume", "player") {
-                SettingsRow(
-                    icon = Icons.Rounded.VolumeOff,
-                    title = hideVolumeBarTitle,
-                    subtitle = stringResource(R.string.hide_volume_bar_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = hideVolumeBar,
-                            onCheckedChange = AppSettings::setHideVolumeBar,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
-                )
-            }
-            val hideSongStatusTitle = stringResource(R.string.hide_song_status)
-            row(hideSongStatusTitle, "player", "playing from", "played by") {
-                SettingsRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    title = hideSongStatusTitle,
-                    subtitle = stringResource(R.string.hide_song_status_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = hideSongStatus,
-                            onCheckedChange = AppSettings::setHideSongStatus,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setHideSongStatus(!hideSongStatus) },
-                )
-            }
-        }
+            NowPlayingSettings(
+                search = search,
+                sheets = sheets,
+                windowWidth = windowWidth,
+                onSpotifyCanvasAuth = onSpotifyCanvasAuth,
+                onLyricsSources = onLyricsSources,
+                onTranslationLanguage = onTranslationLanguage,
+            )
         }
         if (openCategory == SettingsCategory.HOME_LIBRARY || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.HOME_LIBRARY) {
