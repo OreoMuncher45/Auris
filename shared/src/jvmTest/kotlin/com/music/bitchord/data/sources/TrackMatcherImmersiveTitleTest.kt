@@ -79,6 +79,14 @@ class TrackMatcherImmersiveTitleTest {
     }
 
     @Test
+    fun aVersionSharingTheLabelsBracketIsStillAVersion() {
+        val target = TrackMatcher.Target("Morning Light (Eclipsa Audio Live)", "River Lane", durationSec = 200)
+        val rows = listOf(song("Morning Light (Live)", "River Lane", "3:20"))
+
+        assertEquals("Morning Light (Live)", TrackMatcher.best(rows, target)?.title)
+    }
+
+    @Test
     fun theSearchDoesNotAskForTheFormatName() {
         val target = TrackMatcher.Target("Morning Light Eclipsa Audio", "River Lane", durationSec = 200)
 

@@ -862,9 +862,11 @@ object TrackMatcher {
 
     /**
      * YouTube's immersive-upload label, wherever a title carries it, with the
-     * separators in front of it ("봄날·Eclipsa Audio"); see [parseTitle].
+     * separators in front of it ("봄날·Eclipsa Audio") but never a bracket:
+     * "(Eclipsa Audio Live)" has to stay an aside for "live" to be read as a
+     * version. See [parseTitle].
      */
-    private val IMMERSIVE_LABEL = Regex("""[\s\p{P}\p{S}]*(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+    private val IMMERSIVE_LABEL = Regex("""[\s\p{P}\p{S}&&[^()\[\]]]*(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
     /** The last word of a title and the separators around it; see the CJK core in [parseTitle]. */
     private val TRAILING_LABEL = Regex("""[\s\p{P}\p{S}]+([\p{L}\p{N}]+)[\s\p{P}\p{S}]*$""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
