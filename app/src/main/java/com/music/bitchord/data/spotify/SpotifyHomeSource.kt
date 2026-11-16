@@ -1,6 +1,10 @@
 package com.music.bitchord.data.spotify
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.model.HomeChip
+import com.music.bitchord.data.model.HomeHeader
+import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -11,35 +15,81 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Spotify, as this app reads it.
+ * The Spotify side of the homepage: Spotify's own curation, as the web player
+ * draws it.
  *
- * Two things live here, and both are about the listener rather than about a
- * feed:
+ * ## The shape
  *
- *  - [listens]: what they are playing over there — their top tracks and what
- *    they played lately — matched to something this app can play. That is the
- *    one thing Spotify contributes to the mix, and it is *material*, not a
- *    second algorithm: the mix is built by one engine and expanded through
- *    one radio, and Spotify's listening is what seeds it.
- *  - the row a Spotify page draws: [songFor], for a catalogue track that has
- *    no playable id behind it yet.
+ * The page is the web player's home feed: a greeting, a row of chips, a grid
+ * of quick-access tiles, and then a list of titled shelves of cards. Every
+ * card is a collection — a playlist, an album, an artist — and not a track,
+ * because that is what Spotify's own home holds and because it is the only
+ * shape this app can draw without searching: a shelf of tracks has to be
+ * matched to something playable before it can be shown, and matching a track
+ * means a YouTube search. Twelve tracks a shelf, ten shelves, is a hundred
+ * and twenty searches before the page is finished. A shelf of cards costs
+ * none; the search happens when the listener opens one.
  *
- * ## What is not here any more
+ * ## Signed in, and not
  *
- * Spotify's own home page — its curation, its cards, its public browse lists
- * — and its own algorithm for what comes next. Both were the app's second
- * algorithm: a second feed that repeated the same track across its rows, a
- * second radio that answered with the listener's saved songs whether they had
- * asked for that or not, and a second answer to the same question. The
- * homepage is YouTube Music's and the radio is YouTube Music's; what Spotify
- * knows about the listener still comes through [listens].
+ * Signed in, the feed is the listener's own: their shortcuts, their mixes,
+ * the things they jumped back into. Signed out there is nobody's taste to
+ * read, so the page falls back through what a visitor can reach — the
+ * catalogue's own browse grid and its new releases — and says plainly which
+ * of those it got.
+ *
+ * The backend is the web player's own (`api-partner`), not the public `/v1`
+ * catalogue. The public catalogue rate limits *per client*, and the web
+ * player's client is shared by everyone who harvests a token from it: measured
+ * on a signed-in session, recently-played, top-tracks and featured-playlists
+ * all came back `429 API rate limit exceeded`, at once, in the same way.
+ *
+ * ## What this is not
+ *
+ * It is not a byte-for-byte copy of the web player's page. It is the same
+ * feed, read through this app's own GraphQL client and drawn with this app's
+ * own cards — and when the feed cannot be read, the page says why instead of
+ * showing nothing.
+ *
+ * ## And what it is not either
+ *
+ * This is a *catalogue*, not an algorithm. What plays next — Flow, AutoPlay,
+ * "more like this" — is YouTube Music's, whichever catalogue is chosen here.
+ * What Spotify contributes to that mix is [listens]: what the listener is
+ * playing over there, which is material for one engine rather than a second
+ * engine of its own.
  */
 internal object SpotifyHomeSource {
 
     private const val TAG = "SpotifyHome"
+
+    /**
+     * How many tracks of a row are matched and shown.
+     *
+     * A cap rather than the whole collection: matching one track means a
+     * YouTube search, and a row of twenty is twenty searches for cards
+     * nobody scrolls to. Twelve fills a row at any phone width.
+     */
+    private const val TRACKS_PER_ROW = 12
+
+    /**
+     * How many tiles the quick-access grid holds.
+     *
+     * Eight is two rows of four on a phone, which is what Spotify's own grid
+     * holds and what fits above the fold without the shelves being pushed
+     * out of sight.
+     */
+    private const val SHORTCUTS = 8
+
+    /** How many of the listener's own collections become rows. */
+    private const val LIBRARY_ROWS = 4
 
     /** How many matches may be in flight at once; each one is a search. */
     private const val MATCH_CONCURRENCY = 4
@@ -58,13 +108,271 @@ internal object SpotifyHomeSource {
      * Spotify track id to the track this app will play for it.
      *
      * In memory for now, and deliberately: a match is a *search result*, and a
-     * stale one is a wrong song played confidently. A track that has been seen
+     * stale one is a wrong song played confidently. A row that has been seen
      * once in a session loads instantly; a fresh process asks again.
      */
     private val matches = ConcurrentHashMap<String, Song>()
 
     /** Whether a listener's session can be read. */
     fun isSignedIn(): Boolean = AppSettings.spotifySpdcToken.value.isNotBlank()
+
+    /**
+     * The page, plus — when there is none — why not.
+     *
+     * A caller cannot act on "nothing", and neither can the person testing
+     * it: an empty Spotify home has several quite different causes (no token
+     * minted from the web player, the backend refusing, the feed read and
+     * then found to hold no cards), and they need opposite fixes. So the
+     * reason travels with the result and is shown.
+     */
+    data class HomeOutcome(
+        val shelves: List<HomeShelf> = emptyList(),
+        val header: HomeHeader? = null,
+        val reason: String? = null,
+    ) {
+        /** Whether the page has anything to draw. */
+        val isEmpty: Boolean
+            get() = shelves.isEmpty() && (header?.shortcuts.isNullOrEmpty())
+    }
+
+    /**
+     * The page, as it should be drawn.
+     *
+     * @param facet the chip in force; "" for the whole page.
+     */
+    suspend fun page(facet: String = ""): HomeOutcome = withContext(Dispatchers.IO) {
+        SpotifyWebApi.clearProblems()
+        // The diagnostic belongs to this read: a failure two minutes ago says
+        // nothing about this one.
+        diagnostic = null
+        // A token first, because everything downstream answers null without one
+        // and "Spotify returned nothing" would then be the wrong story entirely.
+        // Cached, so this costs the rest of the calls nothing.
+        val signedIn = isSignedIn()
+        val token = if (signedIn) SpotifyToken.accessToken() else SpotifyToken.anonymousToken()
+        if (token == null) {
+            return@withContext HomeOutcome(
+                reason = if (signedIn) {
+                    "Couldn't get a Spotify token for your account — the session may have expired."
+                } else {
+                    "Couldn't get a public Spotify token. Try again in a moment."
+                },
+            )
+        }
+
+        // Spotify's own feed first. It is the page the web player draws, and
+        // it is the only one of these that is personalised.
+        val feed = runCatching { homeFeed(facet) }.getOrElse { error ->
+            note("Spotify's home feed could not be read: ${error.message}")
+            null
+        }
+        if (feed != null && feed.sections.isNotEmpty()) {
+            return@withContext HomeOutcome(
+                shelves = feed.shelves.mapNotNull { shelf -> cardShelf(shelf) },
+                header = HomeHeader(
+                    greeting = feed.greeting.takeIf { it.isNotBlank() },
+                    shortcuts = feed.shortcuts.take(SHORTCUTS).mapNotNull { card -> card.item() },
+                    chips = feed.chips.map { it.item() },
+                    chip = facet,
+                ),
+            )
+        }
+
+        // No feed. A visitor can still reach the public catalogue, and that
+        // is a page with something on it rather than a page asking for a
+        // sign-in it does not need.
+        val fallback = runCatching { publicShelves() }.getOrElse { error ->
+            note("Spotify's public catalogue could not be read: ${error.message}")
+            emptyList()
+        }
+        if (fallback.isNotEmpty()) {
+            return@withContext HomeOutcome(
+                shelves = fallback,
+                // No greeting: there is no feed to greet with. The page's own
+                // heading says what the page is, which is more use than a
+                // heading that repeats the service's name.
+                header = HomeHeader(),
+            )
+        }
+
+        // Signed in, the listener's own library is still there to be read —
+        // it is the same backend, and it does not rate limit the way the
+        // public catalogue does.
+        if (signedIn) {
+            val library = libraryRows()
+            if (library.isNotEmpty()) return@withContext HomeOutcome(shelves = library)
+        }
+
+        val limited = SpotifyGraphQL.rateLimitSecondsRemaining()
+        val problems = SpotifyWebApi.problems()
+        HomeOutcome(
+            reason = buildString {
+                if (limited > 0) {
+                    append("Spotify is rate limiting this device. ")
+                    append("It lifts in about ${limited} second")
+                    append(if (limited == 1) "." else "s.")
+                    if (!signedIn) {
+                        append(" Signing in lets Auris read your library, which Spotify does not limit.")
+                    }
+                    append("\n\n")
+                }
+                append(diagnostic ?: "Spotify returned no rows")
+                if (problems.isNotEmpty()) {
+                    append("\n\n")
+                    append(problems.joinToString("\n"))
+                }
+            },
+        )
+    }
+
+    /**
+     * Spotify's home feed, as the web player reads it.
+     *
+     * The variables are the web player's own: the time zone the page greets
+     * the listener in, the browser id it was given, the chip in force, and
+     * how many cards a shelf may hold.
+     */
+    private suspend fun homeFeed(facet: String): SpotifyHomeFeed {
+        val variables = buildJsonObject {
+            put("timeZone", java.util.TimeZone.getDefault().id)
+            put("sp_t", SpotifyToken.spToken().orEmpty())
+            put("facet", facet)
+            put("sectionItemsLimit", 10)
+            put("homeEndUserIntegration", "INTEGRATION_WEB_PLAYER")
+            put("includeEpisodeContentRatingsV2", false)
+            put("includeHomeChapterVideoCards", false)
+        }
+        return SpotifyHomeFeedParser.parse(SpotifyGraphQL.query("home", variables))
+    }
+
+    /**
+     * The public catalogue, for a listener who has not signed in.
+     *
+     * The browse grid first — the same genre and mood cards the web player
+     * shows on its search page — and then what is new. Both are read through
+     * the same backend as everything else, so neither of them is the
+     * rate-limited public API that gave the old home a 429 on every call.
+     */
+    private suspend fun publicShelves(): List<HomeShelf> = coroutineScope {
+        val browse = async { browseCategories() }
+        val fresh = async { newReleases() }
+        buildList {
+            browse.await()?.let(::add)
+            fresh.await()?.let(::add)
+        }
+    }
+
+    /** The catalogue's own grid of genres and moods. */
+    private suspend fun browseCategories(): HomeShelf? {
+        val variables = buildJsonObject {
+            putJsonObject("pagePagination") {
+                put("offset", 0)
+                put("limit", 10)
+            }
+            putJsonObject("sectionPagination") {
+                put("offset", 0)
+                put("limit", 99)
+            }
+            put("browseEndUserIntegration", "INTEGRATION_WEB_PLAYER")
+        }
+        val root = runCatching { SpotifyGraphQL.query("browseAll", variables) }.getOrElse { error ->
+            Log.w(TAG, "the browse grid could not be read: ${error.message}")
+            return null
+        }
+        val cards = SpotifyBrowseCards.parse(root)
+        if (cards.isEmpty()) return null
+        return HomeShelf(title = "Browse", items = cards.mapNotNull { it.item() })
+    }
+
+    /** What is new in the catalogue. */
+    private suspend fun newReleases(): HomeShelf? {
+        val variables = buildJsonObject {
+            put("offset", 0)
+            put("limit", 20)
+            put("onlyUnPlayedItems", false)
+        }
+        val root = runCatching { SpotifyGraphQL.query("queryWhatsNewFeed", variables) }.getOrElse { error ->
+            Log.w(TAG, "the new-releases feed could not be read: ${error.message}")
+            return null
+        }
+        val cards = SpotifyBrowseCards.parseWhatsNew(root)
+        if (cards.isEmpty()) return null
+        return HomeShelf(title = "New releases", items = cards.mapNotNull { it.item() })
+    }
+
+    /**
+     * One shelf of cards, or null when it has none.
+     *
+     * A shelf with nothing in it is not drawn: it would be a heading over a
+     * blank space.
+     */
+    private fun cardShelf(shelf: SpotifyHomeSection): HomeShelf? {
+        val items = shelf.cards.mapNotNull { card -> card.item() }
+        if (items.isEmpty()) return null
+        return HomeShelf(title = shelf.title, subtitle = shelf.subtitle, items = items)
+    }
+
+    /**
+     * What went wrong, for the empty state.
+     *
+     * Written by every step that can fail, so the last thing to fail is what
+     * the listener sees.
+     */
+    @Volatile
+    private var diagnostic: String? = null
+
+    private fun note(reason: String) {
+        diagnostic = reason
+        Log.w(TAG, reason)
+    }
+
+    /**
+     * The listener's Spotify library, opened into rows.
+     *
+     * Liked Songs first — it is the one collection every listener has and the
+     * one that is unambiguously "their" taste — then their playlists in the
+     * order Spotify lists them. The number of rows is capped because each row
+     * costs a page of tracks and then a YouTube search per track.
+     */
+    private suspend fun libraryRows(): List<HomeShelf> = coroutineScope {
+        val playlists = runCatching { SpotifyLibrary.playlists(maxPages = 1) }.getOrElse { error ->
+            note("Couldn't read your Spotify library: ${error.message}")
+            return@coroutineScope emptyList()
+        }
+        if (playlists.isEmpty()) {
+            note("Your Spotify library has no playlists in it")
+            return@coroutineScope emptyList()
+        }
+        playlists.take(LIBRARY_ROWS).map { playlist ->
+            async {
+                val tracks = runCatching { SpotifyLibrary.preview(playlist.id, TRACKS_PER_ROW) }
+                    .onFailure { note("Couldn't read '${playlist.name}': ${it.message}") }
+                    .getOrDefault(emptyList())
+                row(playlist.name, tracks)
+            }
+        }.awaitAll().filterNotNull()
+    }
+
+    /**
+     * One row of tracks, matched, or null when nothing in it could be matched.
+     *
+     * Null means the row is dropped rather than drawn as a heading over an
+     * empty space. A match failing is ordinary — a remix, a regional edit, a
+     * track YouTube does not carry.
+     */
+    private suspend fun row(title: String, tracks: List<SpotifyTrack>?): HomeShelf? {
+        if (tracks.isNullOrEmpty()) return null
+        val wanted = tracks.take(TRACKS_PER_ROW)
+        val items = match(wanted)
+        if (items.isEmpty()) {
+            note(
+                "Read ${wanted.size} Spotify tracks ('${wanted.first().title}' by " +
+                    "${wanted.first().artist}) and none of them matched on YouTube Music",
+            )
+            return null
+        }
+        return HomeShelf(title = title, items = items)
+    }
 
     /**
      * The listener's Spotify listening, as playable tracks.
@@ -100,13 +408,11 @@ internal object SpotifyHomeSource {
                 val cached = matches[track.id]
                 if (cached != null) return@async track to cached
                 // Guarded: a matcher that throws would otherwise take the whole
-                // read down with it — the exception leaves awaitAll, and a
-                // search that failed looks exactly like a catalogue that
-                // refused.
+                // read down with it — the exception leaves awaitAll, the home
+                // read is caught as "nothing to show", and a search that failed
+                // looks exactly like a catalogue that refused.
                 val matched = runCatching { gate.withPermit { SpotifyImporter.matchTrack(track) } }
-                    .onFailure {
-                        Log.w(TAG, "Searching YouTube Music for '${track.title}' failed: ${it.message}")
-                    }
+                    .onFailure { note("Searching YouTube Music for '${track.title}' failed: ${it.message}") }
                     .getOrNull()
                 matched?.let {
                     matches[track.id] = it
@@ -148,6 +454,18 @@ internal object SpotifyHomeSource {
 
     /** The prefix that marks a row as Spotify's own, with no playable id behind it. */
     const val SPOTIFY_KEY_PREFIX = "spotify:"
+
+    /** One row of [tracks], matched, or an empty list when none of them were. */
+    private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
+        matched(tracks).map { (track, song) ->
+            ShelfItem(
+                title = song.title.ifBlank { track.title },
+                subtitle = song.artist.ifBlank { track.artist },
+                thumbnailUrl = song.thumbnailUrl ?: track.imageUrl,
+                videoId = song.videoId,
+                browseId = null,
+            )
+        }
 }
 
 /** The card on a shelf, as this app draws one. */
@@ -181,3 +499,7 @@ internal fun SpotifyCard.browseIdOf(): String? = when (kind) {
     SpotifyCard.Kind.TRACK -> null
     SpotifyCard.Kind.OTHER -> null
 }
+
+/** The chip, as this app draws one. */
+internal fun SpotifyChip.item(): HomeChip =
+    HomeChip(id = id, label = label, subChips = subChips.map { it.item() })

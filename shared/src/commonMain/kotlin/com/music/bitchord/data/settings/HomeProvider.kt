@@ -11,8 +11,8 @@ package com.music.bitchord.data.settings
  *
  * What this does choose:
  *
- *  - Which catalogue the search opens on, and which service's pages the
- *    library rows lead to.
+ *  - Which catalogue the homepage and the search come from. Spotify's own
+ *    home is Spotify's curation; YouTube Music's is its feed.
  *  - Nothing else about the recommendations. What the listener plays on
  *    Spotify is read either way — it is what seeds the mix — so a signed-in
  *    Spotify session is worth having whichever catalogue is chosen.

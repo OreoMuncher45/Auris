@@ -278,32 +278,45 @@ kotlin {
 }
 
 /*
- * A guard against the same crash coming back.
+ * Two guards on the compiled classes, run after every Kotlin compile of every
+ * variant (dev and prod; debug, release and benchmark), so the shipping
+ * prodRelease and the devDebug that pull-request CI builds are both checked.
+ * The wiring is gradle/class-checks.gradle.kts, shared with :sharedUi and
+ * :desktopApp.
  *
  * dex keeps the size of a call's register window in one byte, so a call
  * cannot pass more than 255 words. A constructor with 254 arguments needs
  * 255 of them — the object itself and the arguments — and is the most a
  * dex can carry. One argument more and the count wraps to zero, the class
- * is refused at launch, and nothing in the build says so.
+ * is refused at launch, and nothing in the build says so. Kotlin does not
+ * object: the limit is dex's, and dex is not the compiler. The lambdas that
+ * capture the most are the ones to watch, and a capture set grows by one
+ * every time a local is added to a big composable.
  *
- * Kotlin does not object: the limit is dex's, and dex is not the compiler.
- * The lambdas that capture the most are the ones to watch, and a capture
- * set grows by one every time a local is added to a big composable.
- *
- * So the compiled classes are counted after every release compile, and a
- * constructor too wide to call fails the build instead of the phone.
+ * The JVM's own limit is the other one a big composable runs into: 65,535
+ * bytes of bytecode per method. A composable is one method however long its
+ * source is, so it creeps up on an ordinary change and then the compiler
+ * stops with a MethodTooLargeException (OVERHAUL_PLAN.md has one, in
+ * BitChordApp). A method over 32,000 bytes — about half the limit, the target
+ * issue #5 set — fails the build while there is still room to split it calmly.
  */
-val checkConstructorWidths by tasks.registering(Exec::class) {
+extra["classChecks"] = listOf("dev", "prod").flatMap { flavor ->
+    listOf("debug", "release", "benchmark").map { type ->
+        val variant = flavor + type.replaceFirstChar { it.uppercase() }
+        "compile${variant.replaceFirstChar { it.uppercase() }}Kotlin" to "tmp/kotlin-classes/$variant"
+    }
+}.toMap()
+apply(from = rootProject.file("gradle/class-checks.gradle.kts"))
+// The names these checks have always had: the dev release classes.
+tasks.register("checkConstructorWidths") {
     group = "verification"
-    description = "Fails if a constructor is wider than dex can call."
-    commandLine(
-        "python3",
-        rootProject.file("tools/check_constructor_widths.py").absolutePath,
-        layout.buildDirectory.dir("tmp/kotlin-classes/devRelease").get().asFile.absolutePath,
-    )
+    description = "Fails if a constructor in the dev release classes is wider than dex can call."
+    dependsOn("checkConstructorWidthsDevReleaseKotlin")
 }
-tasks.matching { it.name == "compileDevReleaseKotlin" }.configureEach {
-    finalizedBy(checkConstructorWidths)
+tasks.register("checkMethodSizes") {
+    group = "verification"
+    description = "Fails if a method in the dev release classes is over 32,000 bytes."
+    dependsOn("checkMethodSizesDevReleaseKotlin")
 }
 
 /*
