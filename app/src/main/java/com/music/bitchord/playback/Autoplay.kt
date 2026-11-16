@@ -100,40 +100,15 @@ suspend fun loadAutoplayTracks(
     existing: List<Song>,
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
-    station: Boolean = false,
 ): Result<List<Song>> {
-    // The provider decides who is asked what comes next, for the same reason it
-    // decides Flow's seeds: AutoPlay is a recommendation. The seed song is
-    // unchanged — a Spotify-provider session still continues from the song that
-    // is playing — and the queue-entry mapping below is shared, so a Spotify
-    // batch lands in the queue looking exactly like a YouTube one.
-    if (com.music.bitchord.data.settings.AppSettings.homeProvider.value ==
-        com.music.bitchord.data.settings.HomeProvider.SPOTIFY
-    ) {
-        val fromSpotify = runCatching {
-            com.music.bitchord.data.spotify.SpotifyHomeSource.autoplayTracks(
-                exclude = existing.mapTo(HashSet()) { it.videoId },
-                limit = limit,
-                seed = seedSong,
-                station = station,
-            )
-        }.getOrDefault(emptyList())
-        if (fromSpotify.isNotEmpty()) {
-            return Result.success(fromSpotify.map {
-                it.copy(
-                    radioName = seedSong.radioName,
-                    playbackSource = seedSong.playbackSource,
-                    playbackSourceType = seedSong.playbackSourceType,
-                    playbackSourceId = seedSong.playbackSourceId,
-                ).asQueueEntry(QueueTier.AUTOPLAY)
-            })
-        }
-        // No fallback to YouTube's radio here either: on a Spotify session its
-        // pool is the only algorithm this app may follow, and a queue filled
-        // from the other provider is the same silent substitution Flow was
-        // doing. Nothing appended is the honest answer. See SpotifyHomeSource.
-        return Result.success(emptyList())
-    }
+    // One algorithm, whichever catalogue the listener browses: YouTube
+    // Music's radio, seeded from the song that is playing. A Spotify track is
+    // matched to something YouTube carries first, so a row that came from
+    // Spotify still starts a station that knows what to play next.
+    //
+    // The seed song is unchanged — a Spotify-provider session still continues
+    // from the song that is playing — and the queue-entry mapping below is
+    // shared, so the batch lands in the queue looking exactly like any other.
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
     val extra = QueueBuilder.extend(existing, related, limit)

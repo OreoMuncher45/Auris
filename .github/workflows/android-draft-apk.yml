@@ -102,7 +102,8 @@ on:
           - A performance monitor with a saveable log: the app's own share of the CPU,
             the thread count, the memory, and counters for the three things that cost
             the most — source searches, next-track preparations and WebView starts.
-            "Copy log" now carries the whole report.
+            "Copy log" now carries the whole report, and the last crash with it, so
+            "it crashed" comes with the stack that says why.
           - The monitor now names the threads that cost the most: the top eight, each
             with its share of one core over the last window. The whole-phone CPU
             columns are gone — Android has not let an app read them since Android 10,
@@ -177,9 +178,23 @@ on:
             DAC has a control of its own — the absolute level the output ended up at.
           
           Spotify
-          - The home can be Spotify's own, with or without a sign-in, and the
-            content-source switch decides which provider builds the homepage; Flow and
-            Autoplay follow the switch.
+          - Spotify's own home is back. The catalogue switch decides where the
+            homepage and the search come from: switch to Spotify and the page is
+            Spotify's own feed, chips and all; switch back and it is YouTube Music's.
+          - One algorithm, whichever catalogue you browse. Flow, Autoplay and
+            "more like this" are YouTube Music's, always. The switch that used to
+            pick a provider's algorithm now picks only the catalogue the homepage
+            and the search come from.
+          - Spotify still knows you: your top tracks and what you played there lately
+            are read and matched to something playable, and they seed the mix whichever
+            catalogue is chosen — signed in.
+          - Your likes are yours. The radio is seeded from the songs you liked only
+            when "similar liked songs" is on; with it off, it is seeded from what you
+            are playing elsewhere. Spotify's Liked Songs are never read into the mix.
+          - Flow no longer repeats itself: the tracks just played are evidence for
+            ranking, not content for the mix, and the radio is closed to them too.
+          - A mix built by the old algorithm is dropped rather than restored, so the
+            stored mix always carries the one this build would build.
           - The Auris Pass replaces the old listener card in Settings, and it is
             findable from the search field too.
           - Spotify rows now play the recording the row names — never another artist's
@@ -199,12 +214,21 @@ on:
           - The playlists shelf can be read as a list, and Spotify comes in from
             Settings.
           - The next download is prepared ahead of the next track.
+          - Songs you listen to are downloaded by themselves now. It is a setting,
+            and it is on by default.
+          - A download you delete by hand is never fetched again — not by the
+            automatic download, and not by the playlist sync.
           
           First run
           - A first-run flow, with a row to see it again, and the real Spotify mark in
             the source selection.
           
           Fixes
+          - The "zoom out album art" switch no longer takes the app down. The picture's
+            corner radius was divided by the picture's own scale, and that scale was
+            zero whenever the player was open — a radius of nothing is not a shape
+            anything can draw. The picture now shrinks with the card, and stops
+            shrinking as the card slides into the mini player.
           - An empty search now says which kind of empty it is.
           - The Automix measures a streamed track's ending, not just its opening.
           - Our own Episodes are in, with a switch that turns podcasts off.

@@ -24,7 +24,6 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.settings.HomeProvider
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.download.Downloads
@@ -36,6 +35,7 @@ import com.music.bitchord.playback.AutomixAnalysisDemand
 import com.music.bitchord.playback.AutomixPreview
 import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.QueueSearch
+import com.music.bitchord.playback.youtubeSeedFor
 import com.music.bitchord.playback.QueueSuggestion
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.smart.AutomixOverride
@@ -169,17 +169,16 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         val answers = when (mode) {
             // The radio built from this track: exactly the list a listener
             // means by "more like this", and the same one AutoPlay reads.
-            // Whose radio it is depends on the provider: on a Spotify session
-            // it is Spotify's own station, and on a YouTube session YouTube
-            // Music's radio.
-            QueueSuggestion.SIMILAR ->
-                if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
-                    runCatching {
-                        com.music.bitchord.data.spotify.SpotifyAlgorithm.more(song, 12)
-                    }.getOrDefault(emptyList())
-                } else {
-                    runCatching { YtMusicRepository.radio(song.videoId).getOrNull() }.getOrNull().orEmpty()
-                }
+            //
+            // One algorithm, whichever catalogue the listener browses: YouTube
+            // Music's radio. A track that carries no YouTube id — a Spotify
+            // row, a module's own recording — is matched to something YouTube
+            // carries first, so it still starts a station that knows what to
+            // play next.
+            QueueSuggestion.SIMILAR -> runCatching {
+                val seed = youtubeSeedFor(song) ?: return@runCatching emptyList()
+                YtMusicRepository.radio(seed).getOrNull()
+            }.getOrNull().orEmpty()
 
             // The artist's own page when the row knew who they are, and a
             // search by name when it did not — a row from a playlist or a home
