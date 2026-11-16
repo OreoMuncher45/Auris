@@ -1050,9 +1050,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @return whether YouTube took it.
      */
-    private suspend fun writeLike(videoId: String, status: LikeStatus, previous: LikeStatus): Boolean =
+    private suspend fun writeLike(
+        videoId: String,
+        status: LikeStatus,
+        previous: LikeStatus,
+        // Runs as soon as YouTube accepts the rating, before the library
+        // housekeeping below, which can suspend and be cancelled.
+        onAccepted: () -> Unit = {},
+    ): Boolean =
         YtMusicRepository.rate(videoId, status).fold(
             onSuccess = {
+                onAccepted()
                 // Liked Music is now out of date either way.
                 libraryStale = true
                 if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)
@@ -1312,8 +1320,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // below like any other unwritten tap.
                 val sendable = videoId != null && !credentialsInValidation
                 val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
-                val written = sendable && writeLike(videoId!!, target, likeStatusOf(videoId))
-                if (written) rowRatingConfirmed[rowId] = target
+                // Confirmed the moment YouTube accepts it, so a cancel during
+                // the housekeeping that follows settles to it, not to the
+                // pre-tap state.
+                val written = sendable && writeLike(videoId!!, target, likeStatusOf(videoId)) {
+                    rowRatingConfirmed[rowId] = target
+                }
                 if (listenerKey() != listener) return@withLock
                 // The recording carries the rating too: other rows and players
                 // read it by its own id, and the next unlike reads its previous
