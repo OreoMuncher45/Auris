@@ -117,6 +117,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.draw.clip
@@ -3985,6 +3987,14 @@ private fun BitChordApp(
                     .then(
                         if (pageCoveredByPlayer) Modifier.clearAndSetSemantics {} else Modifier,
                     )
+                    // Semantics hide the page from TalkBack only. A hardware
+                    // keyboard's Tab could still walk out of the player into
+                    // the covered search field and tabs, so focus may not
+                    // enter the page while the player is over it.
+                    .focusProperties {
+                        onEnter = { if (pageCoveredByPlayer) cancelFocusChange() }
+                    }
+                    .focusGroup()
                     // Nothing of the page under a portrait player that is fully
                     // up: the panel is opaque from edge to edge, and the page
                     // drawing on behind it — the glass bar and the blurs that
