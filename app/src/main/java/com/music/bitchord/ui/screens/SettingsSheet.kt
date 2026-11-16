@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -41,10 +40,8 @@ import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.DeleteSweep
-import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FileDownload
@@ -95,7 +92,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.lyrics.translationLanguageName
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -103,11 +99,9 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -169,16 +163,13 @@ import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.HomeProvider
-import com.music.bitchord.util.AppRelaunch
 import com.music.bitchord.R
-import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.AppUi
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.stats.Backup
-import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -327,34 +318,20 @@ fun SettingsScreen(
     // Filters the rows below — see [SettingsSearch]. Blank shows everything,
     // exactly as if the field weren't there.
     var searchQuery by remember { mutableStateOf("") }
-    var picking by remember { mutableStateOf<QualityTarget?>(null) }
-    var pickingDownloadQuality by remember { mutableStateOf(false) }
-    var pickingAutomixPerformance by remember { mutableStateOf(false) }
-    var pickingHomeProvider by remember { mutableStateOf(false) }
+    // Which sheet or dialog is open; see [SettingsSheets].
+    val sheets = remember { SettingsSheets() }
     // What the last export or import did, shown on the row that did it rather
     // than as a toast: a backup is the one action here whose outcome nobody can
     // check by looking at the app afterwards. Held per direction, or an import's
     // result reports itself under the word "Export".
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var importStatus by remember { mutableStateOf<String?>(null) }
-    var confirmImport by remember { mutableStateOf(false) }
-    var confirmClearSongCache by remember { mutableStateOf(false) }
-    var showBlockedArtists by remember { mutableStateOf(false) }
-    var showJamesDsp by remember { mutableStateOf(false) }
-    var showPerformanceWarning by remember { mutableStateOf(false) }
-    var showPerformanceConfirmation by remember { mutableStateOf(false) }
-    var showSeamlessUpgradeConfirmation by remember { mutableStateOf(false) }
-    // The customisation sheets, opened from the rows that used to live on the
-    // Customisation page.
-    var showPlayerColors by remember { mutableStateOf(false) }
-    var showShelfOrder by remember { mutableStateOf(false) }
-    var showFontSheet by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
-        showPerformanceConfirmation = true
+        sheets.showPerformanceConfirmation = true
     }
     val localMusicFolderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
@@ -631,7 +608,7 @@ fun SettingsScreen(
                     title = onWifiTitle,
                     badge = stringResource(R.string.in_use).takeIf { metered == false },
                     value = wifiQuality.localizedLabel(),
-                    onClick = { picking = QualityTarget.WIFI },
+                    onClick = { sheets.picking = QualityTarget.WIFI },
                 )
             }
             val onMobileDataTitle = stringResource(R.string.on_mobile_data)
@@ -641,7 +618,7 @@ fun SettingsScreen(
                     title = onMobileDataTitle,
                     badge = stringResource(R.string.in_use).takeIf { metered == true },
                     value = cellularQuality.localizedLabel(),
-                    onClick = { picking = QualityTarget.CELLULAR },
+                    onClick = { sheets.picking = QualityTarget.CELLULAR },
                 )
             }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
@@ -733,7 +710,7 @@ fun SettingsScreen(
                             checked = seamlessQualityUpgrade,
                             onCheckedChange = { enabled ->
                                 if (enabled) {
-                                    showSeamlessUpgradeConfirmation = true
+                                    sheets.showSeamlessUpgradeConfirmation = true
                                 } else {
                                     AppSettings.setSeamlessQualityUpgrade(false)
                                 }
@@ -748,7 +725,7 @@ fun SettingsScreen(
                         if (seamlessQualityUpgrade) {
                             AppSettings.setSeamlessQualityUpgrade(false)
                         } else {
-                            showSeamlessUpgradeConfirmation = true
+                            sheets.showSeamlessUpgradeConfirmation = true
                         }
                     },
                 )
@@ -821,7 +798,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.GraphicEq,
                     title = jamesDspTitle,
                     subtitle = stringResource(R.string.jamesdsp_subtitle),
-                    onClick = { showJamesDsp = true },
+                    onClick = { sheets.showJamesDsp = true },
                 )
             }
         }
@@ -895,7 +872,7 @@ fun SettingsScreen(
                     title = automixPerformanceTitle,
                     subtitle = stringResource(R.string.automix_performance_subtitle),
                     value = automixPerformance.localizedLabel(),
-                    onClick = { pickingAutomixPerformance = true },
+                    onClick = { sheets.pickingAutomixPerformance = true },
                 )
             }
             // The catalogue, next to the other decisions about how the app
@@ -909,7 +886,7 @@ fun SettingsScreen(
                     title = homeProviderTitle,
                     subtitle = stringResource(R.string.home_provider_subtitle),
                     value = homeProvider.localizedLabel(),
-                    onClick = { pickingHomeProvider = true },
+                    onClick = { sheets.pickingHomeProvider = true },
                 )
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
@@ -1083,7 +1060,7 @@ fun SettingsScreen(
                     title = downloadQualityTitle,
                     subtitle = stringResource(R.string.download_quality_subtitle, downloadQuality.perTrack),
                     value = downloadQuality.localizedLabel(),
-                    onClick = { pickingDownloadQuality = true },
+                    onClick = { sheets.pickingDownloadQuality = true },
                 )
             }
             // Reads as part of Download quality above it, not as a setting
@@ -1133,7 +1110,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.Palette,
                     title = nowPlayingColorsTitle,
                     subtitle = stringResource(R.string.custom_now_playing_help),
-                    onClick = { showPlayerColors = true },
+                    onClick = { sheets.showPlayerColors = true },
                 )
             }
             val textGlowTitle = stringResource(R.string.custom_text_glow)
@@ -1605,7 +1582,7 @@ fun SettingsScreen(
                     } else {
                         stringResource(R.string.blocked_artists_count, blockedArtists.size)
                     },
-                    onClick = { showBlockedArtists = true },
+                    onClick = { sheets.showBlockedArtists = true },
                 )
             }
             val blockAiTitle = stringResource(R.string.block_ai_music)
@@ -1652,7 +1629,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.ViewList,
                     title = shelfOrderTitle,
                     subtitle = stringResource(R.string.custom_home_help),
-                    onClick = { showShelfOrder = true },
+                    onClick = { sheets.showShelfOrder = true },
                 )
             }
             val showReplayTitle = stringResource(R.string.custom_show_replay)
@@ -1908,7 +1885,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.TextFields,
                     title = fontsTitle,
                     value = fontValue,
-                    onClick = { showFontSheet = true },
+                    onClick = { sheets.showFontSheet = true },
                 )
             }
             val scriptFontsTitle = stringResource(R.string.custom_script_fonts)
@@ -1949,7 +1926,7 @@ fun SettingsScreen(
                             checked = highPerformanceMode,
                             onCheckedChange = { enabled ->
                                 if (enabled) {
-                                    showPerformanceWarning = true
+                                    sheets.showPerformanceWarning = true
                                 } else {
                                     AppSettings.setHighPerformanceMode(false)
                                 }
@@ -1964,7 +1941,7 @@ fun SettingsScreen(
                         if (highPerformanceMode) {
                             AppSettings.setHighPerformanceMode(false)
                         } else {
-                            showPerformanceWarning = true
+                            sheets.showPerformanceWarning = true
                         }
                     },
                 )
@@ -2046,7 +2023,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.DeleteSweep,
                     title = clearSongCacheTitle,
                     subtitle = stringResource(R.string.clear_song_cache_subtitle),
-                    onClick = { confirmClearSongCache = true },
+                    onClick = { sheets.confirmClearSongCache = true },
                 )
             }
             val clearImageCacheTitle = stringResource(R.string.clear_image_cache)
@@ -2154,7 +2131,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.FileDownload,
                     title = importDataTitle,
                     subtitle = importStatus ?: stringResource(R.string.import_data_subtitle),
-                    onClick = { confirmImport = true },
+                    onClick = { sheets.confirmImport = true },
                 )
             }
         }
@@ -2271,235 +2248,12 @@ fun SettingsScreen(
         }
     }
 
-    if (showBlockedArtists) {
-        BlockedArtistsSheet(onDismiss = { showBlockedArtists = false })
-    }
-
-    if (showPlayerColors) {
-        PlayerColorsSheet(onDismiss = { showPlayerColors = false })
-    }
-
-    if (showShelfOrder) {
-        HomeShelfOrderSheet(
-            homeShelfTitles = homeShelfTitles,
-            onDismiss = { showShelfOrder = false },
-        )
-    }
-
-    if (showFontSheet) {
-        FontSheet(onDismiss = { showFontSheet = false })
-    }
-
-    if (showJamesDsp) {
-        JamesDspSheet(onDismiss = { showJamesDsp = false })
-    }
-
-    picking?.let { target ->
-        ModalBottomSheet(
-            onDismissRequest = { picking = null },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            QualitySheet(
-                target = target,
-                selected = when (target) {
-                    QualityTarget.WIFI -> wifiQuality
-                    QualityTarget.CELLULAR -> cellularQuality
-                },
-                // Writes the one ceiling that was being edited and nothing
-                // else. There used to be a `SourceRegistry.applyQualityPreset`
-                // call here that flipped the module and JioSaavn switches to
-                // match — which meant budgeting *mobile data* switched those
-                // sources off while sitting on Wi-Fi, and coming back to Wi-Fi
-                // never switched them on again. Which sources a rung consults
-                // is now read per stream off the connection in force; see
-                // [AudioQuality.permits].
-                onSelect = { quality ->
-                    when (target) {
-                        QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
-                        QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
-                    }
-                    picking = null
-                },
-            )
-        }
-    }
-
-    if (pickingDownloadQuality) {
-        ModalBottomSheet(
-            onDismissRequest = { pickingDownloadQuality = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            DownloadQualitySheet(
-                selected = downloadQuality,
-                onSelect = { quality ->
-                    AppSettings.setDownloadQuality(quality)
-                    pickingDownloadQuality = false
-                },
-            )
-        }
-    }
-
-    if (pickingHomeProvider) {
-        ModalBottomSheet(
-            onDismissRequest = { pickingHomeProvider = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            HomeProviderSheet(
-                selected = homeProvider,
-                onSelect = { provider ->
-                    pickingHomeProvider = false
-                    if (provider != homeProvider) {
-                        // Written before the restart so the new process reads it,
-                        // and the restart is what makes it total: Flow's and
-                        // Autoplay's learning were trained against the provider
-                        // being left behind. See [HomeProvider] and [AppRelaunch].
-                        AppSettings.setHomeProvider(provider)
-                        AppRelaunch.relaunch(context)
-                    }
-                },
-            )
-        }
-    }
-
-    if (pickingAutomixPerformance) {
-        ModalBottomSheet(
-            onDismissRequest = { pickingAutomixPerformance = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            AutomixPerformanceSheet(
-                selected = automixPerformance,
-                onSelect = { mode ->
-                    AppSettings.setAutomixPerformanceMode(mode)
-                    pickingAutomixPerformance = false
-                },
-            )
-        }
-    }
-
-    // Everything in the Cached songs folder goes with it, so say so first.
-    if (confirmClearSongCache) {
-        AlertDialog(
-            onDismissRequest = { confirmClearSongCache = false },
-            title = { Text(stringResource(R.string.clear_song_cache_title)) },
-            text = { Text(stringResource(R.string.clear_song_cache_warning)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClearSongCache = false
-                    AudioCache.clear {
-                        Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text(stringResource(R.string.clear))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearSongCache = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    // Asked before the picker opens rather than after a file is chosen: the
-    // thing being confirmed is that this device's own history is about to be
-    // thrown away, and that is true whichever file gets picked.
-    if (confirmImport) {
-        AlertDialog(
-            onDismissRequest = { confirmImport = false },
-            title = { Text(stringResource(R.string.import_backup_title)) },
-            text = {
-                Text(stringResource(R.string.import_backup_warning))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmImport = false
-                    importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
-                }) {
-                    Text(stringResource(R.string.choose_file))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmImport = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    if (showPerformanceWarning) {
-        AlertDialog(
-            onDismissRequest = { showPerformanceWarning = false },
-            title = { Text(stringResource(R.string.high_performance_before_enabling)) },
-            text = { Text(stringResource(R.string.high_performance_battery_warning)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showPerformanceWarning = false
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
-                        }
-                        val settingsIntent = intent.takeIf {
-                            it.resolveActivity(context.packageManager) != null
-                        } ?: Intent(Settings.ACTION_SETTINGS)
-                        batterySettingsLauncher.launch(settingsIntent)
-                    },
-                ) {
-                    Text(stringResource(R.string.open_battery_settings))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPerformanceWarning = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    if (showPerformanceConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showPerformanceConfirmation = false },
-            title = { Text(stringResource(R.string.enable_high_performance_title)) },
-            text = { Text(stringResource(R.string.enable_high_performance_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showPerformanceConfirmation = false
-                        AppSettings.setHighPerformanceMode(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPerformanceConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
-        )
-    }
-
-    if (showSeamlessUpgradeConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showSeamlessUpgradeConfirmation = false },
-            title = { Text(stringResource(R.string.enable_seamless_upgrades_title)) },
-            text = { Text(stringResource(R.string.enable_seamless_upgrades_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSeamlessUpgradeConfirmation = false
-                        AppSettings.setSeamlessQualityUpgrade(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSeamlessUpgradeConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
-        )
-    }
+    SettingsDialogs(
+        sheets = sheets,
+        homeShelfTitles = homeShelfTitles,
+        importPicker = importPicker,
+        batterySettingsLauncher = batterySettingsLauncher,
+    )
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */
@@ -2581,7 +2335,7 @@ private fun HomeProvider.localizedLabel(): String = stringResource(
  * session.
  */
 @Composable
-private fun HomeProviderSheet(
+internal fun HomeProviderSheet(
     selected: HomeProvider,
     onSelect: (HomeProvider) -> Unit,
 ) {
@@ -2780,7 +2534,7 @@ internal fun AccountCard(
 
 /** The quality options for one connection, with what each costs in data. */
 @Composable
-private fun QualitySheet(
+internal fun QualitySheet(
     target: QualityTarget,
     selected: AudioQuality,
     onSelect: (AudioQuality) -> Unit,
@@ -2857,7 +2611,7 @@ private fun QualitySheet(
 
 /** CPU budget picker for the background models that prepare Automix. */
 @Composable
-private fun AutomixPerformanceSheet(
+internal fun AutomixPerformanceSheet(
     selected: AutomixPerformanceMode,
     onSelect: (AutomixPerformanceMode) -> Unit,
 ) {
@@ -2942,7 +2696,7 @@ private fun AutomixPerformanceSheet(
  * the numbers beside the options are in different units on purpose.
  */
 @Composable
-private fun DownloadQualitySheet(
+internal fun DownloadQualitySheet(
     selected: DownloadQuality,
     onSelect: (DownloadQuality) -> Unit,
 ) {
