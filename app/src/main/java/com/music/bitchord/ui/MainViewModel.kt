@@ -5092,10 +5092,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val (restored, age) = snapshot ?: return@launch
             // Only into the empty mix the view model starts with: a mix built
             // in the moment before this landed is newer than the snapshot.
-            if (restored != null) {
+            val applied = restored != null &&
                 _flowQueue.compareAndSet(UiState.Success(emptyList()), UiState.Success(restored))
-            }
-            maybeAutoRefreshFlow(snapshotAgeMs = age)
+            // The snapshot's age only describes the mix on screen if the
+            // snapshot is what's on screen. Otherwise the hourly check reads
+            // the age of whatever was saved since.
+            if (applied) maybeAutoRefreshFlow(snapshotAgeMs = age) else maybeAutoRefreshFlow()
         }
         viewModelScope.launch {
             while (true) {
