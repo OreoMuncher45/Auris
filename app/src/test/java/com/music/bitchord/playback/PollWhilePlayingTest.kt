@@ -61,4 +61,31 @@ class PollWhilePlayingTest {
         // One loop: a tick on start and one per 500 ms after it.
         assertEquals(3, ticks - before)
     }
+
+    /**
+     * A pause and a resume that both land before the flow looks again. The
+     * player writes its state from a listener between frames, so the flow can
+     * see true, then true: no emission. The loop has to keep going through
+     * that rather than notice the pause on its own and stop for good.
+     */
+    @Test fun `a pause and resume between two looks of the flow does not stop the poll`() = runTest {
+        var ticks = 0
+        backgroundScope.launch { pollWhilePlaying({ playing.value }, intervalMs = 500) { ticks++ } }
+        runCurrent()
+        setPlaying(true)
+        runCurrent()
+        assertEquals(1, ticks)
+        // Paused, with no apply notification yet: the flow has not seen it.
+        playing.value = false
+        advanceTimeBy(600)
+        runCurrent()
+        // Resumed before the flow looked: it reads true again and emits nothing.
+        playing.value = true
+        Snapshot.sendApplyNotifications()
+        runCurrent()
+        val before = ticks
+        advanceTimeBy(1_500)
+        runCurrent()
+        assertEquals("still polling every 500 ms", 3, ticks - before)
+    }
 }

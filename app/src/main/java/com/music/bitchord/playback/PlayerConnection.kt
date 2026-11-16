@@ -523,10 +523,17 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
  * state: a change cancels the running loop (collectLatest) and starts or
  * stops it, the same as a LaunchedEffect keyed on it — without the read
  * landing in a composable's scope. Never returns; cancel its coroutine.
+ *
+ * Only the flow stops the loop. The loop does not read [isPlaying] itself:
+ * a pause and a resume that both land between two looks of the flow emit
+ * nothing, and a loop that had noticed the pause on its own would have
+ * stopped with nothing left to start it again. A real pause is an emission
+ * of false, which cancels the loop at its next delay.
  */
 internal suspend fun pollWhilePlaying(isPlaying: () -> Boolean, intervalMs: Long, tick: () -> Unit) {
     snapshotFlow(isPlaying).collectLatest { playing ->
-        while (playing && isPlaying()) {
+        if (!playing) return@collectLatest
+        while (true) {
             tick()
             delay(intervalMs)
         }
