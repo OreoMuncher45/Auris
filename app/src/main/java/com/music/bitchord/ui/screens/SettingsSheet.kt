@@ -185,7 +185,6 @@ fun SettingsScreen(
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
     val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
-    val podcastsEnabled by AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val appUi by AppSettings.appUi.collectAsStateWithLifecycle()
@@ -475,27 +474,9 @@ fun SettingsScreen(
             )
         }
         if (openCategory == SettingsCategory.PODCASTS || (openCategory == null && searchActive)) {
-        SearchableSettingsGroup(search, SettingsCategory.PODCASTS) {
-            val podcastsTitle = stringResource(R.string.podcasts)
-            row(podcastsTitle, "podcast", "episodes", "episodes for later", "continue listening", "hide", "off") {
-                SettingsRow(
-                    icon = Icons.Rounded.Podcasts,
-                    title = podcastsTitle,
-                    subtitle = stringResource(R.string.podcasts_enabled_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = podcastsEnabled,
-                            onCheckedChange = AppSettings::setPodcastsEnabled,
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    },
-                    onClick = { AppSettings.setPodcastsEnabled(!podcastsEnabled) },
-                )
-            }
-        }
+            PodcastsSettings(
+                search = search,
+            )
         }
         if (openCategory == SettingsCategory.APPEARANCE || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.APPEARANCE) {
