@@ -40,7 +40,6 @@ import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -73,7 +72,7 @@ internal fun BoxScope.PortraitBackdrop(
 ) {
     // Anchored to the sleeve's bottom edge, so the screen carries on in the
     // colours the artwork ended in rather than in a quantiser's idea of what
-    // the artwork was about. Position ticks recompose this screen twice a
+    // the artwork was about. Position ticks recompose the player twice a
     // second and must not drag a full-screen blur along with them, which is
     // why the mesh is passed as one immutable value.
     //
@@ -88,8 +87,8 @@ internal fun BoxScope.PortraitBackdrop(
     // The tablet has no mirrored main-player treatment to crossfade from.
     // Legacy mesh is the whole backdrop on every page, so the lyrics and
     // queue panels must not crossfade the blurred artwork over it.
-    // The legacy backdrop is the mesh's own older cousin — settled above,
-    // where the landscape and tablet answers were known.
+    // The legacy backdrop is the mesh's own older cousin — [legacyMesh] is
+    // settled by the player, where the landscape and tablet answers are known.
     val fullArtworkBackdropAlpha by animateFloatAsState(
         targetValue = if (
             !legacyMesh &&
@@ -111,7 +110,7 @@ internal fun BoxScope.PortraitBackdrop(
         // are not anchored to anything on screen — they fill the player and
         // the artwork simply sits on top of them. Keyed on the track, so
         // they drift when the player opens and on every skip, then rest.
-        // Position ticks recompose this screen twice a second and must not
+        // Position ticks recompose the player twice a second and must not
         // drag a full-screen blur along with them, which is why the palette
         // is passed as one immutable value.
         //
@@ -348,59 +347,4 @@ private fun LegacyMeshBackdrop(
         trackKey = trackKey,
         modifier = modifier,
     )
-}
-
-/**
- * When Spotify Canvas's control deck stands down over its video and when it
- * comes back.
- */
-@Composable
-internal fun SpotifyCanvasDeckEffects(
-    clipState: CanvasClipState,
-    presentation: Boolean,
-    autoHide: Boolean,
-    isPlaying: Boolean,
-    /** Read inside: a scrub or volume drag starting re-keys only these effects. */
-    scrub: PlayerScrub,
-    volume: PlayerVolume,
-    lyricsOpen: Boolean,
-    queueOpen: Boolean,
-    mixing: Boolean,
-) {
-    // The setting defaults on, restoring the five-second stand-down, but the
-    // listener can keep the deck open indefinitely from Spotify integration.
-    // Pausing or interacting with a continuous control suspends the countdown;
-    // it starts fresh once playback/interaction resumes.
-    LaunchedEffect(
-        presentation,
-        clipState.spotifyControlsOpen,
-        autoHide,
-        isPlaying,
-        scrub.scrubbing,
-        volume.dragging,
-        lyricsOpen,
-        queueOpen,
-        mixing,
-    ) {
-        if (!presentation || !clipState.spotifyControlsOpen ||
-            !autoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
-            lyricsOpen || queueOpen || mixing
-        ) return@LaunchedEffect
-        delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
-        clipState.spotifyControlsOpen = false
-    }
-
-    // Returning from a subview, or regaining the TextureView after backgrounding,
-    // is a fresh visit, so show the deck again before any optional countdown.
-    LaunchedEffect(presentation, lyricsOpen, queueOpen) {
-        if (presentation && !lyricsOpen && !queueOpen) {
-            clipState.spotifyControlsOpen = true
-        }
-    }
-    // A transition can begin while Canvas is standing alone. Restore and pin
-    // the compact deck so both the outgoing and incoming song are identified;
-    // normal tap/idle collapsing resumes as soon as the mix finishes.
-    LaunchedEffect(presentation, mixing) {
-        if (presentation && mixing) clipState.spotifyControlsOpen = true
-    }
 }

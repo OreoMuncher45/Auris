@@ -7,18 +7,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.PlaybackPosition
+import com.music.bitchord.sharedui.resources.*
+import kotlinx.coroutines.delay
 
 /**
  * Lyrics, output and queue, with the output name under them — the row both
@@ -266,5 +272,60 @@ internal fun PortraitControlDeck(
             // put — see [DECK_ROWS_LIFT].
             Spacer(Modifier.height(6.dp + DECK_ROWS_LIFT))
         }
+    }
+}
+
+/**
+ * When Spotify Canvas's control deck stands down over its video and when it
+ * comes back.
+ */
+@Composable
+internal fun SpotifyCanvasDeckEffects(
+    clipState: CanvasClipState,
+    presentation: Boolean,
+    autoHide: Boolean,
+    isPlaying: Boolean,
+    /** Read inside: a scrub or volume drag starting re-keys only these effects. */
+    scrub: PlayerScrub,
+    volume: PlayerVolume,
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    mixing: Boolean,
+) {
+    // The setting defaults on, restoring the five-second stand-down, but the
+    // listener can keep the deck open indefinitely from Spotify integration.
+    // Pausing or interacting with a continuous control suspends the countdown;
+    // it starts fresh once playback/interaction resumes.
+    LaunchedEffect(
+        presentation,
+        clipState.spotifyControlsOpen,
+        autoHide,
+        isPlaying,
+        scrub.scrubbing,
+        volume.dragging,
+        lyricsOpen,
+        queueOpen,
+        mixing,
+    ) {
+        if (!presentation || !clipState.spotifyControlsOpen ||
+            !autoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
+            lyricsOpen || queueOpen || mixing
+        ) return@LaunchedEffect
+        delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
+        clipState.spotifyControlsOpen = false
+    }
+
+    // Returning from a subview, or regaining the TextureView after backgrounding,
+    // is a fresh visit, so show the deck again before any optional countdown.
+    LaunchedEffect(presentation, lyricsOpen, queueOpen) {
+        if (presentation && !lyricsOpen && !queueOpen) {
+            clipState.spotifyControlsOpen = true
+        }
+    }
+    // A transition can begin while Canvas is standing alone. Restore and pin
+    // the compact deck so both the outgoing and incoming song are identified;
+    // normal tap/idle collapsing resumes as soon as the mix finishes.
+    LaunchedEffect(presentation, mixing) {
+        if (presentation && mixing) clipState.spotifyControlsOpen = true
     }
 }

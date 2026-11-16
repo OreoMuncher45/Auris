@@ -1375,7 +1375,7 @@ fun NowPlayingScreen(
         haptics = haptics,
         onCard = { overlays.lyricsShare = it },
     )
-    // Nothing here resets [lyricsOpen] on a track change, deliberately. The
+    // Nothing here resets [PlayerPanelState.lyricsOpen] on a track change, deliberately. The
     // panel is a place, not a property of the track: someone reading along who
     // skips — or who simply lets the queue run on — means to carry on reading,
     // so the words change underneath them and the panel stays. Closing it
@@ -1488,9 +1488,9 @@ fun NowPlayingScreen(
     // two controls that are *being used* while nothing else on screen moves,
     // and timing out underneath them would take the thing away mid-gesture.
     //
-    // In a scope of its own: the four states it waits on change at the start
-    // and end of every scrub and volume drag, and read here they recomposed
-    // the whole player each time.
+    // In a scope of its own: two of the states it waits on change at the
+    // start and end of every scrub and volume drag, and read here they
+    // recomposed the whole player each time.
     LyricsControlsIdleEffect(panels = panels, scrub = scrub, volume = volume)
     // How collapsed the sleeve is, whichever surface asked for it — one 420ms
     // ease for the queue and the lyrics both.
