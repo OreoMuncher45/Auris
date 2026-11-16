@@ -233,12 +233,6 @@ fun SettingsScreen(
         }
     }
 
-    val version = remember(context) {
-        runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull() ?: "1.0"
-    }
-
     // Made fresh on every pass rather than remembered: it tallies the rows
     // that answered to the query, and that tally has to start from zero each
     // time the query changes.
@@ -413,7 +407,7 @@ fun SettingsScreen(
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
         if (searchQuery.isBlank() && openCategory == null) {
-            SettingsColophon(version)
+            SettingsColophon()
         }
     }
 
@@ -512,7 +506,15 @@ private fun AurisPassHeader(account: Account?) {
 
 /** "Auris 3.0  Discord  Website": the version line under the index. */
 @Composable
-private fun SettingsColophon(version: String) {
+private fun SettingsColophon() {
+    // Asked here rather than by the screen, so the package manager is only
+    // consulted on the page that shows the answer.
+    val context = LocalContext.current
+    val version = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "1.0"
+    }
     Text(
         text = buildAnnotatedString {
             append("Auris $version  ")
