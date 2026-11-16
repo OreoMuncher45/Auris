@@ -37,6 +37,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -630,12 +634,17 @@ fun DetailScreen(
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
-                is UiState.Error -> item { MessageState(state.message) }
+                is UiState.Error -> item(key = "error", contentType = LazyContent.MESSAGE) {
+                    MessageState(state.message)
+                }
                 is UiState.Success -> if (isArtist) {
                     // An artist's full song list would bury the album shelves, so
                     // it pages sideways four at a time and stops at twenty.
-                    item {
-                        val top = state.data.take(MAX_ARTIST_SONGS)
+                    item(key = "top-songs", contentType = LazyContent.SHELF) {
+                        // Paged once per list, not on every recomposition of the row.
+                        val top = remember(state.data) { state.data.take(MAX_ARTIST_SONGS) }
+                        val topColumns = remember(top) { top.chunked(SONGS_PER_COLUMN) }
+                        val topKeys = remember(topColumns) { uniqueKeys(topColumns) { it.first().videoId } }
                         SectionHeading(
                             title = stringResource(R.string.top_songs),
                             palette = palette,
@@ -647,7 +656,11 @@ fun DetailScreen(
                                 contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                items(top.chunked(SONGS_PER_COLUMN)) { column ->
+                                itemsIndexed(
+                                    topColumns,
+                                    key = { index, _ -> topKeys[index] },
+                                    contentType = { _, _ -> LazyContent.TRACK_COLUMN },
+                                ) { _, column ->
                                     Column(Modifier.width(columnWidth)) {
                                         column.forEach { song ->
                                             CompactSongRow(
@@ -678,6 +691,7 @@ fun DetailScreen(
                     itemsIndexed(
                         items = matches,
                         key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                        contentType = { _, _ -> LazyContent.SONG_ROW },
                     ) { position, entry ->
                         val song = entry.value
                         val isCurrent = song.isSameTrackAs(currentSong)
@@ -725,6 +739,7 @@ fun DetailScreen(
                 itemsIndexed(
                     suggested,
                     key = { _, song -> "suggested-${song.videoId}" },
+                    contentType = { _, _ -> LazyContent.SONG_ROW },
                 ) { index, song ->
                     SuggestedSongRow(
                         song = song,
@@ -747,11 +762,16 @@ fun DetailScreen(
             }
 
             // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf ->
+            itemsIndexed(
+                page.sections,
+                key = { index, shelf -> "section:$index:${shelf.title}" },
+                contentType = { _, _ -> LazyContent.SHELF },
+            ) { _, shelf ->
                 val canShowAll = shelf.items.size > ARTIST_ROW_MAX_ITEMS
                 val displayItems = remember(shelf.items) {
                     if (canShowAll) shelf.items.take(ARTIST_ROW_MAX_ITEMS) else shelf.items
                 }
+                val displayKeys = rememberShelfKeys(displayItems)
                 Column(Modifier.padding(top = 22.dp)) {
                     SectionHeading(
                         title = shelf.title,
@@ -763,7 +783,11 @@ fun DetailScreen(
                         contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(displayItems) { item ->
+                        itemsIndexed(
+                            displayItems,
+                            key = { index, _ -> displayKeys[index] },
+                            contentType = { _, _ -> LazyContent.CARD },
+                        ) { _, item ->
                             SectionCard(
                                 item = item,
                                 palette = palette,
@@ -2203,6 +2227,7 @@ private fun ArtistShelfGridPage(
     // ranking where it gave one, and the catalogue's order everywhere else.
     var sort by rememberSaveable(shelf.title) { mutableStateOf(ShelfSort.RELEASE_DATE) }
     val items = remember(shelf.items, sort) { shelf.items.sortedForShelf(sort) }
+    val keys = rememberShelfKeys(items)
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         Column(Modifier.fillMaxSize()) {
@@ -2220,7 +2245,11 @@ private fun ArtistShelfGridPage(
                     .fillMaxSize()
                     .padding(horizontal = PAGE_GUTTER),
             ) {
-                items(items, key = { it.browseId ?: it.title }) { item ->
+                gridItemsIndexed(
+                    items,
+                    key = { index, _ -> keys[index] },
+                    contentType = { _, _ -> LazyContent.CARD },
+                ) { _, item ->
                     SectionCard(
                         item = item,
                         palette = palette,

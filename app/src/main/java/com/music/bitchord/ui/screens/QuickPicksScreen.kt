@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.LazyContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -107,7 +108,7 @@ fun QuickPicksScreen(
                 }
             }
         } else {
-            items(songs, key = { it.videoId }) { song ->
+            items(songs, key = { it.videoId }, contentType = { LazyContent.SONG_ROW }) { song ->
                 SongRow(
                     song = song,
                     onClick = { onPlay(song) },
