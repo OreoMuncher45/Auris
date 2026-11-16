@@ -318,6 +318,7 @@ internal fun GlassNowPlaying(
         // in, and a pull started in the strip above or below it went nowhere —
         // on a bar only 45dp tall to begin with.
         modifier = Modifier
+            .playerDockPill(dock)
             // Outside the press scale, which it lifts along with everything else.
             .miniPlayerGestures(
                 pull = pull,
@@ -333,8 +334,12 @@ internal fun GlassNowPlaying(
                 onBlocked = onBlockedControl,
             )
             .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
+                // Level while the panel is up: the player's cover flies to and
+                // from the artwork laid out inside this, and a press still
+                // easing back would move that target from under it.
+                val factor = if (dock?.panelShown == true) 1f else pressScale
+                scaleX = factor
+                scaleY = factor
             }
             .then(modifier)
             .clickable(

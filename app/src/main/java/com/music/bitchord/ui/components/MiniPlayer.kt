@@ -346,6 +346,31 @@ internal fun Modifier.playerDockArt(dock: PlayerDock?, corner: Dp): Modifier {
 }
 
 /**
+ * The mini player's whole pill as where the player's panel grows from and
+ * shrinks back into — see [PlayerDock.panelBounds]. Placed ahead of the pull
+ * lift on purpose, so it reports the pill at rest rather than the bar rising
+ * under the finger.
+ *
+ * Ported from Zenith (rezapranata089-bit/Zenith, GPL-3.0).
+ */
+@Composable
+internal fun Modifier.playerDockPill(dock: PlayerDock?): Modifier {
+    if (dock == null) return this
+    val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    DisposableEffect(dock) {
+        onDispose { placed[0]?.let(dock::releaseMiniPill) }
+    }
+    return this
+        .onPlaced { coordinates ->
+            placed[0] = coordinates
+            dock.reportMiniPill(coordinates)
+        }
+        // The player's panel is standing where this pill is: it is one surface
+        // with it, so the pill stands aside rather than show under it.
+        .graphicsLayer { alpha = if (dock.panelShown) 0f else 1f }
+}
+
+/**
  * The mini player's title and artist as the other end of the player's own
  * credits — see [PlayerDock].
  *
@@ -398,6 +423,7 @@ fun MiniPlayer(
     Box(
         modifier = modifier
             .padding(horizontal = BAR_GUTTER)
+            .playerDockPill(dock)
             // Ahead of the surface, so a pull lifts the whole of it, frost and all.
             .miniPlayerGestures(
                 pull = pull,
