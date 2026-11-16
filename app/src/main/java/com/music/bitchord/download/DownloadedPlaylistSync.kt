@@ -177,8 +177,16 @@ object DownloadedPlaylistSync {
             val remote = YtMusicRepository.browseSongsPaged(collection.id).getOrNull()
             if (remote.isNullOrEmpty()) continue
             val known = collection.videoIds.toSet()
+            // The tracks the listener deleted by hand. They are not missing —
+            // they were asked for and taken away again — and a sync that put
+            // them back would be undoing a decision the listener made on
+            // purpose. See [Downloads.deletedByHand].
+            val deleted = Downloads.deletedByHandIds()
             val missing = remote.filter { song ->
-                song.videoId !in known && song.videoId !in onDisk && !song.isDeviceFile()
+                song.videoId !in known &&
+                    song.videoId !in onDisk &&
+                    song.videoId !in deleted &&
+                    !song.isDeviceFile()
             }
             if (missing.isEmpty()) continue
             Log.i(
@@ -186,7 +194,7 @@ object DownloadedPlaylistSync {
                 "${collection.title}: ${missing.size} new track(s) to download",
             )
             Downloads.markRequested(collection.id, missing.map { it.videoId })
-            Downloads.enqueueAll(context, missing, collection.title)
+            Downloads.enqueueAll(context, missing, collection.title, automatic = true)
             // The record grows with what was asked for, so the next pass knows
             // these are not new any more — whether or not the download itself
             // finished.
