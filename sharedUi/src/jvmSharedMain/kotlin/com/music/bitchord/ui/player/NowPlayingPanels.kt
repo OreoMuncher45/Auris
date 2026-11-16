@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -245,7 +246,12 @@ internal fun BoxScope.PortraitLyricsPane(
         animationSpec = tween(if (translateShown) 220 else 160),
         label = "translateFade",
     )
-    if (translateFade > 0.01f && !lyricPicker.picking) {
+    // Whether the toggles are composed at all, through derived state: read as
+    // a value, the fade recomposed this whole pane on every frame of it, and
+    // the controls fade every time they stand down or come back. The alpha is
+    // read in the layers below, in draw.
+    val translateDrawn by remember { derivedStateOf { translateFade > 0.01f } }
+    if (translateDrawn && !lyricPicker.picking) {
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
