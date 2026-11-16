@@ -186,6 +186,36 @@ object StreamChoice {
     }
 
     /**
+     * Hands the [stale] tracks from [inactivePins] over: drops their cached
+     * bytes, then releases the pins whose bytes are all gone and whose track
+     * is still outside the playhead window. Returns the released ids.
+     *
+     * [drop] removes the cache entries one source filled (YouTube's when its
+     * flag is true) and returns the ids whose entries are all gone. A removal
+     * that fails leaves bytes behind, and that track's pin stays.
+     *
+     * Removal failing is not what protects a track being read: Media3's
+     * `SimpleCache.removeResource` ignores readers' locks. The playhead window
+     * protects it. It is excluded before the drop, and [window] is read again
+     * after it, because the playhead can move onto a track while the drop
+     * runs. A track that did keeps its pin, so its reader and every later open
+     * agree on the source. Both cases are left for a later purge.
+     */
+    suspend fun handOver(
+        stale: Map<String, Boolean>,
+        drop: suspend (ids: Set<String>, youtube: Boolean) -> Set<String>,
+        window: () -> Set<String>,
+    ): Set<String> {
+        if (stale.isEmpty()) return emptySet()
+        val dropped = stale.entries.groupBy({ it.value }, { it.key })
+            .flatMap { (youtube, ids) -> drop(ids.toSet(), youtube) }
+            .toSet()
+        val released = dropped - window()
+        forgetAll(released)
+        return released
+    }
+
+    /**
      * Tracks whose read-ahead preparation is still looking for a stream.
      *
      * [AudioCache.prefetchQueue][com.music.bitchord.playback.AudioCache.prefetchQueue]

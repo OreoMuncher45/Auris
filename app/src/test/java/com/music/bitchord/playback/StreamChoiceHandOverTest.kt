@@ -1,0 +1,80 @@
+package com.music.bitchord.playback
+
+import com.music.bitchord.data.sources.SourceStream
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * [StreamChoice.handOver] releases a pin only once its bytes are gone and its
+ * track is still away from the playhead. Ids are unique to this test because
+ * [StreamChoice] is process-wide.
+ */
+class StreamChoiceHandOverTest {
+
+    private val ids = listOf("handover-free", "handover-held", "handover-reader", "handover-yt")
+
+    @After
+    fun tearDown() = ids.forEach(StreamChoice::forget)
+
+    private fun pin(id: String) {
+        StreamChoice.remember(id, SourceStream("https://example.invalid/$id", sourceConfigId = "off"), substituted = true)
+    }
+
+    @Test
+    fun aPinWhoseCacheEntryCouldNotBeRemovedIsKept() = runTest {
+        pin("handover-free")
+        pin("handover-held")
+        val stale = mapOf("handover-free" to false, "handover-held" to false)
+
+        // One entry fails to remove (an I/O failure), so its bytes remain.
+        val released = StreamChoice.handOver(
+            stale,
+            drop = { asked, _ -> asked - "handover-held" },
+            window = { emptySet() },
+        )
+
+        assertEquals(setOf("handover-free"), released)
+        assertNull(StreamChoice.of("handover-free"))
+        assertNotNull(StreamChoice.of("handover-held"))
+    }
+
+    @Test
+    fun aTrackAReaderMovedOntoDuringTheDropKeepsItsPin() = runTest {
+        pin("handover-reader")
+        var window = emptySet<String>()
+
+        val released = StreamChoice.handOver(
+            mapOf("handover-reader" to false),
+            drop = { asked, _ ->
+                // The listener skips onto the track while its bytes are dropped.
+                window = setOf("handover-reader")
+                asked
+            },
+            window = { window },
+        )
+
+        assertEquals(emptySet<String>(), released)
+        assertNotNull(StreamChoice.of("handover-reader"))
+    }
+
+    @Test
+    fun eachSourceIsDroppedOnItsOwnSide() = runTest {
+        pin("handover-free")
+        StreamChoice.remember("handover-yt", SourceStream("https://example.invalid/yt"), substituted = false)
+        val calls = mutableListOf<Pair<Set<String>, Boolean>>()
+
+        StreamChoice.handOver(
+            mapOf("handover-free" to false, "handover-yt" to true),
+            drop = { asked, youtube -> calls += asked to youtube; asked },
+            window = { emptySet() },
+        )
+
+        assertEquals(setOf(setOf("handover-free") to false, setOf("handover-yt") to true), calls.toSet())
+        assertNull(StreamChoice.of("handover-free"))
+        assertNull(StreamChoice.of("handover-yt"))
+    }
+}

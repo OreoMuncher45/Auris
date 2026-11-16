@@ -899,13 +899,14 @@ object AudioCache {
     /**
      * Drops the cache entries of [mediaIds] that one source filled: YouTube's
      * when [youtube] is true, everyone else's when it is false. Returns the ids
-     * whose entries are all gone. An entry still held is left in place, and so
-     * is its id, so the caller keeps that track's pin.
+     * whose entries are all gone. An entry that fails to remove stays, and so
+     * does its id, so the caller keeps that track's pin.
      *
-     * For handing a track over to a different source: see
-     * [StreamChoice.inactivePins]. Its callers pass only tracks away from the
-     * playhead. The other source's copies stay: they are not the bytes that
-     * would be mixed with a new answer.
+     * Removal does not check whether something is reading the entry:
+     * `SimpleCache.removeResource` ignores locks. Callers must pass only tracks
+     * nothing is reading. [StreamChoice.handOver]'s callers pass tracks away
+     * from the playhead. The other source's copies stay: they are not the bytes
+     * that would be mixed with a new answer.
      */
     suspend fun dropEntriesOf(mediaIds: Set<String>, youtube: Boolean): Set<String> {
         if (mediaIds.isEmpty()) return emptySet()

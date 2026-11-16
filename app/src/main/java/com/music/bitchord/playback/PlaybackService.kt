@@ -7210,12 +7210,7 @@ class PlaybackService : MediaLibraryService() {
         val configs = SourceRegistry.configs.value
         val enabled = configs.filter { it.enabled }.mapTo(mutableSetOf()) { it.id }
         val stale = StreamChoice.inactivePins(enabled, SourceRegistry.youtubeEnabled(), keep)
-        if (stale.isEmpty()) return
-        val dropped = stale.entries.groupBy({ it.value }, { it.key })
-            .flatMap { (youtube, ids) -> AudioCache.dropEntriesOf(ids.toSet(), youtube) }
-            .toSet()
-        val nowKept = playheadWindow()
-        StreamChoice.forgetAll(dropped - nowKept)
+        StreamChoice.handOver(stale, AudioCache::dropEntriesOf, ::playheadWindow)
     }
 
     /**
