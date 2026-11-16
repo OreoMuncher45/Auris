@@ -176,6 +176,10 @@ object AppUpdateChecker {
                     target.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var readTotal = 0L
+                        // Published in whole per cent. Per chunk was about
+                        // 1,600 state changes for a 100 MB APK, each one a
+                        // redraw of the dialog's bar; a hundred draw the same bar.
+                        var shownPercent = -1
                         while (true) {
                             if (downloadCancelled) {
                                 _download.value = DownloadState.Idle
@@ -186,8 +190,12 @@ object AppUpdateChecker {
                             output.write(buffer, 0, read)
                             readTotal += read
                             total?.let {
-                                _download.value =
-                                    DownloadState.Downloading((readTotal.toFloat() / it).coerceIn(0f, 1f))
+                                val fraction = (readTotal.toFloat() / it).coerceIn(0f, 1f)
+                                val percent = (fraction * 100f).toInt()
+                                if (percent != shownPercent) {
+                                    shownPercent = percent
+                                    _download.value = DownloadState.Downloading(fraction)
+                                }
                             }
                         }
                     }
