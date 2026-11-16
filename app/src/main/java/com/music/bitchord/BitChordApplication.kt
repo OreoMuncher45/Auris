@@ -61,6 +61,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
         CrashLog.install(this)
+        // Before anything reaches for the shared client, which builds once. No
+        // disk I/O here: OkHttp opens the cache on the first request, on that
+        // request's own thread. See Http.installCache.
+        com.music.bitchord.data.Http.installCache(cacheDir.resolve("http_cache"))
         // The encrypted credential store, opened on a thread of its own from
         // here and joined below, where [authStore] is assigned. Opening it is
         // Keystore work — a master key and a Tink keyset unwrapped — and it

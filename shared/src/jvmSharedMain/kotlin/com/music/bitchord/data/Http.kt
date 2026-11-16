@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import okhttp3.Cache
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
@@ -9,6 +10,7 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.Source
 import okio.buffer
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -155,14 +157,105 @@ object Http {
         chain.proceed(request)
     }
 
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
-        .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
-        .addInterceptor(offlineInterceptor)
-        .addInterceptor(webDavInterceptor)
-        .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
-        .build()
+    /**
+     * The disk cache, once a platform has named a directory for it; see
+     * [installCache]. Null on a platform that never does, which keeps the
+     * client exactly as it was: no cache at all.
+     */
+    @Volatile private var cache: Cache? = null
+
+    /**
+     * Gives the client an HTTP cache in [directory].
+     *
+     * Before this, the client had no cache at all, so every GET went to the
+     * network even when the server had said the answer was good for a year.
+     * The clearest case is YouTube's player JavaScript, which NewPipe fetches
+     * on every cold start to solve signatures. It is about 2.5 MB of script
+     * (about 0.6 MB on the wire) at a versioned URL marked
+     * `max-age=31536000`. Lyrics, release notes, catalogue lookups and API
+     * answers that carry an ETag also turn into 304s instead of full bodies.
+     *
+     * Only [worthStoring] responses are written. Audio, video and images never
+     * reach this cache, because AudioCache and Coil already keep their own.
+     *
+     * Has to be called before the first use of [client]. A call after that is
+     * ignored, and the client simply has no cache.
+     */
+    fun installCache(directory: File, maxBytes: Long = DEFAULT_CACHE_BYTES) {
+        if (cache == null) cache = Cache(directory, maxBytes)
+    }
+
+    private const val DEFAULT_CACHE_BYTES = 20L * 1024 * 1024
+
+    /** Bodies above this are not worth a disk write. The player JS is under it. */
+    private const val MAX_STORED_BODY_BYTES = 4L * 1024 * 1024
+
+    /**
+     * Whether a response is worth writing to the cache.
+     *
+     * OkHttp writes every cacheable GET response by default, even one with no
+     * freshness and no validator, which can never be reused. That is a disk
+     * write per request for nothing. So a response is kept only when all of
+     * these hold:
+     *
+     * - It is a plain GET with no credential and no byte range. A personal
+     *   answer is not written to disk, and a range is part of a stream.
+     * - It is text: JSON, JavaScript, XML, HTML or `text/`. Media and images
+     *   have caches of their own, and a second copy of an audio stream would
+     *   double every write.
+     * - It is no larger than [MAX_STORED_BODY_BYTES].
+     * - It can be reused, either because it states a freshness lifetime or
+     *   because it carries a validator the next request can send back.
+     */
+    private fun worthStoring(request: okhttp3.Request, response: okhttp3.Response): Boolean {
+        if (request.method != "GET") return false
+        if (request.header("Authorization") != null || request.header("Range") != null) return false
+        val type = response.header("Content-Type")?.lowercase() ?: return false
+        val text = type.startsWith("text/") ||
+            "json" in type || "javascript" in type || "xml" in type
+        if (!text) return false
+        val length = response.header("Content-Length")?.toLongOrNull() ?: -1L
+        if (length > MAX_STORED_BODY_BYTES) return false
+        val control = response.cacheControl
+        val fresh = control.maxAgeSeconds > 0 || control.sMaxAgeSeconds > 0 ||
+            response.header("Expires") != null
+        val validated = response.header("ETag") != null || response.header("Last-Modified") != null
+        return fresh || validated
+    }
+
+    /**
+     * Marks every 200 that [worthStoring] turns down as `no-store`, so the
+     * cache leaves it alone. A network interceptor, so the request the
+     * server sees is unchanged: only the cache's view of the response is
+     * rewritten. A 304 passes through untouched, because the cache merges
+     * its headers into the stored copy.
+     */
+    private val cachePolicyInterceptor = okhttp3.Interceptor { chain ->
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (response.code != 200 || worthStoring(request, response)) {
+            response
+        } else {
+            response.newBuilder().header("Cache-Control", "no-store").build()
+        }
+    }
+
+    val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
+            .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+            .addInterceptor(offlineInterceptor)
+            .addInterceptor(webDavInterceptor)
+            .apply {
+                cache?.let { disk ->
+                    cache(disk)
+                    addNetworkInterceptor(cachePolicyInterceptor)
+                }
+            }
+            .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
+            .build()
+    }
 }
