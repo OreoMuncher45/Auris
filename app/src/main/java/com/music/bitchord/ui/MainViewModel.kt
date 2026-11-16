@@ -989,8 +989,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /**
+     * The session's own rating is read straight from [LikeState] first.
+     * [likeStatuses] is built off Main, so for a moment after a tap it can
+     * still hold the previous rating; a second tap in that moment would read
+     * it and send the same rating again. Overrides already win in the
+     * combined map, so once it is current the answer is the same.
+     */
     fun likeStatusOf(videoId: String): LikeStatus =
-        likeStatuses.value[videoId] ?: LikeStatus.INDIFFERENT
+        LikeState.overrides.value[videoId]
+            ?: likeStatuses.value[videoId]
+            ?: LikeStatus.INDIFFERENT
 
     /**
      * The rating of [song], for a row that may not be a YouTube row.
@@ -1001,9 +1010,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * same as none.
      */
     fun likeStatusOf(song: Song): LikeStatus {
+        // Pending ratings first, as in the id overload: the row's own, then
+        // the recording it resolved to, which is what the combined map shows.
+        val overrides = LikeState.overrides.value
+        overrides[song.videoId]?.let { return it }
+        val resolved = RatingTarget.videoIdFor(song.videoId)
+        if (resolved != null) overrides[resolved]?.let { return it }
         val direct = likeStatuses.value[song.videoId]
         if (direct != null) return direct
-        val resolved = RatingTarget.videoIdFor(song.videoId) ?: return LikeStatus.INDIFFERENT
+        if (resolved == null) return LikeStatus.INDIFFERENT
         return likeStatuses.value[resolved] ?: LikeStatus.INDIFFERENT
     }
 
