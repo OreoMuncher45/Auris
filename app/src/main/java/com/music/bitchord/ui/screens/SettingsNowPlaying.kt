@@ -290,25 +290,27 @@ internal fun NowPlayingSettings(
                     onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
                 )
             }
-            // The picture inside the card, rather than the card itself: the
-            // other way of looking at a cover that is cropped too tightly.
-            // A row of its own, because it is a choice about the picture
-            // and not about the treatment the picture sits in.
-            val zoomOutAlbumArtTitle = stringResource(R.string.zoom_out_album_art)
-            row(zoomOutAlbumArtTitle, "artwork", "player", "zoom") {
-                SettingsRow(
-                    icon = Icons.Rounded.ZoomOut,
-                    title = zoomOutAlbumArtTitle,
-                    subtitle = stringResource(R.string.zoom_out_album_art_subtitle),
-                    trailing = {
-                        SettingsSwitch(
-                            checked = zoomOutAlbumArt,
-                            onCheckedChange = AppSettings::setZoomOutAlbumArt,
-                        )
-                    },
-                    onClick = { AppSettings.setZoomOutAlbumArt(!zoomOutAlbumArt) },
-                )
-            }
+        }
+        // The picture inside the card, rather than the card itself: the
+        // other way of looking at a cover that is cropped too tightly. A row
+        // of its own, because it is a choice about the picture and not about
+        // the treatment the picture sits in, and outside the full-bleed gate
+        // for the same reason: the player zooms the card's picture at every
+        // width, including the ones where full bleed is not offered.
+        val zoomOutAlbumArtTitle = stringResource(R.string.zoom_out_album_art)
+        row(zoomOutAlbumArtTitle, "artwork", "player", "zoom") {
+            SettingsRow(
+                icon = Icons.Rounded.ZoomOut,
+                title = zoomOutAlbumArtTitle,
+                subtitle = stringResource(R.string.zoom_out_album_art_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = zoomOutAlbumArt,
+                        onCheckedChange = AppSettings::setZoomOutAlbumArt,
+                    )
+                },
+                onClick = { AppSettings.setZoomOutAlbumArt(!zoomOutAlbumArt) },
+            )
         }
         val legacyMeshGradientTitle = stringResource(R.string.legacy_mesh_gradient)
         row(legacyMeshGradientTitle, "background", "player") {
