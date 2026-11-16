@@ -12,6 +12,7 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -106,8 +107,9 @@ internal fun StorageSettings(
             SettingsRow(
                 icon = Icons.Rounded.Folder,
                 title = localMusicFolderTitle,
-                subtitle = LocalMediaRepository.selectedFolderLabel(localMusicFolderUri)
-                    ?: stringResource(R.string.all_audio_folders),
+                subtitle = remember(localMusicFolderUri) {
+                    LocalMediaRepository.selectedFolderLabel(localMusicFolderUri)
+                } ?: stringResource(R.string.all_audio_folders),
                 onClick = { localMusicFolderPicker.launch(null) },
             )
         }
