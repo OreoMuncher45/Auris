@@ -55,11 +55,19 @@ class TrackMatcherImmersiveTitleTest {
     @Test
     fun everySeparatorBeforeTheLabelMatchesTheStereoTrack() {
         val rows = listOf(song("봄날", "River Lane", "3:20"))
-        for (title in listOf("봄날 - Eclipsa Audio", "봄날·Eclipsa Audio", "봄날 (Eclipsa Audio)", "봄날 | Eclipsa Audio")) {
+        for (title in listOf("봄날 - Eclipsa Audio", "봄날.Eclipsa Audio", "봄날·Eclipsa Audio", "봄날 (Eclipsa Audio)", "봄날 | Eclipsa Audio")) {
             val target = TrackMatcher.Target(title, "River Lane", durationSec = 200)
             assertEquals("봄날", TrackMatcher.best(rows, target)?.title, title)
             assertTrue(TrackMatcher.queries(target).none { "eclipsa" in it }, "$title -> ${TrackMatcher.queries(target)}")
         }
+    }
+
+    @Test
+    fun aTrailingLabelAfterTheSuffixLeavesTheCjkCoreAlone() {
+        val target = TrackMatcher.Target("봄날 Eclipsa Audio Official", "River Lane", durationSec = 200)
+        val rows = listOf(song("봄날", "River Lane", "3:20"))
+
+        assertEquals("봄날", TrackMatcher.best(rows, target)?.title)
     }
 
     @Test

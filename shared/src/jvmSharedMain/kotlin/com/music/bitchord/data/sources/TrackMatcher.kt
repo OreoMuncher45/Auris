@@ -495,7 +495,17 @@ object TrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // The same trailing labels the word loop above drops, or
+            // "봄날 Eclipsa Audio Official" keeps "official" in its core and
+            // misses the stereo "봄날". A label only comes off after a
+            // separator, so the title itself is never one of them.
+            var coreText = text
+            while (true) {
+                val tail = TRAILING_LABEL.find(coreText) ?: break
+                if (tail.groupValues[1] !in TRAILING_NOISE) break
+                coreText = coreText.substring(0, tail.range.first)
+            }
+            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -855,6 +865,8 @@ object TrackMatcher {
      * separators in front of it ("봄날·Eclipsa Audio"); see [parseTitle].
      */
     private val IMMERSIVE_LABEL = Regex("""[\s\p{P}\p{S}]*(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+    /** The last word of a title and the separators around it; see the CJK core in [parseTitle]. */
+    private val TRAILING_LABEL = Regex("""[\s\p{P}\p{S}]+([\p{L}\p{N}]+)[\s\p{P}\p{S}]*$""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
