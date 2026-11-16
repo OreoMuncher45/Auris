@@ -223,14 +223,24 @@ internal class PlaybackStreamResolver(
                     .build()
             }
         }
-        val stream = runBlocking(about) {
-            withTimeout(RESOLVE_TIMEOUT_MS) {
-                if (directYouTube) {
-                    SourceResolver.youtubeFallback(SourceResolver.targetIn(dataSpec.uri))
-                } else {
-                    SourceResolver.resolve(dataSpec.uri)
+        // A timeout leaves as an IOException, as at every other resolve here.
+        // Left as TimeoutCancellationException, it escapes the data source as
+        // something Media3 doesn't expect, which is fatal and never retried.
+        val stream = try {
+            runBlocking(about) {
+                withTimeout(RESOLVE_TIMEOUT_MS) {
+                    if (directYouTube) {
+                        SourceResolver.youtubeFallback(SourceResolver.targetIn(dataSpec.uri))
+                    } else {
+                        SourceResolver.resolve(dataSpec.uri)
+                    }
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            throw java.io.IOException(
+                "Source resolution timed out for ${dataSpec.uri.getQueryParameter("n")}",
+                e,
+            )
         } ?: throw java.io.IOException(
             if (directYouTube) {
                 "No YouTube audio fallback matched ${dataSpec.uri.getQueryParameter("n")}"
