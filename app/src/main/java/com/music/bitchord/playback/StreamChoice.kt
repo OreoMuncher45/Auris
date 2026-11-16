@@ -125,7 +125,20 @@ object StreamChoice {
                 chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
             }
         }
-        chosen[videoId] = Choice(stream, now, substituted)
+        // The check above is only a fast path. Two opens of one track (the
+        // player's and read-ahead's, say) can both pass it, so the decision
+        // that counts is this one, made atomically per track: an unexpired
+        // pin that arrived in between wins, and only one caller gets true.
+        var won = false
+        chosen.compute(videoId) { _, current ->
+            if (current != null && now - current.at <= TTL_MS) {
+                current
+            } else {
+                won = true
+                Choice(stream, now, substituted)
+            }
+        }
+        if (!won) return false
         preparationChanged()
         return true
     }
