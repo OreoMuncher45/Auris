@@ -7055,10 +7055,14 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
+        if (range.isEmpty()) return
         persistedQueueStart = range.first
+        // Only the window is stored, so only the window is converted. This runs
+        // on the main looper when a radio queue lands; converting every item
+        // out of the player first was an O(queue) walk for at most 76 rows.
         LastPlayed.saveQueueImmediately(
-            songs = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toSong() },
-            index = player.currentMediaItemIndex,
+            songs = range.map { player.getMediaItemAt(it).toSong() },
+            index = player.currentMediaItemIndex - range.first,
             positionMs = player.currentPosition,
         )
     }
