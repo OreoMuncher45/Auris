@@ -3111,149 +3111,30 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         onPlayerMenuOpenChange = { playerMenuOpen = it },
                         actions = playerActions,
                     )
-                    if (overlays.accounts) {
-                        DesktopAccountSelector(
-                            accounts = account.accounts,
-                            activeAccountId = account.activeAccountId,
-                            activeProfileId = account.activeProfileId,
-                            busy = account.signInBusy != null,
-                            onSelect = { picked, profile ->
-                                DesktopAccounts.select(picked.accountId, profile.profileId)
-                                account.activeAccountId = picked.accountId
-                                account.activeProfileId = profile.profileId
-                            },
-                            onAddAccount = { overlays.accounts = false; overlays.signIn = true },
-                            onRemoveAccount = { removed ->
-                                scope.launch {
-                                    account.accounts = withContext(Dispatchers.IO) {
-                                        DesktopAccounts.remove(removed.accountId)
-                                        DesktopAccounts.accounts()
-                                    }
-                                    account.activeAccountId = DesktopAccounts.activeAccountId()
-                                    account.activeProfileId = DesktopAccounts.activeProfileId()
-                                }
-                            },
-                            onOpenSettings = { overlays.accounts = false; openSettings() },
-                            onDismiss = { overlays.accounts = false },
-                        )
-                    }
-
-                    if (overlays.signIn) {
-                        DesktopSignInDialog(
-                            busy = account.signInBusy,
-                            error = account.signInError,
-                            interactiveBrowser = interactiveSignInBrowser,
-                            onBrowserSignIn = { browser ->
-                                account.browserSignInJob?.cancel()
-                                account.browserSignInJob = scope.launch {
-                                    account.signInError = null
-                                    account.signInBusy = browser.label
-                                    try {
-                                        val cookie = DesktopBrowserSignIn.capture(browser)
-                                        signIn(cookie, browser.label)
-                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                        throw cancelled
-                                    } catch (failure: Exception) {
-                                        account.signInError = failure.message ?: "Could not complete browser sign-in."
-                                    } finally {
-                                        account.signInBusy = null
-                                        account.browserSignInJob = null
-                                    }
-                                }
-                            },
-                            onImport = { profile ->
-                                scope.launch {
-                                    when (val found = withContext(Dispatchers.IO) { DesktopBrowserCookies.read(profile) }) {
-                                        is DesktopBrowserCookies.Result.Session ->
-                            signIn(found.cookie, profile.label, profile.database.toString())
-                                        DesktopBrowserCookies.Result.SignedOut ->
-                                            account.signInError = "${profile.label} is not signed in."
-                                        is DesktopBrowserCookies.Result.Unavailable ->
-                                            account.signInError = "${profile.label}: ${found.reason}."
-                                    }
-                                }
-                            },
-                            onPaste = { pasted ->
-                                scope.launch {
-                                    if (!DesktopBrowserCookies.hasSigningSecret(pasted)) {
-                                        account.signInError = "That cookie has no signing secret in it — copy the whole header."
-                                    } else {
-                                        signIn(pasted, "the cookie you pasted")
-                                    }
-                                }
-                            },
-                            onDismiss = {
-                                account.browserSignInJob?.cancel()
-                                overlays.signIn = false
-                                account.signInError = null
-                            },
-                        )
-                    }
-                    if (overlays.playlistDialog || library.playlistTarget != null) {
-                        DesktopPlaylistDialog(
-                            song = library.playlistTarget,
-                            accountPlaylists = accountPlaylists,
-                            localPlaylists = library.playlists,
-                            signedIn = account.youtubeSignedIn,
-                            canUseAccount = library.playlistTarget
-                                ?.let { DesktopSearchClient.isVideoId(it.videoId) } ?: true,
-                            busy = library.playlistBusy,
-                            error = library.playlistError,
-                            onPickAccount = ::addToAccountPlaylist,
-                            onPickLocal = ::addToPlaylist,
-                            onCreate = ::createPlaylist,
-                            onDismiss = ::closePlaylistDialogs,
-                        )
-                    }
-                    if (overlays.rename) {
-                        DesktopRenamePlaylistDialog(
-                            current = pages.openedCollection?.title.orEmpty(),
-                            busy = library.playlistBusy,
-                            error = library.playlistError,
-                            onRename = ::renameOpenPlaylist,
-                            onDismiss = ::closePlaylistDialogs,
-                        )
-                    }
-                    if (overlays.delete) {
-                        DesktopDeletePlaylistDialog(
-                            title = pages.openedCollection?.title.orEmpty(),
-                            busy = library.playlistBusy,
-                            error = library.playlistError,
-                            onDelete = ::deleteOpenPlaylist,
-                            onDismiss = ::closePlaylistDialogs,
-                        )
-                    }
-                    if (overlays.downloadManager) {
-                        DesktopDownloadManagerDialog(onDismiss = { overlays.downloadManager = false })
-                    }
-                    if (overlays.lastfmLogin) {
-                        DesktopLastfmLoginDialog(onDismiss = { overlays.lastfmLogin = false })
-                    }
-                    if (overlays.listenBrainzToken) {
-                        DesktopListenBrainzTokenDialog(onDismiss = { overlays.listenBrainzToken = false })
-                    }
-                    if (overlays.discordToken) {
-                        DesktopDiscordTokenDialog(onDismiss = { overlays.discordToken = false })
-                    }
-                    if (overlays.listenTogether) {
-                        DesktopListenTogetherDialog(
-                            autoplayEnabled = settings.autoplay,
-                            onDismiss = { overlays.listenTogether = false },
-                        )
-                    }
-                    if (overlays.audioOutput) {
-                        DesktopAudioOutputDialog(onDismiss = { overlays.audioOutput = false })
-                    }
-                    if (overlays.pipeline) {
-                        DesktopAudioPipelineDialog(
-                            format = playback.streamFormat,
-                            sourceName = playback.streamSourceId?.let { id ->
-                                sourceConfigs.firstOrNull { it.id == id }?.displayName
-                            },
-                            pipeline = playbackEngine.pipeline(),
-                            onDismiss = { overlays.pipeline = false },
-                        )
-                    }
+                    val dialogActions = DesktopDialogActions(
+                        signIn = { cookie, label, sourceProfile -> signIn(cookie, label, sourceProfile) },
+                        openSettings = ::openSettings,
+                        addToAccountPlaylist = ::addToAccountPlaylist,
+                        addToPlaylist = ::addToPlaylist,
+                        createPlaylist = ::createPlaylist,
+                        closePlaylistDialogs = ::closePlaylistDialogs,
+                        renameOpenPlaylist = ::renameOpenPlaylist,
+                        deleteOpenPlaylist = ::deleteOpenPlaylist,
+                    )
+                    DesktopDialogHost(
+                        overlays = overlays,
+                        settings = settings,
+                        account = account,
+                        library = library,
+                        pages = pages,
+                        scope = scope,
+                        interactiveSignInBrowser = interactiveSignInBrowser,
+                        accountPlaylists = accountPlaylists,
+                        playback = playback,
+                        playbackEngine = playbackEngine,
+                        sourceConfigs = sourceConfigs,
+                        actions = dialogActions,
+                    )
                 },
             ) { contentPadding ->
                 // What the page area may ask of the window; see DesktopPageActions.
