@@ -1322,41 +1322,8 @@ fun NowPlayingScreen(
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
     val canvas = rememberCanvasArtwork(song)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
-    // Whether the clip actually has a frame on screen right now, and one of
-    // them — used to blow the sleeve out to the full-bleed hero treatment and
-    // to re-tint the backdrop off the clip's own colours rather than the
-    // still sleeve's.
-    // All five keyed on the clip rather than the song, so a switch that keeps
-    // the same clip — the common case, same title, same search — carries them
-    // through untouched: the player never re-reports a first frame, the
-    // sleeve never flashes back in under a clip that never went away, and
-    // the Spotify deck keeps its state and captured measurements instead of
-    // snapping open mid-loop. A different clip resets them with itself.
-    val canvasRenderedState = remember(canvas?.url) { mutableStateOf(false) }
-    var canvasRendered by canvasRenderedState
-    // The clip's newest frame, held outside this screen's composition — see
-    // [CanvasFrameHolder].
-    //
-    // It used to be a state of this screen's own, read here for the ink, the
-    // mesh and the blurred backdrop. A frame arrives while the clip plays, so
-    // that was a recomposition of the whole player — every control on it —
-    // every time one was captured, and the captures came ten times a second.
-    // The frame is now read by the three things that want it, each in an
-    // effect of its own, and it never reaches this composition at all.
-    val canvasFrameHolder = remember(canvas?.url) { CanvasFrameHolder() }
-    // Spotify's phone presentation starts with the full control deck over its
-    // video. It leaves on a Canvas tap, or after the optional idle timeout.
-    var spotifyCanvasControlsOpen by remember(canvas?.url) { mutableStateOf(true) }
-    // Captured while the deck is fully laid out. SlidingPlayerDeck collapses
-    // that deck's measured height, which makes the weighted region grow;
-    // retaining both measurements keeps the credits' destination stationary.
-    var spotifyCanvasDeckHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
-    var spotifyCanvasExpandedTopHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
-    // How much of the still artwork the clip is covering, reported by the clip
-    // itself. Read from a draw scope rather than in composition: it moves every
-    // frame of the fade, and the still art it governs is an AsyncImage whose
-    // request is rebuilt on each pass and so would not be skipped.
-    val canvasCover = remember(canvas?.url) { mutableFloatStateOf(0f) }
+    // What travels with the clip rather than the song — see [CanvasClipState].
+    val clipState = remember(canvas?.url) { CanvasClipState() }
     // v1.5's backdrop, kept behind a switch — see [PlayerSettings.legacyMeshGradient].
     val legacyMesh by PlayerSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     // The backdrop's colours, taken off the artwork's own arrangement rather
@@ -1769,9 +1736,9 @@ fun NowPlayingScreen(
     // can land in the middle of the sleeve coming back out of a panel —
     // recomposed this whole screen to run a block that, every time after the
     // first, had nothing left to do.
-    LaunchedEffect(art, canvasRenderedState) {
+    LaunchedEffect(art, clipState.renderedState) {
         if (heroSettled) return@LaunchedEffect
-        snapshotFlow { art.loaded || canvasRenderedState.value }.first { it }
+        snapshotFlow { art.loaded || clipState.renderedState.value }.first { it }
         heroSettled = true
         lastHeroSettled = true
     }
@@ -1782,7 +1749,7 @@ fun NowPlayingScreen(
     val heroClip = canvas?.takeIf { heroMode && !collapse.pastHalf }
     val spotifyCanvasFullscreen = spotifyCanvasOnPhone &&
         heroClip?.source == CanvasSource.SPOTIFY
-    val spotifyCanvasPresentation = spotifyCanvasFullscreen && canvasRendered
+    val spotifyCanvasPresentation = spotifyCanvasFullscreen && clipState.rendered
     val canvasFirstPortrait = !spotifyCanvasFullscreen &&
         heroClip != null && canvasAspect > 0f && canvasAspect < 1f
     // The clip's player, which outlives [heroClip] by the second half of a
@@ -1830,7 +1797,7 @@ fun NowPlayingScreen(
     } else {
         LiveColorSource.LIVE_ART
     }
-    val canvasPalette = rememberLivePalette(canvasFrameHolder.frames, canvasSource)
+    val canvasPalette = rememberLivePalette(clipState.frameHolder.frames, canvasSource)
     // The clip owns the whole screen when Spotify's presentation is on. Then
     // there is no sleeve in the answer at all.
     val canvasOwnsScreen = spotifyCanvasPresentation || clipFullscreen
@@ -1871,7 +1838,7 @@ fun NowPlayingScreen(
     // it starts fresh once playback/interaction resumes.
     LaunchedEffect(
         spotifyCanvasPresentation,
-        spotifyCanvasControlsOpen,
+        clipState.spotifyControlsOpen,
         spotifyCanvasAutoHide,
         isPlaying,
         scrub.scrubbing,
@@ -1880,26 +1847,26 @@ fun NowPlayingScreen(
         panels.queueOpen,
         mixing,
     ) {
-        if (!spotifyCanvasPresentation || !spotifyCanvasControlsOpen ||
+        if (!spotifyCanvasPresentation || !clipState.spotifyControlsOpen ||
             !spotifyCanvasAutoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
             panels.lyricsOpen || panels.queueOpen || mixing
         ) return@LaunchedEffect
         delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
-        spotifyCanvasControlsOpen = false
+        clipState.spotifyControlsOpen = false
     }
 
     // Returning from a subview, or regaining the TextureView after backgrounding,
     // is a fresh visit, so show the deck again before any optional countdown.
     LaunchedEffect(spotifyCanvasPresentation, panels.lyricsOpen, panels.queueOpen) {
         if (spotifyCanvasPresentation && !panels.lyricsOpen && !panels.queueOpen) {
-            spotifyCanvasControlsOpen = true
+            clipState.spotifyControlsOpen = true
         }
     }
     // A transition can begin while Canvas is standing alone. Restore and pin
     // the compact deck so both the outgoing and incoming song are identified;
     // normal tap/idle collapsing resumes as soon as the mix finishes.
     LaunchedEffect(spotifyCanvasPresentation, mixing) {
-        if (spotifyCanvasPresentation && mixing) spotifyCanvasControlsOpen = true
+        if (spotifyCanvasPresentation && mixing) clipState.spotifyControlsOpen = true
     }
     // The mesh follows the clip only while the mesh is the backdrop. When
     // Spotify's Canvas owns the screen there is no mesh behind it, and
@@ -1924,13 +1891,13 @@ fun NowPlayingScreen(
         targetValue = if (
             // Latched first, so a clip coming and going isn't listened for
             // once the banner has settled — see [heroSettled].
-            heroMode && (heroSettled || art.loaded || canvasRendered)
+            heroMode && (heroSettled || art.loaded || clipState.rendered)
         ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
     val spotifyChromeAlpha by animateFloatAsState(
-        targetValue = if (!spotifyCanvasPresentation || spotifyCanvasControlsOpen) 1f else 0f,
+        targetValue = if (!spotifyCanvasPresentation || clipState.spotifyControlsOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
         label = "spotifyCanvasChrome",
     )
@@ -1951,24 +1918,15 @@ fun NowPlayingScreen(
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "headerUncrop",
     )
-    // How tall that banner is, worked out down in the layout where the sleeve's
-    // own geometry is known. Zero until the first measure, which is fine: there
-    // is nothing to show that early either.
-    var heroHeight by remember { mutableStateOf(0.dp) }
-    // The card's own bottom edge, in the player's pixels.
-    //
-    // Published out of the layout that measures it, because the backdrop is
-    // drawn in another scope: this is the line the wash below the artwork is
-    // lifted from, and the two have to be given the same line.
-    var cardBottom by remember { mutableStateOf(0.dp) }
-    var playerBounds by remember { mutableStateOf(IntSize.Zero) }
+    // What the layout measures and publishes back — see [PlayerMeasures].
+    val measures = remember { PlayerMeasures() }
     // The bottom of a top-aligned, contained clip in the full-player view.
     // Use measured pixels and the decoded display aspect, never screen constants.
     fun canvasBottom(portrait: Boolean): Dp =
-        if (portrait && playerBounds.width > 0 && playerBounds.height > 0) {
-            val viewAspect = playerBounds.width.toFloat() / playerBounds.height
-            val videoHeight = if (canvasAspect >= viewAspect) playerBounds.width / canvasAspect
-                else playerBounds.height.toFloat()
+        if (portrait && measures.playerBounds.width > 0 && measures.playerBounds.height > 0) {
+            val viewAspect = measures.playerBounds.width.toFloat() / measures.playerBounds.height
+            val videoHeight = if (canvasAspect >= viewAspect) measures.playerBounds.width / canvasAspect
+                else measures.playerBounds.height.toFloat()
             with(density) { videoHeight.toDp() }
         } else 0.dp
     val renderedCanvasBottom = canvasBottom(canvasFirstPortrait)
@@ -1977,7 +1935,7 @@ fun NowPlayingScreen(
     // Match the old hero's fade height in physical pixels, not its much larger
     // percentage of a portrait video. The mask ends at the real video bottom.
     val clipFadeFraction = if (clipBottom > 0.dp) {
-        (heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
+        (measures.heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
     } else 0f
     // The status bar's own height, whether it is showing or not.
     //
@@ -2023,11 +1981,8 @@ fun NowPlayingScreen(
     // Both start at zero, which is a band with no height and so no hole at all
     // until the first layout pass. There is nothing on screen to drag then
     // either.
-    var dismissBandTop by remember { mutableFloatStateOf(0f) }
-    var dismissBandBottom by remember { mutableFloatStateOf(0f) }
-    // The suppressing Column's own coordinates, to put a pointer's local
-    // position into the same space as the two edges above.
-    var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    //
+    // Held in [PlayerMeasures.dismissBandTop] and [PlayerMeasures.dismissBandBottom].
 
     // Where the caption above the credits leads: the party for a track someone
     // else queued, the queue itself for a queue-built session, and otherwise
@@ -2169,7 +2124,7 @@ fun NowPlayingScreen(
         (!legacyMeshBackdrop && (tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen))
     val meshLiveFrames = if (
         spotifyCanvasPresentation || fullCoverBackdropVisible
-    ) null else canvasFrameHolder.frames
+    ) null else clipState.frameHolder.frames
     // Owned by the song-level player composition, not by any one screen state.
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
@@ -2195,7 +2150,7 @@ fun NowPlayingScreen(
     // backdrop drawn at zero alpha is a readback and a blur paid for a wash
     // nobody can see.
     val currentLiveBlurFrames = rememberUpdatedState(
-        if (fullCoverBackdropVisible) canvasFrameHolder.frames else null,
+        if (fullCoverBackdropVisible) clipState.frameHolder.frames else null,
     )
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
@@ -2492,9 +2447,9 @@ fun NowPlayingScreen(
                         artLoaded = art.loaded,
                         onArtState = art::onState,
                         canvas = canvas,
-                        canvasRendered = canvasRendered,
+                        canvasRendered = clipState.rendered,
                         isPlaying = isPlaying,
-                        onCanvasRenderedChange = { canvasRendered = it },
+                        onCanvasRenderedChange = { clipState.rendered = it },
                         // A clip decoding behind a player on its way to the
                         // bar is work nobody sees — see [dockMoving].
                         pausedForTransition = dockMoving,
@@ -2749,7 +2704,7 @@ fun NowPlayingScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .onSizeChanged { playerBounds = it }
+            .onSizeChanged { measures.playerBounds = it }
             .then(dockHost)
             .background(Color.Black),
     ) {
@@ -2780,7 +2735,7 @@ fun NowPlayingScreen(
                 if (canvasFirstPortrait) {
                     renderedCanvasBottom
                 } else {
-                    lerp(0.dp, heroHeight + MESH_SEAM_NUDGE, heroT.value)
+                    lerp(0.dp, measures.heroHeight + MESH_SEAM_NUDGE, heroT.value)
                 }
             },
             // The wash under a card is lifted, so the colour that sat
@@ -2788,15 +2743,15 @@ fun NowPlayingScreen(
             // controls stand on a calmer band. A banner has its own
             // wash under it and is not lifted.
             lift = { BACKDROP_LIFT * (1f - heroT.value) },
-            liftFrom = { cardBottom },
+            liftFrom = { measures.cardBottom },
             fullArtworkBlur = fullArtworkBlurContent,
-            heroHeight = heroHeight,
+            heroHeight = measures.heroHeight,
             heroWash = { heroT.value },
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
         // invisible view to full-player bounds before its first frame is shown.
-        if (heroMode && heroHeight > 0.dp) {
+        if (heroMode && measures.heroHeight > 0.dp) {
             heroClipMounted?.let { clip ->
                 CanvasArtworkPlayer(
                     canvas = clip,
@@ -2830,7 +2785,7 @@ fun NowPlayingScreen(
                     },
                     alignPortraitTop = clipPortrait,
                     onAspectRatioChanged = { canvasAspect = it },
-                    portraitRevealBounds = playerBounds,
+                    portraitRevealBounds = measures.playerBounds,
                     // Gone by the half, where [heroClip] lets it go — and the
                     // still sleeve collapsing over it takes exactly the cover
                     // this gives up, so the two never leave a gap or a pop
@@ -2839,7 +2794,7 @@ fun NowPlayingScreen(
                     // TextureView doesn't reliably take the fade from a
                     // Compose layer around it.
                     presentationAlpha = { (1f - 2f * collapse.p()).coerceIn(0f, 1f) * dockFade() },
-                    onRenderedChanged = { canvasRendered = it },
+                    onRenderedChanged = { clipState.rendered = it },
                     onFrameCaptured = { frame ->
                         // The clip's own colours, read as it plays. The ink
                         // follows them wherever the clip is — including when
@@ -2854,7 +2809,7 @@ fun NowPlayingScreen(
                         // would recompose the whole player every time the
                         // clip produced one.
                         if (!panels.lyricsOpen && !panels.queueOpen && !panels.queueDragging) {
-                            canvasFrameHolder.offer(frame)
+                            clipState.frameHolder.offer(frame)
                         }
                     },
                     // The readback is the expensive half, so this is the number
@@ -2871,7 +2826,7 @@ fun NowPlayingScreen(
                     } else {
                         liveRefreshMs
                     },
-                    onCoverChanged = { canvasCover.floatValue = it },
+                    onCoverChanged = { clipState.cover.floatValue = it },
                     bottomFade = when {
                         clipFullscreen -> 0f
                         clipPortrait -> clipFadeFraction
@@ -2883,19 +2838,19 @@ fun NowPlayingScreen(
                         .align(Alignment.TopStart)
                         .then(
                             if (clipFullscreen || clipPortrait) Modifier.fillMaxSize()
-                            else Modifier.fillMaxWidth().height(heroHeight),
+                            else Modifier.fillMaxWidth().height(measures.heroHeight),
                         )
                         .hazeSource(playerHaze),
                 )
             }
         }
 
-        if (canvasFirstPortrait && canvasRendered) {
+        if (canvasFirstPortrait && clipState.rendered) {
             // The image remains visible through the controls; a plain scrim
             // protects text and touch targets without erasing the video.
             Box(
                 Modifier.matchParentSize()
-                    .graphicsLayer { alpha = canvasCover.floatValue }
+                    .graphicsLayer { alpha = clipState.cover.floatValue }
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Transparent,
@@ -2907,7 +2862,7 @@ fun NowPlayingScreen(
         }
 
         SpotifyCanvasChrome(
-            deckShown = spotifyCanvasPresentation && spotifyCanvasControlsOpen,
+            deckShown = spotifyCanvasPresentation && clipState.spotifyControlsOpen,
             presentation = spotifyCanvasPresentation,
             hazeState = playerHaze,
         )
@@ -2922,7 +2877,7 @@ fun NowPlayingScreen(
                 // video above or below them toggles the lower deck either way.
                 .toggleSpotifyCanvasControlsOnTap(
                     enabled = spotifyCanvasPresentation && !mixing,
-                    onToggle = { spotifyCanvasControlsOpen = !spotifyCanvasControlsOpen },
+                    onToggle = { clipState.spotifyControlsOpen = !clipState.spotifyControlsOpen },
                 )
                 .then(skipSwipeGesture),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -2930,7 +2885,7 @@ fun NowPlayingScreen(
             PlayerTopStrip(
                 height = topStrip,
                 statusBarTop = statusBarTop,
-                playerHeight = { playerBounds.height },
+                playerHeight = { measures.playerBounds.height },
                 chromeAlpha = { spotifyChromeAlpha },
                 onClose = {
                     haptics.play(Haptic.Tap)
@@ -2972,7 +2927,7 @@ fun NowPlayingScreen(
                     // the queue opens, and a hole that waited for it spent that
                     // half second lying across a list the finger was already
                     // scrolling.
-                    .onGloballyPositioned { dismissBandSpace = it }
+                    .onGloballyPositioned { measures.dismissBandSpace = it }
                     .pointerInput(overlays.audioPipeline, overlays.cast, panelScrolling) {
                         if (overlays.audioPipeline || overlays.cast || panelScrolling) return@pointerInput
                         awaitEachGesture {
@@ -2981,7 +2936,7 @@ fun NowPlayingScreen(
                             // out of the queue — has taken the press by the time
                             // an ancestor sees it.
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            val space = dismissBandSpace
+                            val space = measures.dismissBandSpace
                             val y = space?.localToRoot(down.position)?.y
                                 ?: down.position.y
                             // A panel is up from the moment it is asked for to
@@ -2996,8 +2951,8 @@ fun NowPlayingScreen(
                                 bandBottom = bandTop +
                                     (ART_BOX_TOP_PAD + HEADER_HEIGHT).toPx()
                             } else {
-                                bandTop = dismissBandTop
-                                bandBottom = dismissBandBottom
+                                bandTop = measures.dismissBandTop
+                                bandBottom = measures.dismissBandBottom
                             }
                             if (y >= bandTop && y <= bandBottom) {
                                 if (!panelUp) {
@@ -3063,9 +3018,9 @@ fun NowPlayingScreen(
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
                 if (spotifyCanvasPresentation && playerDeckSettledOpen &&
-                    maxHeight != spotifyCanvasExpandedTopHeight
+                    maxHeight != clipState.spotifyExpandedTopHeight
                 ) {
-                    SideEffect { spotifyCanvasExpandedTopHeight = maxHeight }
+                    SideEffect { clipState.spotifyExpandedTopHeight = maxHeight }
                 }
                 // The height this box would have if the controls at the foot of
                 // the screen were at their natural size. They aren't: they are
@@ -3098,8 +3053,8 @@ fun NowPlayingScreen(
                 // gutter it is inset by is assumed: on a phone that is exactly
                 // what it is, and a card sized against it does not jump when
                 // the real width arrives.
-                val playerWidthPx = if (playerBounds.width > 0) {
-                    playerBounds.width
+                val playerWidthPx = if (measures.playerBounds.width > 0) {
+                    measures.playerBounds.width
                 } else {
                     constraints.maxWidth + with(density) {
                         (PLAYER_GUTTER * 2).toPx().roundToInt()
@@ -3263,11 +3218,11 @@ fun NowPlayingScreen(
                 // player chrome against the bottom edge instead of stranding it
                 // where the artwork's title normally sits near mid-screen.
                 val spotifyTitleRange = if (spotifyCanvasPresentation) {
-                    val expandedTopHeight = spotifyCanvasExpandedTopHeight
+                    val expandedTopHeight = clipState.spotifyExpandedTopHeight
                         .takeIf { it > 0.dp }
                         ?: maxHeight
                     val collapsedTitleTop = (
-                        expandedTopHeight + spotifyCanvasDeckHeight - HEADER_HEIGHT
+                        expandedTopHeight + clipState.spotifyDeckHeight - HEADER_HEIGHT
                     ).coerceAtLeast(0.dp)
                     collapsedTitleTop
                 } else {
@@ -3299,9 +3254,9 @@ fun NowPlayingScreen(
                 // from inside a layout. Writing the same answer back costs a
                 // comparison here and a whole frame if it is left to the snapshot
                 // to notice.
-                val bannerSettled = !panels.lyricsOpen || heroHeight == 0.dp
-                if (bannerSettled && bannerBottom != heroHeight) {
-                    SideEffect { heroHeight = bannerBottom }
+                val bannerSettled = !panels.lyricsOpen || measures.heroHeight == 0.dp
+                if (bannerSettled && bannerBottom != measures.heroHeight) {
+                    SideEffect { measures.heroHeight = bannerBottom }
                 }
 
                 // The card's own bottom edge, in the player's pixels — the line
@@ -3312,8 +3267,8 @@ fun NowPlayingScreen(
                 // the picture's edge, and the wash hangs from the picture.
                 val cardBottomPx = statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt
-                if (cardBottomPx != cardBottom) {
-                    SideEffect { cardBottom = cardBottomPx }
+                if (cardBottomPx != measures.cardBottom) {
+                    SideEffect { measures.cardBottom = cardBottomPx }
                 }
 
                 val bannerTopPx = with(density) {
@@ -3322,7 +3277,7 @@ fun NowPlayingScreen(
                 val boxWidthPx = constraints.maxWidth
                 // The box's left edge in the player — the gutter, which the two
                 // widths give back between them.
-                val boxLeftPx = ((playerBounds.width - boxWidthPx) / 2f).roundToInt()
+                val boxLeftPx = ((measures.playerBounds.width - boxWidthPx) / 2f).roundToInt()
 
                 // The sleeve's geometry as functions of the collapse — see
                 // [SleeveGeometry]. Remembered on its inputs, so the layout
@@ -3346,8 +3301,8 @@ fun NowPlayingScreen(
                         creditsDrop = creditsDrop,
                         spotifyTitleRange = spotifyTitleRange,
                         deckReveal = { playerDeckReveal.value },
-                        heroHeight = { heroHeight },
-                        playerBounds = { playerBounds },
+                        heroHeight = { measures.heroHeight },
+                        playerBounds = { measures.playerBounds },
                         heroT = { heroT.value },
                         artScale = { artScale },
                         bannerTopPx = bannerTopPx,
@@ -3372,9 +3327,9 @@ fun NowPlayingScreen(
                     hasPrevious = hasPrevious,
                     hazeState = playerHaze,
                     heroClipShown = heroClip != null,
-                    canvasCover = canvasCover,
+                    canvasCover = clipState.cover,
                     art = art,
-                    canvasRendered = canvasRenderedState,
+                    canvasRendered = clipState.renderedState,
                     headerUncrop = { headerUncrop },
                     heroT = { heroT.value },
                     zoomOutAlbumArt = { zoomOutAlbumArt },
@@ -3387,7 +3342,7 @@ fun NowPlayingScreen(
                     dockMoving = { dockMoving },
                     sheetSettled = sheetSettled,
                     tabletArtworkBackdrop = tabletArtworkBackdrop,
-                    canvasFrameHolder = canvasFrameHolder,
+                    canvasFrameHolder = clipState.frameHolder,
                     liveRefreshMs = liveRefreshMs,
                     spotifyCanvasPresentation = spotifyCanvasPresentation,
                     windowWidth = windowWidth,
@@ -3395,7 +3350,7 @@ fun NowPlayingScreen(
                     fullBleedArtNow = fullBleedArtNow,
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
-                    onDismissBandTop = { dismissBandTop = it },
+                    onDismissBandTop = { measures.dismissBandTop = it },
                 )
 
                 // ---- Title + menu ----
@@ -3436,7 +3391,7 @@ fun NowPlayingScreen(
                         // from the sleeve so the gap between the two is inside
                         // the band as well: it is a gap in one block, not a seam
                         // between two, and a finger should not be able to find it.
-                        .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
+                        .onGloballyPositioned { measures.dismissBandBottom = it.boundsInRoot().bottom },
                     creditsModifier = Modifier
                             // Where the title and the artist are, for the draw
                             // that flies them into the mini player. Measured in
@@ -3573,7 +3528,7 @@ fun NowPlayingScreen(
                 visible = !lyricPicker.picking &&
                     (!panels.lyricsOpen || panels.lyricsControlsOpen) &&
                     (!panels.queueOpen || panels.queueControlsOpen) &&
-                    (!spotifyCanvasPresentation || spotifyCanvasControlsOpen || mixing),
+                    (!spotifyCanvasPresentation || clipState.spotifyControlsOpen || mixing),
                 reveal = playerDeckReveal,
                 // Back to the main player from lyrics or the queue with the
                 // deck stood down: the sleeve is about to come back out, so
@@ -3585,8 +3540,8 @@ fun NowPlayingScreen(
             PortraitControlDeck(
                 panels = panels,
                 onSpotifyDeckHeight = { measuredHeight ->
-                    if (spotifyCanvasPresentation && measuredHeight != spotifyCanvasDeckHeight) {
-                        spotifyCanvasDeckHeight = measuredHeight
+                    if (spotifyCanvasPresentation && measuredHeight != clipState.spotifyDeckHeight) {
+                        clipState.spotifyDeckHeight = measuredHeight
                     }
                 },
                 showLyricLine = syncedLyricsEnabled && lyricLineEnabled,

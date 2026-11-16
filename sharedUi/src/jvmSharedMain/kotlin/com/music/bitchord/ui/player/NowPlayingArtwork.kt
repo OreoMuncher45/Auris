@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -19,7 +20,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -42,6 +48,7 @@ import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -66,6 +73,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.first
 
 /**
  * Where the portrait sleeve and its credits are, as functions of the collapse.
@@ -818,4 +826,102 @@ internal fun BoxScope.PortraitSleeve(
                 },
         )
     }
+}
+
+/**
+ * What the player keeps about the clip on screen, rather than about the song.
+ *
+ * Keyed on the clip rather than the song, so a switch that keeps the same clip
+ * — the common case, same title, same search — carries it through untouched:
+ * the player never re-reports a first frame, the sleeve never flashes back in
+ * under a clip that never went away, and the Spotify deck keeps its state and
+ * captured measurements instead of snapping open mid-loop. A different clip
+ * resets it with itself.
+ */
+@Stable
+internal class CanvasClipState {
+    /**
+     * Whether the clip actually has a frame on screen right now, and one of
+     * them — used to blow the sleeve out to the full-bleed hero treatment and
+     * to re-tint the backdrop off the clip's own colours rather than the
+     * still sleeve's.
+     */
+    val renderedState = mutableStateOf(false)
+    var rendered by renderedState
+
+    /**
+     * The clip's newest frame, held outside the player's composition — see
+     * [CanvasFrameHolder].
+     *
+     * It used to be a state of the player's own, read there for the ink, the
+     * mesh and the blurred backdrop. A frame arrives while the clip plays, so
+     * that was a recomposition of the whole player — every control on it —
+     * every time one was captured, and the captures came ten times a second.
+     * The frame is now read by the three things that want it, each in an
+     * effect of its own, and it never reaches the composition at all.
+     */
+    val frameHolder = CanvasFrameHolder()
+
+    /**
+     * Spotify's phone presentation starts with the full control deck over its
+     * video. It leaves on a Canvas tap, or after the optional idle timeout.
+     */
+    var spotifyControlsOpen by mutableStateOf(true)
+
+    /**
+     * Captured while the deck is fully laid out. SlidingPlayerDeck collapses
+     * that deck's measured height, which makes the weighted region grow;
+     * retaining both measurements keeps the credits' destination stationary.
+     */
+    var spotifyDeckHeight by mutableStateOf(0.dp)
+    var spotifyExpandedTopHeight by mutableStateOf(0.dp)
+
+    /**
+     * How much of the still artwork the clip is covering, reported by the clip
+     * itself. Read from a draw scope rather than in composition: it moves every
+     * frame of the fade, and the still art it governs is an AsyncImage whose
+     * request is rebuilt on each pass and so would not be skipped.
+     */
+    val cover = mutableFloatStateOf(0f)
+}
+
+/**
+ * What the portrait player's layout measures and publishes back to the rest
+ * of the player, which draws in other scopes and has to be given the same
+ * lines.
+ */
+@Stable
+internal class PlayerMeasures {
+    /**
+     * How tall the banner is, worked out down in the layout where the sleeve's
+     * own geometry is known. Zero until the first measure, which is fine: there
+     * is nothing to show that early either.
+     */
+    var heroHeight by mutableStateOf(0.dp)
+
+    /**
+     * The card's own bottom edge, in the player's pixels.
+     *
+     * Published out of the layout that measures it, because the backdrop is
+     * drawn in another scope: this is the line the wash below the artwork is
+     * lifted from, and the two have to be given the same line.
+     */
+    var cardBottom by mutableStateOf(0.dp)
+
+    var playerBounds by mutableStateOf(IntSize.Zero)
+
+    /**
+     * The band of the player a vertical drag belongs to, from the top of the
+     * artwork to the bottom of the credits, in root coordinates. Both start at
+     * zero, which is a band with no height and so no hole at all until the
+     * first layout pass.
+     */
+    var dismissBandTop by mutableFloatStateOf(0f)
+    var dismissBandBottom by mutableFloatStateOf(0f)
+
+    /**
+     * The suppressing Column's own coordinates, to put a pointer's local
+     * position into the same space as the two edges above.
+     */
+    var dismissBandSpace by mutableStateOf<LayoutCoordinates?>(null)
 }
