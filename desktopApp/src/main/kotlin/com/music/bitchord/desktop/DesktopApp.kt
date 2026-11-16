@@ -541,23 +541,9 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         )
     }
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
-    var query by remember { mutableStateOf("") }
-    var searchFilter by remember { mutableStateOf(SearchFilter.ALL) }
-    var searchRows by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    // What has been searched before, and what YouTube thinks is being typed.
+    val searchState = remember { DesktopSearchState() }
+    // What has been searched before.
     val searchHistory by DesktopSearchHistory.recent.collectAsState()
-    // Whether anything has been searched for since the field was last emptied: until then the
-    // page shows recent searches rather than a result set.
-    var searchCommitted by remember { mutableStateOf(false) }
-    var searchScrollReset by remember { mutableStateOf(0) }
-    var searchFocusRequested by remember { mutableStateOf(false) }
-    var searchSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
-    // Playable rows for the half-typed query, shown under the text completions.
-    var searchTypeahead by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    // False while the query is being set *by* the app.
-    var searchTyping by remember { mutableStateOf(false) }
-    var searchLoading by remember { mutableStateOf(false) }
-    var searchError by remember { mutableStateOf<String?>(null) }
     var homeState by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
 
     // Radio's seed row: what was played recently, so a station can be started from something the
@@ -2030,24 +2016,24 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
 
     /** Typing, from the page's field or the sidebar's: the typeahead follows, and an empty field goes back to recents. */
     fun editQuery(text: String) {
-        query = text
-        searchTyping = true
+        searchState.query = text
+        searchState.typing = true
         if (text.isBlank()) {
-            searchCommitted = false
-            searchRows = emptyList()
-            searchError = null
+            searchState.committed = false
+            searchState.rows = emptyList()
+            searchState.error = null
         }
     }
 
     fun search() {
-        if (query.isBlank() || searchLoading) return
+        if (searchState.query.isBlank() || searchState.loading) return
         overlays.settingsPage = null
         destination = DesktopDestination.SEARCH
-        searchTyping = false
-        searchSuggestions = emptyList()
+        searchState.typing = false
+        searchState.suggestions = emptyList()
         // Submitting is picking the first track the typeahead offered, as on the phone — or, with
         // none, the first the results bring back.
-        val typedHit = searchTypeahead.firstNotNullOfOrNull { row ->
+        val typedHit = searchState.typeahead.firstNotNullOfOrNull { row ->
             when (row) {
                 is SearchResult.TopTrack -> row.song
                 is SearchResult.Track -> row.song
@@ -2055,15 +2041,15 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             }
         }
         typedHit?.let(::recordSongSearch)
-        searchCommitted = true
-        searchScrollReset++
-        searchLoading = true
-        searchError = null
+        searchState.committed = true
+        searchState.scrollReset++
+        searchState.loading = true
+        searchState.error = null
         scope.launch {
             try {
-                DesktopMusicSources.search(query, searchFilter).fold(
+                DesktopMusicSources.search(searchState.query, searchState.filter).fold(
                     onSuccess = { rows ->
-                        searchRows = rows
+                        searchState.rows = rows
                         if (typedHit == null) {
                             rows.firstNotNullOfOrNull { row ->
                                 when (row) {
@@ -2074,49 +2060,49 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             }?.let(::recordSongSearch)
                         }
                     },
-                    onFailure = { searchError = it.message ?: "Search failed" },
+                    onFailure = { searchState.error = it.message ?: "Search failed" },
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                searchError = failure.message ?: "Search failed"
+                searchState.error = failure.message ?: "Search failed"
             } finally {
                 // OBS and other desktop capture tools can briefly interrupt focus/coroutines.
-                searchLoading = false
+                searchState.loading = false
             }
         }
     }
 
     /** The typeahead, one request behind the keystrokes rather than one per. */
-    LaunchedEffect(query, searchTyping) {
-        if (!searchTyping || query.isBlank()) {
-            searchSuggestions = emptyList()
+    LaunchedEffect(searchState.query, searchState.typing) {
+        if (!searchState.typing || searchState.query.isBlank()) {
+            searchState.suggestions = emptyList()
             return@LaunchedEffect
         }
         delay(SUGGESTION_DEBOUNCE_MS)
-        DesktopSearchClient.searchSuggestions(query)
-            .onSuccess { if (searchTyping) searchSuggestions = it }
-            .onFailure { searchSuggestions = emptyList() }
+        DesktopSearchClient.searchSuggestions(searchState.query)
+            .onSuccess { if (searchState.typing) searchState.suggestions = it }
+            .onFailure { searchState.suggestions = emptyList() }
     }
 
     // Its own pass, on its own delay: a search costs far more than a completion, so it waits for a
     // longer pause in the typing rather than riding the same one.
-    LaunchedEffect(query, searchTyping) {
-        if (!searchTyping || query.isBlank()) {
-            searchTypeahead = emptyList()
+    LaunchedEffect(searchState.query, searchState.typing) {
+        if (!searchState.typing || searchState.query.isBlank()) {
+            searchState.typeahead = emptyList()
             return@LaunchedEffect
         }
         delay(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
-        DesktopSearchClient.searchTypeahead(query)
-            .onSuccess { if (searchTyping) searchTypeahead = it.take(TYPEAHEAD_MEDIA_LIMIT) }
-            .onFailure { searchTypeahead = emptyList() }
+        DesktopSearchClient.searchTypeahead(searchState.query)
+            .onSuccess { if (searchState.typing) searchState.typeahead = it.take(TYPEAHEAD_MEDIA_LIMIT) }
+            .onFailure { searchState.typeahead = emptyList() }
     }
 
     fun runSearch(term: String) {
-        query = term
-        searchTyping = false
-        searchSuggestions = emptyList()
-        searchTypeahead = emptyList()
+        searchState.query = term
+        searchState.typing = false
+        searchState.suggestions = emptyList()
+        searchState.typeahead = emptyList()
         search()
     }
 
@@ -2131,7 +2117,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         overlays.settingsPage = null
         selectedMoodGenre = null
         libraryShowAll = null
-        if (next == DesktopDestination.SEARCH) searchFocusRequested = true
+        if (next == DesktopDestination.SEARCH) searchState.focusRequested = true
         destination = next
     }
 
@@ -3085,7 +3071,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         accountPlaylists = sidebarAccountPlaylists,
                         localPlaylists = playlists,
                         openedCollectionId = openedCollection?.browseId,
-                        query = query,
+                        query = searchState.query,
                         onQueryChange = { text ->
                             editQuery(text)
                             if (destination != DesktopDestination.SEARCH || overlays.settingsPage != null) {
@@ -3097,8 +3083,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                         onOpenAccountPlaylist = { openShelfItem(it, PLAYLISTS_SHELF) },
                         onOpenLocalPlaylist = ::openPlaylist,
                         onOpenSettings = ::openSettings,
-                        focusSearch = searchFocusRequested,
-                        onSearchFocused = { searchFocusRequested = false },
+                        focusSearch = searchState.focusRequested,
+                        onSearchFocused = { searchState.focusRequested = false },
                     )
                 },
                 bottomBar = { compact ->
@@ -3928,29 +3914,29 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             showTitle = false,
                         )
                         destination == DesktopDestination.SEARCH -> SearchScreen(
-                            query = query,
+                            query = searchState.query,
                             onQueryChange = ::editQuery,
-                            filter = searchFilter,
+                            filter = searchState.filter,
                             // The playing row's indicator, as the phone passes it: the engine's
                             // live state, not the selection a track change publishes behind it.
                             currentSong = playback.song,
                             isPlaying = playback.isPlaying,
                             onFilterChange = {
-                                searchFilter = it
-                                if (query.isNotBlank()) search()
+                                searchState.filter = it
+                                if (searchState.query.isNotBlank()) search()
                             },
                             results = when {
-                                searchLoading -> UiState.Loading
-                                searchError != null -> UiState.Error(searchError!!)
-                                searchCommitted -> UiState.Success(searchRows)
+                                searchState.loading -> UiState.Loading
+                                searchState.error != null -> UiState.Error(searchState.error!!)
+                                searchState.committed -> UiState.Success(searchState.rows)
                                 else -> null
                             },
                             loadingMore = false,
                             onLoadMore = {},
                             listState = searchListState,
-                            scrollResetTrigger = searchScrollReset,
-                            focusRequested = searchFocusRequested,
-                            onFocusHandled = { searchFocusRequested = false },
+                            scrollResetTrigger = searchState.scrollReset,
+                            focusRequested = searchState.focusRequested,
+                            onFocusHandled = { searchState.focusRequested = false },
                             onSongClick = { songs, index ->
                                 songs.getOrNull(index)?.let { song ->
                                     recordSongSearch(song)
@@ -3976,13 +3962,13 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             history = searchHistory,
                             // The typed text leads the list, put there by the keystroke rather than
                             // taken from the response — the page drops it, as the phone's does.
-                            suggestions = if (searchTyping && query.isNotBlank()) {
-                                listOf(query) +
-                                    searchSuggestions.filterNot { it.equals(query, ignoreCase = true) }
+                            suggestions = if (searchState.typing && searchState.query.isNotBlank()) {
+                                listOf(searchState.query) +
+                                    searchState.suggestions.filterNot { it.equals(searchState.query, ignoreCase = true) }
                             } else {
                                 emptyList()
                             },
-                            typeaheadResults = if (searchTyping && query.isNotBlank()) searchTypeahead else emptyList(),
+                            typeaheadResults = if (searchState.typing && searchState.query.isNotBlank()) searchState.typeahead else emptyList(),
                             onSubmit = ::search,
                             onSuggestionClick = ::runSearch,
                             onHistoryClick = { entity ->
