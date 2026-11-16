@@ -2816,6 +2816,15 @@ fun NowPlayingScreen(
                 )
 
                 // ---- Title + menu ----
+                // The recorded title belongs to this layout. The activity
+                // handles a rotation itself, so the same [DockFrame] carries
+                // into the landscape player, which never records the credits:
+                // left set, a landscape dock flew the portrait title from the
+                // portrait position — the previous song's, if it had changed.
+                // The next portrait layout sets it again before it is drawn.
+                DisposableEffect(dockFrame) {
+                    onDispose { dockFrame.creditsKnown = false }
+                }
                 PortraitCredits(
                     modifier = Modifier
                         .fillMaxWidth()
