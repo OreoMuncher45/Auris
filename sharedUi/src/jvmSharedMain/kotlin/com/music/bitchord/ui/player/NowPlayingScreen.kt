@@ -285,8 +285,8 @@ private val ART_TITLE_GAP = 20.dp
  * two read as one block with the title on top rather than as two lines of the
  * same importance.
  */
-private val CREDITS_TITLE_SIZE = 22.sp
-private val CREDITS_ARTIST_SIZE = 17.sp
+internal val CREDITS_TITLE_SIZE = 22.sp
+internal val CREDITS_ARTIST_SIZE = 17.sp
 
 /**
  * How strongly the artist is written.
@@ -295,7 +295,7 @@ private val CREDITS_ARTIST_SIZE = 17.sp
  * reference player writes it at about half strength, which is where this one
  * sat as well.
  */
-private val CREDITS_ARTIST_ALPHA = 0.73f
+internal val CREDITS_ARTIST_ALPHA = 0.73f
 
 /**
  * How far below the artwork the title and the artist sit.
@@ -318,7 +318,7 @@ private val CREDITS_ARTIST_ALPHA = 0.73f
  * and the reference player has no such strip, so it cannot be matched
  * exactly without dropping the feature that carries the current line.
  */
-private val CREDITS_DROP = 40.dp
+internal val CREDITS_DROP = 40.dp
 
 /**
  * How far the sleeve may reach into the player's gutter.
@@ -4347,7 +4347,7 @@ fun NowPlayingScreen(
                 }
 
                 // ---- Title + menu ----
-                Row(
+                PortraitCredits(
                     modifier = Modifier
                         .fillMaxWidth()
                         // Collapsed, this row shares the header with the sleeve
@@ -4385,11 +4385,7 @@ fun NowPlayingScreen(
                         // the band as well: it is a gap in one block, not a seam
                         // between two, and a finger should not be able to find it.
                         .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        Modifier
-                            .weight(1f)
+                    creditsModifier = Modifier
                             // Where the title and the artist are, for the draw
                             // that flies them into the mini player. Measured in
                             // the player's own box; the sheet's own travel is
@@ -4439,178 +4435,21 @@ fun NowPlayingScreen(
                                 scaleY = scale
                                 transformOrigin = TransformOrigin(0f, 0.5f)
                             },
-                    ) {
-                        // Only the title's own overflow gates the artist's stagger
-                        // below — an artist line that's long on its own has no
-                        // reason to wait on a title that already fits.
-                        var titleOverflowing by remember { mutableStateOf(false) }
-                        // Only while these credits are the screen. Collapsed into
-                        // a header over the queue or the lyrics they are a label
-                        // on a list, and a label that crawls pulls the eye off
-                        // whatever is being read below it.
-                        //
-                        // Asked inside the crossfade's own content, so the
-                        // switch recomposes the two lines and not the box
-                        // round the whole sleeve — and asked of the panels
-                        // first, so a collapse a tap asked for stops the crawl
-                        // with the tap, instead of a frame into the movement.
-                        val scrolls = {
-                            !(panels.lyricsOpen || panels.queueOpen || panels.queueDragging) && !collapsePastSettling
-                        }
-                        // Targeted on the words rather than the videoId: two
-                        // cuts that share a title cross-fade into the exact
-                        // same text, which is nothing at all and leaves the
-                        // marquee where it was; a cut that renames the song
-                        // ("… (Live)") dissolves into the new one instead of
-                        // snapping while the rest of the switch moves around
-                        // it.
-                        Crossfade(
-                            targetState = song.title to song.artist,
-                            animationSpec = tween(durationMillis = 300),
-                            label = "playerCredits",
-                        ) {
-                            val scrolling = scrolls()
-                            // The title wears the ink, like everything else on
-                            // the screen — unless the listener pinned a colour
-                            // for the text. The artist below it keeps the ink
-                            // itself: the second line of the block is not the
-                            // loudest thing on the screen.
-                            val ink = LocalPlayerText.current ?: LocalPlayerInk.current.value
-                            val artistInk = LocalPlayerText.current ?: LocalPlayerInk.current.value
-                            val alphas = LocalPlayerAlphas.current
-                            // The glow the text wears, read here rather than
-                            // in the screen above: the glow moves with the
-                            // ink, and a screen that read it would recompose
-                            // the whole player every time the ink did.
-                            val glow = LocalPlayerInkGlow.current.value
-                            val playerShadow = remember(glow, textGlow) {
-                                if (textGlow) Shadow(color = glow, blurRadius = 9f) else null
-                            }
-                            Column {
-                                MarqueeText(
-                                    text = song.title,
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontSize = CREDITS_TITLE_SIZE,
-                                        lineHeight = 27.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        shadow = playerShadow,
-                                    ),
-                                    color = ink,
-                                    enabled = scrolling,
-                                    leading = if (song.isExplicit == true) {
-                                        { ExplicitBadge(color = ink) }
-                                    } else {
-                                        null
-                                    },
-                                    onOverflowChange = { titleOverflowing = it },
-                                    rtl = isRtlText(song.title),
-                                    // Only the tracks YouTube hands us a browse id for
-                                    // lead anywhere; the rest stay plain text.
-                                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
-                                )
-                                ArtistCreditsMarquee(
-                                    text = song.artist,
-                                    credits = remember(song.artist, song.artists, song.artistId) {
-                                        artistCredits(song.artist, song.artists, song.artistId)
-                                    },
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = CREDITS_ARTIST_SIZE,
-                                        lineHeight = 24.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        shadow = playerShadow,
-                                    ),
-                                    // Under the title in weight and in strength,
-                                    // as the reference player sets it: the name
-                                    // is the second line of the block, not a
-                                    // second heading.
-                                    color = artistInk.copy(alpha = alphas.secondary * CREDITS_ARTIST_ALPHA),
-                                    enabled = scrolling,
-                                    // A title that's also scrolling gets to go first —
-                                    // starting together reads as clutter, so the artist
-                                    // waits a beat before it joins in.
-                                    startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                                    onOpenArtist = onOpenArtist,
-                                    rtl = isRtlText(song.artist),
-                                )
-                                if (isAiTrack ||
-                                    song.genAi != com.music.bitchord.data.model.GenAiDisclosure.NONE
-                                ) {
-                                    // Deliberately a small outline chip rather than a
-                                    // button: the listener asked for transparency, not
-                                    // another control competing with the transport.
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .padding(top = 6.dp)
-                                            .border(
-                                                width = 1.dp,
-                                                color = ink.copy(alpha = 0.45f),
-                                                shape = RoundedCornerShape(6.dp),
-                                            )
-                                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                                    ) {
-                                        Text(
-                                            text = if (song.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY) {
-                                                "AI · partly"
-                                            } else {
-                                                "AI"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = ink.copy(alpha = 0.75f),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    // Beside the credits rather than down in the toggle row:
-                    // liking is about *this song*, and the row below is about
-                    // how the queue plays. Guests get nothing to tap, since
-                    // there's no account to record it against — and neither
-                    // does a local file or a finished download, which carries
-                    // no YouTube identity to rate.
-                    //
-                    // Both marks are bare, with no disc behind them: the star
-                    // and the ellipsis are things about the song, and a filled
-                    // circle under each turned them into two more buttons on a
-                    // screen that already has a row of them.
-                    if (signedIn && song.localUri == null) {
-                        val liked = likeStatus == LikeStatus.LIKE
-                        CircleGlyph(
-                            icon = if (liked) PlayerIcons.Liked else PlayerIcons.LikedOff,
-                            contentDescription = stringResource(
-                                if (liked) Res.string.remove_from_liked else Res.string.like,
-                            ),
-                            onClick = onToggleLike,
-                            haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                            glyphSize = 24.dp,
-                            touchSize = 40.dp,
-                            disc = false,
-                            // A liked song says so: the filled star is written
-                            // at full strength, an empty one quietly.
-                            glyphAlpha = if (liked) {
-                                LocalPlayerAlphas.current.primary
-                            } else {
-                                LocalPlayerAlphas.current.tertiary
-                            },
-                        )
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    CircleGlyph(
-                        icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
-                        contentDescription = stringResource(Res.string.more),
-                        onClick = onOpenMenu,
-                        glyphSize = 22.dp,
-                        touchSize = 40.dp,
-                        disc = false,
-                        // Beside the title, and quiet: the reference player
-                        // writes it at half strength, where this one was the
-                        // brightest mark on the screen.
-                        glyphAlpha = LocalPlayerAlphas.current.tertiary,
-                        modifier = Modifier.reportMenuAnchor(onMenuAnchor),
-                    )
-                }
+                    song = song,
+                    isAiTrack = isAiTrack,
+                    textGlow = textGlow,
+                    scrolls = {
+                        !(panels.lyricsOpen || panels.queueOpen || panels.queueDragging) && !collapsePastSettling
+                    },
+                    signedIn = signedIn,
+                    likeStatus = likeStatus,
+                    showRevertCue = showRevertCue,
+                    onToggleLike = onToggleLike,
+                    onOpenMenu = onOpenMenu,
+                    onMenuAnchor = onMenuAnchor,
+                    onOpenAlbum = onOpenAlbum,
+                    onOpenArtist = onOpenArtist,
+                )
 
                 // [lyricsOpen] asked first: a close has already hidden the
                 // panel, and doesn't then listen for the sleeve leaving the
