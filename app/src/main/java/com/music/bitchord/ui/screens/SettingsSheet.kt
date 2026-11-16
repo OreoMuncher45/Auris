@@ -401,14 +401,13 @@ fun SettingsScreen(
                 search = search,
             )
         }
-        // Only for a search that found nothing. Without a query there is no
-        // search to have missed: the Auris Pass page has no searchable rows at
-        // all, and the Support page's rows used to be asked only after this
-        // check, so both showed "No settings match" under an empty field.
+        // Only for a search that found nothing. Without a query nothing has
+        // been searched for, so nothing has missed — even on a page such as
+        // Auris Pass, which has no searchable rows at all.
         //
         // Read after every group, Support included, so the answer covers all
-        // of them. When it shows, no group drew anything, so the message is
-        // still the last thing above the colophon.
+        // of them. When it shows, no group drew a row, so it is the last thing
+        // on the page.
         if (searchActive && !search.anyMatch) {
             MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
@@ -797,6 +796,11 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
  * are composed; the empty state at the foot of the list reads [anyMatch] after
  * every group has had its turn, which is why this is made fresh on each pass
  * rather than remembered.
+ *
+ * [anyMatch] answers only while a query is typed. With a blank one it is true
+ * once any group has drawn a row, and still false on a page that draws none,
+ * such as Auris Pass, so "nothing matched" is a question to ask only with a
+ * query.
  */
 internal class SettingsSearch(query: String) {
     // Trimmed, because a trailing space is a typo rather than a search for
