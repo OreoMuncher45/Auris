@@ -52,7 +52,6 @@ import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import kotlin.math.sin
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A real crossfade: two tracks audible at once, the outgoing one falling as the
@@ -572,8 +571,25 @@ class CrossfadeController(
      * resampled into buckets, which is not free, and the analysis itself is
      * immutable — so a new analysis object is the only thing that should
      * rebuild the digest.
+     *
+     * Bounded, and the bound is load-bearing. Each entry holds the analysis it
+     * was built from, waveform included — about a quarter of a megabyte — and
+     * an unbounded map kept one for every track played this session. That
+     * pinned exactly the waveforms [com.music.bitchord.playback.smart.TrackAnalyzer]
+     * trims out of its own cache, so its bound did nothing: a long evening
+     * left tens of megabytes of curves reachable from here. Only the outgoing
+     * and incoming tracks are ever drawn, so a handful of entries covers a
+     * skip back and forth without rebuilding.
      */
-    private val digestCache = ConcurrentHashMap<String, Pair<TrackAnalysis, TrackAnalysisDigest>>()
+    private val digestCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<TrackAnalysis, TrackAnalysisDigest>>(
+            DIGEST_CACHE_ENTRIES, 0.75f, true,
+        ) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Pair<TrackAnalysis, TrackAnalysisDigest>>,
+            ) = size > DIGEST_CACHE_ENTRIES
+        },
+    )
 
     // ---- Preview ------------------------------------------------------------
 
@@ -3709,6 +3725,9 @@ class CrossfadeController(
 
         /** Relative tempo change worth re-publishing; beatmatch rates are fixed per blend. */
         const val TEMPO_TOLERANCE = 0.005f
+
+        /** Panel digests kept; see [digestCache]. Two are drawn, the rest cover skipping back. */
+        const val DIGEST_CACHE_ENTRIES = 4
 
         const val IDLE_STEP_MS = 250L
 

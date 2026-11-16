@@ -658,6 +658,17 @@ class MainActivity : AppCompatActivity() {
  * non-inline lambda is compiled separately, which keeps the caller small.
  */
 
+/**
+ * Runs [content] as a restart scope of its own.
+ *
+ * State read directly in a big composable's body invalidates the whole body.
+ * Read inside this lambda, it invalidates the lambda alone — which is how a
+ * value that flips often (play/pause, buffering) is kept from recomposing
+ * everything around the one widget that shows it.
+ */
+@Composable
+private fun IsolatedScope(content: @Composable () -> Unit) = content()
+
 @Composable
 private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -4632,30 +4643,38 @@ private fun BitChordApp(
                             .onSizeChanged { floatingBarsHeight.intValue = it.height },
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        QueueActionNoticeHost(queueNotice)
-                        player.song?.let { song ->
-                            MiniPlayer(
-                                song = song,
-                                isPlaying = player.isPlaying,
-                                isLoading = playPauseBusy,
-                                hazeState = hazeState,
-                                onPlayPause = {
-                                    togglePlayPause()
-                                },
-                                onNext = { controller?.seekToNextMediaItem() },
-                                onPrevious = { controller?.seekToPrevious() },
-                                onExpand = if (reducePlayerMotion) {
-                                    { showNowPlaying = true }
-                                } else {
-                                    playerSheetMotion::open
-                                },
-                                controlsLocked = controlsLocked,
-                                onBlockedControl = showHostOnlyNotice,
-                                dock = activeDock,
-                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
+                        // Its own restart scope. The song, play/pause, buffering
+                        // and queue-notice reads below change many times a
+                        // session; made directly in this Column they invalidated
+                        // the whole root content lambda — every page, sheet and
+                        // bar under AppRootBox — on each play/pause and each
+                        // buffering flip. In here they re-run the mini player.
+                        IsolatedScope {
+                            QueueActionNoticeHost(queueNotice)
+                            player.song?.let { song ->
+                                MiniPlayer(
+                                    song = song,
+                                    isPlaying = player.isPlaying,
+                                    isLoading = playPauseBusy,
+                                    hazeState = hazeState,
+                                    onPlayPause = {
+                                        togglePlayPause()
+                                    },
+                                    onNext = { controller?.seekToNextMediaItem() },
+                                    onPrevious = { controller?.seekToPrevious() },
+                                    onExpand = if (reducePlayerMotion) {
+                                        { showNowPlaying = true }
+                                    } else {
+                                        playerSheetMotion::open
+                                    },
+                                    controlsLocked = controlsLocked,
+                                    onBlockedControl = showHostOnlyNotice,
+                                    dock = activeDock,
+                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                         }
                         FloatingBottomBar(
                             tabs = tabs,
@@ -4670,28 +4689,33 @@ private fun BitChordApp(
         }
 
         if (pageCoveredByPlayer) {
-            PlayerPanelHost(
-                song = playerSong,
-                motion = playerSheetMotion,
-                dock = playerDock,
-                reducePlayerMotion = reducePlayerMotion,
-                reduceDynamicBlur = reduceDynamicBlur,
-                glassPill = glassActive,
-                hazeState = hazeState,
-                isPlaying = player.isPlaying,
-                isLoading = playPauseBusy,
-                controlsLocked = controlsLocked,
-                onBlockedControl = showHostOnlyNotice,
-                onPlayPause = { togglePlayPause() },
-                onNext = { controller?.seekToNextMediaItem() },
-                onPrevious = { controller?.seekToPrevious() },
-                menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
-                menuAnchor = sheets.playerMenuAnchor,
-                onDismissMenu = { sheets.songMenu.song = null },
-                songMenuBody = songMenuBody,
-                nowPlaying = nowPlaying,
-                onDismiss = { showNowPlaying = false },
-            )
+            // Its own restart scope, as for the mini player: the panel reads
+            // play/pause and buffering, and read here they would recompose
+            // the whole root on every flip while the player is up.
+            IsolatedScope {
+                PlayerPanelHost(
+                    song = playerSong,
+                    motion = playerSheetMotion,
+                    dock = playerDock,
+                    reducePlayerMotion = reducePlayerMotion,
+                    reduceDynamicBlur = reduceDynamicBlur,
+                    glassPill = glassActive,
+                    hazeState = hazeState,
+                    isPlaying = player.isPlaying,
+                    isLoading = playPauseBusy,
+                    controlsLocked = controlsLocked,
+                    onBlockedControl = showHostOnlyNotice,
+                    onPlayPause = { togglePlayPause() },
+                    onNext = { controller?.seekToNextMediaItem() },
+                    onPrevious = { controller?.seekToPrevious() },
+                    menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
+                    menuAnchor = sheets.playerMenuAnchor,
+                    onDismissMenu = { sheets.songMenu.song = null },
+                    songMenuBody = songMenuBody,
+                    nowPlaying = nowPlaying,
+                    onDismiss = { showNowPlaying = false },
+                )
+            }
         }
 
         // ---- Replay stories ----

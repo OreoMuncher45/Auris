@@ -39,8 +39,10 @@ import com.music.bitchord.ui.components.longPressMenuClickable
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberShelfKeys
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -218,7 +220,7 @@ fun LibraryScreen(
             contentPadding = contentPadding,
         ) {
             if (showTitle) {
-                item {
+                item(key = "title", contentType = LazyContent.HEADER) {
                     Text(
                         text = stringResource(Res.string.library),
                         style = MaterialTheme.typography.displayLarge,
@@ -262,7 +264,7 @@ fun LibraryScreen(
                         item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }
                     }
                     if (folders.isNotEmpty()) {
-                        item(key = "shelf:folders") {
+                        item(key = "shelf:folders", contentType = LazyContent.SHELF) {
                             val folderShelf = HomeShelf(
                                 title = stringResource(Res.string.folders),
                                 items = filtered(
@@ -278,7 +280,7 @@ fun LibraryScreen(
                         }
                     }
                     if (deviceItems.isNotEmpty()) {
-                        item(key = "shelf:$onDevice") {
+                        item(key = "shelf:$onDevice", contentType = LazyContent.SHELF) {
                             val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
                             LibraryGridShelf(
                                 shelf = filtered(onDeviceShelf),
@@ -288,14 +290,14 @@ fun LibraryScreen(
                             )
                         }
                     } else if (links.isEmpty() && folders.isEmpty()) {
-                        item(key = "empty:device") { LibraryEmptySegment() }
+                        item(key = "empty:device", contentType = LazyContent.MESSAGE) { LibraryEmptySegment() }
                     }
                 }
 
                 LibrarySegment.Playlists -> {
                     val playlists = shelfNamed(PLAYLISTS)
                     if (playlists != null || !signedIn) {
-                        item(key = "shelf:$PLAYLISTS") {
+                        item(key = "shelf:$PLAYLISTS", contentType = LazyContent.SHELF) {
                             val shelf = filtered(playlists ?: HomeShelf(PLAYLISTS, emptyList()))
                             PlaylistShelf(
                                 shelf = shelf,
@@ -310,7 +312,7 @@ fun LibraryScreen(
                     // The account's saved podcasts are saved things, and they
                     // are shelves of the same kind as the playlists.
                     shelfNamed(PODCASTS)?.let { podcasts ->
-                        item(key = "shelf:$PODCASTS") {
+                        item(key = "shelf:$PODCASTS", contentType = LazyContent.SHELF) {
                             LibraryGridShelf(
                                 shelf = filtered(podcasts),
                                 onItemClick = onShelfItemClick,
@@ -320,7 +322,7 @@ fun LibraryScreen(
                         }
                     }
                     if (playlists == null && signedIn && shelfNamed(PODCASTS) == null) {
-                        item(key = "empty:playlists") { LibraryEmptySegment() }
+                        item(key = "empty:playlists", contentType = LazyContent.MESSAGE) { LibraryEmptySegment() }
                     }
                 }
 
@@ -328,7 +330,7 @@ fun LibraryScreen(
                     val artists = shelfNamed(ARTISTS)
                     val subscriptions = shelfNamed(SUBSCRIPTIONS)
                     if (artists != null) {
-                        item(key = "shelf:$ARTISTS") {
+                        item(key = "shelf:$ARTISTS", contentType = LazyContent.SHELF) {
                             LibraryGridShelf(
                                 shelf = filtered(artists),
                                 onItemClick = onShelfItemClick,
@@ -338,7 +340,7 @@ fun LibraryScreen(
                         }
                     }
                     if (subscriptions != null) {
-                        item(key = "shelf:$SUBSCRIPTIONS") {
+                        item(key = "shelf:$SUBSCRIPTIONS", contentType = LazyContent.SHELF) {
                             LibraryGridShelf(
                                 shelf = filtered(subscriptions),
                                 onItemClick = onShelfItemClick,
@@ -348,14 +350,14 @@ fun LibraryScreen(
                         }
                     }
                     if (artists == null && subscriptions == null) {
-                        item(key = "empty:artists") { LibraryEmptySegment() }
+                        item(key = "empty:artists", contentType = LazyContent.MESSAGE) { LibraryEmptySegment() }
                     }
                 }
 
                 LibrarySegment.Albums -> {
                     val albums = shelfNamed(ALBUMS)
                     if (albums != null) {
-                        item(key = "shelf:$ALBUMS") {
+                        item(key = "shelf:$ALBUMS", contentType = LazyContent.SHELF) {
                             LibraryGridShelf(
                                 shelf = filtered(albums),
                                 onItemClick = onShelfItemClick,
@@ -364,7 +366,7 @@ fun LibraryScreen(
                             )
                         }
                     } else {
-                        item(key = "empty:albums") { LibraryEmptySegment() }
+                        item(key = "empty:albums", contentType = LazyContent.MESSAGE) { LibraryEmptySegment() }
                     }
                 }
             }
@@ -388,7 +390,7 @@ fun LibraryScreen(
             // Podcast shelves sit at the very bottom of the Library, below all
             // segments (On device / Playlists / Artists / Albums).
             podcastShelves.forEach { shelf ->
-                item(key = "podcast:${shelf.title}") {
+                item(key = "podcast:${shelf.title}", contentType = LazyContent.SHELF) {
                     Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
                 }
             }
@@ -780,7 +782,12 @@ internal fun LibraryGridShelf(
     pinnedPlaylists: List<String> = emptyList(),
 ) {
     val leadingCount = if (leadingCard != null) 1 else 0
-    val visibleItems = shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
+    val visibleItems = remember(shelf.items, leadingCount) {
+        shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
+    }
+    val keys = rememberShelfKeys(visibleItems)
+    // A set, so each card's pin check is a lookup rather than a walk of the list.
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(
             title = shelf.title,
@@ -791,13 +798,19 @@ internal fun LibraryGridShelf(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
         ) {
-            leadingCard?.let { card -> item(key = "leading") { card() } }
-            items(visibleItems) { item ->
+            leadingCard?.let { card ->
+                item(key = "leading", contentType = LazyContent.LEADING_CARD) { card() }
+            }
+            itemsIndexed(
+                visibleItems,
+                key = { index, _ -> keys[index] },
+                contentType = { _, _ -> LazyContent.CARD },
+            ) { _, item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
-                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPinned = item.browseId != null && item.browseId in pinned,
                 )
             }
         }
@@ -827,7 +840,15 @@ fun LibraryGridPage(
     // Pinning wins over the default order, but an explicit sort is a stronger,
     // more deliberate signal than a pin and is left to reorder the whole grid,
     // pinned cards included.
-    val sortedShelf = shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    //
+    // Remembered against exactly those three: sorting a few hundred titles on
+    // every recomposition of the page — each scroll-driven bar change, each
+    // pin — was work redone for an answer that had not changed.
+    val sortedShelf = remember(shelf, pinnedPlaylists, librarySort) {
+        shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    }
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
+    val keys = rememberShelfKeys(sortedShelf.items)
     BoxWithConstraints(modifier.fillMaxSize()) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         LazyVerticalGrid(
@@ -839,7 +860,7 @@ fun LibraryGridPage(
             modifier = Modifier.padding(horizontal = PAGE_GUTTER),
         ) {
             if (onNewPlaylist != null) {
-                item(key = "leading") {
+                item(key = "leading", contentType = LazyContent.LEADING_CARD) {
                     NewShelfCard(
                         icon = BitChordIcons.Plus,
                         label = stringResource(Res.string.new_playlist),
@@ -849,13 +870,19 @@ fun LibraryGridPage(
                     )
                 }
             }
-            items(sortedShelf.items, key = { it.browseId ?: it.title }) { item ->
+            // Counted-off keys: `browseId ?: title` alone would crash the grid on a
+            // shelf that listed the same title twice without a browse id.
+            itemsIndexed(
+                sortedShelf.items,
+                key = { index, _ -> keys[index] },
+                contentType = { _, _ -> LazyContent.CARD },
+            ) { _, item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
                     modifier = Modifier.fillMaxWidth(),
-                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPinned = item.browseId != null && item.browseId in pinned,
                 )
             }
         }

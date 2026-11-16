@@ -102,6 +102,8 @@ import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.data.settings.LocalMusicSort
 import com.music.bitchord.download.DownloadedCollection
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberSongKeys
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.hangIntoGutter
@@ -259,7 +261,9 @@ fun LocalMusicScreen(
         if (selectingDownloads) {
             DownloadSelectionBar(
                 count = selectedDownloadIds.size,
-                allSelected = sortedSongs.isNotEmpty() && selectedDownloadIds.containsAll(sortedSongs.map { it.videoId }),
+                allSelected = remember(sortedSongs, selectedDownloadIds) {
+                    sortedSongs.isNotEmpty() && sortedSongs.all { it.videoId in selectedDownloadIds }
+                },
                 onSelectAll = { selectedDownloadIds = sortedSongs.mapTo(linkedSetOf()) { it.videoId } },
                 onDelete = {
                     val chosen = songs.filter { it.videoId in selectedDownloadIds }
@@ -515,6 +519,10 @@ private fun SongsTab(
     onSongSwipe: (Song) -> Unit,
     contentPadding: PaddingValues,
 ) {
+    // Keyed by track, not by place: the old `videoId_index` keys changed for
+    // every row below a sort, a filter or an insertion, so the list threw away
+    // and rebuilt rows that had only moved.
+    val songKeys = rememberSongKeys(songs)
     if (viewType == LibraryViewType.GRID) {
         val gridState = rememberLazyGridState()
         LazyVerticalGrid(
@@ -537,7 +545,11 @@ private fun SongsTab(
                     modifier = Modifier.padding(horizontal = 0.dp, vertical = 10.dp),
                 )
             }
-            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
+            itemsIndexed(
+                songs,
+                key = { index, _ -> songKeys[index] },
+                contentType = { _, _ -> LazyContent.SONG_ROW },
+            ) { index, song ->
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -562,7 +574,11 @@ private fun SongsTab(
                     title = pluralStringResource(R.plurals.song_count_plural, songs.size, songs.size),
                 )
             }
-            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
+            itemsIndexed(
+                songs,
+                key = { index, _ -> songKeys[index] },
+                contentType = { _, _ -> LazyContent.SONG_ROW },
+            ) { index, song ->
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -689,7 +705,7 @@ private fun ArtistsTab(
                     modifier = Modifier.padding(horizontal = 0.dp, vertical = 10.dp),
                 )
             }
-            items(artists, key = { it.key }) { (artist, artistSongs) ->
+            items(artists, key = { it.key }, contentType = { "artist" }) { (artist, artistSongs) ->
                 ArtistGridCard(
                     name = artist,
                     songCount = artistSongs.size,
@@ -712,7 +728,7 @@ private fun ArtistsTab(
                     title = pluralStringResource(R.plurals.artist_count, artists.size, artists.size),
                 )
             }
-            items(artists, key = { it.key }) { (artist, artistSongs) ->
+            items(artists, key = { it.key }, contentType = { "artist" }) { (artist, artistSongs) ->
                 ArtistRow(
                     name = artist,
                     songCount = artistSongs.size,
@@ -982,7 +998,7 @@ private fun AlbumsTab(
                     )
                 }
             }
-            items(albums, key = { it.key }) { entry ->
+            items(albums, key = { it.key }, contentType = { "album" }) { entry ->
                 AlbumGridCard(
                     entry = entry,
                     selected = entry.key in selectedKeys,
@@ -1011,7 +1027,7 @@ private fun AlbumsTab(
                     )
                 }
             }
-            items(albums, key = { it.key }) { entry ->
+            items(albums, key = { it.key }, contentType = { "album" }) { entry ->
                 AlbumRow(
                     entry = entry,
                     selected = entry.key in selectedKeys,
@@ -1371,6 +1387,10 @@ private fun DrillDownSongList(
     onBack: () -> Unit,
     contentPadding: PaddingValues,
 ) {
+    // Keyed by track, not by place: the old `videoId_index` keys changed for
+    // every row below a sort, a filter or an insertion, so the list threw away
+    // and rebuilt rows that had only moved.
+    val songKeys = rememberSongKeys(songs)
     if (viewType == LibraryViewType.GRID) {
         val gridState = rememberLazyGridState()
         LazyVerticalGrid(
@@ -1402,7 +1422,11 @@ private fun DrillDownSongList(
                     onShuffle = onShuffle,
                 )
             }
-            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
+            itemsIndexed(
+                songs,
+                key = { index, _ -> songKeys[index] },
+                contentType = { _, _ -> LazyContent.SONG_ROW },
+            ) { index, song ->
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -1437,7 +1461,11 @@ private fun DrillDownSongList(
                     onShuffle = onShuffle,
                 )
             }
-            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
+            itemsIndexed(
+                songs,
+                key = { index, _ -> songKeys[index] },
+                contentType = { _, _ -> LazyContent.SONG_ROW },
+            ) { index, song ->
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,
