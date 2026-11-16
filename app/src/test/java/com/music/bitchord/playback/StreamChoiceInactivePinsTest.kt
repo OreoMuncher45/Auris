@@ -28,22 +28,37 @@ class StreamChoiceInactivePinsTest {
         pin("inactive-off", "saavn")
         pin("inactive-on", "addon")
         pin("inactive-kept", "saavn")
-        pin("inactive-youtube", null)
+        StreamChoice.remember("inactive-youtube", SourceStream("https://example.invalid/yt"), substituted = false)
 
-        val stale = StreamChoice.inactivePins(active = setOf("addon"), keep = setOf("inactive-kept"))
+        val stale = StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = setOf("inactive-kept"))
 
-        assertEquals(setOf("inactive-off"), stale.filter { it in ids }.toSet())
+        assertEquals(mapOf("inactive-off" to false), stale.filterKeys { it in ids })
+    }
+
+    @Test
+    fun aYouTubePinIsStaleOnlyWhileYouTubeIsOff() {
+        StreamChoice.remember("inactive-youtube", SourceStream("https://example.invalid/yt"), substituted = false)
+        // A substitute with no source id names no source, so it is never retired.
+        pin("inactive-on", null)
+
+        val off = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = false, keep = emptySet())
+        val on = StreamChoice.inactivePins(enabled = emptySet(), youtubeEnabled = true, keep = emptySet())
+
+        assertEquals(mapOf("inactive-youtube" to true), off.filterKeys { it in ids })
+        assertEquals(emptyMap<String, Boolean>(), on.filterKeys { it in ids })
     }
 
     @Test
     fun aReleasedPinNoLongerBlocksItsReplacement() {
         pin("inactive-off", "saavn")
-        // Before the hand-over the old pin wins: this is the review finding.
+        // While the old pin is held it wins over any replacement.
         val replacement = SourceStream("https://example.invalid/new", sourceConfigId = "addon")
         assertEquals(false, StreamChoice.remember("inactive-off", replacement, substituted = true))
         assertEquals("saavn", StreamChoice.of("inactive-off")?.sourceConfigId)
 
-        StreamChoice.forgetAll(StreamChoice.inactivePins(active = setOf("addon"), keep = emptySet()))
+        StreamChoice.forgetAll(
+            StreamChoice.inactivePins(enabled = setOf("addon"), youtubeEnabled = true, keep = emptySet()).keys,
+        )
 
         assertNull(StreamChoice.of("inactive-off"))
         assertTrue(StreamChoice.remember("inactive-off", replacement, substituted = true))

@@ -897,29 +897,49 @@ object AudioCache {
     }
 
     /**
-     * Drops every cache entry, all renditions, that belongs to one of
-     * [mediaIds], and returns once they are gone.
+     * Drops the cache entries of [mediaIds] that one source filled: YouTube's
+     * when [youtube] is true, everyone else's when it is false. Returns the ids
+     * whose entries are all gone. An entry still held is left in place, and so
+     * is its id, so the caller keeps that track's pin.
      *
      * For handing a track over to a different source: see
      * [StreamChoice.inactivePins]. Its callers pass only tracks away from the
-     * playhead, which nothing is reading.
+     * playhead. The other source's copies stay: they are not the bytes that
+     * would be mixed with a new answer.
      */
-    suspend fun dropEntriesOf(mediaIds: Set<String>) {
-        if (mediaIds.isEmpty() || !::cache.isInitialized) return
-        kotlinx.coroutines.withContext(Dispatchers.IO) {
+    suspend fun dropEntriesOf(mediaIds: Set<String>, youtube: Boolean): Set<String> {
+        if (mediaIds.isEmpty()) return emptySet()
+        if (!::cache.isInitialized) return mediaIds
+        return withContext(Dispatchers.IO) {
+            val failed = mutableSetOf<String>()
             cache.keys.toList().forEach { key ->
                 val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: return@forEach
+                // An entry written before it was tagged is matched by its key,
+                // and one with no origin is dropped whichever source is
+                // leaving: over-dropping costs a re-download, under-dropping
+                // a corrupt file.
+                val mediaId = meta.get(META_MEDIA_ID, null as String?)
+                    ?: mediaIds.firstOrNull { id ->
+                        val base = cacheKeyBaseOf(id)
+                        key == base || key.startsWith("$base#")
+                    }
+                    ?: return@forEach
                 if (mediaId !in mediaIds) return@forEach
+                val origin = meta.get(META_ORIGIN, null as String?)
+                if (origin != null && (origin == Origin.YOUTUBE.name) != youtube) return@forEach
                 runCatching { cache.removeResource(key) }
                     .onSuccess {
                         analysisHeads.remove(mediaId)
                         analysisHeadWant.remove(mediaId)
                         renditionKeys.remove(mediaId)
-                        TrackLog.d(TAG, "dropped $key: its source is no longer active", about = mediaId)
+                        TrackLog.d(TAG, "dropped $key: its source is switched off", about = mediaId)
                     }
-                    .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+                    .onFailure {
+                        failed += mediaId
+                        TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId)
+                    }
             }
+            mediaIds - failed
         }
     }
 
