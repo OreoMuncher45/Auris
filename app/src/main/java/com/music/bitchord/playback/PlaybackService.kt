@@ -1447,6 +1447,10 @@ class PlaybackService : MediaLibraryService() {
         // the listener pauses and then leaves; ProcessLifecycleOwner does.
         ProcessLifecycleOwner.get().lifecycle.addObserver(discordIdleObserver)
 
+        // Not a Keystore open, although AuthStore is the encrypted store: the
+        // service shares the application's process, BitChordApplication has
+        // opened this store before any service can start, and EncryptedPrefs
+        // keeps one store per file per process. This is a read from that one.
         if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
             com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
         }
