@@ -3987,6 +3987,9 @@ private fun BitChordApp(
         // the feed, the frosted bars, the tab row — becomes the left half of
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
+        val pageCoveredByPlayer by remember(showNowPlaying, playerDock) {
+            derivedStateOf { showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f }
+        }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -4001,10 +4004,13 @@ private fun BitChordApp(
                     // player's own dim skips itself on. Composition and layout
                     // carry on, so the page is current the moment the player
                     // starts to come down and this draws again.
+                    //
+                    // Derived, as Zenith does it: the open fraction moves on
+                    // every frame of the sheet's travel, and read straight in
+                    // this draw it invalidated the page root on each of them.
+                    // The flag only flips twice per open or close.
                     .drawWithContent {
-                        val coveredByPlayer =
-                            showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f
-                        if (!coveredByPlayer) drawContent()
+                        if (!pageCoveredByPlayer) drawContent()
                     },
             ) {
                 // Which page is on screen, as one name. The transition runs
