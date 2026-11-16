@@ -515,31 +515,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
     val settings = remember { DesktopAppSettings(persistence) }
-    var availableUpdate by remember { mutableStateOf<DesktopUpdateChecker.UpdateInfo?>(null) }
-    LaunchedEffect(Unit) { availableUpdate = DesktopUpdateChecker.check() }
-    availableUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = { availableUpdate = null },
-            title = { Text(DesktopStrings["d_update_available", "Update available"]) },
-            text = {
-                Text(
-                    "BitChord ${update.version} is out — you have ${DesktopUpdateChecker.currentVersion}." +
-                        (update.notes?.takeIf { it.isNotBlank() }?.let { "\n\n${it.take(600)}" } ?: ""),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    DesktopExternalLinks.open(update.downloadUrl ?: update.releaseUrl)
-                    availableUpdate = null
-                }) { Text(DesktopStrings["d_download", "Download"]) }
-            },
-            dismissButton = {
-                TextButton(onClick = { availableUpdate = null }) {
-                    Text(DesktopStrings["d_later", "Later"])
-                }
-            },
-        )
-    }
+    DesktopUpdatePrompt()
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
     val searchState = remember { DesktopSearchState() }
     val pages = remember { DesktopPagesState(persistence) }
