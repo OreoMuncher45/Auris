@@ -1267,10 +1267,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Checked again after each suspension: the listener can change
                 // while the lookup or the request is out.
                 if (listenerKey() != listener) return@withLock
-                if (videoId != null && writeLike(videoId, target, likeStatusOf(videoId))) {
-                    rowRatingConfirmed[rowId] = target
-                }
+                val written = videoId != null && writeLike(videoId, target, likeStatusOf(videoId))
+                if (written) rowRatingConfirmed[rowId] = target
                 if (listenerKey() != listener) return@withLock
+                // The recording carries the rating too: other rows and players
+                // read it by its own id, and the next unlike reads its previous
+                // state from here to know whether to forget it from the library.
+                if (written && videoId != null) LikeState.set(videoId, target)
                 if (rowRatingVersion[rowId] == version) {
                     rowRatingVersion.remove(rowId)
                     LikeState.set(rowId, rowRatingConfirmed.remove(rowId) ?: previous)
