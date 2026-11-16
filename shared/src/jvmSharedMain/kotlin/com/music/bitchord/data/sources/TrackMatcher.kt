@@ -404,6 +404,18 @@ object TrackMatcher {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
         var text = normalize(raw)
+        // "Morning Light Eclipsa Audio", "봄날 - Eclipsa Audio", "Song (Eclipsa
+        // Audio)": YouTube's immersive upload of the stereo track, filed under
+        // the stereo title with the format added. No other catalogue prints
+        // the format, so a title that kept it searched for "eclipsa", found
+        // nothing, and the song stayed on YouTube's Opus. Taken out before any
+        // bracket or dash is read, so every shape of it goes the same way.
+        // Never down to nothing: a title that is only the label keeps it.
+        // At the end it goes with the separators in front of it; with more
+        // after it only the two words go, so a dash or bracket that leads on
+        // to a version ("Song - Eclipsa Audio Live") is still read as one.
+        text.replace(IMMERSIVE_LABEL_AT_END, "").replace(IMMERSIVE_LABEL, " ")
+            .takeIf { it.isNotBlank() }?.let { text = it }
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -487,7 +499,17 @@ object TrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // The same trailing labels the word loop above drops, or
+            // "봄날 Eclipsa Audio Official" keeps "official" in its core and
+            // misses the stereo "봄날". A label only comes off after a
+            // separator, so the title itself is never one of them.
+            var coreText = text
+            while (true) {
+                val tail = TRAILING_LABEL.find(coreText) ?: break
+                if (tail.groupValues[1] !in TRAILING_NOISE) break
+                coreText = coreText.substring(0, tail.range.first)
+            }
+            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -842,6 +864,17 @@ object TrackMatcher {
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
 
+    /** YouTube's immersive-upload label, wherever a title carries it; see [parseTitle]. */
+    private val IMMERSIVE_LABEL = Regex("""(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+
+    /**
+     * The label as the last words of a title, with the separators in front of
+     * it ("봄날·Eclipsa Audio") but never a bracket, which belongs to an aside.
+     */
+    private val IMMERSIVE_LABEL_AT_END =
+        Regex("""[\s\p{P}\p{S}&&[^()\[\]]]*(?<![\p{L}\p{N}])eclipsa\s+audio(?=[^\p{L}\p{N}]*$)""")
+    /** The last word of a title and the separators around it; see the CJK core in [parseTitle]. */
+    private val TRAILING_LABEL = Regex("""[\s\p{P}\p{S}]+([\p{L}\p{N}]+)[\s\p{P}\p{S}]*$""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
