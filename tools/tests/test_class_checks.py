@@ -15,6 +15,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
@@ -203,6 +204,44 @@ class ChecksTest(unittest.TestCase):
             with ClassDir(("a/Ok.class", class_bytes([]))) as root:
                 status, _ = run(main, [root, os.path.join(root, "absent")])
             self.assertEqual(status, 1, main.__module__)
+
+
+class UnreadableDirectoryTest(unittest.TestCase):
+    """A directory the walk cannot list fails the check, next to readable classes."""
+
+    checks = (check_constructor_widths.main, check_method_sizes.main)
+
+    def test_injected_listing_error_fails(self):
+        real_scandir = os.scandir
+
+        def scandir(path="."):
+            if os.path.basename(str(path)) == "locked":
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_scandir(path)
+
+        files = (("a/Ok.class", class_bytes([])), ("locked/B.class", class_bytes([])))
+        with ClassDir(*files) as root:
+            with mock.patch("os.scandir", scandir):
+                with self.assertRaises(classfile.ClassFileError):
+                    classfile.class_files(root)
+                for main in self.checks:
+                    status, out = run(main, [root])
+                    self.assertEqual(status, 1, main.__module__)
+                    self.assertIn("cannot be listed", out)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can list any directory")
+    def test_directory_without_permission_fails(self):
+        files = (("a/Ok.class", class_bytes([])), ("locked/B.class", class_bytes([])))
+        with ClassDir(*files) as root:
+            locked = os.path.join(root, "locked")
+            os.chmod(locked, 0)
+            try:
+                for main in self.checks:
+                    status, out = run(main, [root])
+                    self.assertEqual(status, 1, main.__module__)
+                    self.assertIn("cannot be listed", out)
+            finally:
+                os.chmod(locked, 0o755)
 
 
 if __name__ == "__main__":

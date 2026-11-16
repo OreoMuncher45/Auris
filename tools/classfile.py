@@ -94,16 +94,23 @@ def methods(data):
         raise ClassFileError("truncated or malformed (%s)" % e)
 
 
+def _unreadable_directory(error):
+    raise ClassFileError("%s: cannot be listed (%s)" % (error.filename, error.strerror or error))
+
+
 def class_files(root):
     """Every .class file under root, hidden directories included, in a stable order.
 
-    Raises ClassFileError if root is missing or holds no class files: that
-    means the compile did not run, not that every class is fine.
+    Raises ClassFileError if root is missing or holds no class files (the
+    compile did not run, which is not the same as every class being fine),
+    or if any directory under it cannot be listed.
     """
     if not os.path.isdir(root):
         raise ClassFileError("%s: no such directory (was the compile task run?)" % root)
     paths = []
-    for directory, _, files in os.walk(root):
+    # os.walk skips a directory it cannot list unless told otherwise, which
+    # would leave its classes unchecked while the check passed.
+    for directory, _, files in os.walk(root, onerror=_unreadable_directory):
         paths.extend(os.path.join(directory, name) for name in files if name.endswith(".class"))
     if not paths:
         raise ClassFileError("%s: no class files in it (was the compile task run?)" % root)
