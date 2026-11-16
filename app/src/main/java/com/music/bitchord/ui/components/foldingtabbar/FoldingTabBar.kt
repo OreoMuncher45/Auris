@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -134,6 +136,9 @@ fun FoldingTabBar(
     val selectedIndex = scope.tabs.indexOf(selected).coerceAtLeast(0)
     val tabsCount = scope.tabs.size.coerceAtLeast(1)
     val surfaceBackdrop = rememberLayerBackdrop()
+    val searchGlassShown by remember {
+        derivedStateOf { fold.value > 0f || search.value > 0f }
+    }
     val foldedOrSearching = folded || inSearch
     val noTap = remember { MutableInteractionSource() }
     val glowScope = rememberCoroutineScope()
@@ -198,14 +203,27 @@ fun FoldingTabBar(
                 )
             }
             // 3: search's own glass, only while detached from the group.
+            //
+            // At rest (open, not searching) this sits at alpha 0 under the group, and
+            // it used to carry the full glass anyway: a backdrop sampler, its blur and
+            // lens chain, rim and shadow layers, all recorded for a surface no one can
+            // see. The glass is attached only while the circle has any opacity; the
+            // flag is derived, so it flips once at each end of a fold, not per frame.
             Box(
                 Modifier
                     .graphicsLayer(elasticStretchLayerBlock(searchGlow))
                     .graphicsLayer { alpha = maxOf(fold.value, search.value).coerceIn(0f, 1f) }
-                    .background(colors.backgroundColor, shapes.standaloneTabShape)
-                    .clip(shapes.standaloneTabShape)
-                    .then(tabBarContentModifier)
-                    .then(searchGlow.modifier)
+                    .then(
+                        if (searchGlassShown) {
+                            Modifier
+                                .background(colors.backgroundColor, shapes.standaloneTabShape)
+                                .clip(shapes.standaloneTabShape)
+                                .then(tabBarContentModifier)
+                                .then(searchGlow.modifier)
+                        } else {
+                            Modifier
+                        }
+                    )
             )
             // 4: the detached search control.
             Box(
