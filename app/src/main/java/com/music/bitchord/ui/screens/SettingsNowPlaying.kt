@@ -247,8 +247,8 @@ internal fun NowPlayingSettings(
                         //
                         // A failed write (a full disk, storage that went away)
                         // is said in the toast rather than thrown out of the
-                        // coroutine. Only IOException is caught, so leaving the
-                        // page still cancels the save.
+                        // coroutine. Only IOException is caught: anything else
+                        // is a bug, and is still thrown.
                         saveScope.launch {
                             val message = try {
                                 withContext(Dispatchers.IO) {
