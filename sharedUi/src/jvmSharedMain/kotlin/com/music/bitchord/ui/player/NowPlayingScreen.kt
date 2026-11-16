@@ -1375,6 +1375,13 @@ fun NowPlayingScreen(
         haptics = haptics,
         onCard = { overlays.lyricsShare = it },
     )
+    // A pick lives in the lyrics panel and goes with it. Back already drops
+    // the pick first, but a tap on the header's artwork closes the panel
+    // outright: left picking, the pick bar stayed over the sleeve and the
+    // transport stayed hidden until the bar was cancelled by hand.
+    LaunchedEffect(panels.lyricsOpen) {
+        if (!panels.lyricsOpen && lyricPicker.picking) lyricPicker.cancel()
+    }
     // Nothing here resets [PlayerPanelState.lyricsOpen] on a track change, deliberately. The
     // panel is a place, not a property of the track: someone reading along who
     // skips — or who simply lets the queue run on — means to carry on reading,
