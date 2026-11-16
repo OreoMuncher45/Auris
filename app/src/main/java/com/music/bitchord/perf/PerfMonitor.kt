@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import com.music.bitchord.data.CrashLog
 import com.music.bitchord.data.PerfCounters
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
@@ -66,6 +67,14 @@ object PerfMonitor {
 
     /** How many threads the report names, heaviest first. */
     private const val TOP_THREADS = 8
+
+    /**
+     * How much of the last crash the report carries.
+     *
+     * The tail, not the whole file: the top of the stack is where the answer
+     * is, and older crashes would only bury it.
+     */
+    private const val CRASH_TAIL_CHARS = 4_000
 
     private const val TAG = "PerfMonitor"
 
@@ -291,6 +300,19 @@ object PerfMonitor {
         lines.appendLine("counters since this process started")
         counters.forEachIndexed { index, counter ->
             lines.appendLine("  %-9s %d".format(Locale.US, counter.shortName(), totals[index]))
+        }
+        // The last crash, if there was one.
+        //
+        // "It crashed" with nothing attached is a report nobody can act on, and
+        // the stack is already on disk — it only has to be somewhere the
+        // listener can reach. The tail is enough: the top of the stack is
+        // where the answer is, and a whole file of old crashes would bury it.
+        val crash = runCatching { CrashLog.read(context) }.getOrNull()
+        if (!crash.isNullOrBlank()) {
+            lines.appendLine()
+            lines.appendLine("last crash")
+            lines.append(crash.takeLast(CRASH_TAIL_CHARS))
+            if (!crash.endsWith("\n")) lines.appendLine()
         }
         return lines.toString()
     }

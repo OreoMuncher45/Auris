@@ -130,6 +130,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.download.AutoDownload
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import java.util.concurrent.ConcurrentHashMap
@@ -847,6 +848,13 @@ class PlaybackService : MediaLibraryService() {
     private var favoriteActionJob: Job? = null
     private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
+    /**
+     * The waiting that decides whether the track now playing is kept.
+     *
+     * One at a time: a new track cancels the last one's wait, because the
+     * wait is about *this* track and the old one is not playing any more.
+     */
+    private var autoDownloadJob: Job? = null
     /** Rate limit for listener-requested retries; automatic upgrades do not touch it. */
     private val manualUpgradeThrottle = ManualUpgradeThrottle(MANUAL_UPGRADE_COOLDOWN_MS)
     /** Catalogue lookup that decides which rendition of the next video to warm. */
@@ -1118,6 +1126,7 @@ class PlaybackService : MediaLibraryService() {
             autoplaySeed = null
             loadAutoplayForCurrentTrack()
             loadLyricsForCurrentTrack()
+            scheduleAutoDownload(mediaItem)
             if (exoPlayer.isPlaying) startLyricsTicker()
             refreshCustomLayouts()
             }
@@ -1934,9 +1943,6 @@ class PlaybackService : MediaLibraryService() {
                 existing = listOf(radioSeed),
                 seedSong = radioSeed,
                 limit = INITIAL_STATION_TRACKS,
-                // A station, asked for by the track that is playing: on a
-                // Spotify session that is Spotify's own mix of that track.
-                station = true,
             ).getOrElse {
                 TrackLog.w(
                     "BitChord",
@@ -3329,6 +3335,32 @@ class PlaybackService : MediaLibraryService() {
             repeatAllStashSeed = null
         }
         refreshCustomLayouts()
+    }
+
+    /**
+     * Keeps the track that has just become current, if the listener wants
+     * that.
+     *
+     * The decision is not made here: the track has only just started, and a
+     * track that is skipped in the next two seconds was not listened to. So
+     * this schedules the question and [AutoDownload] asks it a little later,
+     * with the rules it owns — the switch, the Wi-Fi-only setting, offline
+     * mode, and the tracks the listener deleted by hand.
+     *
+     * Every automatic path in the app asks [Downloads.deletedByHand] before it
+     * fetches anything, so a track deleted by hand does not come back because
+     * the app noticed it playing.
+     */
+    private fun scheduleAutoDownload(mediaItem: MediaItem?) {
+        autoDownloadJob?.cancel()
+        autoDownloadJob = null
+        if (!AppSettings.autoDownloadSongs.value) return
+        val song = mediaItem?.toSong() ?: return
+        autoDownloadJob = AutoDownload.confirmAndDownload(this, scope, song) {
+            val active = player ?: return@confirmAndDownload false
+            active.currentMediaItem?.mediaId == mediaItem.mediaId &&
+                (active.isPlaying || active.currentPosition > 0L)
+        }
     }
 
     /**

@@ -127,8 +127,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** What the Search tab searches: YouTube Music, or the Local Music folder on this device. */
-/** How many tracks one Spotify expansion asks for. */
-private const val FLOW_EXPANSION = 8
 
 /**
  * Where the Search tab looks.
@@ -2492,11 +2490,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
 
-        // The provider decides what a feed *is*, so the YouTube fan-out below is
-        // not something to run and then discard: a Spotify home is built from
-        // Spotify's own rows, matched to playable tracks, and pages no further.
-        // The two above counters are set for requests this path never makes, so
-        // they are cleared rather than left to draw skeletons that never fill.
+        // The catalogue decides what the page *is*: Spotify's own rows when
+        // Spotify is chosen, YouTube Music's feed when it is. The YouTube
+        // fan-out below is not something to run and then discard — a Spotify
+        // home is built from Spotify's own rows, matched to playable tracks,
+        // and pages no further. The two above counters are set for requests
+        // this path never makes, so they are cleared rather than left to draw
+        // skeletons that never fill.
+        //
+        // What plays next is not decided here: Flow, AutoPlay and "more like
+        // this" are YouTube Music's whichever catalogue is chosen.
         if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
             _homePendingShelves.value = 0
             _homeRecentlyPlayedLoading.value = false
@@ -2552,10 +2555,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * [loadHome]'s Spotify half.
      *
-     * Not a branch inside the YouTube fan-out, because the two providers share
-     * none of it — not a request, not a continuation, not a shelf shape. What
-     * they do share is the *page*: [publishHomeShelves] and everything under it
-     * draw both, so a Spotify home gets the same skeleton, the same
+     * Not a branch inside the YouTube fan-out, because the two catalogues
+     * share none of it — not a request, not a continuation, not a shelf shape.
+     * What they do share is the *page*: [publishHomeShelves] and everything
+     * under it draw both, so a Spotify home gets the same skeleton, the same
      * blocked-artist filtering and the same cards as a YouTube one.
      *
      * Nothing here pages. YouTube's home is an endless continuation; Spotify's
@@ -2569,7 +2572,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val outcome = runCatching { SpotifyHomeSource.page(facet) }.getOrNull()
             if (!isCurrentHomeLoad(identity, generation)) return@launch
             if (outcome == null || outcome.isEmpty) {
-                // The provider's own words for it. An empty Spotify home has
+                // The catalogue's own words for it. An empty Spotify home has
                 // several unrelated causes — no token, a refused endpoint, a
                 // feed read and found to hold no cards — and they need opposite
                 // fixes, so the message names the one that happened instead of
@@ -4112,13 +4115,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // lookup done before the row was ever pressed.
                         val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
                             ?: SpotifyHomeSource.songFor(track)
-                        // The Spotify id behind the row, remembered wherever the
-                        // row came from. The station a listener starts from this
-                        // track is asked for by that id, and a row matched on the
-                        // page never went through the code that used to record
-                        // it — so "start radio" had no seed to ask Spotify about
-                        // and answered from the listener's library instead.
-                        SpotifyHomeSource.rememberSpotifyId(found.videoId, track.id)
                         _detailStack.value = _detailStack.value.map { page ->
                             val list = (page.songs as? UiState.Success<List<Song>>)?.data
                             if (page.browseId == browseId && list != null && index < list.size) {
@@ -4807,19 +4803,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Flow unlock status, derived from favorites.
      * Unlocks at 16 fav tracks+artists total, or 10 artists alone.
+     *
+     * A signed-in Spotify session counts on its own: the listener has a whole
+     * library over there and their Auris likes are often zero, which is what
+     * put "Like 16 more songs" in front of somebody with thousands. The
+     * session is the evidence, not the catalogue the listener browses — the
+     * mix takes from both either way.
      */
     val flowStatus: StateFlow<FlowStatus> =
-        combine(_library, likeStatuses, AppSettings.homeProvider) { library, likes, provider ->
+        combine(_library, likeStatuses, AppSettings.spotifySpdcToken) { library, likes, token ->
             val favTracks = likes.count { it.value == LikeStatus.LIKE }
             val shelves = (library as? UiState.Success)?.data?.shelves.orEmpty()
             val artists = shelves.firstOrNull { it.title.equals("Artists", true) }?.items?.size ?: 0
             val subs = shelves.firstOrNull { it.title.equals("Subscriptions", true) }?.items?.size ?: 0
             val favArtists = maxOf(artists, subs)
-            // Flow is built from the provider that is selected. A listener on
-            // the Spotify catalogue has a whole library over there, and the
-            // YouTube counts this used to read are zero — which is what put
-            // "Like 16 more songs" in front of somebody with thousands.
-            val spotify = provider == HomeProvider.SPOTIFY
+            val spotify = token.isNotBlank()
             FlowStatus(
                 unlocked = spotify || FlowRules.isUnlocked(favTracks, favArtists),
                 favTrackCount = favTracks,
@@ -4897,42 +4895,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Build the Flow opening queue from library + history + recommendations.
      * Returns tagged Flow tracks ready for playSongs().
+     *
+     * One algorithm, whichever catalogue the listener browses: Auris's own
+     * mix, expanded through YouTube Music's radio. What Spotify contributes is
+     * *material* — what the listener plays there — and not a second algorithm
+     * with its own idea of what a mix is.
      */
     suspend fun buildFlowQueue(limit: Int = FlowEngine.INITIAL_TRACKS): List<Song> {
-        // The provider decides the evidence a mix is built from, for the same
-        // reason it decides the homepage: a Flow mix is a recommendation, and the
-        // service the listener chose is whose taste it should reflect. Nothing
-        // else changes — the engine, its weights, the skip and ban learning and
-        // the hourly refresh are all the same; only the seed pool is.
-        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
-            val seeds = runCatching { SpotifyHomeSource.flowSeeds() }.getOrNull()
-            if (seeds == null || seeds.isEmpty) {
-                // Deliberately *not* falling back to the YouTube seeds.
-                //
-                // It did, and that is the bug this replaced: Spotify selected,
-                // Spotify unable to answer, and Flow quietly built a YouTube
-                // mix — a mix that looks like it works, is trained on the wrong
-                // provider, and hides the failure instead of showing it. An
-                // empty Flow says what is true.
-                return emptyList()
-            }
-            return flowQueueFrom(
-                FlowEngine.SeedPool(
-                    favorites = seeds.top,
-                    history = seeds.recent,
-                    quickPicks = emptyList(),
-                    moodPool = emptyList(),
-                ),
-                limit,
-                // The expansion is Spotify's too: the station Spotify would
-                // start for the seed, or the artists Spotify puts beside the
-                // seed's artist. Expanding a Spotify mix through YouTube's
-                // radio is how this mix stopped being the listener's.
-                relatedTracks = { seed ->
-                    com.music.bitchord.data.spotify.SpotifyAlgorithm.more(seed, FLOW_EXPANSION)
-                },
-            )
-        }
         val lib = (_library.value as? UiState.Success)?.data
         val favorites = (lib?.likedSongs.orEmpty() + lib?.librarySongs.orEmpty())
             .withoutBlockedArtists()
@@ -4947,26 +4916,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // songs the mood is made of. The unfiltered mix has no station and
         // asks for none.
         val moodPool = fetchFlowMoodPool(FlowStore.config.mood)
+        // What the listener is playing elsewhere: their Spotify top tracks and
+        // what they played there lately, matched to something playable.
+        //
+        // Their *likes* are not read here. The mix asks the catalogue for songs
+        // like the ones they liked only when they say so, and a shelf of liked
+        // songs read on its own puts their likes back into every mix whether
+        // they asked for them or not.
+        val listens = spotifyListens()
         return flowQueueFrom(
-            FlowEngine.SeedPool(favorites, history, quickPicks, moodPool),
+            FlowEngine.SeedPool(favorites, history, quickPicks, moodPool, listens),
             limit,
         )
     }
 
     /**
+     * The listener's Spotify listening, as playable tracks.
+     *
+     * Their top tracks and what they played lately — what they listen to
+     * rather than what they saved. Read once per mix, matched through the
+     * usual matcher, and bounded so a mix never waits on a whole library.
+     *
+     * Empty when there is no Spotify session: there is nobody's listening to
+     * read, and a mix built out of the public catalogue's playlists is not
+     * the listener's listening.
+     */
+    private suspend fun spotifyListens(): List<Song> =
+        runCatching { SpotifyHomeSource.listens() }
+            .getOrDefault(emptyList())
+            .withoutBlockedArtists()
+
+    /**
      * One Flow mix from a seed pool.
      *
-     * Shared by both providers so that everything after the seeds — the engine
-     * settings, the like and ban evidence, the blocked-artist pass, the
-     * de-duplication — is the same code for a Spotify mix as for a YouTube one.
-     * The extra tracks asked for past [limit] cover what the blocked-artist pass
-     * removes, which is why the buffer only exists when there is something to
-     * remove.
+     * Everything after the seeds — the engine settings, the like and ban
+     * evidence, the blocked-artist pass, the de-duplication — is one code
+     * path, and the mix is expanded through YouTube Music's radio whatever the
+     * catalogue the listener browses. The extra tracks asked for past [limit]
+     * cover what the blocked-artist pass removes, which is why the buffer
+     * only exists when there is something to remove.
      */
     private suspend fun flowQueueFrom(
         seeds: FlowEngine.SeedPool,
         limit: Int,
-        relatedTracks: (suspend (Song) -> List<Song>)? = null,
     ): List<Song> {
         val buffer = if (AppSettings.blockedArtists.value.isEmpty()) 0 else 12
         return FlowEngine.buildInitialQueue(
@@ -4977,7 +4969,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             config = FlowStore.config,
             limit = limit + buffer,
             genreOf = ::flowGenreOf,
-            relatedTracks = relatedTracks,
         ).withoutBlockedArtists().distinctBy { it.videoId }.take(limit)
     }
 
@@ -5109,6 +5100,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * The ids of the tracks played lately.
+     *
+     * What the radio must not hand back: a radio answers with what it knows,
+     * and what it knows includes the last hour. A mix that repeats itself is
+     * a replay, so the growth is closed to those ids too.
+     *
+     * Only the most recent [FLOW_RECENT_LIMIT] of them: the history is the
+     * account's whole listening history, and every track ever played is not
+     * what "lately" means.
+     */
+    private fun recentHistoryIds(): Set<String> =
+        ((_history.value as? UiState.Success)?.data.orEmpty())
+            .take(FLOW_RECENT_LIMIT)
+            .map { it.videoId }
+            .toSet()
+
+    /**
      * Grow the temp playlist while it stays unsaved: fetch radio on the tail
      * and append fresh tracks. Called when the list nears its end and by the
      * endless top-up path. No-op once saved — a saved playlist is frozen.
@@ -5125,19 +5133,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 val tail = current.takeLast(3)
                 val out = current.toMutableList()
+                val played = recentHistoryIds()
                 for (seed in tail) {
                     if (out.size >= current.size + limit) break
-                    // The top-up is the provider's algorithm as well: a mix
-                    // that starts as Spotify's and grows through YouTube's
-                    // radio is half Spotify and half YouTube.
-                    val related = if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
-                        runCatching {
-                            com.music.bitchord.data.spotify.SpotifyAlgorithm.more(seed, FLOW_EXPANSION)
-                        }.getOrDefault(emptyList())
-                    } else {
-                        YtMusicRepository.radio(seed.videoId).getOrNull().orEmpty()
-                    }
+                    // One algorithm: the mix grows through the same radio it
+                    // was built from, whichever catalogue the listener browses.
+                    val related = YtMusicRepository.radio(seed.videoId).getOrNull().orEmpty()
                         .withoutBlockedArtists()
+                        .filterNot { c -> c.videoId in played }
                         .filterNot { c ->
                             FlowEngine.isExcluded(
                                 c, FlowStore.bannedIds.value, likeStatuses.value,
@@ -5199,3 +5202,12 @@ private const val FLOW_MOOD_PLAYLIST_SONGS = 60
 
 /** How many songs the mood's pool holds in total. */
 private const val FLOW_MOOD_POOL_SIZE = 240
+
+/**
+ * How many of the most recent plays are kept out of the mix.
+ *
+ * The history is the account's whole listening history — hundreds of tracks
+ * over the weeks — and keeping all of them out would leave the mix with only
+ * what was never played.
+ */
+private const val FLOW_RECENT_LIMIT = 50

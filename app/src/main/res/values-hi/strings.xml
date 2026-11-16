@@ -147,6 +147,8 @@
     <string name="widget_preview_pill">गाने का शीर्षक - कलाकार</string>
     <string name="download_quality">डाउनलोड क्वालिटी</string>
     <string name="download_wifi_only">केवल Wi-Fi पर डाउनलोड करें</string>
+    <string name="auto_download_songs">सुनी गई गानियाँ अपने आप डाउनलोड करें</string>
+    <string name="auto_download_songs_subtitle">जो गाने आप सुनते हैं, वे अपने आप सहेजे जाते हैं। जिस डाउनलोड को आप खुद हटाते हैं, वह फिर कभी नहीं लाया जाता।</string>
     <string name="spatial_audio">स्पेशियल ऑडियो</string>
     <string name="spatial_audio_subtitle">ज़्यादा इमर्सिव अनुभव के लिए स्टीरियो ट्रैक को चौड़ा करता है</string>
     <string name="spatial_audio_atmos_subtitle">इस ट्रैक के लिए रुका हुआ — Dolby Atmos पहले से ही स्पेशियल है</string>
@@ -1402,11 +1404,11 @@
     <string name="quick_picks_offline_empty">अभी तक कुछ भी डाउनलोड नहीं हुआ</string>
     <string name="quick_picks_play_all">सभी चलाएँ</string>
     <string name="quick_picks_shuffle">क्रम बदलें</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">कैटलॉग</string>
+    <string name="home_provider_subtitle">होम और खोज कहाँ से आते हैं। Flow, Autoplay और \"इस जैसा और\" हमेशा YouTube Music से आते हैं।</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">Spotify का अपना होम और कैटलॉग। साइन इन होने पर, Flow वहाँ भी आप क्या सुनते हैं, वह भी लेता है।</string>
+    <string name="home_provider_youtube_subtitle">YouTube Music का अपना होम और कैटलॉग, और Flow के लिए उसकी फ़ीड।</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="upgrade_quality_started">बेहतर कॉपी खोज रहे हैं…</string>
     <string name="upgrade_quality_offline">ऑफ़लाइन मोड चालू है — अपग्रेड के लिए नेटवर्क चाहिए</string>

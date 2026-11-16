@@ -278,6 +278,7 @@ fun SettingsScreen(
     val concurrentDownloads by AppSettings.concurrentDownloads.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
+    val autoDownloadSongs by AppSettings.autoDownloadSongs.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
@@ -916,13 +917,12 @@ fun SettingsScreen(
                     onClick = { pickingAutomixPerformance = true },
                 )
             }
-            // The provider, next to the other decisions about how the app picks
-            // music for the listener. It sits here rather than with the account
-            // rows because it is a choice about the feed, not about a service
-            // connection — Spotify selected with nobody signed in still shows a
-            // home, from Spotify's public lists.
+            // The catalogue, next to the other decisions about how the app
+            // finds music for the listener. It sits here rather than with the
+            // account rows because it is a choice about where the page and
+            // the search come from, not about a service connection.
             val homeProviderTitle = stringResource(R.string.home_provider)
-            row(homeProviderTitle, "provider", "spotify", "youtube", "algorithm", "flow") {
+            row(homeProviderTitle, "provider", "spotify", "youtube", "search", "library") {
                 SettingsRow(
                     icon = Icons.Rounded.Tune,
                     title = homeProviderTitle,
@@ -1095,6 +1095,19 @@ fun SettingsScreen(
         }
         if (openCategory == SettingsCategory.DOWNLOADS || (openCategory == null && searchActive)) {
         SearchableSettingsGroup(search, SettingsCategory.DOWNLOADS) {
+            // The headline of this section: the songs they play are saved by
+            // themselves. It leads because it is the one that changes what the
+            // app does without a tap, and because the rules below it — Wi-Fi
+            // only, offline mode — are conditions on it.
+            val autoDownloadTitle = stringResource(R.string.auto_download_songs)
+            row(autoDownloadTitle, "automatic", "keep", "offline", "played") {
+                SettingsSubRow(
+                    title = autoDownloadTitle,
+                    subtitle = stringResource(R.string.auto_download_songs_subtitle),
+                    checked = autoDownloadSongs,
+                    onCheckedChange = AppSettings::setAutoDownloadSongs,
+                )
+            }
             val downloadQualityTitle = stringResource(R.string.download_quality)
             row(downloadQualityTitle, "offline", "lossless") {
                 SettingsRow(
@@ -2697,16 +2710,16 @@ private fun HomeProvider.localizedLabel(): String = stringResource(
 )
 
 /**
- * Content-provider picker: which service's algorithm builds the homepage,
- * Flow and Autoplay.
+ * Catalogue picker: which service's catalogue the homepage and the search
+ * come from.
  *
  * Two rows now and room for more, which is why this is a list rather than a
- * switch: a third provider is a row and an enum value, not a redesign.
+ * switch: a third catalogue is a row and an enum value, not a redesign.
  *
  * The note at the top says the app restarts, and it is not a warning to be
- * scrolled past — it is the mechanism. Flow and Autoplay each carry learning
- * trained against whichever provider built them, so the change is applied by
- * starting over rather than by swapping a feed underneath a live session.
+ * scrolled past — it is the mechanism. The page and the search belong to the
+ * catalogue they were read from, so the change is applied by starting over
+ * rather than by swapping a feed underneath a live session.
  */
 @Composable
 private fun HomeProviderSheet(

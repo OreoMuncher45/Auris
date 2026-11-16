@@ -1862,10 +1862,6 @@ private fun BitChordApp(
                     existing = listOf(seed),
                     seedSong = seed,
                     limit = INITIAL_RADIO_TRACKS,
-                    // An explicit station, not a queue top-up: this is the
-                    // listener asking for a radio, so the provider's own
-                    // algorithm answers it rather than the seed pool.
-                    station = true,
                 ).getOrElse {
                     if (request == playRequestGeneration) {
                         Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
@@ -3230,7 +3226,7 @@ private fun BitChordApp(
         // and the quick-access grid. Spotify's home has all three; YouTube's has
         // none of them.
         val homeHeader by viewModel.homeHeader.collectAsStateWithLifecycle()
-        // Which provider is drawing the page. Spotify's shelves are cards of
+        // Which catalogue is drawing the page. Spotify's shelves are cards of
         // collections, and the full-bleed hero treatment is for a row of tracks.
         val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
         val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()

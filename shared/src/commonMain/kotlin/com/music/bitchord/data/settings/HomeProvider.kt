@@ -1,38 +1,36 @@
 package com.music.bitchord.data.settings
 
 /**
- * Where the app's *algorithmic* content comes from: the homepage, Flow, and
- * Autoplay.
+ * Which catalogue the app looks in.
  *
- * Not where the audio comes from, and not what the library shows. Those are
- * three different questions and it matters that they are answered separately:
+ * Not which algorithm builds the homepage, the Flow or the radio: those are
+ * YouTube Music's, whichever catalogue is chosen here. One algorithm means
+ * one answer to "what should play next" — two meant two mixes, and the
+ * second one repeated the listener's saved songs whether they had asked for
+ * that or not.
  *
- *  - A home row is a *recommendation*, which one service or the other is better
- *    at. That is what this switches.
- *  - The audio for a row is played from whatever the source ranking picks —
- *    YouTube, an addon, a file on the device — exactly as it is today. A
- *    Spotify-sourced row still plays through the same path a YouTube-sourced
- *    one does, and its tracks are matched to it the same way an imported
- *    playlist's are.
- *  - The Library tab keeps showing the listener's own YouTube and device
- *    content whichever provider is selected, because that is their library
- *    rather than a feed.
+ * What this does choose:
  *
- * The switch is deliberately a whole-app one rather than per-screen: Flow
- * carries learning state (skips, bans, an hourly snapshot) and Autoplay
- * carries its own, and both are trained against whichever provider built them.
- * Mixing the two in one session would train each on the other's evidence, which
- * is why changing this restarts the app rather than quietly swapping a feed.
+ *  - Which catalogue the homepage and the search come from. Spotify's own
+ *    home is Spotify's curation; YouTube Music's is its feed.
+ *  - Nothing else about the recommendations. What the listener plays on
+ *    Spotify is read either way — it is what seeds the mix — so a signed-in
+ *    Spotify session is worth having whichever catalogue is chosen.
  *
- * More providers are expected; nothing outside this enum should assume there
- * are two.
+ * The audio is played from whatever the source ranking picks — YouTube, an
+ * addon, a file on the device — whichever catalogue is chosen. A Spotify
+ * track is matched to a playable recording the same way an imported
+ * playlist's is.
+ *
+ * More catalogues are expected; nothing outside this enum should assume
+ * there are two.
  */
 enum class HomeProvider {
     /** YouTube Music, through the app's own innertube session. The default. */
     YOUTUBE,
 
     /**
-     * Spotify: the listener's own playlists, top tracks and history when they
+     * Spotify: the listener's own playlists, top tracks and pages when they
      * are signed in, and Spotify's public browse lists (featured playlists, new
      * releases, categories) when they are not, so a selection made without a
      * sign-in still shows music.
@@ -40,11 +38,11 @@ enum class HomeProvider {
     SPOTIFY,
     ;
 
-    /** Whether this provider can only be read by a signed-in listener. */
+    /** Whether this catalogue can only be read by a signed-in listener. */
     val needsSignIn: Boolean get() = this == SPOTIFY
 
     companion object {
-        /** The provider named [name], or [YOUTUBE] when it names nothing known. */
+        /** The catalogue named [name], or [YOUTUBE] when it names nothing known. */
         fun of(name: String?): HomeProvider =
             entries.firstOrNull { it.name == name } ?: YOUTUBE
     }

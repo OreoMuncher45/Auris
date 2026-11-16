@@ -64,6 +64,7 @@ object FlowStore {
     private const val KEY_FLOW_BUILT_AT = "flow_built_at"
     private const val KEY_FLOW_SNAPSHOT_VERSION = "flow_snapshot_version"
     private const val KEY_FLOW_SNAPSHOT_APP = "flow_snapshot_app"
+    private const val KEY_FLOW_SNAPSHOT_ALGORITHM = "flow_snapshot_algorithm"
 
     /**
      * The shape of a stored mix.
@@ -91,6 +92,7 @@ object FlowStore {
             .putLong(KEY_FLOW_BUILT_AT, System.currentTimeMillis())
             .putInt(KEY_FLOW_SNAPSHOT_VERSION, SNAPSHOT_VERSION)
             .putInt(KEY_FLOW_SNAPSHOT_APP, BuildConfig.VERSION_CODE)
+            .putInt(KEY_FLOW_SNAPSHOT_ALGORITHM, FlowEngine.ALGORITHM_VERSION)
             .apply()
     }
 
@@ -102,6 +104,12 @@ object FlowStore {
      * is preferences, so it outlives an update — restoring yesterday's mix
      * after today's build is how the old layout came back with the old
      * contents.
+     *
+     * A mix built by another *algorithm* is dropped the same way. The shape
+     * can be the same and the mix still be another build's idea of a mix: the
+     * seeds, the expander and the rule about repeats all changed when the
+     * algorithm changed, and a stored mix from the old one is not what this
+     * build would build today.
      */
     fun readSnapshot(): Pair<List<Song>, Long>? {
         if (!this::prefs.isInitialized) return null
@@ -112,6 +120,12 @@ object FlowStore {
         // listener's mix away and made them build a fresh one. An upgrade is
         // not a new listener.
         if (version != SNAPSHOT_VERSION) {
+            clearSnapshot()
+            return null
+        }
+        // The algorithm that built it. A mix from another algorithm is not
+        // this build's mix, whatever shape it is in.
+        if (prefs.getInt(KEY_FLOW_SNAPSHOT_ALGORITHM, 0) != FlowEngine.ALGORITHM_VERSION) {
             clearSnapshot()
             return null
         }
@@ -130,6 +144,7 @@ object FlowStore {
             .remove(KEY_FLOW_BUILT_AT)
             .remove(KEY_FLOW_SNAPSHOT_VERSION)
             .remove(KEY_FLOW_SNAPSHOT_APP)
+            .remove(KEY_FLOW_SNAPSHOT_ALGORITHM)
             .apply()
     }
 

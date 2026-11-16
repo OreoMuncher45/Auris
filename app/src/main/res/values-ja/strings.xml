@@ -142,6 +142,8 @@
     <string name="widget_preview_pill">曲名 - アーティスト</string>
     <string name="download_quality">ダウンロード品質</string>
     <string name="download_wifi_only">Wi-Fi接続時のみダウンロード</string>
+    <string name="auto_download_songs">再生した曲を自動ダウンロード</string>
+    <string name="auto_download_songs_subtitle">再生した曲は自動で保存されます。手動で削除したダウンロードは再取得されません。</string>
     <string name="spatial_audio">空間オーディオ</string>
     <string name="spatial_audio_subtitle">よりイマーシブな体験のためにステレオトラックを広げます</string>
     <string name="spatial_audio_atmos_subtitle">この曲では一時停止中 — Dolby Atmosはすでに空間オーディオです</string>
@@ -1380,11 +1382,11 @@
     <string name="quick_picks_offline_empty">まだ何もダウンロードされていません</string>
     <string name="quick_picks_play_all">すべて再生</string>
     <string name="quick_picks_shuffle">シャッフル</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">カタログ</string>
+    <string name="home_provider_subtitle">ホームと検索の由来。Flow、Autoplay、「もっとこういう曲」はどちらの場合も YouTube Music から。</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">Spotify 自身のホームとカタログ。サインインしていれば、Flow はそこで流している曲も使います。</string>
+    <string name="home_provider_youtube_subtitle">YouTube Music 自身のホームとカタログ、および Flow 用のフィード。</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="upgrade_quality_started">より良いコピーを探しています…</string>
     <string name="upgrade_quality_offline">オフラインモードがオンです — アップグレードにはネットワークが必要です</string>

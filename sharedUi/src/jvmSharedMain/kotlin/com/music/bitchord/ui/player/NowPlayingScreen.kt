@@ -4264,8 +4264,21 @@ fun NowPlayingScreen(
                                 // edge, and there is nothing to sit inside.
                                 // Nor in the header's thumbnail, which is the
                                 // cover itself and has no edge of its own.
+                                //
+                                // The card's own share of the picture: one while
+                                // the sleeve is a card, and back to none as it
+                                // collapses into the mini player, where the
+                                // picture is the cover again and shrinking it
+                                // would only take it out of sight.
+                                //
+                                // [dockT] is one while the player is open and
+                                // falls to zero as it rides down onto the mini
+                                // player, so it is read as it is: one means the
+                                // card is there to be looked at.
+                                val cardShare = ((1f - p()) * dockT())
+                                    .coerceIn(0f, 1f)
                                 val cardZoom = if (zoomOutAlbumArt) {
-                                    ALBUM_ART_ZOOM_OUT * (1f - p()) * (1f - dockT())
+                                    lerpFloat(1f, ALBUM_ART_ZOOM_OUT, cardShare)
                                 } else {
                                     1f
                                 }
@@ -4283,8 +4296,12 @@ fun NowPlayingScreen(
                                 // shrunk, and it is the card's radius — zero in
                                 // the banner, where the picture is edge to edge
                                 // and there are no corners to keep.
+                                //
+                                // A scale of zero would divide into nothing and
+                                // leave the radius infinite, which is not a
+                                // shape anything can draw.
                                 val radius = sleeveCorner()
-                                if (cardZoom < 0.999f && radius > 0.dp) {
+                                if (cardZoom < 0.999f && radius > 0.dp && scale > 0.01f) {
                                     shape = RoundedCornerShape(radius / scale)
                                     clip = true
                                 }

@@ -150,6 +150,8 @@
     <string name="widget_preview_pill">ชื่อเพลง - ศิลปิน</string>
     <string name="download_quality">คุณภาพการดาวน์โหลด</string>
     <string name="download_wifi_only">ดาวน์โหลดผ่าน Wi-Fi เท่านั้น</string>
+    <string name="auto_download_songs">ดาวน์โหลดเพลงที่ฟังโดยอัตโนมัติ</string>
+    <string name="auto_download_songs_subtitle">เพลงที่คุณฟังจะถูกบันทึกไว้เอง ดาวน์โหลดที่คุณลบด้วยตัวเองจะไม่ถูกดาวน์โหลดอีก</string>
     <string name="convert_to_audio">แปลงเป็นเสียง</string>
     <string name="convert_to_video">แปลงเป็นวิดีโอ</string>
     <string name="converting_to_audio">กำลังแปลงเป็นเสียง…</string>
@@ -1385,11 +1387,11 @@
     <string name="quick_picks_offline_empty">ยังไม่ได้ดาวน์โหลดอะไรเลย</string>
     <string name="quick_picks_play_all">เล่นทั้งหมด</string>
     <string name="quick_picks_shuffle">สุ่ม</string>
-    <string name="home_provider">Content source</string>
-    <string name="home_provider_subtitle">Where the homepage, Flow and Autoplay come from. Changing it restarts Auris.</string>
+    <string name="home_provider">แคตตาล็อก</string>
+    <string name="home_provider_subtitle">หน้าแรกและการค้นหามาจากไหน Flow, Autoplay และ \"แบบนี้เพิ่งเติม\" ยังคงมาจาก YouTube Music เสมอ</string>
     <string name="home_provider_youtube">YouTube Music</string>
-    <string name="home_provider_spotify_subtitle">Spotify\'s picks, played from YouTube Music. Signed in it uses your own history; signed out it uses Spotify\'s public lists.</string>
-    <string name="home_provider_youtube_subtitle">YouTube Music\'s own feed, trained on what you play here.</string>
+    <string name="home_provider_spotify_subtitle">หน้าแรกและแคตตาล็อกของ Spotify เมื่อเข้าสู่ระบบแล้ว Flow จะดึงสิ่งที่คุณฟังที่นั่นมาด้วย</string>
+    <string name="home_provider_youtube_subtitle">หน้าแรกและแคตตาล็อกของ YouTube Music และฟีดของมันสำหรับ Flow</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
     <string name="upgrade_quality_started">กำลังมองหาสำเนาที่ดีกว่า…</string>
     <string name="upgrade_quality_offline">โหมดออฟไลน์เปิดอยู่ — การอัปเกรดต้องใช้เครือข่าย</string>
