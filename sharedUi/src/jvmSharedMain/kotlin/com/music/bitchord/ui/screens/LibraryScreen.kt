@@ -786,6 +786,8 @@ internal fun LibraryGridShelf(
         shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
     }
     val keys = rememberShelfKeys(visibleItems)
+    // A set, so each card's pin check is a lookup rather than a walk of the list.
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(
             title = shelf.title,
@@ -808,7 +810,7 @@ internal fun LibraryGridShelf(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
-                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPinned = item.browseId != null && item.browseId in pinned,
                 )
             }
         }
@@ -838,7 +840,14 @@ fun LibraryGridPage(
     // Pinning wins over the default order, but an explicit sort is a stronger,
     // more deliberate signal than a pin and is left to reorder the whole grid,
     // pinned cards included.
-    val sortedShelf = shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    //
+    // Remembered against exactly those three: sorting a few hundred titles on
+    // every recomposition of the page — each scroll-driven bar change, each
+    // pin — was work redone for an answer that had not changed.
+    val sortedShelf = remember(shelf, pinnedPlaylists, librarySort) {
+        shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    }
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
     val keys = rememberShelfKeys(sortedShelf.items)
     BoxWithConstraints(modifier.fillMaxSize()) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
@@ -873,7 +882,7 @@ fun LibraryGridPage(
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
                     modifier = Modifier.fillMaxWidth(),
-                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPinned = item.browseId != null && item.browseId in pinned,
                 )
             }
         }

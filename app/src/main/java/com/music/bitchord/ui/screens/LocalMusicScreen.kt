@@ -261,7 +261,9 @@ fun LocalMusicScreen(
         if (selectingDownloads) {
             DownloadSelectionBar(
                 count = selectedDownloadIds.size,
-                allSelected = sortedSongs.isNotEmpty() && selectedDownloadIds.containsAll(sortedSongs.map { it.videoId }),
+                allSelected = remember(sortedSongs, selectedDownloadIds) {
+                    sortedSongs.isNotEmpty() && sortedSongs.all { it.videoId in selectedDownloadIds }
+                },
                 onSelectAll = { selectedDownloadIds = sortedSongs.mapTo(linkedSetOf()) { it.videoId } },
                 onDelete = {
                     val chosen = songs.filter { it.videoId in selectedDownloadIds }

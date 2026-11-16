@@ -695,12 +695,18 @@ fun DetailScreen(
                     ) { position, entry ->
                         val song = entry.value
                         val isCurrent = song.isSameTrackAs(currentSong)
-                        SongRow(
-                            song = if (numbered) {
+                        // Made once per row rather than on every recomposition of
+                        // it: a fresh copy each time is a new Song for the row to
+                        // compare, and an allocation per row per frame of scroll.
+                        val rowSong = remember(song, numbered, page.thumbnailUrl) {
+                            if (numbered || song.thumbnailUrl != null) {
                                 song
                             } else {
-                                song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
-                            },
+                                song.copy(thumbnailUrl = page.thumbnailUrl)
+                            }
+                        }
+                        SongRow(
+                            song = rowSong,
                             onClick = {
                                 onSongClick(queue, position)
                             },
