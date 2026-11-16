@@ -268,7 +268,7 @@ private val THUMB_SIZE = 66.dp
  * banner, so this is a band rather than a box: everything in it moves down by
  * the same twelve.
  */
-private val HEADER_HEIGHT = 72.dp
+internal val HEADER_HEIGHT = 72.dp
 private val ART_TITLE_GAP = 20.dp
 /**
  * The size of the player's own title and artist.
@@ -4617,123 +4617,23 @@ fun NowPlayingScreen(
                 // header — which is its first frame of moving.
                 val lyricsPanelVisible = panels.lyricsOpen && collapseDone
                 if (lyricsPanelVisible || playerPrewarmStage >= 2) {
-                        LyricsTranslationMotion(
-                            trigger = lyricsTranslation.transition,
-                            reduceMotion = lyricsTranslation.reduceMotion,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT)
-                                // Keep the prepared list measured but completely
-                                // outside hit-testing/drawing until it is needed.
-                                .offset {
-                                    if (lyricsPanelVisible) IntOffset.Zero else IntOffset(100_000, 0)
-                                }
-                                // Arrives after the sleeve has finished collapsing
-                                // into the header rather than during — see
-                                // [collapseDone]. Fading lyrics in over a sleeve
-                                // still mid-collapse doubled the same movement in
-                                // two places on screen at once, and composing them
-                                // there was what made the collapse stutter.
-                                .graphicsLayer { alpha = if (lyricsPanelVisible) panelFade.value else 0f },
-                        ) { particleProgress ->
-                            LyricsPanel(
-                                lines = lyrics.orEmpty(),
-                                subLines = lyricsTranslation.subLines,
-                                trackKey = song.videoId,
-                                playhead = lyricsPlayhead,
-                                looking = !lyricsUnavailable,
-                                isPlaying = isPlaying && position.advancing,
-                                active = lyricsPanelVisible,
-                                onSeekToLine = seekToLyric,
-                                controlsOpen = panels.lyricsControlsOpen,
-                                onRevealControls = { panels.lyricsControlsOpen = true },
-                                onHideControls = { panels.lyricsControlsOpen = false },
-                                translationProgress = particleProgress,
-                                onScrollingChange = { panels.lyricsScrolling = it },
-                                canPick = lyricsShareEnabled,
-                                picking = lyricPicker.picking,
-                                picked = lyricPicker.picks,
-                                onPickLine = lyricPicker.pick,
-                                onTogglePick = lyricPicker.toggle,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-
-                    // Floated over the foot of the lyrics rather than placed in
-                    // the controls below them. In the controls it was a row of
-                    // layout like any other, and the bottom block is measured at
-                    // its natural height — so the button's 34dp came straight
-                    // off the panel above it and the lyrics lost a line. Drawn
-                    // here it costs the panel nothing and still reads as sitting
-                    // on top of the half player, because that is where it is.
-                    //
-                    // Arrives and leaves on the controls' own fade: the panel is
-                    // for reading, and a control parked over the words when
-                    // nobody asked for the controls is one more thing between
-                    // the reader and them.
-                    val translateShown = lyricsPanelVisible && panels.lyricsControlsOpen
-                    val translateFade by animateFloatAsState(
-                        targetValue = if (translateShown) 1f else 0f,
-                        animationSpec = tween(if (translateShown) 220 else 160),
-                        label = "translateFade",
+                    PortraitLyricsPane(
+                        visible = lyricsPanelVisible,
+                        fade = { panelFade.value },
+                        panels = panels,
+                        lyrics = lyrics,
+                        lyricsTranslation = lyricsTranslation,
+                        song = song,
+                        lyricsPlayhead = lyricsPlayhead,
+                        lyricsUnavailable = lyricsUnavailable,
+                        isPlaying = isPlaying,
+                        position = position,
+                        onSeekToLine = seekToLyric,
+                        canPick = lyricsShareEnabled,
+                        lyricPicker = lyricPicker,
+                        singActive = singActive,
+                        onOpenSing = onOpenSing,
                     )
-                    if (translateFade > 0.01f && !lyricPicker.picking) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            TranslationToggleButton(
-                                state = lyricsTranslation.translationState,
-                                showingTranslation = lyricsTranslation.showingTranslation,
-                                // Not tappable on the way out: a disc at 20%
-                                // opacity is on its way to gone, not a target.
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleTranslation,
-                            )
-                        }
-                        // Sing's way in, centered between the two language
-                        // discs the way Apple's mic sits in its lyrics view.
-                        // Hidden while picking: the pick bar owns the bottom
-                        // center then, and a mic under it would be a second
-                        // target in the same place.
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .graphicsLayer { alpha = translateFade },
-                        ) {
-                            SingMicButton(
-                                singActive = singActive,
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = onOpenSing,
-                            )
-                        }
-                    }
-                    // The bar arrives and leaves without a transition of its own:
-                    // it is an instruction over the words, and one that has to
-                    // be legible the instant it is on. Anything that animated
-                    // would be over the reader's first pick anyway.
-                    if (lyricPicker.picking) {
-                        LyricsPickBar(
-                            shareEnabled = lyricPicker.picks.isNotEmpty() &&
-                                !lyricPicker.overBudget,
-                            onCancel = lyricPicker.cancel,
-                            onShare = lyricPicker.share,
-                            modifier = Modifier.align(Alignment.BottomCenter),
-                        )
-                    }
                 }
 
                 // Toggles and the queue arrive after the sleeve has finished
@@ -4751,46 +4651,21 @@ fun NowPlayingScreen(
                 val queuePanelVisible = !panels.lyricsOpen &&
                     (panels.queueDragging || (panels.queueOpen && queueShowing && collapseDone))
                 if (queuePanelVisible || playerPrewarmStage >= 3) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = HEADER_HEIGHT)
-                            .offset {
-                                if (queuePanelVisible) IntOffset.Zero else IntOffset(100_000, 0)
-                            }
-                            .graphicsLayer {
-                                alpha = if (!queuePanelVisible) {
-                                    0f
-                                } else if (panels.queueDragging) {
-                                    ((panels.queueSlide.floatValue - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                } else {
-                                    panelFade.value
-                                }
-                                translationY = if (queuePanelVisible) {
-                                    (1f - panels.queueSlide.floatValue) * 26.dp.toPx()
-                                } else {
-                                    0f
-                                }
-                            },
-                    ) {
-                        InlineQueue(
-                            queue = queue,
-                            currentIndex = queueIndex,
-                            autoplayEnabled = autoplayEnabled,
-                            controlsLocked = controlsLocked,
-                            onJumpTo = onJumpTo,
-                            onRemove = onRemoveFromQueue,
-                            onMove = onMoveInQueue,
-                            onClear = onClearQueue,
-                            onScrollingChange = { panels.queueScrolling = it },
-                            onDragActiveChange = onQueueDragActiveChange,
-                            collapsePlayerOnScroll = true,
-                            onRevealPlayer = { panels.queueControlsOpen = true },
-                            onHidePlayer = { panels.queueControlsOpen = false },
-                            onOpenSearch = openQueueSearch,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                    PortraitQueuePane(
+                        visible = queuePanelVisible,
+                        fade = { panelFade.value },
+                        panels = panels,
+                        queue = queue,
+                        queueIndex = queueIndex,
+                        autoplayEnabled = autoplayEnabled,
+                        controlsLocked = controlsLocked,
+                        onJumpTo = onJumpTo,
+                        onRemoveFromQueue = onRemoveFromQueue,
+                        onMoveInQueue = onMoveInQueue,
+                        onClearQueue = onClearQueue,
+                        onQueueDragActiveChange = onQueueDragActiveChange,
+                        onOpenSearch = openQueueSearch,
+                    )
                 }
             }
 

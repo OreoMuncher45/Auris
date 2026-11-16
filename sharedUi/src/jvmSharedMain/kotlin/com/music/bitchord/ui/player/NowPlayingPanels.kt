@@ -1,5 +1,14 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -7,6 +16,14 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.data.settings.LastPlayerScreen
 
 /**
@@ -101,5 +118,216 @@ internal class PlayerPanelState(restored: LastPlayerScreen) {
     val closePanels: () -> Unit = {
         queueOpen = false
         closeLyrics()
+    }
+}
+
+/**
+ * The full lyrics panel of the portrait player, with its translation,
+ * romanisation and Sing controls and the bar that shares a pick.
+ *
+ * Kept composed but off screen while [visible] is false once the player has
+ * prewarmed it, so opening it does not lay out every line on the frame the
+ * sleeve starts moving.
+ */
+@Composable
+internal fun BoxScope.PortraitLyricsPane(
+    visible: Boolean,
+    /** The panel's own fade-up after the sleeve has settled. Read in draw. */
+    fade: () -> Float,
+    panels: PlayerPanelState,
+    lyrics: List<LyricLine>?,
+    lyricsTranslation: LyricsTranslationUi,
+    song: Song,
+    lyricsPlayhead: LyricPlayhead,
+    lyricsUnavailable: Boolean,
+    isPlaying: Boolean,
+    position: PlaybackPosition,
+    onSeekToLine: (Long) -> Unit,
+    canPick: Boolean,
+    lyricPicker: LyricsPicker,
+    singActive: Boolean,
+    onOpenSing: () -> Unit,
+) {
+    LyricsTranslationMotion(
+        trigger = lyricsTranslation.transition,
+        reduceMotion = lyricsTranslation.reduceMotion,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = HEADER_HEIGHT)
+            // Keep the prepared list measured but completely
+            // outside hit-testing/drawing until it is needed.
+            .offset {
+                if (visible) IntOffset.Zero else IntOffset(100_000, 0)
+            }
+            // Arrives after the sleeve has finished collapsing
+            // into the header rather than during — see
+            // [collapseDone]. Fading lyrics in over a sleeve
+            // still mid-collapse doubled the same movement in
+            // two places on screen at once, and composing them
+            // there was what made the collapse stutter.
+            .graphicsLayer { alpha = if (visible) fade() else 0f },
+    ) { particleProgress ->
+        LyricsPanel(
+            lines = lyrics.orEmpty(),
+            subLines = lyricsTranslation.subLines,
+            trackKey = song.videoId,
+            playhead = lyricsPlayhead,
+            looking = !lyricsUnavailable,
+            isPlaying = isPlaying && position.advancing,
+            active = visible,
+            onSeekToLine = onSeekToLine,
+            controlsOpen = panels.lyricsControlsOpen,
+            onRevealControls = { panels.lyricsControlsOpen = true },
+            onHideControls = { panels.lyricsControlsOpen = false },
+            translationProgress = particleProgress,
+            onScrollingChange = { panels.lyricsScrolling = it },
+            canPick = canPick,
+            picking = lyricPicker.picking,
+            picked = lyricPicker.picks,
+            onPickLine = lyricPicker.pick,
+            onTogglePick = lyricPicker.toggle,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+
+    // Floated over the foot of the lyrics rather than placed in
+    // the controls below them. In the controls it was a row of
+    // layout like any other, and the bottom block is measured at
+    // its natural height — so the button's 34dp came straight
+    // off the panel above it and the lyrics lost a line. Drawn
+    // here it costs the panel nothing and still reads as sitting
+    // on top of the half player, because that is where it is.
+    //
+    // Arrives and leaves on the controls' own fade: the panel is
+    // for reading, and a control parked over the words when
+    // nobody asked for the controls is one more thing between
+    // the reader and them.
+    val translateShown = visible && panels.lyricsControlsOpen
+    val translateFade by animateFloatAsState(
+        targetValue = if (translateShown) 1f else 0f,
+        animationSpec = tween(if (translateShown) 220 else 160),
+        label = "translateFade",
+    )
+    if (translateFade > 0.01f && !lyricPicker.picking) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .graphicsLayer { alpha = translateFade },
+        ) {
+            RomanizationToggleButton(
+                state = lyricsTranslation.romanizationState,
+                showingRomanization = lyricsTranslation.showingRomanization,
+                enabled = translateShown && !lyrics.isNullOrEmpty(),
+                onClick = lyricsTranslation.toggleRomanization,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .graphicsLayer { alpha = translateFade },
+        ) {
+            TranslationToggleButton(
+                state = lyricsTranslation.translationState,
+                showingTranslation = lyricsTranslation.showingTranslation,
+                // Not tappable on the way out: a disc at 20%
+                // opacity is on its way to gone, not a target.
+                enabled = translateShown && !lyrics.isNullOrEmpty(),
+                onClick = lyricsTranslation.toggleTranslation,
+            )
+        }
+        // Sing's way in, centered between the two language
+        // discs the way Apple's mic sits in its lyrics view.
+        // Hidden while picking: the pick bar owns the bottom
+        // center then, and a mic under it would be a second
+        // target in the same place.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .graphicsLayer { alpha = translateFade },
+        ) {
+            SingMicButton(
+                singActive = singActive,
+                enabled = translateShown && !lyrics.isNullOrEmpty(),
+                onClick = onOpenSing,
+            )
+        }
+    }
+    // The bar arrives and leaves without a transition of its own:
+    // it is an instruction over the words, and one that has to
+    // be legible the instant it is on. Anything that animated
+    // would be over the reader's first pick anyway.
+    if (lyricPicker.picking) {
+        LyricsPickBar(
+            shareEnabled = lyricPicker.picks.isNotEmpty() &&
+                !lyricPicker.overBudget,
+            onCancel = lyricPicker.cancel,
+            onShare = lyricPicker.share,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+/**
+ * The queue panel of the portrait player.
+ *
+ * Kept composed but off screen while [visible] is false once the player has
+ * prewarmed it, for the same reason as [PortraitLyricsPane].
+ */
+@Composable
+internal fun PortraitQueuePane(
+    visible: Boolean,
+    /** The panel's own fade-up after the sleeve has settled. Read in draw. */
+    fade: () -> Float,
+    panels: PlayerPanelState,
+    queue: List<Song>,
+    queueIndex: Int,
+    autoplayEnabled: Boolean,
+    controlsLocked: Boolean,
+    onJumpTo: (Int) -> Unit,
+    onRemoveFromQueue: (Int) -> Unit,
+    onMoveInQueue: (Int, Int) -> Unit,
+    onClearQueue: () -> Unit,
+    onQueueDragActiveChange: (Boolean) -> Unit,
+    onOpenSearch: (() -> Unit)?,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = HEADER_HEIGHT)
+            .offset {
+                if (visible) IntOffset.Zero else IntOffset(100_000, 0)
+            }
+            .graphicsLayer {
+                alpha = if (!visible) {
+                    0f
+                } else if (panels.queueDragging) {
+                    ((panels.queueSlide.floatValue - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                } else {
+                    fade()
+                }
+                translationY = if (visible) {
+                    (1f - panels.queueSlide.floatValue) * 26.dp.toPx()
+                } else {
+                    0f
+                }
+            },
+    ) {
+        InlineQueue(
+            queue = queue,
+            currentIndex = queueIndex,
+            autoplayEnabled = autoplayEnabled,
+            controlsLocked = controlsLocked,
+            onJumpTo = onJumpTo,
+            onRemove = onRemoveFromQueue,
+            onMove = onMoveInQueue,
+            onClear = onClearQueue,
+            onScrollingChange = { panels.queueScrolling = it },
+            onDragActiveChange = onQueueDragActiveChange,
+            collapsePlayerOnScroll = true,
+            onRevealPlayer = { panels.queueControlsOpen = true },
+            onHidePlayer = { panels.queueControlsOpen = false },
+            onOpenSearch = onOpenSearch,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
