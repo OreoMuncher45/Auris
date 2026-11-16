@@ -5072,27 +5072,13 @@ private fun RootPage(
 ) {
     val scroll = inputs.scroll
     val viewModel = inputs.viewModel
-    val scope = inputs.scope
     val player = inputs.player
     val nav = inputs.nav
     val sheets = inputs.sheets
     val podcastUi = inputs.podcastUi
     val replay = inputs.replay
     val pageActions = inputs.pageActions
-    val detailListStates = inputs.detailListStates
-    val downloadedReleases = inputs.downloadedReleases
-    val flowTile = inputs.flowTile
-    val folderItems = inputs.folderItems
-    val homeFlowLeading = inputs.homeFlowLeading
     val listPadding = inputs.listPadding
-    val localPlaylistItems = inputs.localPlaylistItems
-    val quickPicksSongs = inputs.quickPicksSongs
-    val radioSeeds = inputs.radioSeeds
-    val replayCards = inputs.replayCards
-    val songSort = inputs.songSort
-    val windowWidth = inputs.windowWidth
-    val quickPicksLabel = inputs.quickPicksLabel
-    val searchLabel = inputs.searchLabel
     val context = LocalContext.current
     val account by inputs.accountState
     val audiobooks by inputs.audiobooksState
@@ -5185,7 +5171,7 @@ private fun RootPage(
     // whichever detail happens to be at the top of the stack
     // while the slot is fading out.
     val pageDetailListState = remember(key) {
-        detailListStates.forPage(key)
+        inputs.detailListStates.forPage(key)
     }
     if (key == "history") {
         HistoryScreen(
@@ -5261,10 +5247,10 @@ private fun RootPage(
         )
     } else if (key == "quick_picks") {
         QuickPicksScreen(
-            songs = quickPicksSongs,
+            songs = inputs.quickPicksSongs,
             offline = offlineActive,
             onPlay = { song ->
-                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
+                val source = QueueSource(inputs.quickPicksLabel, PlaybackSourceType.HOME)
                 if (offlineActive && pageActions.isOnDevice(song.videoId)) {
                     pageActions.playOfflineLibrary(song, source)
                 } else {
@@ -5410,7 +5396,7 @@ private fun RootPage(
             onVerifyExtension = { id ->
                 val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
                 if (installed != null && SflxCatalog.host?.sessionStatus(id) != null) {
-                    scope.launch {
+                    inputs.scope.launch {
                         val url = withContext(Dispatchers.IO) {
                             SflxCatalog.beginVerification(id)
                         }
@@ -5571,7 +5557,7 @@ private fun RootPage(
         )
     } else if (key == "settings") {
         SettingsScreen(
-            windowWidth = windowWidth,
+            windowWidth = inputs.windowWidth,
             signedIn = signedIn,
             account = account,
             onSignIn = {
@@ -5648,7 +5634,7 @@ private fun RootPage(
             currentSong = player.song,
             isPlaying = player.isPlaying,
             onDeleteDownloads = { selected ->
-                scope.launch {
+                inputs.scope.launch {
                     selected.forEach { song -> Downloads.delete(context, song.videoId) }
                 }
             },
@@ -5801,7 +5787,7 @@ private fun RootPage(
             } else {
                 null
             },
-            songSort = songSort,
+            songSort = inputs.songSort,
             contentPadding = listPadding,
         )
     } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: nav.selectedTab) {
@@ -5860,7 +5846,7 @@ private fun RootPage(
                     )
                 }
             },
-            flowItem = homeFlowLeading,
+            flowItem = inputs.homeFlowLeading,
             onFlowClick = { sheets.showFlow = true },
             // The arrow at the end of the Quick Picks heading:
             // the shelf shows what fits on a screen, this is
@@ -5982,9 +5968,9 @@ private fun RootPage(
         } ?: RadioScreen(
             state = exploreState,
             listState = scroll.radio,
-            flowItem = flowTile,
+            flowItem = inputs.flowTile,
             onFlowClick = { sheets.showFlow = true },
-            seeds = radioSeeds,
+            seeds = inputs.radioSeeds,
             onSeedClick = { item ->
                 val videoId = item.videoId
                 if (videoId != null) {
@@ -6047,7 +6033,7 @@ private fun RootPage(
                         artworkUrl = song.thumbnailUrl,
                         entityType = EntityType.TRACK,
                     ))
-                    pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                    pageActions.playRadio(song, QueueSource(inputs.searchLabel, PlaybackSourceType.SEARCH))
                 }
             },
             onSongLongPress = pageActions.openSongMenu,
@@ -6060,7 +6046,7 @@ private fun RootPage(
                     artworkUrl = song.thumbnailUrl,
                     entityType = EntityType.TRACK,
                 ))
-                pageActions.playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                pageActions.playRadio(song, QueueSource(inputs.searchLabel, PlaybackSourceType.SEARCH))
             },
             onTopResultPlaylist = { song ->
                 viewModel.recordEntity(SearchHistoryEntity(
@@ -6208,12 +6194,12 @@ private fun RootPage(
             // rather than a playlist on somebody's account: it
             // belongs to the device and works signed out.
             onNewFolder = { sheets.creatingFolder = true },
-            folders = folderItems,
+            folders = inputs.folderItems,
             onShowAll = { shelf -> sheets.libraryShowAll = shelf },
             replay = {
                 if (libraryReplayVisible) {
                     LibraryReplayEntry(
-                        cards = replayCards,
+                        cards = inputs.replayCards,
                         loading = replay.loading,
                         holder = account?.name.orEmpty(),
                         memberSince = replay.memberSince,
@@ -6233,8 +6219,8 @@ private fun RootPage(
             links = libraryLinks(),
             // Each list remembered against what it is built from, so an
             // unchanged Library is handed the same instances and can skip.
-            deviceItems = libraryDeviceItems(downloadedReleases).let { downloaded ->
-                remember(downloaded, localPlaylistItems) { downloaded + localPlaylistItems }
+            deviceItems = libraryDeviceItems(inputs.downloadedReleases).let { downloaded ->
+                remember(downloaded, inputs.localPlaylistItems) { downloaded + inputs.localPlaylistItems }
             },
             podcastShelves = remember(podcastsEnabled, podcastLikedShelf, podcastLaterShelf) {
                 if (podcastsEnabled) {
