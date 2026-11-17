@@ -3316,7 +3316,10 @@ class PlaybackService : MediaLibraryService() {
 
         val position = activePlayer.currentPosition
         val wasPlaying = activePlayer.isPlaying
-        swappingMediaId = song.videoId
+        // The new item has a different id, so the transition callback must be
+        // told to treat it as the same listen, not a new track to record.
+        swappingMediaId = targetVideoId
+        PlaybackTracker.onVersionSwapped(song.videoId, targetVideoId)
 
         // Create the target song with the appropriate flags.
         //
@@ -3335,6 +3338,10 @@ class PlaybackService : MediaLibraryService() {
         activePlayer.replaceMediaItem(index, targetSong.toMediaItem())
         activePlayer.seekTo(index, position)
         if (wasPlaying) activePlayer.play()
+        // The transition callback now passes this swap over as the same
+        // listen, but the other version can be timed differently (a video's
+        // intro), so its lyrics are fetched here instead.
+        loadLyricsForCurrentTrack()
         refreshCustomLayouts()
     }
 
