@@ -75,6 +75,13 @@ object HomeFeedCache {
         now: Long = System.currentTimeMillis(),
     ) {
         if (snapshot.shelves.isEmpty()) return
+        // One writer at a time: a load and an overlapping refresh can both
+        // save, and they share the temporary file. Writes are rare and small,
+        // so one lock for both catalogues is enough.
+        synchronized(this) { write(context, catalogue, listener, snapshot, now) }
+    }
+
+    private fun write(context: Context, catalogue: String, listener: String?, snapshot: Snapshot, now: Long) {
         runCatching {
             val target = file(context, catalogue)
             // Written aside and moved into place, so a process that dies

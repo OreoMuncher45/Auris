@@ -2240,6 +2240,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
         viewModelScope.launch {
+            // Another Spotify session is another listener's Spotify home: the
+            // page on screen (or a cached one still being read) is the last
+            // session's, so the load is started again, which also retires any
+            // restore or request still in flight for the old one. The chip goes
+            // with it, since chips are the session's own.
+            AppSettings.spotifySpdcToken.drop(1).collect {
+                if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
+                    homeFacet.value = ""
+                    loadHome()
+                }
+            }
+        }
+        viewModelScope.launch {
             AppSettings.filterNonMusicAudio.drop(1).collect {
                 if (_detailStack.value.any { page -> page.browseId == "local:all" }) {
                     reloadLocalDetail("local:all")
@@ -2885,6 +2898,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             homeCachedRaw = null
             _homeShowingCached.value = false
             publishHomeShelves(outcome.shelves)
+            if (outcome.shelves.isEmpty()) publishHeaderOnlyHome()
             keepHomeCache(identity, generation, cacheOwner)
         }
     }
@@ -2923,7 +2937,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         homeCachedRaw = null
         _homeShowingCached.value = false
         publishHome()
+        if (outcome.shelves.isEmpty()) publishHeaderOnlyHome()
         keepHomeCache(identity, generation, cacheOwner)
+    }
+
+    /**
+     * A Spotify page that came as a header and nothing under it — tiles but
+     * no shelves. [publishHome] draws nothing from an empty feed, which would
+     * leave whatever was there before (a cached page, or the skeleton) under
+     * the fresh header; the page is the header alone instead.
+     */
+    private fun publishHeaderOnlyHome() {
+        _homeShelfTitles.value = emptyList()
+        _homeQuickPicksItems.value = emptyList()
+        _home.value = UiState.Success(emptyList())
     }
 
     /**
