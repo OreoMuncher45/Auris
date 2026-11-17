@@ -128,7 +128,7 @@ u1z9k30yyvy63f5w0jypt02kvvw6dcpcgprlhzmsgc57mw6qc8rtuc5tfd9ny4atqhr448udexhkuc8x
 ## Credits & license
 
 - **BitChord** by [kushagra](https://github.com/kushagrasinghx) — the app this fork is built on. If you redistribute Auris, keep that credit.
-- **Zenith** by [rezapranata089-bit](https://github.com/rezapranata089-bit/Zenith), a fellow GPL-3.0 fork of BitChord: the unified mini/full player panel and the still-backdrop menu blur are ported from it.
+- **Zenith** by [rezapranata089-bit](https://github.com/rezapranata089-bit/Zenith), a fellow GPL-3.0 fork of BitChord: the unified mini/full player panel is ported from it.
 - Everyone whose libraries and community services make the sources possible.
 - Third-party components and their licences are listed in [NOTICE](NOTICE).
 
