@@ -140,6 +140,43 @@ class PlayerInkContrastTest {
     }
 
     @Test
+    fun aThinStripeAcrossAnyBoundaryStillDecides() {
+        // A four-pixel white stripe on a dark ground, placed across x = 10 —
+        // where a six-cell split of a 60-pixel strip would cut it in two and
+        // dilute it on both sides. The chosen ink has to hold over the stripe
+        // itself after the mesh's scrim, not over a cell's average.
+        val width = 60
+        val height = 30
+        val pixels = IntArray(width * height) { i -> if (i % width in 8..11) white else grey(0x10) }
+        val bounds = bandBounds(pixels, width, height)
+        bounds.lightest.forEach { assertEquals(white, it, "the stripe is the strip's lightest") }
+        val surface = meshInkSurface(bounds)
+        val choice = resolveInk(NeutralInkAccent, surface, alphas)
+        assertHolds(choice, surface)
+        val stripe = scrimmed(white, MESH_SCRIM_TOP + (MESH_SCRIM_BOTTOM - MESH_SCRIM_TOP) * 0.40f)
+        if (!choice.dark) {
+            assertTrue(
+                inkHolds(choice.fg.toArgb(), blendArgb(black, stripe, choice.wash), alphas),
+                "the ink fails over the stripe itself",
+            )
+        }
+    }
+
+    @Test
+    fun luminanceTableMatchesTheFormula() {
+        fun formula(argb: Int): Float {
+            fun linear(shift: Int): Float {
+                val c = ((argb shr shift) and 0xFF) / 255f
+                return if (c <= 0.04045f) c / 12.92f else Math.pow(((c + 0.055f) / 1.055f).toDouble(), 2.4).toFloat()
+            }
+            return 0.2126f * linear(16) + 0.7152f * linear(8) + 0.0722f * linear(0)
+        }
+        for (c in intArrayOf(white, black, grey(1), grey(10), grey(0x77), rgb(0x4B2B6E), rgb(0xC62828), rgb(0x00FF7F))) {
+            assertEquals(formula(c), wcagLuminance(c), 1e-5f)
+        }
+    }
+
+    @Test
     fun theBannerWashIsJudgedOverTheGradeNotUnderIt() {
         // The renderer grades the mesh's scrim white, then lays the banner's
         // black wash over both. Judged in that order, a dark ink over a

@@ -106,14 +106,20 @@ internal class PlayerInkSurfaces {
  */
 internal enum class InkSurfaceKind { MAIN, PANEL }
 
-/** WCAG relative luminance, in linear light. */
-internal fun wcagLuminance(argb: Int): Float {
-    fun linear(shift: Int): Float {
-        val c = ((argb shr shift) and 0xFF) / 255f
-        return if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
-    }
-    return 0.2126f * linear(16) + 0.7152f * linear(8) + 0.0722f * linear(0)
+/**
+ * Each 8-bit sRGB level in linear light, once: the same values the WCAG
+ * formula gives, without a `pow` per channel per pixel.
+ */
+private val SRGB_TO_LINEAR = FloatArray(256) { level ->
+    val c = level / 255f
+    if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
 }
+
+/** WCAG relative luminance, in linear light. */
+internal fun wcagLuminance(argb: Int): Float =
+    0.2126f * SRGB_TO_LINEAR[(argb shr 16) and 0xFF] +
+        0.7152f * SRGB_TO_LINEAR[(argb shr 8) and 0xFF] +
+        0.0722f * SRGB_TO_LINEAR[argb and 0xFF]
 
 /** WCAG contrast ratio between two relative luminances. */
 internal fun contrastRatio(a: Float, b: Float): Float {
@@ -237,22 +243,22 @@ internal fun bandAverages(pixels: IntArray, width: Int, height: Int, bands: Int 
     }
 }
 
-/** How many cells across each strip [bandBounds] compares. */
-internal const val INK_COLUMNS = 6
-
 /**
- * The lightest and darkest cell of each of [bands] strips of a [width] x
- * [height] ARGB image, cells [columns] across — by WCAG luminance.
+ * The lightest and darkest pixel of each of [bands] strips of a [width] x
+ * [height] ARGB image, by WCAG luminance.
+ *
+ * Pixels, not cells: an average of any size can dilute a thin bright stripe
+ * that falls across its edge, and the pictures read here are what is drawn —
+ * the mesh's texels are interpolated as they are, the full-cover blur is
+ * already blurred — so their extremes are the extremes on screen.
  */
 internal fun bandBounds(
     pixels: IntArray,
     width: Int,
     height: Int,
     bands: Int = INK_BANDS,
-    columns: Int = INK_COLUMNS,
 ): BandBounds {
     require(width > 0 && height > 0 && pixels.size >= width * height)
-    val cols = columns.coerceIn(1, width)
     val lightest = IntArray(bands)
     val darkest = IntArray(bands)
     for (band in 0 until bands) {
@@ -260,38 +266,14 @@ internal fun bandBounds(
         val bottom = ((band + 1) * height / bands).coerceAtLeast(top + 1).coerceAtMost(height)
         var maxL = -1f
         var minL = 2f
-        for (col in 0 until cols) {
-            val left = col * width / cols
-            val right = ((col + 1) * width / cols).coerceAtLeast(left + 1).coerceAtMost(width)
-            val cell = averageCell(pixels, width, left, right, top, bottom)
-            val l = wcagLuminance(cell)
-            if (l > maxL) { maxL = l; lightest[band] = cell }
-            if (l < minL) { minL = l; darkest[band] = cell }
+        for (i in top * width until bottom * width) {
+            val pixel = pixels[i] or (0xFF shl 24)
+            val l = wcagLuminance(pixel)
+            if (l > maxL) { maxL = l; lightest[band] = pixel }
+            if (l < minL) { minL = l; darkest[band] = pixel }
         }
     }
     return BandBounds(lightest, darkest)
-}
-
-private fun averageCell(pixels: IntArray, width: Int, left: Int, right: Int, top: Int, bottom: Int): Int {
-    var red = 0L
-    var green = 0L
-    var blue = 0L
-    var count = 0
-    for (row in top until bottom) {
-        val base = row * width
-        for (x in left until right) {
-            val pixel = pixels[base + x]
-            red += (pixel shr 16) and 0xFF
-            green += (pixel shr 8) and 0xFF
-            blue += pixel and 0xFF
-            count++
-        }
-    }
-    if (count == 0) return BLACK_ARGB
-    return (0xFF shl 24) or
-        ((red / count).toInt() shl 16) or
-        ((green / count).toInt() shl 8) or
-        (blue / count).toInt()
 }
 
 /** Mean colour of rows [from] until [to] of an ARGB image [width] wide. */
