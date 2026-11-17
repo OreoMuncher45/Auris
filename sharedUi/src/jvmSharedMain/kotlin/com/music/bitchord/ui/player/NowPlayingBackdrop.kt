@@ -26,10 +26,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,9 @@ import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
+import com.music.bitchord.ui.graphics.argbPixels
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -74,6 +79,15 @@ internal fun BoxScope.PortraitBackdrop(
     fullArtworkBlur: @Composable (Modifier) -> Unit,
     heroHeight: Dp,
     heroWash: () -> Float,
+    /**
+     * Where the mesh or the legacy blobs publish the colours they show under
+     * the chrome, for the ink to be judged against — see [resolveInk]. Read
+     * only by the ink's own effect, so publishing recomposes nothing.
+     */
+    inkSurfaces: PlayerInkSurfaces,
+    /** The ink's grade over the main view's scrim, read in draw. */
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     // Anchored to the sleeve's bottom edge, so the screen carries on in the
     // colours the artwork ended in rather than in a quantiser's idea of what
@@ -127,6 +141,9 @@ internal fun BoxScope.PortraitBackdrop(
             liveFrames = meshLiveFrames,
             trackKey = trackKey,
             modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+            inkSurfaces = inkSurfaces,
+            inkBlackWash = inkBlackWash,
+            inkWhiteWash = inkWhiteWash,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
         // Not drawn once the full-cover blur has taken the screen: a
@@ -143,6 +160,9 @@ internal fun BoxScope.PortraitBackdrop(
                 lift = lift,
                 liftFrom = liftFrom,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+                inkSurfaces = inkSurfaces,
+                inkBlackWash = inkBlackWash,
+                inkWhiteWash = inkWhiteWash,
             )
         }
     }
@@ -204,6 +224,12 @@ internal fun BoxScope.SpotifyCanvasChrome(
     deckShown: Boolean,
     presentation: Boolean,
     hazeState: HazeState,
+    /**
+     * The ink's grade over the dim — black under light ink, white under dark —
+     * for a frame no ink holds on under the dim alone. Read in draw.
+     */
+    inkBlackWash: () -> Float = { 0f },
+    inkWhiteWash: () -> Float = { 0f },
 ) {
     // Spotify Canvas keeps its pixels sharp across the whole phone. Pure
     // glass blur belongs only under the temporary lower control deck,
@@ -288,10 +314,17 @@ internal fun BoxScope.SpotifyCanvasChrome(
     )
     val spotifyCanvasDimShowing by remember { derivedStateOf { spotifyCanvasDim.value > 0f } }
     if (presentation || spotifyCanvasDimShowing) {
+        // One rect, drawn with the dim and the ink's grade folded together,
+        // and everything read here in draw: neither the deck's fade nor the
+        // grade recomposes, and it needs no layer of its own. The grade fades
+        // with the deck, as the controls it is for do.
         Box(
-            Modifier.matchParentSize()
-                .graphicsLayer { alpha = spotifyCanvasDim.value }
-                .background(Color.Black),
+            Modifier.matchParentSize().drawBehind {
+                val dim = spotifyCanvasDim.value
+                if (dim <= 0f) return@drawBehind
+                val deck = (dim / CANVAS_DECK_DIM).coerceIn(0f, 1f)
+                drawRect(gradedScrimStop(dim, inkBlackWash() * deck, inkWhiteWash() * deck))
+            },
         )
     }
 }
@@ -317,16 +350,36 @@ private fun PlayerMeshBackdrop(
     modifier: Modifier = Modifier,
     lift: () -> Dp = { 0.dp },
     liftFrom: () -> Dp = { 0.dp },
+    inkSurfaces: PlayerInkSurfaces,
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames)
     }
+    // What the chrome stands on, read off the mesh on screen: a 32-texel
+    // image, averaged into bands off the main thread whenever the mesh
+    // changes. See [MeshInkPublisher] for which mesh that is.
+    val meshInk = remember(inkSurfaces) {
+        MeshInkPublisher<ArtworkMesh>(
+            bands = { shown ->
+                val image = shown.image
+                withContext(Dispatchers.Default) {
+                    bandBounds(image.argbPixels(), image.width, image.height)
+                }
+            },
+            publish = { inkSurfaces.main = it },
+        )
+    }
+    LaunchedEffect(mesh) { meshInk.onMesh(mesh) }
     ArtworkMeshBackdrop(
         mesh = mesh,
         seam = seam,
         modifier = modifier,
         lift = lift,
         liftFrom = liftFrom,
+        blackWash = inkBlackWash,
+        whiteWash = inkWhiteWash,
     )
 }
 
@@ -343,15 +396,24 @@ private fun LegacyMeshBackdrop(
     liveFrames: Flow<ImageBitmap?>?,
     trackKey: String,
     modifier: Modifier = Modifier,
+    inkSurfaces: PlayerInkSurfaces,
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     // One frame at a time: the legacy backdrop takes a picture, not a stream.
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(liveFrames) {
         liveFrames?.collectLatest { frame = it }
     }
+    val palette = rememberArtworkColors(imageUrl, frame)
+    // The blobs' own colours, published for the ink — four colours and a
+    // base, so cheap enough to read wherever the palette lands.
+    LaunchedEffect(palette) { inkSurfaces.main = legacyMeshInkSurface(palette) }
     MeshGradientBackground(
-        palette = rememberArtworkColors(imageUrl, frame),
+        palette = palette,
         trackKey = trackKey,
         modifier = modifier,
+        blackWash = inkBlackWash,
+        whiteWash = inkWhiteWash,
     )
 }

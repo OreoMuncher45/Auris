@@ -198,11 +198,25 @@ fun FullArtworkBlurBackdrop(
      * frame must not reach the caller's composition.
      */
     liveFrames: Flow<ImageBitmap?>? = null,
+    /**
+     * The player ink's grade over the scrim — black under light ink, white
+     * under dark — read in the draw phase, so its fade never recomposes. See
+     * [resolveInk].
+     */
+    blackWash: () -> Float = { 0f },
+    whiteWash: () -> Float = { 0f },
+    /**
+     * Told which image this backdrop is actually showing — the live blur
+     * while a cover is playing, the still one otherwise — so the ink can be
+     * judged against it. Called from an effect, never from composition.
+     */
+    onShown: suspend (ImageBitmap) -> Unit = {},
 ) {
     // The blur of the frame, re-blurred as the frame changes. While there is
     // one it *is* the backdrop.
     val liveBlur = rememberLiveBlurImage(liveFrames)
     val shown = liveBlur ?: image
+    LaunchedEffect(shown) { shown?.let { onShown(it) } }
     val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (shown != null) 1f else 0f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
@@ -219,14 +233,17 @@ fun FullArtworkBlurBackdrop(
             )
         }
 
-        // Lyrics and queue are dense white foregrounds. Preserve the cover's
+        // Lyrics and queue are dense foregrounds. Preserve the cover's
         // colour and layout, but keep bright sleeves from lowering contrast.
+        // The ink's grade rides in this same gradient, so it costs no layer.
         Canvas(Modifier.fillMaxSize()) {
+            val black = blackWash()
+            val white = whiteWash()
             drawRect(
                 brush = Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.34f),
-                    0.55f to Color.Black.copy(alpha = 0.48f),
-                    1f to Color.Black.copy(alpha = 0.64f),
+                    FULL_BLUR_SCRIM_POSITIONS[0] to gradedScrimStop(FULL_BLUR_SCRIM_ALPHAS[0], black, white),
+                    FULL_BLUR_SCRIM_POSITIONS[1] to gradedScrimStop(FULL_BLUR_SCRIM_ALPHAS[1], black, white),
+                    FULL_BLUR_SCRIM_POSITIONS[2] to gradedScrimStop(FULL_BLUR_SCRIM_ALPHAS[2], black, white),
                 ),
             )
         }
@@ -454,6 +471,13 @@ fun ArtworkMeshBackdrop(
      * picture with it.
      */
     liftFrom: () -> Dp = { 0.dp },
+    /**
+     * The player ink's grade over the scrim — black under light ink, white
+     * under dark. Read in the draw phase, so its fade invalidates the drawing
+     * and never recomposes. See [resolveInk].
+     */
+    blackWash: () -> Float = { 0f },
+    whiteWash: () -> Float = { 0f },
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -555,12 +579,15 @@ fun ArtworkMeshBackdrop(
         // Enough of a scrim to keep white text off a bright sleeve, and no
         // more. The mesh keeps the sleeve's own lightness now, so a bright
         // cover needs this underneath the controls; a sleeve that ends dark
-        // leaves a dark screen.
+        // leaves a dark screen. The ink's grade, when it asks for one, rides
+        // in the same draw.
+        val black = blackWash()
+        val white = whiteWash()
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(
-                    Color.Black.copy(alpha = 0.06f),
-                    Color.Black.copy(alpha = 0.30f),
+                    gradedScrimStop(MESH_SCRIM_TOP, black, white),
+                    gradedScrimStop(MESH_SCRIM_BOTTOM, black, white),
                 ),
             ),
         )
@@ -643,7 +670,7 @@ private fun DrawScope.drawMeshLifted(
 }
 
 /** Drawn only until an artwork has been read — never a colour anyone chose. */
-private val FallbackBackdrop = Color(0xFF121212)
+internal val FallbackBackdrop = Color(0xFF121212)
 
 /** A screen cannot recover detail discarded here; small is the performance feature. */
 private const val FULL_BLUR_SOURCE_PX = 128

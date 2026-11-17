@@ -55,6 +55,12 @@ internal data class LivePalette(
     /** The ink, the alphas — see [NowPlayingPalette]. */
     val palette: NowPlayingPalette,
     val source: LiveColorSource,
+    /**
+     * What a Canvas shows under the chrome — its frame under the deck's dim —
+     * for the ink to be judged against. Null for every other source: those
+     * stand behind the sleeve's own backdrop, which publishes its own.
+     */
+    val surface: InkSurface? = null,
 )
 
 /**
@@ -69,8 +75,23 @@ internal data class LivePalette(
  * controls must belong to what is behind them, and what is behind them is a
  * video.
  */
-internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): LivePalette =
-    LivePalette(computeNowPlayingPalette(frame.liveSamples()), source)
+internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): LivePalette {
+    if (frame.width <= 0 || frame.height <= 0) {
+        return LivePalette(computeNowPlayingPalette(emptyList()), source)
+    }
+    // One read of the frame serves both the palette's samples and, for a
+    // Canvas, the bands the chrome stands on.
+    val pixels = IntArray(frame.width * frame.height)
+    frame.readPixels(pixels, startX = 0, startY = 0, width = frame.width, height = frame.height)
+    // What the controls stand on when this picture is behind them: a Canvas
+    // under its deck dim, or a portrait motion cover under its own scrim.
+    val surface = when (source) {
+        LiveColorSource.CANVAS -> canvasInkSurface(bandBounds(pixels, frame.width, frame.height))
+        LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, frame.width, frame.height))
+        LiveColorSource.STATIC_ART -> null
+    }
+    return LivePalette(computeNowPlayingPalette(pixels.liveSamples()), source, surface)
+}
 
 /**
  * The colours of a moving picture, kept current as new frames arrive.
@@ -144,7 +165,7 @@ internal fun rememberLivePalette(
             // could see the difference of, and publishing them is work for
             // nothing.
             val previous = live.value
-            if (previous != null && !inkMoved(previous.palette, next.palette)) return@collect
+            if (previous != null && !inkMoved(previous, next)) return@collect
             live.value = next
         }
     }
@@ -161,6 +182,34 @@ internal fun rememberLivePalette(
  * half-percent of opacity is the difference between a label that reads and
  * one that does not.
  */
+private fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
+    inkMoved(previous.palette, next.palette) || inkSurfaceMoved(previous.surface, next.surface)
+
+/** Whether a surface's bands moved by more than a few levels of eight-bit colour. */
+internal fun inkSurfaceMoved(previous: InkSurface?, next: InkSurface?): Boolean {
+    if (previous == null || next == null) return previous !== next
+    // Both sides: light ink is judged on [InkSurface.light], dark ink on
+    // [InkSurface.dark], and either can move while the other stands still.
+    return bandsMoved(previous.light, next.light) ||
+        bandsMoved(previous.dark, next.dark) ||
+        previous.darkOverlay != next.darkOverlay
+}
+
+private fun bandsMoved(previous: IntArray, next: IntArray): Boolean {
+    if (previous.size != next.size) return true
+    for (i in previous.indices) {
+        val a = previous[i]
+        val b = next[i]
+        for (shift in intArrayOf(16, 8, 0)) {
+            if (kotlin.math.abs(((a shr shift) and 0xFF) - ((b shr shift) and 0xFF)) > SURFACE_MOVE_LEVELS) return true
+        }
+    }
+    return false
+}
+
+/** Three levels of eight-bit colour: the same threshold [inkMoved] holds the ink to. */
+private const val SURFACE_MOVE_LEVELS = 3
+
 private fun inkMoved(previous: NowPlayingPalette, next: NowPlayingPalette): Boolean {
     val a = previous.fg
     val b = next.fg
@@ -195,11 +244,16 @@ internal fun ImageBitmap.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
     if (width <= 0 || height <= 0) return emptyList()
     val pixels = IntArray(width * height)
     readPixels(pixels, startX = 0, startY = 0, width = width, height = height)
-    val step = (pixels.size / limit).coerceAtLeast(1)
-    return buildList(minOf(pixels.size, limit)) {
+    return pixels.liveSamples(limit)
+}
+
+/** [liveSamples] off pixels already read. */
+private fun IntArray.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
+    val step = (size / limit).coerceAtLeast(1)
+    return buildList(minOf(size, limit)) {
         var index = 0
-        while (index < pixels.size) {
-            add(pixels[index])
+        while (index < this@liveSamples.size) {
+            add(this@liveSamples[index])
             index += step
         }
     }

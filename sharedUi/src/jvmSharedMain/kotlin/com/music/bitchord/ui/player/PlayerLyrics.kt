@@ -431,6 +431,9 @@ private val CONTROLS_SCROLL_SLOP = 20.dp
 
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
+
+/** The lyrics action discs' 34 dp, and a little air above them. */
+private val LYRICS_DISC_CLEARANCE = 40.dp
 internal sealed interface LyricsTranslationUiState {
     data object Idle : LyricsTranslationUiState
     data object Loading : LyricsTranslationUiState
@@ -1654,9 +1657,25 @@ internal fun LyricsPanel(
     onPickLine: (Int) -> Unit = {},
     /** Tap while picking: add or drop that line. */
     onTogglePick: (Int) -> Unit = {},
+    /**
+     * Whether the action discs float over the foot of this panel while its
+     * controls are shown — the portrait player's arrangement. Elsewhere they
+     * sit beside the lines, and the panel keeps its full height.
+     */
+    discsFloatOver: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
+    // The romanize / sing / translate discs float over the foot of the panel
+    // while its controls are shown. Lines fade out above them instead of
+    // running underneath, on the discs' own fade (see NowPlayingPanels). Read
+    // in the draw phase only, so this never relays the list or loses a line.
+    val discsShown = discsFloatOver && controlsOpen && !picking
+    val discClearance = animateDpAsState(
+        targetValue = if (discsShown) LYRICS_DISC_CLEARANCE else 0.dp,
+        animationSpec = tween(if (discsShown) 220 else 160),
+        label = "lyricsDiscClearance",
+    )
     val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
@@ -1874,7 +1893,7 @@ internal fun LyricsPanel(
             // below takes taps at the initial pass, so while a pick is open it
             // would swallow every choice before the row ever saw it.
             .revealLyricsControlsOnTap(!controlsOpen && !picking, onBottomHalfTap)
-            .fadingEdges(),
+            .fadingEdges(bottomClear = { discClearance.value }),
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
         // width further apart and further in than they used to.

@@ -85,7 +85,17 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.animation.VectorConverter
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import androidx.compose.runtime.Stable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.music.bitchord.ui.graphics.argbPixels
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
@@ -558,25 +568,172 @@ internal const val TOP_SCRIM_FRACTION = 0.14f
  * belong to the picture under them. A track change still gets the long fade,
  * which is a change of record rather than a change of frame.
  */
+/**
+ * The ink and the grades it asks of the backdrops, as states — see
+ * [rememberPlayerInk].
+ */
+@Stable
+internal class PlayerInkStates(
+    val ink: State<Color>,
+    /** Black and white grade over the mesh or legacy blobs' scrim. */
+    val mainBlackWash: State<Float>,
+    val mainWhiteWash: State<Float>,
+    /** The same over the full-cover blur's scrim. */
+    val panelBlackWash: State<Float>,
+    val panelWhiteWash: State<Float>,
+    /** The same over a Spotify Canvas's deck dim. */
+    val canvasBlackWash: State<Float>,
+    val canvasWhiteWash: State<Float>,
+    /** The same over a portrait motion cover's scrim. */
+    val portraitBlackWash: State<Float>,
+    val portraitWhiteWash: State<Float>,
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
 @Composable
-private fun rememberPlayerInk(
+internal fun rememberPlayerInk(
     palette: State<LivePalette?>,
     fromClip: Boolean,
-    fallback: Color,
-): State<Color> {
-    val target by remember(palette, fromClip, fallback) {
-        derivedStateOf {
-            val live = palette.value
-            if (fromClip && live != null) live.palette.fg else fallback
+    sleeve: NowPlayingPalette,
+    surfaces: PlayerInkSurfaces = remember { PlayerInkSurfaces() },
+    surface: InkSurfaceKind = InkSurfaceKind.MAIN,
+    portraitClip: Boolean = false,
+): PlayerInkStates {
+    // Read only by the effect below, never by composition: a clip's new ink,
+    // or a backdrop's new colours, must not recompose the player that
+    // provides the ink — see the note above.
+    val currentSleeve = rememberUpdatedState(sleeve)
+    val currentSurface = rememberUpdatedState(surface)
+    val currentPortraitClip = rememberUpdatedState(portraitClip)
+    val ink = remember {
+        val first = Snapshot.withoutReadObservation { palette.value }
+        Animatable(
+            if (fromClip && first != null) first.palette.fg else sleeve.fg,
+            Color.VectorConverter(sleeve.fg.colorSpace),
+        )
+    }
+    val mainBlack = remember { Animatable(0f) }
+    val mainWhite = remember { Animatable(0f) }
+    val panelBlack = remember { Animatable(0f) }
+    val panelWhite = remember { Animatable(0f) }
+    val canvasBlack = remember { Animatable(0f) }
+    val canvasWhite = remember { Animatable(0f) }
+    val portraitBlack = remember { Animatable(0f) }
+    val portraitWhite = remember { Animatable(0f) }
+    LaunchedEffect(palette, fromClip, surfaces) {
+        val inkSpec = tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+        val washSpec = tween<Float>(durationMillis = PLAYER_INK_FADE_MS)
+        snapshotFlow {
+            InkInputs(
+                live = palette.value,
+                sleeve = currentSleeve.value,
+                main = surfaces.main,
+                panel = surfaces.panel,
+                surface = currentSurface.value,
+                portraitClip = currentPortraitClip.value,
+            )
         }
+            // The judging is a few hundred contrast checks: off the main thread.
+            .mapLatest { withContext(Dispatchers.Default) { inkOutcome(it, fromClip) } }
+            .distinctUntilChanged()
+            .collectLatest { out ->
+                coroutineScope {
+                    launch { ink.animateTo(out.fg, inkSpec) }
+                    launch { mainBlack.animateTo(out.mainBlack, washSpec) }
+                    launch { mainWhite.animateTo(out.mainWhite, washSpec) }
+                    launch { panelBlack.animateTo(out.panelBlack, washSpec) }
+                    launch { panelWhite.animateTo(out.panelWhite, washSpec) }
+                    // On the ink's own clock: a Canvas regrades as it plays.
+                    val canvasSpec = tween<Float>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+                    launch { canvasBlack.animateTo(out.canvasBlack, canvasSpec) }
+                    launch { canvasWhite.animateTo(out.canvasWhite, canvasSpec) }
+                    launch { portraitBlack.animateTo(out.portraitBlack, washSpec) }
+                    launch { portraitWhite.animateTo(out.portraitWhite, washSpec) }
+                }
+            }
     }
-    val spec = remember(fromClip) {
-        tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+    return remember {
+        PlayerInkStates(
+            ink = ink.asState(),
+            mainBlackWash = mainBlack.asState(),
+            mainWhiteWash = mainWhite.asState(),
+            panelBlackWash = panelBlack.asState(),
+            panelWhiteWash = panelWhite.asState(),
+            canvasBlackWash = canvasBlack.asState(),
+            canvasWhiteWash = canvasWhite.asState(),
+            portraitBlackWash = portraitBlack.asState(),
+            portraitWhiteWash = portraitWhite.asState(),
+        )
     }
-    return animateColorAsState(
-        targetValue = target,
-        animationSpec = spec,
-        label = "playerInk",
+}
+
+/** Everything the ink is decided from, read together so it is judged once per change. */
+private data class InkInputs(
+    val live: LivePalette?,
+    val sleeve: NowPlayingPalette,
+    val main: InkSurface?,
+    val panel: InkSurface?,
+    val surface: InkSurfaceKind,
+    val portraitClip: Boolean,
+)
+
+/** The ink and the grades, settled. */
+private data class InkOutcome(
+    val fg: Color,
+    val mainBlack: Float,
+    val mainWhite: Float,
+    val panelBlack: Float,
+    val panelWhite: Float,
+    val canvasBlack: Float,
+    val canvasWhite: Float,
+    val portraitBlack: Float,
+    val portraitWhite: Float,
+)
+
+/**
+ * The ink judged against the surface it stands on, and the grade each
+ * backdrop needs for its own ink. Both backdrops are judged every time, so the
+ * one not on screen already carries its grade when it fades back in.
+ *
+ * Until a backdrop has published its colours the ink is the palette's own
+ * sleeve-judged answer, as it always was.
+ */
+private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
+    val live = inputs.live
+    val owner = if (fromClip && live != null) live.palette else inputs.sleeve
+    val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas) }
+    val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas) }
+    // A Canvas that owns the screen is its own surface, graded over its dim.
+    val canvas = if (fromClip && live != null) {
+        live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
+    } else {
+        null
+    }
+    // A portrait motion cover that isn't a Canvas keeps the sleeve's ink, as
+    // it always has, but stands it on the clip's own frame under its scrim.
+    // That scrim lies over the mesh as well, so it carries the grade instead.
+    val portrait = if (!fromClip && inputs.portraitClip && live?.source == LiveColorSource.LIVE_ART) {
+        live.surface?.let { clip ->
+            resolveInk(owner.accent, portraitOverMeshInkSurface(clip, inputs.main), owner.alphas)
+        }
+    } else {
+        null
+    }
+    val fg = when {
+        fromClip && live != null -> canvas?.fg ?: live.palette.fg
+        inputs.surface == InkSurfaceKind.PANEL -> panel?.fg ?: owner.fg
+        portrait != null -> portrait.fg
+        else -> main?.fg ?: owner.fg
+    }
+    fun InkResolution?.black() = if (this == null || dark) 0f else wash
+    fun InkResolution?.white() = if (this != null && dark) wash else 0f
+    val meshGraded = if (portrait != null) null else main
+    return InkOutcome(
+        fg,
+        meshGraded.black(), meshGraded.white(),
+        panel.black(), panel.white(),
+        canvas.black(), canvas.white(),
+        portrait.black(), portrait.white(),
     )
 }
 
@@ -584,22 +741,25 @@ private fun rememberPlayerInk(
  * The halo the ink wears, as a state.
  *
  * Light ink needs the dark halo and the reverse, so the halo follows the ink
- * — and it is read from the ink's state rather than from a value, for the
- * reason [rememberPlayerInk] gives.
+ * — and it is read from the ink's state in an effect rather than in
+ * composition, for the reason [rememberPlayerInk] gives: a flip of the halo
+ * must not recompose the player either.
  */
 @Composable
-private fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
-    val target by remember(ink) {
-        derivedStateOf {
-            if (ink.value.isLightInk()) PLAYER_GLOW_ON_LIGHT else PLAYER_GLOW_ON_DARK
-        }
+internal fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
+    val glow = remember(ink) {
+        Animatable(Snapshot.withoutReadObservation { glowFor(ink.value) }, Color.VectorConverter(PLAYER_GLOW_ON_LIGHT.colorSpace))
     }
-    return animateColorAsState(
-        targetValue = target,
-        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
-        label = "playerInkGlow",
-    )
+    LaunchedEffect(ink) {
+        val spec = tween<Color>(durationMillis = PLAYER_INK_FADE_MS)
+        snapshotFlow { glowFor(ink.value) }
+            .collectLatest { glow.animateTo(it, spec) }
+    }
+    return glow.asState()
 }
+
+private fun glowFor(ink: Color): Color =
+    if (ink.isLightInk()) PLAYER_GLOW_ON_LIGHT else PLAYER_GLOW_ON_DARK
 
 /**
  * The player's colours, handed down to everything inside it.
@@ -1672,37 +1832,6 @@ fun NowPlayingScreen(
     // The clip owns the whole screen when Spotify's presentation is on. Then
     // there is no sleeve in the answer at all.
     val canvasOwnsScreen = spotifyCanvasPresentation || clipFullscreen
-    // The ink, as a state.
-    //
-    // The ink follows a playing clip, so it changes while the player is open,
-    // and the palette that decides it changes with it. Both are read inside
-    // [rememberPlayerInk]'s own scope, and the ink is handed down as a state
-    // rather than as a colour: a colour handed down through a composition
-    // local changes the whole subtree under it, and this subtree is the entire
-    // player. A state changes only the texts and the glyphs that wear it.
-    val playerInkState = rememberPlayerInk(
-        palette = canvasPalette,
-        fromClip = canvasOwnsScreen,
-        fallback = nowPlayingPalette.fg,
-    )
-    // The ink is always light now, so its halo is the dark one. It is also
-    // strictly optional: with the switch off neither the composition local
-    // nor the text shadow may carry any colour at all.
-    val playerInkGlowState = rememberPlayerInkGlow(playerInkState)
-    // The glow, switched off: a state of its own, so the local's value never
-    // changes and nothing under it is invalidated when the setting is off.
-    val playerInkGlowOff = remember { mutableStateOf(Color.Transparent) }
-    // The lyrics panel's own controls, and the line that says where the lyrics
-    // came from: the artwork's ink, unless the listener pinned a colour for
-    // them. A pinned colour stands still; the ink moves with a playing clip.
-    val lyricsButtonsInk: State<Color> = remember(colors.lyricsButtons, playerInkState) {
-        colors.lyricsButtons?.let { mutableStateOf(it) } ?: playerInkState
-    }
-    val lyricsSourceInk: State<Color> = remember(colors.lyricsSource, playerInkState) {
-        colors.lyricsSource?.let { mutableStateOf(it) } ?: playerInkState
-    }
-
-
     // When Spotify's deck stands down and comes back — see
     // [SpotifyCanvasDeckEffects].
     SpotifyCanvasDeckEffects(
@@ -1961,6 +2090,83 @@ fun NowPlayingScreen(
         prepare = landscape || tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen ||
             playerPrewarmStage >= 1,
     )
+    // Where the backdrops publish what they show under the chrome — see
+    // [resolveInk]. Written by the backdrops' own effects and read only by the
+    // ink's, so neither recomposes this screen.
+    val inkSurfaces = remember { PlayerInkSurfaces() }
+    // The full-cover blur's bands, off the main thread. Read off the still
+    // copy as soon as it exists, so the ink is ready before the panel opens;
+    // the backdrop then reports what it actually shows — the live blur of a
+    // playing cover included — through [publishPanelInk].
+    //
+    // While the backdrop is mounted and has said what it shows, it alone
+    // publishes: the still-copy read only stands in before then, and its
+    // result is dropped if the backdrop has spoken by the time it lands — so
+    // a still surface can never be put back under a live blur, paused or not.
+    // The backdrop gives the authority back when it leaves the screen. A
+    // plain flag, not state: nothing composes off it.
+    val panelDisplayed = remember { booleanArrayOf(false) }
+    fun panelInkSurface(image: ImageBitmap) =
+        fullBlurInkSurface(bandBounds(image.argbPixels(), image.width, image.height))
+    // A live blur lands up to thirty times a second, and its bands drift by
+    // levels nobody sees. Only a real move is published, so the ink is
+    // re-judged when it could change and not otherwise.
+    fun publishPanel(next: InkSurface) {
+        if (inkSurfaceMoved(inkSurfaces.panel, next)) inkSurfaces.panel = next
+    }
+    val publishPanelInk: suspend (ImageBitmap) -> Unit = remember(inkSurfaces) {
+        { image ->
+            panelDisplayed[0] = true
+            publishPanel(withContext(Dispatchers.Default) { panelInkSurface(image) })
+        }
+    }
+    LaunchedEffect(fullArtworkBlurImage) {
+        val image = fullArtworkBlurImage ?: return@LaunchedEffect
+        if (panelDisplayed[0]) return@LaunchedEffect
+        val next = withContext(Dispatchers.Default) { panelInkSurface(image) }
+        if (!panelDisplayed[0]) publishPanel(next)
+    }
+    // The ink, as states.
+    //
+    // The ink follows a playing clip and the backdrop under it, so it changes
+    // while the player is open. Everything that decides it is read inside
+    // [rememberPlayerInk]'s own effect, and the ink is handed down as a state
+    // rather than as a colour: a colour handed down through a composition
+    // local changes the whole subtree under it, and this subtree is the entire
+    // player. A state changes only the texts and the glyphs that wear it.
+    val inkStates = rememberPlayerInk(
+        palette = canvasPalette,
+        fromClip = canvasOwnsScreen,
+        sleeve = nowPlayingPalette,
+        surfaces = inkSurfaces,
+        // The blur is what the chrome stands on wherever it is shown and ready;
+        // until it is, the mesh or the legacy blobs are still on screen.
+        surface = if (fullCoverBackdropVisible && fullArtworkBlurImage != null) {
+            InkSurfaceKind.PANEL
+        } else {
+            InkSurfaceKind.MAIN
+        },
+        // A portrait motion cover runs the screen behind the controls, under
+        // a scrim of its own — that, not the mesh beneath it, is the surface.
+        portraitClip = canvasFirstPortrait && clipState.rendered,
+    )
+    val playerInkState = inkStates.ink
+    // The halo follows the ink: dark under light ink, light under dark. It is
+    // also strictly optional: with the switch off neither the composition
+    // local nor the text shadow may carry any colour at all.
+    val playerInkGlowState = rememberPlayerInkGlow(playerInkState)
+    // The glow, switched off: a state of its own, so the local's value never
+    // changes and nothing under it is invalidated when the setting is off.
+    val playerInkGlowOff = remember { mutableStateOf(Color.Transparent) }
+    // The lyrics panel's own controls, and the line that says where the lyrics
+    // came from: the artwork's ink, unless the listener pinned a colour for
+    // them. A pinned colour stands still; the ink moves with a playing clip.
+    val lyricsButtonsInk: State<Color> = remember(colors.lyricsButtons, playerInkState) {
+        colors.lyricsButtons?.let { mutableStateOf(it) } ?: playerInkState
+    }
+    val lyricsSourceInk: State<Color> = remember(colors.lyricsSource, playerInkState) {
+        colors.lyricsSource?.let { mutableStateOf(it) } ?: playerInkState
+    }
     // One movable Image node, not two backdrop call sites. Compose carries it
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
@@ -1980,10 +2186,16 @@ fun NowPlayingScreen(
     )
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
+            // Moving between the portrait and landscape players keeps it; only
+            // leaving the screen hands the panel's surface back to the prewarm.
+            DisposableEffect(Unit) { onDispose { panelDisplayed[0] = false } }
             FullArtworkBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
                 liveFrames = currentLiveBlurFrames.value,
                 modifier = backdropModifier,
+                blackWash = { inkStates.panelBlackWash.value },
+                whiteWash = { inkStates.panelWhiteWash.value },
+                onShown = publishPanelInk,
             )
         }
     }
@@ -2254,6 +2466,9 @@ fun NowPlayingScreen(
             fullArtworkBlur = fullArtworkBlurContent,
             heroHeight = measures.heroHeight,
             heroWash = { heroT.value },
+            inkSurfaces = inkSurfaces,
+            inkBlackWash = { inkStates.mainBlackWash.value },
+            inkWhiteWash = { inkStates.mainWhiteWash.value },
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
@@ -2358,17 +2573,26 @@ fun NowPlayingScreen(
 
         if (canvasFirstPortrait && clipState.rendered) {
             // The image remains visible through the controls; a plain scrim
-            // protects text and touch targets without erasing the video.
+            // protects text and touch targets without erasing the video. The
+            // ink's grade rides in the same gradient, ramping in above the
+            // controls, and the clip's cover is folded into each stop rather
+            // than given a layer — all read here, in draw.
             Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = clipState.cover.floatValue }
-                    .background(
+                Modifier.matchParentSize().drawBehind {
+                    val cover = clipState.cover.floatValue
+                    if (cover <= 0f) return@drawBehind
+                    val black = inkStates.portraitBlackWash.value
+                    val white = inkStates.portraitWhiteWash.value
+                    drawRect(
                         Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.40f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.70f),
+                            colorStops = Array(PORTRAIT_CLIP_SCRIM_POSITIONS.size) { i ->
+                                val share = PORTRAIT_CLIP_WASH_SHARE[i]
+                                val stop = gradedScrimStop(PORTRAIT_CLIP_SCRIM_ALPHAS[i], black * share, white * share)
+                                PORTRAIT_CLIP_SCRIM_POSITIONS[i] to stop.copy(alpha = stop.alpha * cover)
+                            },
                         ),
-                    ),
+                    )
+                },
             )
         }
 
@@ -2376,6 +2600,8 @@ fun NowPlayingScreen(
             deckShown = spotifyCanvasPresentation && clipState.spotifyControlsOpen,
             presentation = spotifyCanvasPresentation,
             hazeState = playerHaze,
+            inkBlackWash = { inkStates.canvasBlackWash.value },
+            inkWhiteWash = { inkStates.canvasWhiteWash.value },
         )
 
         Column(
