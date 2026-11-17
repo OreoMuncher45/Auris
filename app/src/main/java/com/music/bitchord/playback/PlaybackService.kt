@@ -7799,10 +7799,11 @@ class PlaybackService : MediaLibraryService() {
                 // takes effect on the next decoder buffer and needs no rebuild
                 // of the player when the output encoding itself is unchanged.
                 bitPerfect = { AppSettings.bitPerfect.value },
-                // The userspace USB session, when a DAC has granted access.
-                // The sink only engages it for stereo tracks at the source
-                // rate; anything else stays on AudioTrack and says so.
-                exclusiveUsb = exclusiveUsb,
+                // The mixer-free output for bit-perfect playback. Today the
+                // userspace USB session, when a DAC has granted access. The
+                // sink only engages it at the source rate; anything else stays
+                // on AudioTrack and says so.
+                exclusiveSession = { exclusiveUsb },
                 // Do not attempt a claim until there is a DAC on the bus and
                 // the listener has granted direct access. The sink re-reads
                 // this per buffer, so a grant while a track plays is adopted.

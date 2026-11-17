@@ -19,10 +19,13 @@ import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 /**
  * Output transport mechanism selected by the universal best-path engine.
  */
-enum class TransportType(val label: String) {
+enum class TransportType(val label: String, val bypassesMixer: Boolean = false) {
     AUDIO_TRACK("AudioTrack"),
     AUDIO_TRACK_DIRECT("AudioTrack (Direct)"),
-    DIRECT_USB("Direct USB"),
+    DIRECT_USB("Direct USB", bypassesMixer = true),
+
+    /** A built-in DAC opened through an AAudio exclusive (MMAP) stream. */
+    AAUDIO_EXCLUSIVE("AAudio exclusive", bypassesMixer = true),
 }
 
 /**

@@ -19,7 +19,9 @@ import androidx.media3.common.MimeTypes
 import com.decent.usbaudio.UsbAudioDevice
 import com.decent.usbaudio.UsbAudioStream
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.ExclusiveSession
 import com.music.bitchord.playback.audio.ListenerVolumePolicy
+import com.music.bitchord.playback.audio.TransportType
 import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import java.nio.ByteBuffer
@@ -41,7 +43,12 @@ import java.nio.ByteOrder
  */
 class ExclusiveUsbOutput(
     context: Context,
-) {
+) : ExclusiveSession {
+
+    override val pathLabel: String = "USB exclusive"
+    override val pathDetail: String = "via usbdevfs, AudioFlinger not in the path"
+    override val transport: TransportType = TransportType.DIRECT_USB
+
     private val appContext = context.applicationContext
     private val lock = Any()
 
@@ -114,7 +121,7 @@ class ExclusiveUsbOutput(
     private var volumeReceiverRegistered = false
     /** Last exclusive open failure, for the signal-path dialog. Cleared on
      *  the next successful start so a stale reason never shows. */
-    @Volatile var lastFailureReason: String? = null
+    @Volatile override var lastFailureReason: String? = null
         private set
     /** True when retrying the open could plausibly succeed (device/permission). */
     @Volatile private var lastFailureRetryable = false
@@ -172,7 +179,7 @@ class ExclusiveUsbOutput(
      * Callers use this to avoid tearing down the working AudioTrack path for
      * an attempt that cannot get past the permission check.
      */
-    fun canOpen(): Boolean {
+    override fun canOpen(): Boolean {
         val manager = appContext.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return false
         val device = manager.deviceList.values.firstOrNull { dev ->
             (0 until dev.interfaceCount).any {
@@ -223,15 +230,15 @@ class ExclusiveUsbOutput(
     fun isClockMatched(): Boolean = active && clockMatched
 
     /** Whether the last open failure is worth retrying at the next track. */
-    fun failureIsRetryable(): Boolean = lastFailureRetryable
+    override fun failureIsRetryable(): Boolean = lastFailureRetryable
 
-    fun usesHardwareVolume(): Boolean = active && hardwareVolume
+    override fun usesHardwareVolume(): Boolean = active && hardwareVolume
 
     /**
      * PCM software gain for exclusive output. 1 when the DAC's own control
      * carries the level; otherwise the listener's level as a sample gain.
      */
-    fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
+    override fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
 
     /**
      * The absolute level the DAC's own volume control is at, in dB.
@@ -242,16 +249,16 @@ class ExclusiveUsbOutput(
      * when its level cannot be read: then there is no absolute level to
      * name, and the app is scaling the samples instead.
      */
-    fun hardwareOutputLevelDb(): Double? {
+    override fun hardwareOutputLevelDb(): Double? {
         if (!active || !hardwareVolume || forceSoftwareVolume) return null
         val written = lastWrittenDb
         if (written != null) return written
         return dacCurrentDb
     }
 
-    fun currentRateHz(): Int = if (active) configuredRateHz else 0
+    override fun currentRateHz(): Int = if (active) configuredRateHz else 0
 
-    fun activeWireBits(): Int = if (active) activeWireBits else 0
+    override fun activeWireBits(): Int = if (active) activeWireBits else 0
 
     fun lastHardwareRateHz(): Int = lastHardwareRate
 
@@ -259,14 +266,14 @@ class ExclusiveUsbOutput(
 
     fun framesWritten(): Long = stream?.framesWritten ?: 0L
 
-    fun isPaused(): Boolean = paused
+    override fun isPaused(): Boolean = paused
 
     /**
      * Pause/resume ISO writes without tearing down the USB session or
      * discarding already-decoded PCM in [pcmQueue]. [flush] clears the queue
      * on explicit seek/stop.
      */
-    fun setPaused(value: Boolean) {
+    override fun setPaused(value: Boolean) {
         if (!value) revalidateClockOnResume()
         paused = value
         if (value) {
@@ -298,7 +305,7 @@ class ExclusiveUsbOutput(
     }
 
     /** True while the isochronous stream is still accepting PCM. */
-    fun isStreamAlive(): Boolean = active && stream?.isAlive == true
+    override fun isStreamAlive(): Boolean = active && stream?.isAlive == true
 
     /**
      * True while PCM is actively queued/writing to the DAC or a USB write
@@ -356,9 +363,9 @@ class ExclusiveUsbOutput(
      * The open fails closed instead, and the sink falls back to AudioTrack,
      * which does resample properly.
      */
-    fun configure(
+    override fun configure(
         format: Format,
-        bitDepthHint: Int? = null,
+        bitDepthHint: Int?,
     ): Boolean {
         if (!wanted) return false
         if (format.sampleMimeType != MimeTypes.AUDIO_RAW ||
@@ -394,10 +401,10 @@ class ExclusiveUsbOutput(
         }
     }
 
-    fun write(
+    override fun write(
         buffer: ByteBuffer,
         presentationTimeUs: Long,
-        isFloatBuffer: Boolean = useFloatWrite,
+        isFloatBuffer: Boolean,
     ): Boolean {
         if (!buffer.hasRemaining()) return true
         if (paused) return false
@@ -453,7 +460,7 @@ class ExclusiveUsbOutput(
         return true
     }
 
-    fun getCurrentPositionUs(): Long {
+    override fun getCurrentPositionUs(): Long {
         val running = stream ?: return androidx.media3.exoplayer.audio.AudioSink.CURRENT_POSITION_NOT_SET
         if (!active || configuredRateHz <= 0 || startMediaTimeNeedsInit) {
             return androidx.media3.exoplayer.audio.AudioSink.CURRENT_POSITION_NOT_SET
@@ -472,10 +479,10 @@ class ExclusiveUsbOutput(
      * BUFFERING between DASH chunks. While exclusive USB is playing, the
      * isochronous pipeline is that pending audio.
      */
-    fun hasPendingData(): Boolean =
+    override fun hasPendingData(): Boolean =
         active && (queuedBytes > 0 || (!paused && stream?.isAlive == true))
 
-    fun flush() {
+    override fun flush() {
         synchronized(pcmLock) {
             recycleQueueLocked()
             queuedBytes = 0
@@ -496,7 +503,7 @@ class ExclusiveUsbOutput(
      * leftover URBs and marks it running again. [start] would zero the DAC
      * clock and make the sink position jump back to the beginning.
      */
-    fun restartIfStopped(): Boolean {
+    override fun restartIfStopped(): Boolean {
         val running = stream ?: return false
         // A session parked by the clock watchdog (or by teardown) is not a
         // stream to re-arm; restarting it would write the same bytes at the
@@ -512,7 +519,7 @@ class ExclusiveUsbOutput(
         return true
     }
 
-    fun handleDiscontinuity() {
+    override fun handleDiscontinuity() {
         // A DASH segment boundary is not a seek. Resetting the sink clock
         // here made ExoPlayer wait forever after the first ~5s chunk
         // ("keeps loading") while the DAC had already stopped.
@@ -523,7 +530,7 @@ class ExclusiveUsbOutput(
      * configure can reuse the stream instead of closeDevice + Feature Unit
      * re-probe (seconds of control-transfer timeouts).
      */
-    fun prepareForNextItem() {
+    override fun prepareForNextItem() {
         synchronized(pcmLock) {
             recycleQueueLocked()
             queuedBytes = 0
@@ -543,13 +550,13 @@ class ExclusiveUsbOutput(
         mediaTimeBaseFrames = stream?.framesWritten ?: 0L
     }
 
-    fun reset() {
+    override fun reset() {
         synchronized(lock) {
             teardownLocked(closeDevice = true)
         }
     }
 
-    fun release() {
+    override fun release() {
         synchronized(lock) {
             wanted = false
             teardownLocked(closeDevice = true)
@@ -571,7 +578,7 @@ class ExclusiveUsbOutput(
      * so they happen on the writer thread, never on the audio thread that
      * calls this.
      */
-    fun setListenerLevel(level: Float) {
+    override fun setListenerLevel(level: Float) {
         val normalized = level.coerceIn(0f, 1f)
         synchronized(lock) {
             if (listenerLevel == normalized && !volumeDirty) return

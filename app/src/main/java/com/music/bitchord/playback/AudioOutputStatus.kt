@@ -105,6 +105,8 @@ object AudioOutputStatus {
         val exclusiveUsbActive: Boolean = false,
         /** Rate/bit depth on the wire, or why the session is not running. */
         val exclusiveUsbDetail: String? = null,
+        /** Which mixer-free path [exclusiveUsbActive] and [exclusiveUsbDetail] describe. */
+        val exclusiveTransport: TransportType = TransportType.DIRECT_USB,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
         val directPlaybackSelected: Boolean = false,
@@ -205,6 +207,7 @@ object AudioOutputStatus {
                 bitPerfectMixer == other.bitPerfectMixer &&
                 exclusiveUsbActive == other.exclusiveUsbActive &&
                 exclusiveUsbDetail == other.exclusiveUsbDetail &&
+                exclusiveTransport == other.exclusiveTransport &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
                 directPlaybackSelected == other.directPlaybackSelected &&
@@ -253,6 +256,7 @@ object AudioOutputStatus {
             result = 31 * result + (bitPerfectMixer?.hashCode() ?: 0)
             result = 31 * result + exclusiveUsbActive.hashCode()
             result = 31 * result + (exclusiveUsbDetail?.hashCode() ?: 0)
+            result = 31 * result + exclusiveTransport.hashCode()
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
             result = 31 * result + directPlaybackSelected.hashCode()
@@ -470,9 +474,18 @@ object AudioOutputStatus {
      * sink that owns the endpoint; a non-null [detail] with `active = false`
      * names why the mixer is still in the path (permission, clock, channels).
      */
-    fun publishExclusiveUsb(active: Boolean, detail: String?) {
+    fun publishExclusiveUsb(
+        active: Boolean,
+        detail: String?,
+        transport: TransportType = TransportType.DIRECT_USB,
+    ) {
         val snapshot = current.value
-        if (snapshot.exclusiveUsbActive == active && snapshot.exclusiveUsbDetail == detail) return
+        if (snapshot.exclusiveUsbActive == active &&
+            snapshot.exclusiveUsbDetail == detail &&
+            snapshot.exclusiveTransport == transport
+        ) {
+            return
+        }
         // Deactivation must drop the DIRECT_USB transport the session forced,
         // or the old values would make evaluateActualPath keep claiming a
         // direct path after it is gone. A session that was never active must
@@ -488,7 +501,7 @@ object AudioOutputStatus {
             snapshot
         }
         current.value = evaluateActualPath(
-            base.copy(exclusiveUsbActive = active, exclusiveUsbDetail = detail),
+            base.copy(exclusiveUsbActive = active, exclusiveUsbDetail = detail, exclusiveTransport = transport),
         )
     }
 
@@ -557,8 +570,8 @@ object AudioOutputStatus {
         // system mixer cannot resample what it never receives.
         if (snapshot.exclusiveUsbActive) {
             return snapshot.copy(
-                transportType = TransportType.DIRECT_USB,
-                requestedTransportType = TransportType.DIRECT_USB,
+                transportType = snapshot.exclusiveTransport,
+                requestedTransportType = snapshot.exclusiveTransport,
                 directPlaybackRequested = true,
                 directPlaybackActual = true,
                 directPlaybackRejected = false,
