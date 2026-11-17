@@ -1898,11 +1898,15 @@ private fun BitChordApp(
                     // Keep the current MediaItem itself untouched. Replacing it,
                     // even with the same song, reparses the source at position
                     // zero and audibly stops/restarts the track.
-                    if (currentIndex + 1 < activeController.mediaItemCount) {
-                        activeController.removeMediaItems(currentIndex + 1, activeController.mediaItemCount)
+                    // Station first, old tail after: removing first leaves the
+                    // current track briefly last, and AutoPlay answers that by
+                    // appending this same radio a second time.
+                    activeController.addMediaItems(currentIndex + 1, related.map { it.toMediaItem() })
+                    val oldTail = currentIndex + 1 + related.size
+                    if (oldTail < activeController.mediaItemCount) {
+                        activeController.removeMediaItems(oldTail, activeController.mediaItemCount)
                     }
                     if (currentIndex > 0) activeController.removeMediaItems(0, currentIndex)
-                    activeController.addMediaItems(1, related.map { it.toMediaItem() })
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
