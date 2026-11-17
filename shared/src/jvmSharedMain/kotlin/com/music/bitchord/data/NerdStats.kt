@@ -419,6 +419,26 @@ object NerdStats {
     fun pickedBitrateKbps(videoId: String?): Int? = videoId?.let { picked[it] }
 
     /**
+     * The resolver's bitrate for the stream behind [mediaId], for when neither
+     * the decoder nor a measurement has one. Only ever a lossy figure: a
+     * lossless claim states the master's PCM rate, not the encoded one.
+     *
+     * A declared format that names its stream is the stream the player was
+     * handed, so YouTube's [picked] figure for the same id describes the one
+     * it replaced — how an addon's AAC that stated no bitrate read as the
+     * Opus 160 it stood in for. The pick is used only when nothing was
+     * declared, or the declaration is the empty one a plain YouTube resolve
+     * leaves.
+     */
+    fun resolverBitrateKbps(mediaId: String?): Int? {
+        val declared = declaredFormat(mediaId)
+        if (declared != null && (declared.codec != null || declared.kbps != null)) {
+            return declared.kbps?.takeIf { declared.isLossless != true }
+        }
+        return pickedBitrateKbps(mediaId)
+    }
+
+    /**
      * Undoes [onSourceStream] for [trackId].
      *
      * For when a swap to a claimed-better stream doesn't pan out and the

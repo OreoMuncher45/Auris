@@ -7009,6 +7009,7 @@ class PlaybackService : MediaLibraryService() {
         // made-up number.
         val liveMeasuredKbps = mediaId?.let { measuredBitrate.measuredKbps(it) }
         val localReading = mediaId?.let { localBitrateCache[it] }
+        val resolverKbps = NerdStats.resolverBitrateKbps(mediaId)
         val (bitrate, provenance) = when {
             liveMeasuredKbps != null ->
                 Pair(liveMeasuredKbps, TelemetryProvenance.MEASURED)
@@ -7027,10 +7028,10 @@ class PlaybackService : MediaLibraryService() {
             // The lossless claim stays in [NerdStats.Snapshot.claimed], where
             // it is labelled a claim, and the true PCM figure has its own
             // row.
-            !isLossless && dsd == null && NerdStats.declaredFormat(mediaId)?.let { it.kbps != null && it.isLossless != true } == true ->
-                Pair(NerdStats.declaredFormat(mediaId)?.kbps, TelemetryProvenance.DERIVED)
-            !isLossless && dsd == null && NerdStats.pickedBitrateKbps(mediaId) != null ->
-                Pair(NerdStats.pickedBitrateKbps(mediaId), TelemetryProvenance.DERIVED)
+            // See [NerdStats.resolverBitrateKbps] for why YouTube's pick is
+            // not read over a stream some other source declared.
+            !isLossless && dsd == null && resolverKbps != null ->
+                Pair(resolverKbps, TelemetryProvenance.DERIVED)
             dsd == null && isRawPcm && pcmDataRate != null ->
                 Pair(pcmDataRate, TelemetryProvenance.DERIVED)
             else ->
