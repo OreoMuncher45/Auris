@@ -6946,7 +6946,19 @@ private fun RootOverlays(
                 sheets.showAccountSelector = false
                 onOpenSettings()
             },
+            onMusicCatalogue = {
+                sheets.showAccountSelector = false
+                sheets.pickingMusicCatalogue = true
+            },
             onDismiss = { sheets.showAccountSelector = false },
+        )
+    }
+
+    // The catalogue picker the account sheet opens: the same sheet and the
+    // same restart as the card at the top of Settings.
+    if (sheets.pickingMusicCatalogue) {
+        com.music.bitchord.ui.screens.HomeProviderPicker(
+            onDismiss = { sheets.pickingMusicCatalogue = false },
         )
     }
 
@@ -7620,6 +7632,7 @@ internal class RootSheets {
     var showAppLanguage by mutableStateOf(false)
     var showTranslationLanguage by mutableStateOf(false)
     var showAccountSelector by mutableStateOf(false)
+    var pickingMusicCatalogue by mutableStateOf(false)
     var showListenBrainzLogin by mutableStateOf(false)
     var showLastfmLogin by mutableStateOf(false)
     var showWebDavEditor by mutableStateOf(false)
