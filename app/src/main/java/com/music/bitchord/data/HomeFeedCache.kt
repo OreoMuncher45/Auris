@@ -21,8 +21,9 @@ import java.security.MessageDigest
  * pull to refresh makes.
  *
  * Kept per catalogue (one file each) and per listener: a page read for one
- * account is never drawn for another, and the listener is stored as a hash
- * rather than as their account id. A copy older than [MAX_AGE_MS] is not
+ * account is never drawn for another. The listener is whatever the caller
+ * names as the page's owner (on Spotify, the Spotify session as well as the
+ * Google one) and is stored only as a hash. A copy older than [MAX_AGE_MS] is not
  * used, because a home page that old is not "last time" any more.
  *
  * Only the whole page is kept. A chip narrows the page by asking Spotify a
