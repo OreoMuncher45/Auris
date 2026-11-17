@@ -36,6 +36,13 @@ class SpotifyTokenSessionTest {
         SpotifyToken::class.java.getDeclaredField(name).apply { isAccessible = true }.set(SpotifyToken, value)
     }
 
+    /** A `SpotifyToken.CachedToken`, which is private to the object. */
+    private fun cachedToken(token: String, cookie: String?): Any =
+        Class.forName("com.music.bitchord.data.canvas.SpotifyToken\$CachedToken")
+            .getDeclaredConstructor(String::class.java, Long::class.javaPrimitiveType, String::class.java)
+            .apply { isAccessible = true }
+            .newInstance(token, future, cookie)
+
     private fun mutex(): Mutex =
         SpotifyToken::class.java.getDeclaredField("harvestMutex").apply { isAccessible = true }.get(SpotifyToken) as Mutex
 
@@ -54,9 +61,9 @@ class SpotifyTokenSessionTest {
 
     @Test
     fun aTokenCachedForTheOldCookieIsNotReturnedForTheNewOne() = runBlocking {
-        set("cachedAccessToken", "token-for-A")
-        set("cachedAccessCookie", "cookie-A")
-        set("accessTokenExpiresAtMs", future)
+        // Token, cookie and expiry are one immutable value, so no reader can
+        // see A's token beside B's cookie: the torn read has no field to tear.
+        set("access", cachedToken("token-for-A", "cookie-A"))
 
         // The settings write has landed; its invalidate() has not run yet.
         AppSettings.spotifySpdcToken.value = "cookie-B"
@@ -77,8 +84,7 @@ class SpotifyTokenSessionTest {
         // The switch happens while it waits, and the next session's token is
         // cached before the lock comes free.
         SpotifyToken.invalidate()
-        set("cachedAnonymousToken", "visitor-token-after-switch")
-        set("anonymousTokenExpiresAtMs", future)
+        set("anonymous", cachedToken("visitor-token-after-switch", null))
         lock.unlock()
 
         assertNull(queued.await())

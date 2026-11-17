@@ -54,16 +54,24 @@ internal object SpotifyToken {
 
     @Volatile private var appContext: Context? = null
 
-    @Volatile private var cachedAccessToken: String? = null
-
     /**
-     * The cookie [cachedAccessToken] was minted from. Memory only. A hit is a
-     * hit only for the cookie the caller is asking with: the settings write
-     * lands before the [invalidate] that follows it, and in between the old
-     * listener's token must not be handed to the new one.
+     * A cached token, the moment it is good until, and the cookie it was
+     * minted from (null for the visitor's), as one immutable value.
+     *
+     * One reference rather than three fields, so a reader sees a token with
+     * its own cookie and expiry and never one session's token beside another
+     * session's cookie. A hit is a hit only for the cookie the caller is
+     * asking with: the settings write lands before the [invalidate] that
+     * follows it, and in between the old listener's token must not be handed
+     * to the new one. The cookie is held in memory only.
      */
-    @Volatile private var cachedAccessCookie: String? = null
-    @Volatile private var accessTokenExpiresAtMs = 0L
+    private data class CachedToken(val token: String, val expiresAt: Long, val cookie: String?) {
+        fun usableFor(cookie: String?, now: Long): Boolean =
+            this.cookie == cookie && now < expiresAt - 30_000
+    }
+
+    /** The listener's token; see [CachedToken]. */
+    @Volatile private var access: CachedToken? = null
     @Volatile private var cachedClientId: String? = null
 
     /**
@@ -76,8 +84,7 @@ internal object SpotifyToken {
      * token overwrite the listener's (or the other way round) depending on
      * which request happened to be reading it.
      */
-    @Volatile private var cachedAnonymousToken: String? = null
-    @Volatile private var anonymousTokenExpiresAtMs = 0L
+    @Volatile private var anonymous: CachedToken? = null
     @Volatile private var anonymousClientId: String? = null
 
     @Volatile private var cachedSession: SessionInfo? = null
@@ -92,12 +99,9 @@ internal object SpotifyToken {
     }
 
     fun invalidate() = synchronized(stateLock) {
-        cachedAccessToken = null
-        cachedAccessCookie = null
-        accessTokenExpiresAtMs = 0L
+        access = null
         cachedClientId = null
-        cachedAnonymousToken = null
-        anonymousTokenExpiresAtMs = 0L
+        anonymous = null
         anonymousClientId = null
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
@@ -109,6 +113,21 @@ internal object SpotifyToken {
         // listener's token after this has cleared it.
         restored = true
         store()?.edit()?.apply { TOKEN_KEYS.forEach(::remove) }?.apply()
+    }
+
+    /**
+     * Drops the client version, in memory and on disk, so the next request
+     * reads the web player's page again.
+     *
+     * For a refusal that is not about the token: Spotify's response to a stale
+     * build is not a documented status, and a kept version that Spotify has
+     * stopped accepting would otherwise be sent for the rest of its 12 hours.
+     * Costs one page read after an error, at most. The device id stays.
+     */
+    fun forgetClientVersion() = synchronized(stateLock) {
+        cachedSession = null
+        store()?.edit()?.remove(K_CLIENT_VERSION)?.remove(K_CLIENT_VERSION_AT)?.apply()
+        Unit
     }
 
     /**
@@ -168,17 +187,14 @@ internal object SpotifyToken {
                 val expires = live(K_ACCESS_EXPIRES)
                 val token = prefs.getString(K_ACCESS, null)
                 if (expires != null && token != null) {
-                    cachedAccessToken = token
-                    cachedAccessCookie = cookie
-                    accessTokenExpiresAtMs = expires
+                    access = CachedToken(token, expires, cookie)
                     prefs.getString(K_ACCESS_CLIENT_ID, null)?.let { cachedClientId = it }
                 }
             }
             val anonymousExpires = live(K_ANONYMOUS_EXPIRES)
             val anonymous = prefs.getString(K_ANONYMOUS, null)
             if (anonymousExpires != null && anonymous != null) {
-                cachedAnonymousToken = anonymous
-                anonymousTokenExpiresAtMs = anonymousExpires
+                this.anonymous = CachedToken(anonymous, anonymousExpires, null)
                 prefs.getString(K_ANONYMOUS_CLIENT_ID, null)?.let { anonymousClientId = it }
             }
             val clientExpires = live(K_CLIENT_EXPIRES)
@@ -304,26 +320,14 @@ internal object SpotifyToken {
         if (mode == Mode.SIGNED_IN && cookie.isNullOrBlank()) return null
         restore()
 
-        val now = System.currentTimeMillis()
-        if (mode == Mode.SIGNED_IN) {
-            cachedAccessToken?.takeIf { cachedAccessCookie == cookie }
-                ?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
-        } else {
-            cachedAnonymousToken?.let { if (now < anonymousTokenExpiresAtMs - 30_000) return it }
-        }
+        fun cached(): CachedToken? = if (mode == Mode.SIGNED_IN) access else anonymous
+        cached()?.takeIf { it.usableFor(cookie, System.currentTimeMillis()) }?.let { return it.token }
 
         return harvestMutex.withLock {
-            val stillNow = System.currentTimeMillis()
             // A call queued behind an invalidation asked for a session that is
             // gone; whatever is cached now belongs to the next one.
             if (epoch != startEpoch) return@withLock null
-            val live = if (mode == Mode.SIGNED_IN) {
-                cachedAccessToken?.takeIf { cachedAccessCookie == cookie }
-            } else {
-                cachedAnonymousToken
-            }
-            val liveExpiry = if (mode == Mode.SIGNED_IN) accessTokenExpiresAtMs else anonymousTokenExpiresAtMs
-            live?.let { if (stillNow < liveExpiry - 30_000) return@withLock it }
+            cached()?.takeIf { it.usableFor(cookie, System.currentTimeMillis()) }?.let { return@withLock it.token }
 
             val context = appContext
             if (context == null) {
@@ -349,13 +353,10 @@ internal object SpotifyToken {
             val published = synchronized(stateLock) {
                 if (epoch != startEpoch) return@synchronized false
                 if (mode == Mode.SIGNED_IN) {
-                    cachedAccessToken = harvested.token
-                    cachedAccessCookie = cookie
-                    accessTokenExpiresAtMs = harvested.expiresAt
+                    access = CachedToken(harvested.token, harvested.expiresAt, cookie)
                     harvested.clientId?.let { cachedClientId = it }
                 } else {
-                    cachedAnonymousToken = harvested.token
-                    anonymousTokenExpiresAtMs = harvested.expiresAt
+                    anonymous = CachedToken(harvested.token, harvested.expiresAt, null)
                     // Only when nothing better exists: the client id feeds the
                     // client-token request, and the listener's own client id is the
                     // one the rest of the app's signed-in calls should be using.
