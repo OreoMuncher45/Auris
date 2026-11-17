@@ -102,6 +102,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -332,6 +333,8 @@ import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.PlayerPlatform
+import com.music.bitchord.ui.components.VolumeHud
+import com.music.bitchord.ui.components.VolumeHudOverlay
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import com.music.bitchord.ui.player.PlayerPanelHost
 import androidx.compose.ui.geometry.Offset
@@ -437,11 +440,15 @@ class MainActivity : AppCompatActivity() {
                 else -> null
             }
             if (up != null) {
+                val before = AppSettings.playerVolume.value
                 val level = HardwareVolume.levelForKey(up)
                 if (level != null) {
                     // Through the same door the slider uses, so the bar in the
                     // player and the level on the wire are one level.
                     PlayerPlatform.host.volume.set(level)
+                    // Android's own panel is not shown for a key the app takes,
+                    // so the app shows the level itself.
+                    VolumeHud.pulse(direction = if (up) 1 else -1, atLimit = level == before)
                     return true
                 }
             }
@@ -4798,6 +4805,10 @@ private fun BitChordApp(
         // below is overlays (menus, pickers, notices, dialogs) shared by both.
         // The iPod used to return before reaching them, which is why its
         // three-dot menu set state nothing rendered.
+
+        // The player's own volume bar shows the level while it is up.
+        SideEffect { VolumeHud.suppressed = showNowPlaying }
+        VolumeHudOverlay()
 
         RootOverlays(
             sheets = sheets,
