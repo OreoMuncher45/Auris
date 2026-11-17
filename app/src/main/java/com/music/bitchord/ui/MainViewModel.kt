@@ -2248,6 +2248,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             AppSettings.spotifySpdcToken.drop(1).collect {
                 if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
                     homeFacet.value = ""
+                    // loadHome keeps the header across a reload of the same
+                    // session (the chips are the way back); this is another
+                    // session, and the greeting and tiles were the last one's.
+                    _homeHeader.value = null
                     loadHome()
                 }
             }
