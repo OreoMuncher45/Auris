@@ -977,10 +977,20 @@ class ExclusiveUsbOutput(
     }
 
     private fun writeLoop(target: UsbAudioStream) {
+        // Pumps since the pause began. A paused ring has drained (80 URBs,
+        // 80 ms) within a few of them; after that there is nothing left to
+        // reap, and waking every 20 ms for the length of a pause was 50
+        // wakeups a second for nothing. Every state change (resume, a write,
+        // a flush, a stop) notifies the lock, so a longer wait costs no
+        // responsiveness.
+        var pausedPumps = 0
         while (!writerStop) {
             val next = synchronized(pcmLock) {
                 if (!writerStop && !flushRequested && (paused || pcmQueue.isEmpty())) {
-                    pcmLock.wait(20)
+                    if (paused) pausedPumps++ else pausedPumps = 0
+                    pcmLock.wait(if (pausedPumps > PAUSED_PUMPS_BEFORE_PARKING) PARKED_WAIT_MS else 20L)
+                } else {
+                    pausedPumps = 0
                 }
                 if (writerStop) return@synchronized null
                 if (flushRequested) {
@@ -1211,6 +1221,10 @@ class ExclusiveUsbOutput(
         const val MAX_QUEUED_BYTES = 512 * 1024
         /** Enough for a full queue of typical Media3 buffers, with a little slack. */
         const val MAX_POOLED_CHUNKS = 48
+        /** 10 × 20 ms covers the 80 ms ring draining after a pause. */
+        const val PAUSED_PUMPS_BEFORE_PARKING = 10
+        /** A safety net only; resume and every write notify the lock. */
+        const val PARKED_WAIT_MS = 1_000L
         val FLUSH_MARKER = QueuedPcm(null, null, -1, 0)
         val IDLE_MARKER = QueuedPcm(null, null, -2, 0)
 
