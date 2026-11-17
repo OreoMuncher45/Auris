@@ -297,11 +297,11 @@ class MixerSession(
         return false
     }
 
-    private companion object {
-        const val TAG = "MixerSession"
+    internal companion object {
+        private const val TAG = "MixerSession"
 
         /** Scales little-endian integer PCM in place; only used below full level. */
-        fun scaleInPlace(pcm: ByteBuffer, bits: Int, gain: Float) {
+        internal fun scaleInPlace(pcm: ByteBuffer, bits: Int, gain: Float) {
             val g = gain.toDouble()
             var i = pcm.position()
             val end = pcm.limit()

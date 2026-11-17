@@ -89,6 +89,8 @@ import com.music.bitchord.playback.audio.ContainerBitrate
 import com.music.bitchord.playback.audio.BitPerfectMixer
 import com.music.bitchord.playback.audio.ExclusiveSession
 import com.music.bitchord.playback.audio.bitperfect.MixerSession
+import com.music.bitchord.playback.audio.bitperfect.AAudioExclusiveSession
+import com.music.bitchord.data.settings.BitPerfectPath
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.audio.JamesDspConfig
 import com.music.bitchord.playback.audio.JamesDspNative
@@ -596,6 +598,15 @@ class PlaybackService : MediaLibraryService() {
      */
     private val exclusiveUsb by lazy { ExclusiveUsbOutput(this) }
 
+    /** A built-in DAC's wired output, opened exclusively; see [AAudioExclusiveSession]. */
+    private val aaudioSession by lazy { AAudioExclusiveSession(this) }
+
+    /**
+     * Whether a wired output is attached, kept current by [outputDeviceCallback]
+     * for the same reason as [usbOutputPresent].
+     */
+    @Volatile private var wiredOutputPresent = false
+
     /** Android 14's bit-perfect mixer at integer precision; see [MixerSession]. */
     private val mixerSession by lazy {
         MixerSession(this, AUDIO_ATTRIBUTES.platformAudioAttributes)
@@ -609,6 +620,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun refreshUsbOutputPresent() {
         usbOutputPresent = BitPerfectMixer.usbOutput(audioManager) != null
+        wiredOutputPresent = aaudioSession.wiredOutput() != null
     }
 
     /**
@@ -618,10 +630,14 @@ class PlaybackService : MediaLibraryService() {
      *
      * Direct USB first, when a DAC has granted access: nothing of Android's
      * is in the path at all. Then, on Android 14+, the framework's own
-     * bit-perfect mixer at the track's integer precision.
+     * bit-perfect mixer at the track's integer precision. The built-in DAC
+     * path is chosen in settings, and plays to the wired output only.
      */
     private fun chosenExclusiveSession(): ExclusiveSession? {
         if (!AppSettings.bitPerfect.value) return null
+        if (AppSettings.bitPerfectPath.value == BitPerfectPath.BUILT_IN_DAC) {
+            return aaudioSession.takeIf { wiredOutputPresent }
+        }
         if (exclusiveUsbWanted()) return exclusiveUsb
         if (android.os.Build.VERSION.SDK_INT >= 34 && usbOutputPresent) return mixerSession
         return null
@@ -1049,6 +1065,7 @@ class PlaybackService : MediaLibraryService() {
             if (AppSettings.bitPerfect.value) {
                 exclusiveUsb.setPaused(!playWhenReady)
                 mixerSession.setPaused(!playWhenReady)
+                aaudioSession.setPaused(!playWhenReady)
             }
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
@@ -8342,10 +8359,19 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
+            // The sink notices the change at its next buffer and closes the
+            // old path; reconfiguring opens the new one without waiting for
+            // the next track.
+            AppSettings.bitPerfectPath.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
             AppSettings.bitPerfect.collect { enabled ->
                 if (enabled) ensureUsbPermission()
                 exclusiveUsb.setWanted(exclusiveUsbWanted())
-                if (!enabled) mixerSession.reset()
+                if (!enabled) {
+                    mixerSession.reset()
+                    aaudioSession.reset()
+                }
                 publishExclusiveUsbAvailability()
                 requestOutputReconfiguration()
             }
@@ -9121,6 +9147,7 @@ class PlaybackService : MediaLibraryService() {
         // service goes; the next one re-opens it on its first configure.
         exclusiveUsb.release()
         mixerSession.release()
+        aaudioSession.release()
         usbDacMonitor.release()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)

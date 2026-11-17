@@ -92,6 +92,16 @@ fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
  * PCM_FLOAT. Android may still route/resample it according to the selected
  * output device, which is why the player exposes the negotiated format.
  */
+/**
+ * Which mixer-free output bit-perfect playback uses.
+ *
+ * [AUTO] is v2's own order for a USB DAC: the direct driver when the DAC has
+ * granted access, else Android 14's bit-perfect mixer. [BUILT_IN_DAC] is for
+ * a player with a DAC of its own: the wired output, opened exclusively
+ * through AAudio.
+ */
+enum class BitPerfectPath { AUTO, BUILT_IN_DAC }
+
 enum class OutputPcmMode(val label: String) {
     PCM_16("16-bit PCM"),
     FLOAT_32("32-bit float"),
@@ -374,6 +384,16 @@ object AppSettings {
      * encoding the pipeline readout says so rather than claiming otherwise.
      */
     val bitPerfect = MutableStateFlow(false)
+
+    /** See [BitPerfectPath]. */
+    val bitPerfectPath = MutableStateFlow(BitPerfectPath.AUTO)
+
+    /**
+     * Converts a track the DAC cannot take as it is (above its rate or depth)
+     * to the best format it has, instead of leaving it to Android's mixer.
+     * Never bit-perfect, and reported as converted. Off by default.
+     */
+    val convertForLimitedDac = MutableStateFlow(false)
 
     /**
      * The listener's own volume, 0..1, as the app sees it.
@@ -1602,6 +1622,10 @@ object AppSettings {
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
         bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
+        bitPerfectPath.value = prefs.getString(KEY_BIT_PERFECT_PATH, null)
+            ?.let { name -> BitPerfectPath.entries.firstOrNull { it.name == name } }
+            ?: BitPerfectPath.AUTO
+        convertForLimitedDac.value = prefs.getBoolean(KEY_CONVERT_FOR_LIMITED_DAC, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         // The listener's own level, remembered: the system volume cannot be
         // trusted on its own once a USB DAC is attached, because Android
@@ -2740,6 +2764,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
     }
 
+    fun setBitPerfectPath(value: BitPerfectPath) {
+        bitPerfectPath.value = value
+        prefs.edit().putString(KEY_BIT_PERFECT_PATH, value.name).apply()
+    }
+
+    fun setConvertForLimitedDac(value: Boolean) {
+        convertForLimitedDac.value = value
+        prefs.edit().putBoolean(KEY_CONVERT_FOR_LIMITED_DAC, value).apply()
+    }
+
     /** Sets the face the whole app is set in. */
     fun setAppFont(value: String) {
         appFont.value = value
@@ -3253,6 +3287,8 @@ object AppSettings {
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_BIT_PERFECT = "bit_perfect"
+    private const val KEY_BIT_PERFECT_PATH = "bit_perfect_path"
+    private const val KEY_CONVERT_FOR_LIMITED_DAC = "convert_for_limited_dac"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_PLAYER_VOLUME = "player_volume"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
