@@ -18,8 +18,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.CubicBezierEasing
@@ -1448,30 +1446,14 @@ fun NowPlayingScreen(
     // follows the finger so the gesture has something to hold on to.
     val swipeThreshold = with(density) { 72.dp.toPx() }
     // Where the finger has dragged the sleeve to, and the sleeve springing
-    // after it. What animateFloatAsState does inside — a conflated channel of
-    // targets, each chased from the current velocity — but fed straight from
-    // the gesture: as state read here, every pointer move recomposed the whole
-    // player just to hand the spring a new target, when the only readers are
-    // draw-phase layers.
-    val swipeSettle = remember { Animatable(0f) }
-    val swipeTargets = remember { Channel<Float>(Channel.CONFLATED) }
-    LaunchedEffect(swipeTargets) {
-        for (target in swipeTargets) {
-            val newest = swipeTargets.tryReceive().getOrNull() ?: target
-            launch {
-                if (newest != swipeSettle.targetValue) {
-                    swipeSettle.animateTo(newest, spring(stiffness = Spring.StiffnessMediumLow))
-                }
-            }
-        }
-    }
-    val setSwipeOffset: (Float) -> Unit = { swipeTargets.trySend(it) }
+    // back. Read only by draw-phase layers, so a drag recomposes nothing.
+    val trackMotion = rememberTrackChangeMotion()
     // The skip hint under the sleeve only needs composing while there is a
     // drag to hint at, and which way it points; its fade is drawn, not composed.
     val swipeHintShown by remember(swipeThreshold) {
-        derivedStateOf { abs(swipeSettle.value) / swipeThreshold > 0.01f }
+        derivedStateOf { abs(trackMotion.offset()) / swipeThreshold > 0.01f }
     }
-    val swipeHintNext by remember { derivedStateOf { swipeSettle.value > 0f } }
+    val swipeHintNext by remember { derivedStateOf { trackMotion.offset() > 0f } }
 
     // Signature Apple Music touch: the sleeve shrinks back while paused.
     val artScale by animateFloatAsState(
@@ -1863,7 +1845,7 @@ fun NowPlayingScreen(
         onBlockedControl = onBlockedControl,
         onNext = onNext,
         onPrevious = onPrevious,
-        setSwipeOffset = setSwipeOffset,
+        motion = trackMotion,
     )
 
     // The scrubber's two halves, shared by both layouts so a drop point is held
@@ -2145,7 +2127,7 @@ fun NowPlayingScreen(
                 lyricsShareEnabled = lyricsShareEnabled,
                 lyricPicker = lyricPicker,
                 showRevertCue = { showRevertCue },
-                swipeSettle = swipeSettle,
+                trackMotion = trackMotion,
                 volume = volume,
                 art = art,
                 openPlaybackOrigin = openPlaybackOrigin,
@@ -2790,7 +2772,7 @@ fun NowPlayingScreen(
                     dock = dock,
                     dockFrame = dockFrame,
                     sleeveLayer = sleeveLayer,
-                    swipeSettle = swipeSettle,
+                    trackMotion = trackMotion,
                     swipeThreshold = swipeThreshold,
                     swipeHintShown = { swipeHintShown },
                     swipeHintNext = { swipeHintNext },

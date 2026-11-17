@@ -1,7 +1,5 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -262,7 +260,7 @@ internal fun BoxScope.PortraitSleeve(
     dock: PlayerDock?,
     dockFrame: DockFrame,
     sleeveLayer: GraphicsLayer,
-    swipeSettle: Animatable<Float, AnimationVector1D>,
+    trackMotion: TrackChangeMotion,
     swipeThreshold: Float,
     swipeHintShown: () -> Boolean,
     swipeHintNext: () -> Boolean,
@@ -351,7 +349,7 @@ internal fun BoxScope.PortraitSleeve(
                 val scale = if (t >= 1f) open else 1f + (open - 1f) * t
                 scaleX = scale
                 scaleY = scale
-                translationX = swipeSettle.value * (1f - p()) * (1f - share) * t
+                translationX = trackMotion.offset() * (1f - p()) * (1f - share) * t
             }
             // Haze must observe the drawable layer itself, the
             // banner included — a source on the surrounding layout
@@ -463,7 +461,7 @@ internal fun BoxScope.PortraitSleeve(
                     }
                     scaleX = scale
                     scaleY = scale
-                    translationX = swipeSettle.value * (1f - p()) * share * t
+                    translationX = trackMotion.offset() * (1f - p()) * share * t
                     // Its own corners only once it is smaller than
                     // the sleeve; as the whole card it takes the
                     // sleeve's clip, as it always did.
@@ -756,7 +754,7 @@ internal fun BoxScope.PortraitSleeve(
                 val idle = geometry.cardScale()
                 scaleX = idle
                 scaleY = idle
-                translationX = swipeSettle.value * (1f - p())
+                translationX = trackMotion.offset() * (1f - p())
             }
             // Collapsed, the sleeve is the way back: tapping the
             // thumbnail puts the queue or the lyrics away again.
@@ -814,7 +812,7 @@ internal fun BoxScope.PortraitSleeve(
                 }
                 .size(16.dp)
                 .graphicsLayer {
-                    alpha = (abs(swipeSettle.value) / swipeThreshold)
+                    alpha = (abs(trackMotion.offset()) / swipeThreshold)
                         .coerceIn(0f, 1f) * (1f - p()) * hintAlpha
                 },
         )

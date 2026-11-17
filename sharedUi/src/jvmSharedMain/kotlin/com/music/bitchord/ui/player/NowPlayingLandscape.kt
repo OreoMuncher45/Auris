@@ -1,7 +1,5 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -123,7 +121,7 @@ internal fun LandscapeNowPlaying(
     lyricsShareEnabled: Boolean,
     lyricPicker: LyricsPicker,
     showRevertCue: () -> Boolean,
-    swipeSettle: Animatable<Float, AnimationVector1D>,
+    trackMotion: TrackChangeMotion,
     volume: PlayerVolume,
     art: PlayerArtwork,
     openPlaybackOrigin: () -> Unit,
@@ -270,7 +268,7 @@ internal fun LandscapeNowPlaying(
                             val scale = if (t >= 1f) landscapeArtScale else 1f + (landscapeArtScale - 1f) * t
                             scaleX = scale
                             scaleY = scale
-                            translationX = if (t >= 1f) swipeSettle.value else swipeSettle.value * t
+                            translationX = if (t >= 1f) trackMotion.offset() else trackMotion.offset() * t
                         }
                         // With a panel up the sleeve is the way back to
                         // the player, as the portrait thumbnail is.

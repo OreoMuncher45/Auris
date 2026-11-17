@@ -239,7 +239,7 @@ internal class DockFrame {
 
 /**
  * Horizontal fling skips tracks; the artwork follows the finger through
- * [setSwipeOffset] so the gesture has something to hold on to.
+ * [motion] so the gesture has something to hold on to.
  *
  * Stands down while the pipeline or cast dialog is up or a panel's list is
  * scrolling, and answers [onBlockedControl] instead of skipping while a party
@@ -255,13 +255,16 @@ internal fun Modifier.skipSwipeGesture(
     onBlockedControl: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
-    setSwipeOffset: (Float) -> Unit,
+    motion: TrackChangeMotion,
 ): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, controlsLocked) {
         if (pipelineOpen || castOpen || panelScrolling) return@pointerInput
         var total = 0f
         detectHorizontalDragGestures(
-            onDragStart = { total = 0f },
-            onDragCancel = { setSwipeOffset(0f) },
+            onDragStart = {
+                total = 0f
+                motion.dragStart()
+            },
+            onDragCancel = { motion.springBack() },
             onDragEnd = {
                 // The same two buzzes the transport glyphs give, so swiping the
                 // sleeve and tapping skip feel like one gesture with two
@@ -281,12 +284,11 @@ internal fun Modifier.skipSwipeGesture(
                         onPrevious()
                     }
                 }
-                setSwipeOffset(0f)
+                motion.springBack()
             },
             onHorizontalDrag = { _, delta ->
                 total += delta
-                // Damped: it's a hint, not a drag-to-position.
-                setSwipeOffset(total * 0.35f)
+                motion.drag(total)
             },
         )
     }
