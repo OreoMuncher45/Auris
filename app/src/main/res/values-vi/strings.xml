@@ -1539,4 +1539,6 @@
     <string name="cached_song_partial">Một phần</string>
     <string name="remove_from_cache">Xóa khỏi bộ nhớ đệm</string>
     <string name="removed_from_cache">Đã xóa khỏi bộ nhớ đệm bài hát</string>
+    <string name="remove_from_history">Xóa khỏi lịch sử</string>
+    <string name="remove_from_history_failed">Không thể xóa khỏi lịch sử</string>
 </resources>

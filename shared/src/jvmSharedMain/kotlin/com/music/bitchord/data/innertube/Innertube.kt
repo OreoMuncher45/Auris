@@ -938,9 +938,24 @@ object Innertube {
      * There is no video-id form of this call; the token *is* the request.
      */
     suspend fun sendFeedback(token: String) {
+        sendFeedbackForAnswer(token)
+    }
+
+    /**
+     * [sendFeedback], returning YouTube's answer: whether it actually acted on
+     * the token. A refused token still comes back as HTTP 200, with
+     * `feedbackResponses[].isProcessed` false, so the status alone cannot say
+     * the history entry is gone.
+     */
+    suspend fun sendFeedbackForAnswer(token: String): Boolean {
         requireSession()
-        postMusic("feedback") {
+        val response = postMusic("feedback") {
             putJsonArray("feedbackTokens") { add(token) }
+        }
+        val answers = (response["feedbackResponses"] as? kotlinx.serialization.json.JsonArray) ?: return true
+        return answers.none { answer ->
+            ((answer as? JsonObject)?.get("isProcessed") as? kotlinx.serialization.json.JsonPrimitive)
+                ?.content == "false"
         }
     }
 

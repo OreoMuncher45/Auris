@@ -1561,4 +1561,6 @@
     <string name="cached_song_partial">Parziale</string>
     <string name="remove_from_cache">Rimuovi dalla cache</string>
     <string name="removed_from_cache">Rimosso dalla cache dei brani</string>
+    <string name="remove_from_history">Rimuovi dalla cronologia</string>
+    <string name="remove_from_history_failed">Impossibile rimuovere dalla cronologia</string>
 </resources>

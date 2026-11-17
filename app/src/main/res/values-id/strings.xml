@@ -1599,4 +1599,6 @@
     <string name="cached_song_partial">Sebagian</string>
     <string name="remove_from_cache">Hapus dari cache</string>
     <string name="removed_from_cache">Dihapus dari cache lagu</string>
+    <string name="remove_from_history">Hapus dari riwayat</string>
+    <string name="remove_from_history_failed">Tidak dapat menghapus dari riwayat</string>
 </resources>

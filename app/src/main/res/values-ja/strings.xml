@@ -1600,4 +1600,6 @@
     <string name="cached_song_partial">一部のみ</string>
     <string name="remove_from_cache">キャッシュから削除</string>
     <string name="removed_from_cache">曲のキャッシュから削除しました</string>
+    <string name="remove_from_history">履歴から削除</string>
+    <string name="remove_from_history_failed">履歴から削除できませんでした</string>
 </resources>

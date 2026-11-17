@@ -3239,6 +3239,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Removes one play from the account's listening history, by the token its
+     * History row carries — see [Song.feedbackToken].
+     *
+     * Nothing changes until YouTube confirms. On success only the row wearing
+     * that token leaves [history]: one emission of the list minus that key, so
+     * the History screen animates that row out and every other row is left
+     * where it is. The listener snapshot is brought in line in the same step,
+     * so switching account and back cannot bring the row back. On failure the
+     * list is left exactly as it was — not replaced with an error — and
+     * [onFailure] says so.
+     */
+    /**
+     * The last History removal YouTube refused: which row, and a count that
+     * makes a second refusal of the same row a new event. Read by the History
+     * screen to pulse that one row — see [removeFromHistory].
+     */
+    data class HistoryRemovalFailure(val token: String, val seq: Int)
+
+    private val _historyRemovalFailed = MutableStateFlow<HistoryRemovalFailure?>(null)
+    val historyRemovalFailed: StateFlow<HistoryRemovalFailure?> = _historyRemovalFailed.asStateFlow()
+
+    fun removeFromHistory(token: String, onFailure: () -> Unit) {
+        val identity = listenerKey()
+        viewModelScope.launch {
+            YtMusicRepository.removeFromHistory(token)
+                .onSuccess {
+                    if (identity != listenerKey()) return@onSuccess
+                    val current = _history.value as? UiState.Success ?: return@onSuccess
+                    val index = current.data.indexOfFirst { it.feedbackToken == token }
+                    if (index < 0) return@onSuccess
+                    val remaining = current.data.toMutableList().apply { removeAt(index) }
+                    _history.value = if (remaining.isEmpty()) {
+                        UiState.Error(text(R.string.history_empty))
+                    } else {
+                        UiState.Success(remaining)
+                    }
+                    identity?.let { key ->
+                        listenerCache[key]?.let { listenerCache[key] = it.copy(history = _history.value) }
+                    }
+                }
+                .onFailure {
+                    com.music.bitchord.data.TrackLog.w("BitChord", "removeFromHistory failed: ${it.message}")
+                    _historyRemovalFailed.value = HistoryRemovalFailure(
+                        token,
+                        (_historyRemovalFailed.value?.seq ?: 0) + 1,
+                    )
+                    onFailure()
+                }
+        }
+    }
+
     /** Recent searches, kept on device as rich entity records. */
     val searchHistory: StateFlow<List<SearchHistoryEntity>> = SearchHistory.recent
 

@@ -1594,4 +1594,6 @@
     <string name="cached_song_partial">Parcial</string>
     <string name="remove_from_cache">Quitar de la caché</string>
     <string name="removed_from_cache">Quitada de la caché de canciones</string>
+    <string name="remove_from_history">Quitar del historial</string>
+    <string name="remove_from_history_failed">No se pudo quitar del historial</string>
 </resources>

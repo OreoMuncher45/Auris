@@ -1605,4 +1605,6 @@
     <string name="cached_song_partial">บางส่วน</string>
     <string name="remove_from_cache">นำออกจากแคช</string>
     <string name="removed_from_cache">นำออกจากแคชเพลงแล้ว</string>
+    <string name="remove_from_history">นำออกจากประวัติ</string>
+    <string name="remove_from_history_failed">นำออกจากประวัติไม่ได้</string>
 </resources>

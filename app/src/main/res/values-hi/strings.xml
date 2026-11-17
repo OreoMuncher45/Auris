@@ -1622,4 +1622,6 @@
     <string name="cached_song_partial">आंशिक</string>
     <string name="remove_from_cache">कैश से हटाएँ</string>
     <string name="removed_from_cache">गाने के कैश से हटाया गया</string>
+    <string name="remove_from_history">इतिहास से हटाएँ</string>
+    <string name="remove_from_history_failed">इतिहास से नहीं हटाया जा सका</string>
 </resources>

@@ -774,8 +774,14 @@ private fun BitChordApp(
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
         sheets.songMenu.fromPlayer = false
+        sheets.songMenu.fromHistory = false
         sheets.songMenu.origin = LongPressOrigin.consume()
         sheets.songMenu.song = song
+    }
+    /** Holding a History row: the same menu, plus "Remove from history" when the row can be removed. */
+    val openHistorySongMenu: (Song) -> Unit = { song ->
+        openSongMenu(song)
+        sheets.songMenu.fromHistory = true
     }
     /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
@@ -3054,6 +3060,7 @@ private fun BitChordApp(
             // ids have been resolved.
             onOpenMenu = {
                 sheets.songMenu.fromPlayer = true
+                sheets.songMenu.fromHistory = false
                 sheets.songMenu.origin = null
                 sheets.songMenu.song = song
             },
@@ -3569,6 +3576,9 @@ private fun BitChordApp(
                 value = song.localUri == null &&
                     withContext(Dispatchers.IO) { AudioCache.holds(song.videoId) }
             }
+            // A History row carries YouTube's own "remove from history" token,
+            // and only a menu opened there may spend it.
+            val historyToken = song.feedbackToken?.takeIf { sheets.songMenu.fromHistory && !fromPlayer }
             SongActionsSheet(
                 song = song,
                 presentation = presentation,
@@ -3639,6 +3649,16 @@ private fun BitChordApp(
                     }
                 } else {
                     null
+                },
+                // The list is left alone until YouTube confirms; a refusal
+                // says so and changes nothing — see [MainViewModel.removeFromHistory].
+                onRemoveFromHistory = historyToken?.let { token ->
+                    {
+                        sheets.songMenu.song = null
+                        viewModel.removeFromHistory(token) {
+                            Toast.makeText(context, R.string.remove_from_history_failed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 },
                 // The folders are the listener's own, so these are offered
                 // whether or not anyone is signed in — a folder is the answer
@@ -3957,6 +3977,7 @@ private fun BitChordApp(
             playOfflineLibrary = playOfflineLibrary,
             onSongSwipe = onSongSwipe,
             openSongMenu = openSongMenu,
+            openHistorySongMenu = openHistorySongMenu,
             openBrowseMenu = openBrowseMenu,
             onBrowseLongPress = onBrowseLongPress,
             onShelfLongPress = onShelfLongPress,
@@ -4982,6 +5003,7 @@ private fun RootPage(
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
     val historyState by viewModel.history.collectAsStateWithLifecycle()
+    val historyRemovalFailed by viewModel.historyRemovalFailed.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
@@ -5020,13 +5042,14 @@ private fun RootPage(
     if (key == "history") {
         HistoryScreen(
             state = historyState,
+            removalFailure = historyRemovalFailed,
             listState = scroll.history,
             currentSong = player.song,
             isPlaying = player.isPlaying,
             onSongClick = { songs, index ->
                 pageActions.playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
             },
-            onSongLongPress = pageActions.openSongMenu,
+            onSongLongPress = pageActions.openHistorySongMenu,
             onSongSwipe = pageActions.onSongSwipe,
             onRetry = viewModel::loadHistory,
             contentPadding = listPadding,
@@ -6246,6 +6269,7 @@ private data class PageActions(
     val playOfflineLibrary: (Song, QueueSource) -> Unit,
     val onSongSwipe: (Song) -> Unit,
     val openSongMenu: (Song) -> Unit,
+    val openHistorySongMenu: (Song) -> Unit,
     val openBrowseMenu: (BrowseTarget) -> Unit,
     val onBrowseLongPress: (ShelfItem) -> Unit,
     val onShelfLongPress: (ShelfItem) -> Unit,
@@ -7823,6 +7847,12 @@ internal class RootSheets {
          * question has to be answered by whoever opened the menu.
          */
         var fromPlayer by mutableStateOf(false)
+        /**
+         * Whether the menu was opened from the History screen — the one place
+         * "Remove from history" means anything. Set by the History screen's
+         * opener after the ordinary one has cleared it.
+         */
+        var fromHistory by mutableStateOf(false)
         /**
          * The row or card that was held to open the track menu, or null when it
          * was opened any other way. Non-null lifts that item into

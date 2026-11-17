@@ -154,6 +154,15 @@ object YtMusicRepository {
      */
     suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
 
+    /**
+     * Removes one play from the account's listening history, with the token
+     * YouTube put on that History row — see [Song.feedbackToken]. There is no
+     * video-id form of this call; the token *is* the request.
+     */
+    suspend fun removeFromHistory(token: String): Result<Unit> = call("removeFromHistory") {
+        check(Innertube.sendFeedbackForAnswer(token)) { "YouTube Music did not remove it from the history" }
+    }
+
     /** Account listening history for the Recents feed. */
     suspend fun recents(): Result<List<Song>> = call("recents") {
         if (Innertube.cookie != null) {

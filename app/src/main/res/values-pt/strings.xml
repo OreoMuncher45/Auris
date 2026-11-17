@@ -1627,4 +1627,6 @@
     <string name="cached_song_partial">Parcial</string>
     <string name="remove_from_cache">Remover do cache</string>
     <string name="removed_from_cache">Removida do cache de músicas</string>
+    <string name="remove_from_history">Remover do histórico</string>
+    <string name="remove_from_history_failed">Não foi possível remover do histórico</string>
 </resources>

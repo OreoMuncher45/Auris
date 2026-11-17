@@ -1623,4 +1623,6 @@
     <string name="cached_song_partial">Partiel</string>
     <string name="remove_from_cache">Retirer du cache</string>
     <string name="removed_from_cache">Retiré du cache des titres</string>
+    <string name="remove_from_history">Retirer de l\'historique</string>
+    <string name="remove_from_history_failed">Impossible de retirer de l\'historique</string>
 </resources>

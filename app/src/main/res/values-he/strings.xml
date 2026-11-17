@@ -1627,4 +1627,6 @@
     <string name="cached_song_partial">חלקי</string>
     <string name="remove_from_cache">הסרה מהמטמון</string>
     <string name="removed_from_cache">הוסר ממטמון השירים</string>
+    <string name="remove_from_history">הסרה מההיסטוריה</string>
+    <string name="remove_from_history_failed">לא ניתן להסיר מההיסטוריה</string>
 </resources>

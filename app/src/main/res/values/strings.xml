@@ -1489,4 +1489,6 @@
     <string name="cached_song_partial">Partial</string>
     <string name="remove_from_cache">Remove from cache</string>
     <string name="removed_from_cache">Removed from the song cache</string>
+    <string name="remove_from_history">Remove from history</string>
+    <string name="remove_from_history_failed">Couldn\'t remove from history</string>
 </resources>

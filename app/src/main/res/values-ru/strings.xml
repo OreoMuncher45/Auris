@@ -1654,4 +1654,6 @@
     <string name="cached_song_partial">Частично</string>
     <string name="remove_from_cache">Удалить из кеша</string>
     <string name="removed_from_cache">Удалено из кеша треков</string>
+    <string name="remove_from_history">Удалить из истории</string>
+    <string name="remove_from_history_failed">Не удалось удалить из истории</string>
 </resources>

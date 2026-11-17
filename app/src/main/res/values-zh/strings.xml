@@ -1599,4 +1599,6 @@
     <string name="cached_song_partial">部分</string>
     <string name="remove_from_cache">从缓存中移除</string>
     <string name="removed_from_cache">已从歌曲缓存中移除</string>
+    <string name="remove_from_history">从历史记录中移除</string>
+    <string name="remove_from_history_failed">无法从历史记录中移除</string>
 </resources>

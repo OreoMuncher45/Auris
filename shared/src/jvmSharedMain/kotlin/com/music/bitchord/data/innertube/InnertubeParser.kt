@@ -777,8 +777,25 @@ object InnertubeParser {
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer.hasExplicitBadge(),
             genAi = renderer.detectGenAi(),
+            // Only a History row's menu carries one; see [historyRemovalToken].
+            feedbackToken = historyRemovalToken(renderer),
         )
     }
+
+    /**
+     * The "Remove from history" feedback token on a History row's menu, or
+     * null. The same plain menu items also carry other feedback actions —
+     * "Don't recommend this", for one — so only the item wearing the DELETE
+     * icon is taken; sending another item's token would quietly do something
+     * else to the account.
+     */
+    private fun historyRemovalToken(renderer: JsonObject): String? =
+        renderer.o("menu").o("menuRenderer").a("items")
+            ?.firstNotNullOfOrNull { item ->
+                val service = item.o("menuServiceItemRenderer") ?: return@firstNotNullOfOrNull null
+                if (service.o("icon").s("iconType") != "DELETE") return@firstNotNullOfOrNull null
+                service.o("serviceEndpoint").o("feedbackEndpoint").s("feedbackToken")
+            }
 
     /**
      * The promoted result at the top of an unfiltered search is a

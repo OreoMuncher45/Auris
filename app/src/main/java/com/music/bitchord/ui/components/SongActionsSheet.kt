@@ -171,6 +171,12 @@ fun SongActionsSheet(
      * passes one only while the cache actually holds some of it.
      */
     onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — passed only for a menu opened on the History screen, for a row
+     * YouTube gave a removal token.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -386,6 +392,14 @@ fun SongActionsSheet(
             )
         }
 
+        onRemoveFromHistory?.let {
+            ActionRow(
+                icon = Icons.Rounded.History,
+                label = stringResource(R.string.remove_from_history),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         DownloadRow(song, palette, isOffline, onDownload)
         onRemoveFromCache?.let {
             ActionRow(

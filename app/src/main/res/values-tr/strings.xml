@@ -1579,4 +1579,6 @@
     <string name="cached_song_partial">Kısmi</string>
     <string name="remove_from_cache">Önbellekten kaldır</string>
     <string name="removed_from_cache">Şarkı önbelleğinden kaldırıldı</string>
+    <string name="remove_from_history">Geçmişten kaldır</string>
+    <string name="remove_from_history_failed">Geçmişten kaldırılamadı</string>
 </resources>
