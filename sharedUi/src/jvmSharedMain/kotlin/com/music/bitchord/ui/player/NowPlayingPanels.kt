@@ -224,6 +224,7 @@ internal fun BoxScope.PortraitLyricsPane(
             picked = lyricPicker.picks,
             onPickLine = lyricPicker.pick,
             onTogglePick = lyricPicker.toggle,
+            discsFloatOver = true,
             modifier = Modifier.fillMaxSize(),
         )
     }
