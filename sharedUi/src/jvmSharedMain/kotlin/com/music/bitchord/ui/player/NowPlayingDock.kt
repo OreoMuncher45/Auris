@@ -272,6 +272,9 @@ internal fun Modifier.skipSwipeGesture(
         // of on the way out instead of leaving the art under a finger that has
         // gone.
         var holding = false
+        // When the finger last moved sideways, so a release after a pause
+        // isn't read as the flick that came before it.
+        var lastMoveNanos = 0L
         try {
             detectHorizontalDragGestures(
                 onDragStart = {
@@ -288,7 +291,10 @@ internal fun Modifier.skipSwipeGesture(
                     holding = false
                     val direction = trackSwipeDirection(
                         total = total,
-                        velocity = velocity.calculateVelocity().x,
+                        velocity = releaseVelocity(
+                            velocity = velocity.calculateVelocity().x,
+                            sinceLastMoveMs = (System.nanoTime() - lastMoveNanos) / 1_000_000L,
+                        ),
                         threshold = swipeThreshold,
                         flingVelocity = flingVelocity,
                     )
@@ -322,6 +328,7 @@ internal fun Modifier.skipSwipeGesture(
                 onHorizontalDrag = { change, delta ->
                     total += delta
                     velocity.addPointerInputChange(change)
+                    lastMoveNanos = System.nanoTime()
                     motion.drag(total, swipeThreshold)
                 },
             )

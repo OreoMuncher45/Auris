@@ -48,6 +48,17 @@ internal fun trackSwipeDirection(total: Float, velocity: Float, threshold: Float
 }
 
 /**
+ * The release's speed, or none if the finger had stopped before it lifted.
+ *
+ * The tracker only hears sideways moves, and with none after a pause it
+ * still reports the speed of the last one: a quick drag held still and then
+ * let go would read as a flick. [STOPPED_AFTER_MS] matches Compose's own
+ * cut-off for a pointer that has stopped.
+ */
+internal fun releaseVelocity(velocity: Float, sinceLastMoveMs: Long): Float =
+    if (sinceLastMoveMs > STOPPED_AFTER_MS) 0f else velocity
+
+/**
  * Where the card is drawn for a finger [total] pixels along: with it, one to
  * one, up to [knee], and then giving way, so the card still answers past the
  * point where a release would skip without running off with the finger.
@@ -391,6 +402,8 @@ internal const val ENTER_FRACTION = 0.35f
 
 /** A release this fast, in dp per second, skips however short the drag. */
 internal const val SWIPE_FLING_DP_PER_S = 1000f
+/** A finger still this long before it lifts had stopped: no flick. */
+internal const val STOPPED_AFTER_MS = 40L
 /** How long a swipe or button's word on which way the change went is trusted. */
 internal const val TRACK_HINT_TTL_MS = 1_000L
 /** How long a swipe that left waits for the change before coming back. */

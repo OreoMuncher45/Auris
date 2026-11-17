@@ -33,6 +33,16 @@ class TrackChangeMotionTest {
     }
 
     @Test
+    fun aQuickDragHeldStillBeforeReleaseIsNotAFlick() {
+        // Moving fast, released at once: a flick.
+        val fresh = releaseVelocity(velocity = -1500f, sinceLastMoveMs = 8)
+        assertEquals(1, trackSwipeDirection(total = -40f, velocity = fresh, threshold = 72f, flingVelocity = 1000f))
+        // The same drag held for 500ms first: it springs back.
+        val stale = releaseVelocity(velocity = -1500f, sinceLastMoveMs = 500)
+        assertEquals(0, trackSwipeDirection(total = -40f, velocity = stale, threshold = 72f, flingVelocity = 1000f))
+    }
+
+    @Test
     fun theCardFollowsOneToOneThenGivesWay() {
         assertEquals(100f, cardSwipeOffset(100f, knee = 400f))
         assertEquals(-400f, cardSwipeOffset(-400f, knee = 400f))
