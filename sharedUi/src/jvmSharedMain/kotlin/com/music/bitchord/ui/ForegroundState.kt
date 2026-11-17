@@ -2,6 +2,8 @@ package com.music.bitchord.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,4 +52,30 @@ fun rememberIsForeground(): Boolean {
         onDispose { lifecycle.removeObserver(observer) }
     }
     return foreground
+}
+
+/**
+ * Whether the page this is composed in is wholly hidden behind the player —
+ * the portrait panel all the way up, which draws edge to edge and leaves the
+ * page undrawn underneath it.
+ *
+ * The page stays composed while it is hidden, so it is current the moment the
+ * panel starts down again. That is right for its layout and wrong for its
+ * loops: a video clip on Home or a detail page went on decoding behind a
+ * player that covered it, and each decoded frame woke the window to draw it —
+ * a redraw a frame for a picture nobody could see, on a screen that otherwise
+ * had nothing moving.
+ *
+ * Asked rather than handed down as a value, so a flip recomposes only the
+ * readers of [rememberPageHidden], not the whole page. Never true for anything
+ * composed in the player itself; it is provided around the page alone.
+ */
+val LocalPageHidden = compositionLocalOf<() -> Boolean> { { false } }
+
+/** [LocalPageHidden] as a value that changes only when it flips. */
+@Composable
+fun rememberPageHidden(): Boolean {
+    val hidden = LocalPageHidden.current
+    val state = remember(hidden) { derivedStateOf(hidden) }
+    return state.value
 }

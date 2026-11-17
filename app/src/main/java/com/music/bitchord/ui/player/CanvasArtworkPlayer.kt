@@ -56,6 +56,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.rememberPageHidden
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
@@ -369,11 +370,17 @@ internal fun AndroidCanvasArtworkPlayer(
     // pocket. The last frame stays on the surface, so resuming picks up where
     // it stopped with nothing to repaint.
     //
+    // A page hidden behind the player stops it too — see [LocalPageHidden].
+    // A pause, not a release: the last frame stays on the surface, so when the
+    // player comes down the clip is already there and picks up from it, with
+    // no decoder to rebuild and no fade back in.
+    //
     // Held inside this component rather than asked of each caller, so no call
     // site can forget it.
     val foreground = rememberIsForeground()
-    LaunchedEffect(foreground, isPlaying, pausedForTransition) {
-        player.playWhenReady = foreground && isPlaying && !pausedForTransition
+    val pageHidden = rememberPageHidden()
+    LaunchedEffect(foreground, isPlaying, pausedForTransition, pageHidden) {
+        player.playWhenReady = foreground && isPlaying && !pausedForTransition && !pageHidden
     }
 
     // Repaint onto a surface that has just been handed back. A TextureView's
@@ -456,6 +463,7 @@ internal fun AndroidCanvasArtworkPlayer(
         foreground,
         isPlaying,
         pausedForTransition,
+        pageHidden,
         currentVideoSize,
         copyThread,
     ) {
@@ -464,7 +472,7 @@ internal fun AndroidCanvasArtworkPlayer(
         Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
-        if (!rendered || !foreground || !isPlaying || pausedForTransition) return@LaunchedEffect
+        if (!rendered || !foreground || !isPlaying || pausedForTransition || pageHidden) return@LaunchedEffect
         while (isActive) {
             val view = textureView
             if (view == null) {

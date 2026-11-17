@@ -100,6 +100,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -4078,6 +4079,7 @@ private fun BitChordApp(
         val pageHiddenByPlayer by remember(pageCoveredByPlayer, playerDock) {
             derivedStateOf { pageCoveredByPlayer && playerDock.attached && playerDock.openFraction() >= 1f }
         }
+        val pageHiddenQuery: () -> Boolean = remember(pageCoveredByPlayer, playerDock) { { pageHiddenByPlayer } }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -4107,6 +4109,10 @@ private fun BitChordApp(
                         if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
+                // Clips on the page hold still while it is hidden — see
+                // [LocalPageHidden]. The flag, not the fraction, so the page
+                // hears it twice per open and close rather than every frame.
+                CompositionLocalProvider(LocalPageHidden provides pageHiddenQuery) {
                 // Which page is on screen, as one name. The transition runs
                 // on the difference between two of these.
                 val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
@@ -4793,6 +4799,7 @@ private fun BitChordApp(
                         )
                     }
                 }
+                } // LocalPageHidden
             }
 
         }
