@@ -553,8 +553,8 @@ object AudioCache {
                 when {
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { offlineSibling(videoId, it) ?: it }
-                    else -> offlineSibling(videoId, videoId) ?: videoId
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
+                    else -> completeSibling(videoId, videoId) ?: videoId
                 }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -577,20 +577,28 @@ object AudioCache {
     }
 
     /**
-     * With no connection, the complete copy of [videoId] the cache holds under
-     * a sibling key, when [preferred] — the key the current settings name —
-     * holds nothing at all.
+     * The complete copy of [videoId] the cache holds under a sibling key, when
+     * [preferred] — the key the current settings name — holds nothing at all.
      *
      * Which key a track lands under depends on settings that can change after
      * it was cached: ranking a source above YouTube, or turning Dolby Atmos
-     * off, moves it from `videoId` to `videoId#alt2` or `#alt2-noatmos`.
-     * Online that only costs a re-download. Offline it made a track the Cached
-     * songs folder lists — fully on disk — fail to play at all, because the
-     * player asked for an empty entry and the network to fill it was not there.
+     * off, moves it from `videoId` to `videoId#alt2` or `#alt2-noatmos`, and
+     * un-ranking it moves it back. Offline that made a track the Cached songs
+     * folder lists — fully on disk — fail to play at all, because the player
+     * asked for an empty entry and the network to fill it was not there.
      *
-     * Only offline, and only for a copy that is complete: a complete entry is
-     * never written to again, so reading it cannot start the mixed-file seam
-     * [keyFactory] keeps renditions apart to prevent.
+     * Only for a copy that is complete: a complete entry is never written to
+     * again, so reading it cannot start the mixed-file seam [keyFactory] keeps
+     * renditions apart to prevent.
+     *
+     * Online it depends on the direction. With a source ranked above YouTube
+     * the preferred `#alt2` key keeps its own rendition — falling back to the
+     * plain entry would hand back a YouTube Opus copy in place of the better
+     * one a source would resolve, and `#alt2` against `#alt2-noatmos` is the
+     * Atmos setting itself. With nothing ranked above YouTube, the plain key
+     * would only ever resolve the same YouTube stream, so a kept YouTube or
+     * JioSaavn copy under `#alt2` is taken online too, instead of writing a
+     * second, byte-identical file under the plain key.
      *
      * The span lookup goes first: nearly every open is of an entry that
      * already holds something, and that answer is an in-memory index read.
@@ -598,11 +606,25 @@ object AudioCache {
      * callback keeps current, so no open pays a ConnectivityManager binder
      * call.
      */
-    private fun offlineSibling(videoId: String, preferred: String): String? {
+    private fun completeSibling(videoId: String, preferred: String): String? {
         if (!::cache.isInitialized) return null
-        if (cache.getCachedSpans(preferred).isNotEmpty() || !isOffline()) return null
-        return siblingKeysOf(videoId).filter { it != preferred }.firstOrNull(::isComplete)
+        if (cache.getCachedSpans(preferred).isNotEmpty()) return null
+        val siblings = siblingKeysOf(videoId).filter { it != preferred }
+        if (isOffline()) return siblings.firstOrNull(::isComplete)
+        if (preferred != videoId) return null
+        return siblings.firstOrNull { key -> isComplete(key) && isKeptOrigin(key) }
     }
+
+    /**
+     * Whether [key]'s bytes came from YouTube or JioSaavn — the copies kept
+     * past playback, see [Origin]. An addon's file is dropped once the queue
+     * moves past it, but until then may sit under `#alt2` as an Atmos or
+     * lossless rendition nothing ranked above YouTube would serve.
+     */
+    private fun isKeptOrigin(key: String): Boolean = runCatching {
+        val origin = cache.getContentMetadata(key).get(META_ORIGIN, null as String?)
+        origin == Origin.YOUTUBE.name || origin == Origin.JIOSAAVN.name
+    }.getOrDefault(false)
 
     /**
      * Every key [keyFactory] can file a YouTube [videoId]'s ordinary playback
