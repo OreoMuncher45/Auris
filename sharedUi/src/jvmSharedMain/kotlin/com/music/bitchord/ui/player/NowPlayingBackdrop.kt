@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -342,13 +343,26 @@ private fun PlayerMeshBackdrop(
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames)
     }
+    // Whether this backdrop has drawn a mesh yet. [ArtworkMeshBackdrop] keeps
+    // the mesh it already has while the next one is null, and draws its flat
+    // fallback only when it never had one — the surface published below
+    // follows the same rule, so it is always what is on screen. A plain flag,
+    // not state: nothing composes off it.
+    val drewMesh = remember { booleanArrayOf(false) }
     // What the chrome stands on, read off the mesh itself: a 32-texel image,
     // averaged into bands off the main thread whenever the mesh changes.
     LaunchedEffect(mesh) {
-        val image = mesh?.image ?: return@LaunchedEffect
+        val image = mesh?.image
+        if (image == null) {
+            if (!drewMesh[0]) {
+                inkSurfaces.main = meshInkSurface(IntArray(INK_BANDS) { FallbackBackdrop.toArgb() })
+            }
+            return@LaunchedEffect
+        }
         inkSurfaces.main = withContext(Dispatchers.Default) {
             meshInkSurface(bandAverages(image.argbPixels(), image.width, image.height))
         }
+        drewMesh[0] = true
     }
     ArtworkMeshBackdrop(
         mesh = mesh,
