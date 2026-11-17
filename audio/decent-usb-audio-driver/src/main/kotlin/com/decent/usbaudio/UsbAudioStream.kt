@@ -117,11 +117,13 @@ class UsbAudioStream(
      * This call blocks when the pipeline is full (natural backpressure
      * matching the DAC's clock rate).
      *
-     * @param pcmBuffer Interleaved float PCM; length = frameCount * channelCount
+     * @param pcmBuffer Interleaved float PCM
+     * @param count Samples of [pcmBuffer] that are audio (frameCount * channelCount);
+     *   the rest is spare capacity of a reused array
      */
-    fun write(pcmBuffer: FloatArray) {
+    fun write(pcmBuffer: FloatArray, count: Int = pcmBuffer.size) {
         if (nativeHandle == 0L) return
-        nativeUsbAudioWrite(nativeHandle, pcmBuffer)
+        nativeUsbAudioWrite(nativeHandle, pcmBuffer, count)
     }
 
     /**
@@ -133,8 +135,9 @@ class UsbAudioStream(
      *
      * @param pcmBuffer Raw PCM bytes (interleaved, little-endian)
      * @param encoding  Media3 PCM encoding constant (C.ENCODING_PCM_16BIT, etc.)
+     * @param count Bytes of [pcmBuffer] that are audio; the rest is spare capacity
      */
-    fun writeRaw(pcmBuffer: ByteArray, encoding: Int) {
+    fun writeRaw(pcmBuffer: ByteArray, encoding: Int, count: Int = pcmBuffer.size) {
         if (nativeHandle == 0L) return
         val inputBitDepth = when (encoding) {
             2 -> 16   // C.ENCODING_PCM_16BIT
@@ -142,7 +145,7 @@ class UsbAudioStream(
             0x16 -> 32 // C.ENCODING_PCM_32BIT
             else -> return
         }
-        nativeUsbAudioWriteRaw(nativeHandle, pcmBuffer, inputBitDepth)
+        nativeUsbAudioWriteRaw(nativeHandle, pcmBuffer, count, inputBitDepth)
     }
 
     /**
@@ -205,8 +208,8 @@ class UsbAudioStream(
     private external fun nativeUsbAudioSetAltSetting(handle: Long, altSetting: Int): Boolean
     private external fun nativeUsbAudioSetSampleRate(handle: Long, sampleRateHz: Int, clockSourceId: Int): Boolean
     private external fun nativeUsbAudioStart(handle: Long): Boolean
-    private external fun nativeUsbAudioWrite(handle: Long, pcmBuffer: FloatArray)
-    private external fun nativeUsbAudioWriteRaw(handle: Long, pcmBuffer: ByteArray, inputBitDepth: Int)
+    private external fun nativeUsbAudioWrite(handle: Long, pcmBuffer: FloatArray, count: Int)
+    private external fun nativeUsbAudioWriteRaw(handle: Long, pcmBuffer: ByteArray, count: Int, inputBitDepth: Int)
     private external fun nativeUsbAudioStop(handle: Long)
     private external fun nativeFlush(handle: Long)
     private external fun nativePump(handle: Long)
