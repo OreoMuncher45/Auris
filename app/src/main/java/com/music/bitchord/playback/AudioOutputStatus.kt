@@ -107,6 +107,11 @@ object AudioOutputStatus {
         val exclusiveUsbDetail: String? = null,
         /** Which mixer-free path [exclusiveUsbActive] and [exclusiveUsbDetail] describe. */
         val exclusiveTransport: TransportType = TransportType.DIRECT_USB,
+        /**
+         * Non-null while the exclusive output carries the track converted to the
+         * DAC's best format ("convert for lower-spec DACs"): what it was fitted to.
+         */
+        val dacConversion: String? = null,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
         val directPlaybackSelected: Boolean = false,
@@ -208,6 +213,7 @@ object AudioOutputStatus {
                 exclusiveUsbActive == other.exclusiveUsbActive &&
                 exclusiveUsbDetail == other.exclusiveUsbDetail &&
                 exclusiveTransport == other.exclusiveTransport &&
+                dacConversion == other.dacConversion &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
                 directPlaybackSelected == other.directPlaybackSelected &&
@@ -257,6 +263,7 @@ object AudioOutputStatus {
             result = 31 * result + exclusiveUsbActive.hashCode()
             result = 31 * result + (exclusiveUsbDetail?.hashCode() ?: 0)
             result = 31 * result + exclusiveTransport.hashCode()
+            result = 31 * result + (dacConversion?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
             result = 31 * result + directPlaybackSelected.hashCode()
@@ -465,6 +472,11 @@ object AudioOutputStatus {
     }
 
     /** The Android 14 bit-perfect mixer request, or null when bit-perfect is off. */
+    fun publishDacConversion(label: String?) {
+        if (current.value.dacConversion == label) return
+        current.value = current.value.copy(dacConversion = label)
+    }
+
     fun publishBitPerfectMixer(state: BitPerfectMixer.State?) {
         current.value = current.value.copy(bitPerfectMixer = state)
     }

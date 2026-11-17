@@ -116,6 +116,16 @@ class AAudioExclusiveSession(context: Context) : ExclusiveSession {
                 it.type == AudioDeviceInfo.TYPE_LINE_ANALOG
         }
 
+    /**
+     * The wired output's own rate list where it gives one. Its depths are only
+     * found out by opening, so 16 and 24 are offered and the native side
+     * falls back from there.
+     */
+    override fun dacOffers(format: Format): Map<Int, Set<Int>> {
+        val rates = wiredOutput()?.sampleRates?.takeIf { it.isNotEmpty() }?.toList() ?: BitPerfectPcm.STANDARD_RATES
+        return rates.associateWith { setOf(16, 24) }
+    }
+
     override fun canOpen(): Boolean = ExclusiveNative.loaded && wiredOutput() != null
 
     override fun configure(format: Format, bitDepthHint: Int?): Boolean = synchronized(lock) {

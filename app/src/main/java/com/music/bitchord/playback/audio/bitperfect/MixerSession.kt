@@ -97,6 +97,9 @@ class MixerSession(
         return BitPerfectMixer.usbOutput(manager) != null
     }
 
+    override fun dacOffers(format: Format): Map<Int, Set<Int>> =
+        BitPerfectMixer.bitPerfectIntegerFormats(manager, BitPerfectMixer.usbOutput(manager), format.channelCount)
+
     override fun configure(format: Format, bitDepthHint: Int?): Boolean = synchronized(lock) {
         closeLocked()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

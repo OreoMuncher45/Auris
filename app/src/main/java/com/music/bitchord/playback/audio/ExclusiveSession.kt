@@ -56,6 +56,13 @@ interface ExclusiveSession {
     /** Whether there is something to try right now: the device is there and allowed. */
     fun canOpen(): Boolean
 
+    /**
+     * What the device offers for a track like [format] when it cannot take
+     * [format] itself: rate to the integer depths it takes there, for the
+     * opt-in "convert for lower-spec DACs" fallback. Empty when unknown.
+     */
+    fun dacOffers(format: Format): Map<Int, Set<Int>> = emptyMap()
+
     /** Opens at [format]'s own rate and channel count, or returns false. */
     fun configure(format: Format, bitDepthHint: Int? = null): Boolean
 

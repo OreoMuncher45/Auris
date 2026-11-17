@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.audio.bitperfect.DacFit
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -157,6 +158,13 @@ class PrecisionAudioSink(
      * path switch mid-track still closes the session that is actually open.
      */
     @Volatile private var boundSession: ExclusiveSession? = null
+
+    /**
+     * Set while the open session carries this track converted to the DAC's
+     * best format ("convert for lower-spec DACs"); null when it carries the
+     * track untouched.
+     */
+    private var dacFit: DacFit? = null
 
     /** The open session, or the one the service would use next. */
     private val exclusiveUsb: ExclusiveSession?
@@ -406,17 +414,38 @@ class PrecisionAudioSink(
         // LastWave's order: release the mixer's claim before opening usbdevfs.
         runCatching { delegate.pause() }
         runCatching { delegate.flush() }
-        val started = runCatching {
+        dacFit = null
+        var started = runCatching {
             session.configure(format, bitDepthHint = bitDepthHint())
         }.getOrDefault(false)
         // A DAC that latched a different clock would get source-rate bytes fed
-        // to the wrong rate. This sink has no resampler, so the honest answer
-        // is the mixer fallback rather than a pitch-shifted stream.
+        // to the wrong rate. The untouched path has no resampler, so the
+        // honest answer is the mixer fallback rather than a pitch-shifted
+        // stream — unless the listener asked for conversion, below.
+        var latched = 0
         if (started && session.currentRateHz() != format.sampleRate) {
-            val latched = session.currentRateHz()
+            latched = session.currentRateHz()
             runCatching { session.reset() }
+            started = false
+        }
+        // "Convert for lower-spec DACs": the DAC's best format instead of the
+        // mixer. Never reported as bit-perfect. A few formats at most, since
+        // every attempt opens the device.
+        if (!started && AppSettings.convertForLimitedDac.value) {
+            for ((rate, bits) in DacFit.candidates(format, runCatching { session.dacOffers(format) }.getOrDefault(emptyMap()))) {
+                val target = DacFit.targetFormat(format, rate, bits)
+                val opened = runCatching { session.configure(target, bitDepthHint = bits) }.getOrDefault(false)
+                if (opened && session.currentRateHz() == rate) {
+                    dacFit = DacFit(format, target, bits)
+                    started = true
+                    break
+                }
+                if (opened) runCatching { session.reset() }
+            }
+        }
+        if (!started && latched > 0) {
             publishExclusiveUnavailable(
-                "DAC clock ${latched} Hz for a ${format.sampleRate} Hz track; no resampling in bit-perfect",
+                "DAC clock $latched Hz for a ${format.sampleRate} Hz track; no resampling in bit-perfect",
             )
             if (playing) runCatching { delegate.play() }
             return true
@@ -433,10 +462,16 @@ class PrecisionAudioSink(
             val bits = session.activeWireBits()
             val rate = session.currentRateHz()
             val wire = if (bits > 0) "$bits-bit" else "PCM"
+            val fit = dacFit
             AudioOutputStatus.publishOutputExactness(
-                exact = true,
-                detail = "${session.pathLabel}: $wire / $rate Hz direct to the DAC",
+                exact = fit == null,
+                detail = if (fit == null) {
+                    "${session.pathLabel}: $wire / $rate Hz direct to the DAC"
+                } else {
+                    "${session.pathLabel}: DAC max ${fit.label}"
+                },
             )
+            AudioOutputStatus.publishDacConversion(fit?.label)
             AudioOutputStatus.publishDsp(
                 decoderOutputEncoding = inputPcmEncoding?.let { encodingLabel(mapFromPcmEncoding(it)) },
                 dspFormat = "Float32 (bypassed)",
@@ -459,6 +494,8 @@ class PrecisionAudioSink(
         exclusiveEnded = false
         runCatching { exclusiveUsb?.reset() }
         boundSession = null
+        dacFit = null
+        AudioOutputStatus.publishDacConversion(null)
         val input = inputPcmEncoding
         val output = targetOutputEncoding
         if (input != null && output != null) publishTelemetry(input, output)
@@ -565,7 +602,13 @@ class PrecisionAudioSink(
             session.hardwareOutputLevelDb(),
         )
         val encoding = inputPcmEncoding ?: return ExclusiveOutcome.FALL_THROUGH
-        if (session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)) {
+        val fit = dacFit
+        val taken = if (fit != null) {
+            fit.write(session, buffer, presentationTimeUs)
+        } else {
+            session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)
+        }
+        if (taken) {
             exclusiveEnded = false
             return ExclusiveOutcome.CONSUMED
         }
@@ -868,6 +911,7 @@ class PrecisionAudioSink(
             // Drop the URBs already queued for the pre-seek position. The
             // delegate is already idle and flushed from configure.
             runCatching { exclusiveUsb?.flush() }
+            dacFit?.reset()
         }
         if (isPrecisionActive) {
             dspChain.flush()
@@ -888,6 +932,7 @@ class PrecisionAudioSink(
         }
         exclusiveActive = false
         boundSession = null
+        dacFit = null
         exclusiveEnded = false
         processedEndUs = C.TIME_UNSET
         dspChain.transition.leadUs = 0L

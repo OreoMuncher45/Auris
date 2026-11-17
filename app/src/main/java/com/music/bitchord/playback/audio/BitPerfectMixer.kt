@@ -133,6 +133,34 @@ object BitPerfectMixer {
             .toSet()
     }
 
+    /** Every rate [device] offers a bit-perfect mix at for [channelCount], to the integer depths there. */
+    fun bitPerfectIntegerFormats(
+        manager: AudioManager?,
+        device: AudioDeviceInfo?,
+        channelCount: Int,
+    ): Map<Int, Set<Int>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return emptyMap()
+        if (manager == null || device == null || !device.isUsb) return emptyMap()
+        return bitPerfectIntegerFormatsApi34(manager, device, channelCount)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun bitPerfectIntegerFormatsApi34(
+        manager: AudioManager,
+        device: AudioDeviceInfo,
+        channelCount: Int,
+    ): Map<Int, Set<Int>> {
+        val supported = runCatching { manager.getSupportedMixerAttributes(device) }.getOrDefault(emptyList())
+        val offers = HashMap<Int, MutableSet<Int>>()
+        for (attributes in supported) {
+            if (attributes.mixerBehavior != AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT) continue
+            if (Integer.bitCount(attributes.format.channelMask) != channelCount) continue
+            val bits = integerBits(attributes.format.encoding) ?: continue
+            offers.getOrPut(attributes.format.sampleRate) { HashSet() }.add(bits)
+        }
+        return offers
+    }
+
     /** The integer depth of a framework PCM encoding, or null for float and the rest. */
     fun integerBits(encoding: Int): Int? = when (encoding) {
         AudioFormat.ENCODING_PCM_16BIT -> 16

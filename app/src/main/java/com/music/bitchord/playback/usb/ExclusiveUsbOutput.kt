@@ -256,6 +256,16 @@ class ExclusiveUsbOutput(
         return dacCurrentDb
     }
 
+    /**
+     * The DAC's clock rates as last read from it, else the standard list; the
+     * alt-setting search at open settles the depth.
+     */
+    override fun dacOffers(format: Format): Map<Int, Set<Int>> {
+        val rates = runCatching { usbAudio.querySupportedSampleRates() }.getOrDefault(emptyList())
+            .ifEmpty { com.music.bitchord.playback.audio.bitperfect.BitPerfectPcm.STANDARD_RATES }
+        return rates.associateWith { setOf(16, 24) }
+    }
+
     override fun currentRateHz(): Int = if (active) configuredRateHz else 0
 
     override fun activeWireBits(): Int = if (active) activeWireBits else 0
