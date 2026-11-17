@@ -1410,6 +1410,10 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="community_header">Community</string>
+    <string name="community_discord">Discord</string>
+    <string name="community_discord_subtitle">Bugs, features, beta builds</string>
+    <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="audiobooks">Audiobooks</string>
     <string name="audiobooks_subtitle">Public-domain books, read aloud</string>
     <string name="audiobooks_search_hint">Search books</string>

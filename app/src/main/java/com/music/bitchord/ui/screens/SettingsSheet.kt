@@ -28,9 +28,7 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -44,10 +42,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -70,8 +65,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -81,7 +76,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -305,10 +299,6 @@ fun SettingsScreen(
         if (openCategory == null && !searchActive) {
             // The index: one row per category. Each opens a page of its own;
             // the search field above reaches into all of them at once.
-            if (search.matches("community", "discord", "reddit", "beta", "bugs", "features")) {
-                Spacer(Modifier.height(14.dp))
-                CommunityCard()
-            }
             SettingsCategoryIndex(onOpen = onOpenCategory)
         }
         if (shows(SettingsCategory.ACCOUNT)) {
@@ -714,112 +704,12 @@ internal fun AccountCard(
 
 // ---- Building blocks --------------------------------------------------------
 
-private const val COMMUNITY_DISCORD_URL = "https://discord.gg/8VnWqcuzqg"
-private const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/BitChordNext"
+internal const val COMMUNITY_DISCORD_URL = "https://discord.gg/8VnWqcuzqg"
+internal const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/BitChordNext"
 
-private fun openCommunityLink(context: Context, url: String) {
+internal fun openCommunityLink(context: Context, url: String) {
     runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    }
-}
-
-/**
- * The first thing under the search field: where to report a bug, ask for a
- * feature, get into the beta, or just talk about the app. Discord is the
- * primary action because that is where the builds and quick replies live;
- * Reddit stays one tap away without turning the card into a menu.
- */
-@Composable
-private fun CommunityCard() {
-    val context = LocalContext.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = GROUP_INSET)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                        MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ),
-            )
-            .padding(18.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Groups,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = stringResource(R.string.community_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = stringResource(R.string.community_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(14.dp))
-        Button(
-            onClick = { openCommunityLink(context, COMMUNITY_DISCORD_URL) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF5865F2),
-                contentColor = Color.White,
-            ),
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_discord),
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = Color.White,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(stringResource(R.string.community_join_discord))
-        }
-        Spacer(Modifier.height(8.dp))
-        FilledTonalButton(
-            onClick = { openCommunityLink(context, COMMUNITY_REDDIT_URL) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Forum,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = Color(0xFFFF4500),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = stringResource(R.string.community_reddit),
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
@@ -1052,6 +942,8 @@ internal fun SettingsRow(
     badge: String? = null,
     enabled: Boolean = true,
     iconPainter: Painter? = null,
+    /** A brand mark's own colour; unspecified rows take the text colour. */
+    iconTint: Color = Color.Unspecified,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     /**
@@ -1061,6 +953,7 @@ internal fun SettingsRow(
      */
     titleMaxLines: Int = 1,
 ) {
+    val resolvedIconTint = iconTint.takeOrElse { MaterialTheme.colorScheme.onBackground }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1074,14 +967,14 @@ internal fun SettingsRow(
             Icon(
                 painter = iconPainter,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
+                tint = resolvedIconTint,
                 modifier = Modifier.size(ICON_SIZE),
             )
         } else if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
+                tint = resolvedIconTint,
                 modifier = Modifier.size(ICON_SIZE),
             )
         }

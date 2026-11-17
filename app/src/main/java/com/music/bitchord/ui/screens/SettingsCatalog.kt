@@ -69,6 +69,8 @@ object SettingsCatalog {
         SettingsCategory.ACCOUNT to listOf(
             "account.integrations",
             "account.listen_together",
+            "account.community_discord",
+            "account.community_reddit",
         ),
         SettingsCategory.AUDIO to listOf(
             "audio.source",

@@ -1,17 +1,24 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.Account
 
-/** The Account category: the account and scrobbling screen, and Listen Together. */
+/**
+ * The Account category: the account and scrobbling screen, Listen Together,
+ * and where to find the community (Discord, Reddit).
+ */
 @Composable
 internal fun AccountSettings(
     search: SettingsSearch,
@@ -48,6 +55,32 @@ internal fun AccountSettings(
                 } ?: stringResource(R.string.listen_together_subtitle),
                 badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
                 onClick = onListenTogether,
+            )
+        }
+    }
+    // Where to report a bug, ask for a feature or get into the beta. Plain
+    // rows rather than a card, so the page draws no gradient or buttons and
+    // the links are found by the settings search like any other row.
+    val context = LocalContext.current
+    SearchableSettingsGroup(search, header = stringResource(R.string.community_header)) {
+        val discordTitle = stringResource(R.string.community_discord)
+        row(discordTitle, "community", "beta", "bugs", "features", "server") {
+            SettingsRow(
+                iconPainter = painterResource(R.drawable.ic_discord),
+                title = discordTitle,
+                subtitle = stringResource(R.string.community_discord_subtitle),
+                onClick = { openCommunityLink(context, COMMUNITY_DISCORD_URL) },
+            )
+        }
+        val redditTitle = stringResource(R.string.community_reddit)
+        row(redditTitle, "community", "subreddit", "forum") {
+            SettingsRow(
+                icon = Icons.Rounded.Forum,
+                // Reddit's orange, as the old community card drew it.
+                iconTint = Color(0xFFFF4500),
+                title = redditTitle,
+                subtitle = stringResource(R.string.community_reddit_subtitle),
+                onClick = { openCommunityLink(context, COMMUNITY_REDDIT_URL) },
             )
         }
     }
