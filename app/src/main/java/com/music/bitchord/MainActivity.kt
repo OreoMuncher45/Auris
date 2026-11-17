@@ -107,6 +107,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1221,17 +1222,20 @@ private fun BitChordApp(
     val versions = remember { VersionSwitchState() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
-    // Keyed on the lyric settings too, so turning a source on or off applies to
-    // the track already playing rather than only the next one.
-    val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
-    val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
+    // The lyric settings are watched too, so turning a source on or off applies
+    // to the track already playing rather than only the next one.
     //
-    // The duration is watched inside the effect rather than read as a key: a
-    // key is read in BitChordApp's body, which would then recompose on every
-    // duration the player settles on. collectLatest asks again for each
-    // distinct duration, exactly as restarting the effect on that key did.
-    LaunchedEffect(player.song?.videoId, syncedLyricsEnabled, lyricsSources) {
-        snapshotFlow { player.durationMs }.collectLatest { durationMs ->
+    // The duration and the settings are watched inside the effect rather than
+    // read as keys: a key is read in BitChordApp's body, which would then
+    // recompose on every duration the player settles on and every settings
+    // change. collectLatest asks again for each distinct value, exactly as
+    // restarting the effect on that key did.
+    LaunchedEffect(player.song?.videoId) {
+        combine(
+            AppSettings.syncedLyrics,
+            AppSettings.lyricsSources,
+            snapshotFlow { player.durationMs },
+        ) { _, _, durationMs -> durationMs }.collectLatest { durationMs ->
             player.song?.let {
                 viewModel.loadLyrics(
                     it.videoId,
