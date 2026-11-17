@@ -56,7 +56,6 @@ internal fun PlaybackSettings(
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
-    val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
@@ -132,20 +131,6 @@ internal fun PlaybackSettings(
                 subtitle = stringResource(R.string.automix_performance_subtitle),
                 value = automixPerformance.localizedLabel(),
                 onClick = { sheets.pickingAutomixPerformance = true },
-            )
-        }
-        // The catalogue, next to the other decisions about how the app
-        // finds music for the listener. It sits here rather than with the
-        // account rows because it is a choice about where the page and
-        // the search come from, not about a service connection.
-        val homeProviderTitle = stringResource(R.string.home_provider)
-        row(homeProviderTitle, "provider", "spotify", "youtube", "search", "library") {
-            SettingsRow(
-                icon = Icons.Rounded.Tune,
-                title = homeProviderTitle,
-                subtitle = stringResource(R.string.home_provider_subtitle),
-                value = homeProvider.localizedLabel(),
-                onClick = { sheets.pickingHomeProvider = true },
             )
         }
         val skipSilenceTitle = stringResource(R.string.skip_silence)
@@ -292,9 +277,9 @@ private fun AutomixPerformanceMode.localizedLabel(): String = stringResource(
     },
 )
 
-/** The selected content provider, as the settings row shows it. */
+/** The selected content provider, as the catalogue rows show it. */
 @Composable
-private fun HomeProvider.localizedLabel(): String = stringResource(
+internal fun HomeProvider.localizedLabel(): String = stringResource(
     when (this) {
         HomeProvider.YOUTUBE -> R.string.home_provider_youtube
         HomeProvider.SPOTIFY -> R.string.spotify

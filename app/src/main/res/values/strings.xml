@@ -150,6 +150,9 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s own home and catalogue. Signed in, Flow also takes from what you play there.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own home and catalogue, and its feed for Flow.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="music_catalogue">Music catalogue</string>
+    <string name="music_catalogue_row">Spotify or YouTube Music</string>
+    <string name="music_catalogue_row_subtitle">Where Home and Search come from</string>
     <string name="account_scrobbling">Account &amp; scrobbling</string>
     <string name="rich_presence">Rich presence</string>
     <string name="scrobbling">Scrobbling</string>

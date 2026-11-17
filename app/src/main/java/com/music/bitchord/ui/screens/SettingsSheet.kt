@@ -296,6 +296,12 @@ fun SettingsScreen(
             }
         }
 
+        // The catalogue switch, first thing on the index and still found by
+        // the search there. Not on a category page: it belongs to none of them.
+        if (openCategory == null) {
+            MusicCatalogueSettings(search = search, sheets = sheets)
+        }
+
         if (openCategory == null && !searchActive) {
             // The index: one row per category. Each opens a page of its own;
             // the search field above reaches into all of them at once.
@@ -1048,6 +1054,12 @@ internal fun SettingsRow(
     iconPainter: Painter? = null,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    /**
+     * How many lines the title may take before it is cut short. One for
+     * nearly every row; a title that must stay whole, such as one naming
+     * both services, wraps rather than losing its end at large font sizes.
+     */
+    titleMaxLines: Int = 1,
 ) {
     Row(
         modifier = Modifier
@@ -1080,7 +1092,7 @@ internal fun SettingsRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
+                    maxLines = titleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (badge != null) {
