@@ -1088,6 +1088,29 @@ class ExclusiveUsbOutput(
         return false
     }
 
+    /**
+     * Hands the DAC back at the level its own knob had before the session.
+     *
+     * The phone's slider is applied as an offset written into the DAC's
+     * Feature Unit, so a session that ends without undoing it leaves the DAC
+     * quieter than the listener set it — for the system mixer, another app or
+     * the next session alike. Worse, the next session reads that attenuated
+     * level back as its new base and offsets from it again, so each reopen
+     * stacked another cut on top. Only a level this session actually changed
+     * is written back.
+     */
+    private fun restoreDacLevelLocked() {
+        val control = featureVolume ?: return
+        if (!dacBaseKnown) return
+        val written = lastWrittenDb ?: return
+        val base = dacBaseDb
+        if (kotlin.math.abs(written - base) <= 0.05) return
+        if (runCatching { control.setDb(base) }.getOrDefault(false)) {
+            lastWrittenDb = base
+            Log.i(TAG, "DAC level returned to ${base}dB on close")
+        }
+    }
+
     private fun stopStreamLocked() {
         val running = stream
         // Stop the native stream FIRST. This flips running=false so a write()
@@ -1108,6 +1131,7 @@ class ExclusiveUsbOutput(
     }
 
     private fun teardownLocked(closeDevice: Boolean) {
+        restoreDacLevelLocked()
         stopStreamLocked()
         if (closeDevice) {
             runCatching { usbAudio.closeDevice() }
