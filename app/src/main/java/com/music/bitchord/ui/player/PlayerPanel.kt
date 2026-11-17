@@ -76,6 +76,7 @@ import com.music.bitchord.ui.components.MiniPlayerNextGlyph
 import com.music.bitchord.ui.components.glassContentColor
 import com.music.bitchord.ui.components.liquidGlass
 import com.music.bitchord.ui.components.MiniArt
+import com.music.bitchord.ui.components.miniArtPadding
 import com.music.bitchord.ui.components.miniPlayerGestures
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
@@ -343,6 +344,9 @@ private fun PanelMiniRow(
     val glyphSize: Dp = if (inline) 24.dp else 32.dp
     Box(
         contentAlignment = Alignment.Center,
+        // The row sees the height the pill is stretched to, so the cover can sit
+        // on the centre of that pill's end cap rather than the row's.
+        propagateMinConstraints = true,
         modifier = modifier
             .miniPlayerGestures(
                 pull = motion,
@@ -367,12 +371,7 @@ private fun PanelMiniRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    start = art.padStart,
-                    end = art.padEnd,
-                    top = art.padVertical,
-                    bottom = art.padVertical,
-                ),
+                .miniArtPadding(art),
         ) {
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),

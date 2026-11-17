@@ -53,13 +53,17 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -137,9 +141,13 @@ private val TRANSPORT_GAP = 8.dp
  * - Expanded, the pill has always been 60 tall: the title and artist lines
  *   (44) with 8 above and below. A 48dp cover padded 6 on the start, top and
  *   bottom keeps it at 60, now set by the cover, and sits on the centre of the
- *   radius-30 cap with a 6dp ring. A larger system font can still make the
- *   text the taller of the two; the cover then stays centred top to bottom
- *   and the ring grows above and below it.
+ *   radius-30 cap with a 6dp ring.
+ *
+ * [padStart] is the least the cover is inset by. A pill that ends up taller
+ * than these figures — [GlassNavBar]'s folded row stretches its player to the
+ * tab pill beside it, and a larger system font grows the expanded row — moves
+ * the cover further in, through [miniArtPadding], so it stays on the cap's
+ * centre and the ring stays even, just wider.
  *
  * The far end keeps its larger pad, since the transport there is square.
  */
@@ -170,6 +178,29 @@ internal enum class MiniArt(
     companion object {
         fun of(inline: Boolean): MiniArt = if (inline) Inline else Expanded
     }
+}
+
+/**
+ * [art]'s row padding, with the cover kept on the centre of the pill's end cap
+ * however tall the pill turns out.
+ *
+ * The row is measured once, inset by [MiniArt.padStart]. Where the pill is
+ * taller than that inset assumes — stretched by its parent (the stretch reaches
+ * the row through `propagateMinConstraints`), or grown by a larger font — the
+ * content is shifted in by the difference, taken from the end pad. Shifting
+ * rather than re-measuring keeps it to one measure, and means the panel's copy
+ * of the row, stretched to the pill's measured height, arrives at the same
+ * offsets as the pill it stands in for.
+ */
+internal fun Modifier.miniArtPadding(art: MiniArt): Modifier = layout { measurable, constraints ->
+    val start = art.padStart.roundToPx()
+    val end = art.padEnd.roundToPx()
+    val vertical = art.padVertical.roundToPx()
+    val placeable = measurable.measure(constraints.offset(horizontal = -(start + end), vertical = -2 * vertical))
+    val width = constraints.constrainWidth(placeable.width + start + end)
+    val height = constraints.constrainHeight(placeable.height + 2 * vertical)
+    val shift = ((height - art.size.roundToPx()) / 2 - start).coerceIn(0, end)
+    layout(width, height) { placeable.place(start + shift, vertical) }
 }
 
 /**
@@ -494,12 +525,7 @@ fun MiniPlayer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    start = art.padStart,
-                    end = art.padEnd,
-                    top = art.padVertical,
-                    bottom = art.padVertical,
-                ),
+                .miniArtPadding(art),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(

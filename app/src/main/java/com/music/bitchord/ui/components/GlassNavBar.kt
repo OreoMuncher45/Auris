@@ -313,6 +313,9 @@ internal fun GlassNowPlaying(
         // couple of dp above the pill's centre line. Expanded the Box wraps its
         // content, so centring is a no-op there.
         contentAlignment = Alignment.Center,
+        // The row sees the height the pill is stretched to, so the cover can sit
+        // on the centre of that pill's end cap rather than the row's.
+        propagateMinConstraints = true,
         // The gestures and the tap belong to the whole glass surface, not the
         // row centred in it. Inline, that row is shorter than the pill it sits
         // in, and a pull started in the strip above or below it went nowhere —
@@ -352,12 +355,7 @@ internal fun GlassNowPlaying(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    start = art.padStart,
-                    end = art.padEnd,
-                    top = art.padVertical,
-                    bottom = art.padVertical,
-                ),
+                .miniArtPadding(art),
         ) {
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
