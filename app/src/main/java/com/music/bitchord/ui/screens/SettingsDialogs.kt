@@ -36,6 +36,7 @@ import com.music.bitchord.playback.AudioCache
 internal class SettingsSheets {
     /** The connection whose quality ceiling is being picked, or null. */
     var pickingQuality by mutableStateOf<QualityTarget?>(null)
+    var pickingBitPerfectPath by mutableStateOf(false)
     var pickingDownloadQuality by mutableStateOf(false)
     var pickingAutomixPerformance by mutableStateOf(false)
     var pickingHomeProvider by mutableStateOf(false)
@@ -119,6 +120,22 @@ internal fun SettingsDialogs(
                         QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
                     }
                     sheets.pickingQuality = null
+                },
+            )
+        }
+    }
+
+    if (sheets.pickingBitPerfectPath) {
+        val path by AppSettings.bitPerfectPath.collectAsStateWithLifecycle()
+        ModalBottomSheet(
+            onDismissRequest = { sheets.pickingBitPerfectPath = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            BitPerfectPathSheet(
+                selected = path,
+                onSelect = {
+                    AppSettings.setBitPerfectPath(it)
+                    sheets.pickingBitPerfectPath = false
                 },
             )
         }

@@ -40,6 +40,10 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.audio.VolumeApplication
+import com.music.bitchord.data.settings.BitPerfectPath
+import com.music.bitchord.ui.player.PlayerPlatform
 import java.util.Locale
 
 /** The Audio category: the source, streaming quality, output and the effects. */
@@ -60,7 +64,27 @@ internal fun AudioSettings(
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val loudnessOffOnSpeaker by AppSettings.loudnessOffOnSpeaker.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
-    SearchableSettingsGroup(search, SettingsCategory.AUDIO) {
+    val bitPerfectPath by AppSettings.bitPerfectPath.collectAsStateWithLifecycle()
+    val convertForLimitedDac by AppSettings.convertForLimitedDac.collectAsStateWithLifecycle()
+    val playerVolume by AppSettings.playerVolume.collectAsStateWithLifecycle()
+    // Live: an exclusive session or Android's bit-perfect mixer is carrying
+    // the track. Ready: live, or the chosen path's device is attached, so the
+    // next lossless track will be. What fades follows ready, not the bare
+    // switch: with nothing plugged in, everything plays as normal and should
+    // look it.
+    val bitPerfectLive = outputStatus.exclusiveUsbActive || outputStatus.bitPerfectMixer?.active == true
+    val bitPerfectReady = bitPerfect && (
+        bitPerfectLive ||
+            when (bitPerfectPath) {
+                BitPerfectPath.AUTO -> outputStatus.isUsb
+                BitPerfectPath.BUILT_IN_DAC -> outputStatus.routeKind == AudioRouting.Kind.WIRED
+            }
+        )
+    SearchableSettingsGroup(
+        search,
+        SettingsCategory.AUDIO,
+        footer = stringResource(R.string.bit_perfect_bypassed_footer).takeIf { bitPerfectReady },
+    ) {
         val sourceTitle = stringResource(R.string.source)
         val sourceSubtitle = stringResource(R.string.sources_subtitle)
         row(sourceTitle, sourceSubtitle, "addon", "lossless") {
@@ -153,12 +177,58 @@ internal fun AudioSettings(
             "lossless",
             divided = false,
         ) {
+            val conversion = outputStatus.dacConversion
             SettingsSubRow(
                 title = bitPerfectTitle,
                 checked = bitPerfect,
                 onCheckedChange = AppSettings::setBitPerfect,
-                subtitle = stringResource(R.string.bit_perfect_subtitle),
+                badge = when {
+                    !bitPerfect -> null
+                    conversion != null -> stringResource(R.string.bit_perfect_converted)
+                    bitPerfectLive -> stringResource(R.string.bit_perfect_active)
+                    bitPerfectReady -> stringResource(R.string.bit_perfect_ready)
+                    else -> null
+                },
+                subtitle = when {
+                    !bitPerfect -> stringResource(R.string.bit_perfect_subtitle)
+                    conversion != null -> conversion
+                    outputStatus.exclusiveUsbActive -> outputStatus.exclusiveUsbDetail
+                    outputStatus.bitPerfectMixer?.active == true -> outputStatus.bitPerfectMixer?.detail
+                    else -> outputStatus.exclusiveUsbDetail ?: stringResource(R.string.bit_perfect_waiting)
+                },
             )
+        }
+        if (bitPerfect) {
+            val pathTitle = stringResource(R.string.bit_perfect_path)
+            row(pathTitle, "bit perfect", "dac", "exclusive", "aaudio", "built-in", divided = false) {
+                SettingsValueSubRow(
+                    title = pathTitle,
+                    value = bitPerfectPath.localizedLabel(),
+                    subtitle = bitPerfectPath.localizedSubtitle(),
+                    onClick = { sheets.pickingBitPerfectPath = true },
+                )
+            }
+            // Only while the DAC's own control carries the level: then it is
+            // the volume, and nothing else on screen says where it stands.
+            if (outputStatus.volumeApplication == VolumeApplication.DAC_HARDWARE) {
+                val dacVolumeTitle = stringResource(R.string.dac_volume)
+                row(dacVolumeTitle, "volume", "dac", "hardware", divided = false) {
+                    DacVolumeSubRow(
+                        level = playerVolume,
+                        outputDb = outputStatus.volumeOutputDb,
+                        onLevel = { PlayerPlatform.host.volume.set(it) },
+                    )
+                }
+            }
+            val convertTitle = stringResource(R.string.convert_for_limited_dac)
+            row(convertTitle, "dac", "resample", "convert", "limit", divided = false) {
+                SettingsSubRow(
+                    title = convertTitle,
+                    checked = convertForLimitedDac,
+                    onCheckedChange = AppSettings::setConvertForLimitedDac,
+                    subtitle = stringResource(R.string.convert_for_limited_dac_subtitle),
+                )
+            }
         }
         val preferUsbDacTitle = stringResource(R.string.prefer_usb_dac)
         row(preferUsbDacTitle, "headphone", "output") {
@@ -171,56 +241,62 @@ internal fun AudioSettings(
         }
         val loudnessTitle = stringResource(R.string.loudness_normalization)
         row(loudnessTitle, "loudness", "volume", "normalize", "replaygain", "lufs") {
-            SettingsRow(
-                icon = Icons.Rounded.VolumeUp,
-                title = loudnessTitle,
-                subtitle = stringResource(R.string.loudness_normalization_subtitle),
-                trailing = {
-                    SettingsSwitch(
-                        checked = loudnessNormalization,
-                        onCheckedChange = AppSettings::setLoudnessNormalization,
-                    )
-                },
-                onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
-            )
+            BypassedByBitPerfect(bitPerfectReady) {
+                SettingsRow(
+                    icon = Icons.Rounded.VolumeUp,
+                    title = loudnessTitle,
+                    subtitle = stringResource(R.string.loudness_normalization_subtitle),
+                    trailing = {
+                        SettingsSwitch(
+                            checked = loudnessNormalization,
+                            onCheckedChange = AppSettings::setLoudnessNormalization,
+                        )
+                    },
+                    onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
+                )
+            }
         }
         val loudnessSpeakerTitle = stringResource(R.string.loudness_off_on_speaker)
         row(loudnessSpeakerTitle, "loudness", "speaker", "normalize") {
-            SettingsSubRow(
-                title = loudnessSpeakerTitle,
-                checked = loudnessOffOnSpeaker,
-                onCheckedChange = AppSettings::setLoudnessOffOnSpeaker,
-            )
+            BypassedByBitPerfect(bitPerfectReady) {
+                SettingsSubRow(
+                    title = loudnessSpeakerTitle,
+                    checked = loudnessOffOnSpeaker,
+                    onCheckedChange = AppSettings::setLoudnessOffOnSpeaker,
+                )
+            }
         }
         // Off by default and behind a confirmation, because the blend can
         // be heard as doubling when the two masters differ. The switch only
         // asks; nothing is written until the dialog is confirmed.
         val seamlessUpgradeTitle = stringResource(R.string.seamless_quality_upgrades)
         row(seamlessUpgradeTitle, "lossless", "flac", "quality", "upgrade", "crossfade", "gapless") {
-            SettingsRow(
-                icon = Icons.Rounded.SwapHoriz,
-                title = seamlessUpgradeTitle,
-                subtitle = stringResource(R.string.seamless_quality_upgrades_subtitle),
-                trailing = {
-                    SettingsSwitch(
-                        checked = seamlessQualityUpgrade,
-                        onCheckedChange = { enabled ->
-                            if (enabled) {
-                                sheets.showSeamlessUpgradeConfirmation = true
-                            } else {
-                                AppSettings.setSeamlessQualityUpgrade(false)
-                            }
-                        },
-                    )
-                },
-                onClick = {
-                    if (seamlessQualityUpgrade) {
-                        AppSettings.setSeamlessQualityUpgrade(false)
-                    } else {
-                        sheets.showSeamlessUpgradeConfirmation = true
-                    }
-                },
-            )
+            BypassedByBitPerfect(bitPerfectReady) {
+                SettingsRow(
+                    icon = Icons.Rounded.SwapHoriz,
+                    title = seamlessUpgradeTitle,
+                    subtitle = stringResource(R.string.seamless_quality_upgrades_subtitle),
+                    trailing = {
+                        SettingsSwitch(
+                            checked = seamlessQualityUpgrade,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    sheets.showSeamlessUpgradeConfirmation = true
+                                } else {
+                                    AppSettings.setSeamlessQualityUpgrade(false)
+                                }
+                            },
+                        )
+                    },
+                    onClick = {
+                        if (seamlessQualityUpgrade) {
+                            AppSettings.setSeamlessQualityUpgrade(false)
+                        } else {
+                            sheets.showSeamlessUpgradeConfirmation = true
+                        }
+                    },
+                )
+            }
         }
         // The songs kept on the device are upgraded to a better copy
         // while they play, unless the app cannot fetch one.
@@ -273,21 +349,25 @@ internal fun AudioSettings(
         // screen, rather than as a second equaliser entry alongside ours.
         val equalizerTitle = stringResource(R.string.equalizer)
         row(equalizerTitle, "eq", "bass", "treble") {
-            SettingsRow(
-                icon = Icons.Rounded.Tune,
-                title = equalizerTitle,
-                subtitle = stringResource(R.string.equalizer_subtitle),
-                onClick = onEqualizer,
-            )
+            BypassedByBitPerfect(bitPerfectReady) {
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = equalizerTitle,
+                    subtitle = stringResource(R.string.equalizer_subtitle),
+                    onClick = onEqualizer,
+                )
+            }
         }
         val jamesDspTitle = stringResource(R.string.jamesdsp)
         row(jamesDspTitle, "jamesdsp", "dsp", "reverb", "bass", "tube") {
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = jamesDspTitle,
-                subtitle = stringResource(R.string.jamesdsp_subtitle),
-                onClick = { sheets.showJamesDsp = true },
-            )
+            BypassedByBitPerfect(bitPerfectReady) {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = jamesDspTitle,
+                    subtitle = stringResource(R.string.jamesdsp_subtitle),
+                    onClick = { sheets.showJamesDsp = true },
+                )
+            }
         }
     }
 }
