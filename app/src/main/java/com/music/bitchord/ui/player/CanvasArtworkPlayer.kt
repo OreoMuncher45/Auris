@@ -172,8 +172,13 @@ internal fun AndroidCanvasArtworkPlayer(
     presentationAlpha: () -> Float = { 1f },
     /** Fires once the clip has an actual frame on screen, and again if it drops back to none. */
     onRenderedChanged: (Boolean) -> Unit = {},
-    /** A single frame off the playing clip, for callers that want to re-tint around it. */
-    onFrameCaptured: (ImageBitmap) -> Unit = {},
+    /**
+     * A single frame off the playing clip, for callers that want to re-tint
+     * around it. Null for a caller with no use for one, which then pays for no
+     * readback at all: no copy off the GPU on each fade-in, and no thread to
+     * take it on.
+     */
+    onFrameCaptured: ((ImageBitmap) -> Unit)? = null,
     /**
      * Keep calling [onFrameCaptured] every so many milliseconds instead of
      * only once — for a caller re-tinting its backdrop off a playing clip,
@@ -391,15 +396,23 @@ internal fun AndroidCanvasArtworkPlayer(
     }
 
     val reportRendered by rememberUpdatedState(onRenderedChanged)
+    // Read where the frame is handed over, so a caller that swaps its lambda
+    // does not restart a capture.
+    val reportFrame by rememberUpdatedState(onFrameCaptured)
+    // Whether anyone reads frames at all. Most clips — a Home tile, a detail
+    // page's header, the radio card, the landscape sleeve — are only shown,
+    // and used to pay for a copy off the GPU on every fade-in and a thread of
+    // their own to take it on, for a frame that was dropped on the floor.
+    val wantsFrames = onFrameCaptured != null
     // The thread the frame copies report back on — see [FrameCopyThread]. It
-    // exists only while a clip is on screen.
-    val copyThread = remember { FrameCopyThread() }
+    // exists only while a clip that reads frames is on screen.
+    val copyThread = remember(wantsFrames) { if (wantsFrames) FrameCopyThread() else null }
     DisposableEffect(copyThread) {
-        onDispose { copyThread.stop() }
+        onDispose { copyThread?.stop() }
     }
-    LaunchedEffect(rendered) {
+    LaunchedEffect(rendered, copyThread) {
         reportRendered(rendered)
-        if (!rendered) return@LaunchedEffect
+        if (!rendered || copyThread == null) return@LaunchedEffect
         // Let the surface actually paint the frame that just triggered this
         // before reading it back — grabbing it the instant the callback fires
         // can still catch the previous, empty buffer.
@@ -422,7 +435,7 @@ internal fun AndroidCanvasArtworkPlayer(
             com.music.bitchord.data.PerfCounters.bump(
                 com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
             )
-            onFrameCaptured(bitmap.asImageBitmap())
+            reportFrame?.invoke(bitmap.asImageBitmap())
         } else {
             Log.w(TAG, "frame capture returned null after rendered=true")
         }
@@ -444,8 +457,10 @@ internal fun AndroidCanvasArtworkPlayer(
         isPlaying,
         pausedForTransition,
         currentVideoSize,
+        copyThread,
     ) {
         val requested = refreshFrameEveryMs ?: return@LaunchedEffect
+        val frames = copyThread ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
@@ -468,7 +483,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 clipAspect,
                 contentMode,
                 alignPortraitTop,
-                copyThread.handler,
+                frames.handler,
             )
             val cost = SystemClock.elapsedRealtime() - started
             if (bitmap != null) {
@@ -476,7 +491,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 com.music.bitchord.data.PerfCounters.bump(
                 com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
             )
-            onFrameCaptured(bitmap.asImageBitmap())
+            reportFrame?.invoke(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
             }
