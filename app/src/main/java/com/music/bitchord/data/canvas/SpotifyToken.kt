@@ -209,11 +209,13 @@ internal object SpotifyToken {
 
     /**
      * The shared client with a deadline on the whole call, for the session
-     * page. The token harvest waits for that read, and the shared client's
-     * timeouts are per read: a page trickling in could hold the harvest past
-     * its own deadline and every harvest queued behind it.
+     * page and the client token. The token harvest waits for the session read,
+     * which waits on this object's monitor while a client token is minted
+     * under it, and the shared client's timeouts are per read: a response
+     * trickling in could hold the harvest past its own deadline and every
+     * harvest queued behind it.
      */
-    private val sessionClient by lazy {
+    private val boundedClient by lazy {
         Http.client.newBuilder().callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
     }
     private const val K_ACCESS = "access"
@@ -586,7 +588,7 @@ internal object SpotifyToken {
 
         var lastCode = -1
         val body = runCatching {
-            Http.client.newCall(request).execute().use { response ->
+            boundedClient.newCall(request).execute().use { response ->
                 lastCode = response.code
                 if (response.isSuccessful) response.body?.string() else null
             }
@@ -683,7 +685,7 @@ internal object SpotifyToken {
             .header("User-Agent", CANVAS_UA)
             .build()
         val (html, deviceId) = runCatching {
-            sessionClient.newCall(request).execute().use { response ->
+            boundedClient.newCall(request).execute().use { response ->
                 val body = response.body?.string()
                 val spT = response.headers("Set-Cookie").firstNotNullOfOrNull { header ->
                     Regex("""sp_t=([^;]+)""").find(header)?.groupValues?.get(1)
