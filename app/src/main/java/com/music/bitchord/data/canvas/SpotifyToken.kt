@@ -286,6 +286,10 @@ internal object SpotifyToken {
      * the listener's library must not be handed a stranger's view of it.
      */
     private suspend fun token(mode: Mode): String? {
+        // Before the cookie is read: an invalidation between reading it and
+        // publishing what was minted with it (including one that lands while
+        // this call waits for [harvestMutex]) must reject the result.
+        val startEpoch = epoch
         val cookie = AppSettings.spotifySpdcToken.value.takeIf { mode == Mode.SIGNED_IN }
         if (mode == Mode.SIGNED_IN && cookie.isNullOrBlank()) return null
         restore()
@@ -308,7 +312,6 @@ internal object SpotifyToken {
                 Log.w(TAG, "SpotifyToken.init was never called; no context for the harvest")
                 return@withLock null
             }
-            val startEpoch = epoch
 
             // The session page is needed by the first request after this one
             // (its client version and the client token both come off it), and
