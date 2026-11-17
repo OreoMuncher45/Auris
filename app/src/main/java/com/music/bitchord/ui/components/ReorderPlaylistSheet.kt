@@ -166,12 +166,16 @@ private fun ReorderableSongList(order: MutableList<Song>, enabled: Boolean) {
         val dragged = items.firstOrNull { it.key == key } ?: return
         val top = dragged.offset + offset
         val center = top + dragged.size / 2f
+        // Songs only: the footer after the last row is a list item too, and
+        // carrying a row onto it would move it to an index past the end.
         val target = items.firstOrNull { item ->
-            item.key != key && center >= item.offset && center <= item.offset + item.size
+            item.key != key && item.index < order.size &&
+                center >= item.offset && center <= item.offset + item.size
         }
         if (target != null) {
             val from = dragged.index
             val to = target.index
+            if (from !in order.indices) return
             // LazyColumn holds its place by the key of the first visible row;
             // moving that row would drag the whole list along with it, so the
             // current position is pinned explicitly across the swap.
