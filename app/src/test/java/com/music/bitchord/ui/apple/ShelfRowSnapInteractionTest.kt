@@ -67,9 +67,9 @@ class ShelfRowSnapInteractionTest {
     private lateinit var state: LazyListState
 
     /** How many times each item's content has been composed, by index. */
-    private val compositions = IntArray(ITEMS)
+    private val compositions = IntArray(CARDS)
 
-    private fun setShelf(snap: ShelfSnap, itemWidth: Dp = COLUMN) {
+    private fun setShelf(snap: ShelfSnap, itemWidth: Dp = COLUMN, count: Int = ITEMS) {
         compose.setContent {
             state = rememberLazyListState()
             Box(Modifier.width(ROW).testTag(SHELF)) {
@@ -79,7 +79,7 @@ class ShelfRowSnapInteractionTest {
                     state = state,
                     snap = snap,
                 ) {
-                    itemsIndexed(List(ITEMS) { it }) { index, _ ->
+                    itemsIndexed(List(count) { it }) { index, _ ->
                         SideEffect { compositions[index]++ }
                         Box(Modifier.width(itemWidth).height(48.dp))
                     }
@@ -132,13 +132,18 @@ class ShelfRowSnapInteractionTest {
         assertRestsOnLeadingInset(expectedIndex = 1)
     }
 
-    /** Card shelves may travel several cards on a hard flick, but still land on one. */
+    /**
+     * Card shelves may travel several cards on a hard flick, but still land on
+     * one. The shelf is long enough that the flick stops short of the end,
+     * where the trailing inset rather than the leading one decides the rest.
+     */
     @Test
     fun aFlingOnACardShelfLandsOnACard() {
-        setShelf(ShelfSnap.Item, itemWidth = CARD)
+        setShelf(ShelfSnap.Item, itemWidth = CARD, count = CARDS)
         swipeLeft(distance = 0.6f, millis = 60)
 
         assertTrue("a flick must move the shelf", state.firstVisibleItemIndex >= 1)
+        assertTrue("the flick must stop short of the end", state.canScrollForward)
         assertRestsOnLeadingInset()
     }
 
@@ -179,6 +184,7 @@ class ShelfRowSnapInteractionTest {
     private companion object {
         const val SHELF = "shelf"
         const val ITEMS = 6
+        const val CARDS = 40
         val ROW = 360.dp
         val GUTTER = 16.dp
         val GAP = 12.dp
