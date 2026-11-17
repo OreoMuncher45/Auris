@@ -4510,10 +4510,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         tracks: List<SpotifyTrack>,
         setSongs: (UiState<List<Song>>) -> Unit,
     ) {
-        setSongs(UiState.Success(tracks.map { it.asPendingSong() }))
+        // Rows matched earlier this session go up matched, in the same publish
+        // as the rest, and are never searched again. A reopened playlist used
+        // to search every row again, and swap each one in one publish at a time.
+        val remembered = tracks.map { track ->
+            SpotifyImporter.cachedMatch(track)?.let { it.copy(thumbnailUrl = it.thumbnailUrl ?: track.imageUrl) }
+        }
+        setSongs(UiState.Success(tracks.mapIndexed { index, track -> remembered[index] ?: track.asPendingSong() }))
         val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
         coroutineScope {
             tracks.forEachIndexed { index, track ->
+                if (remembered[index] != null) return@forEachIndexed
                 launch {
                     gate.withPermit {
                         // The page may have been closed while the search was

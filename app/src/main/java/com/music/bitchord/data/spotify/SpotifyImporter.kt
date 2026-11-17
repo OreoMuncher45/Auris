@@ -173,6 +173,35 @@ object SpotifyImporter {
      * search's first hit.
      */
     suspend fun matchTrack(track: SpotifyTrack): Song? {
+        val context = matchContext()
+        matches.get(track.id, context)?.let { return it }
+        return searchMatch(track)?.also { matches.put(track.id, context, it) }
+    }
+
+    /**
+     * The match [matchTrack] made for [track] earlier in this process, if the
+     * sources are still set up the way they were then. No search.
+     */
+    fun cachedMatch(track: SpotifyTrack): Song? = matches.get(track.id, matchContext())
+
+    /**
+     * What a match depends on besides the track: which sources are switched on,
+     * and the quality ceiling [SourceRegistry.activeForPlayback] filters them by.
+     */
+    private fun matchContext(): Any =
+        SourceRegistry.configs.value to com.music.bitchord.data.settings.AppSettings.effectiveAudioQuality
+
+    /**
+     * Every Spotify row matched this session, shared by the Home rows and the
+     * playlist and album pages. Before, only Home remembered: a playlist page
+     * searched YouTube for every row again on every open, about two minutes of
+     * searches per thousand rows, six at a time. See [SpotifyMatchCache].
+     */
+    private val matches = SpotifyMatchCache(MATCH_CACHE_ENTRIES)
+
+    private const val MATCH_CACHE_ENTRIES = 5_000
+
+    private suspend fun searchMatch(track: SpotifyTrack): Song? {
         val target = TrackMatcher.Target(
             title = track.title,
             artist = track.artist,

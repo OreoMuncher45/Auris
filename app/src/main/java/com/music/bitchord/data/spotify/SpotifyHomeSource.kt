@@ -19,7 +19,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The Spotify side of the homepage: Spotify's own curation, as the web player
@@ -103,15 +102,6 @@ internal object SpotifyHomeSource {
      * the next mix costs nothing.
      */
     private const val LISTEN_SEEDS = 12
-
-    /**
-     * Spotify track id to the track this app will play for it.
-     *
-     * In memory for now, and deliberately: a match is a *search result*, and a
-     * stale one is a wrong song played confidently. A row that has been seen
-     * once in a session loads instantly; a fresh process asks again.
-     */
-    private val matches = ConcurrentHashMap<String, Song>()
 
     /** Whether a listener's session can be read. */
     fun isSignedIn(): Boolean = AppSettings.spotifySpdcToken.value.isNotBlank()
@@ -405,7 +395,9 @@ internal object SpotifyHomeSource {
         val gate = Semaphore(MATCH_CONCURRENCY)
         tracks.distinctBy { it.id }.map { track ->
             async(Dispatchers.IO) {
-                val cached = matches[track.id]
+                // Checked before the gate, so a remembered row never queues
+                // behind searches. See [SpotifyImporter.cachedMatch].
+                val cached = SpotifyImporter.cachedMatch(track)
                 if (cached != null) return@async track to cached
                 // Guarded: a matcher that throws would otherwise take the whole
                 // read down with it — the exception leaves awaitAll, the home
@@ -414,10 +406,7 @@ internal object SpotifyHomeSource {
                 val matched = runCatching { gate.withPermit { SpotifyImporter.matchTrack(track) } }
                     .onFailure { note("Searching YouTube Music for '${track.title}' failed: ${it.message}") }
                     .getOrNull()
-                matched?.let {
-                    matches[track.id] = it
-                    track to it
-                }
+                matched?.let { track to it }
             }
         }.awaitAll().filterNotNull()
     }
