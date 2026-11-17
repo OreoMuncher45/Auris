@@ -713,7 +713,9 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     // it always has, but stands it on the clip's own frame under its scrim.
     // That scrim lies over the mesh as well, so it carries the grade instead.
     val portrait = if (!fromClip && inputs.portraitClip && live?.source == LiveColorSource.LIVE_ART) {
-        live.surface?.let { resolveInk(owner.accent, it, owner.alphas) }
+        live.surface?.let { clip ->
+            resolveInk(owner.accent, portraitOverMeshInkSurface(clip, inputs.main), owner.alphas)
+        }
     } else {
         null
     }

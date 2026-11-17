@@ -428,6 +428,23 @@ internal val PORTRAIT_CLIP_SCRIM_ALPHAS = floatArrayOf(0f, 0f, 0f, 0.70f)
 internal val PORTRAIT_CLIP_WASH_SHARE = floatArrayOf(0f, 0f, 1f, 1f)
 
 /**
+ * What the controls stand on with a portrait motion cover up: the clip where
+ * it reaches them, and the mesh below it where a shorter clip ends — both
+ * under the clip's scrim, which carries the grade for both. Every band of
+ * either has to hold, since which control sits over which is not known.
+ *
+ * The mesh is drawn with its own scrim (graded nothing while the clip is up),
+ * then the banner's wash, then the clip's scrim; its dark side takes all
+ * three before the grade, in that order.
+ */
+internal fun portraitOverMeshInkSurface(clip: InkSurface, mesh: InkSurface?): InkSurface {
+    if (mesh == null) return clip
+    val clipScrim = PORTRAIT_CLIP_SCRIM_ALPHAS.last()
+    val meshDark = IntArray(mesh.dark.size) { scrimmed(scrimmed(mesh.dark[it], mesh.darkOverlay), clipScrim) }
+    return InkSurface(light = clip.light + mesh.light, dark = clip.dark + meshDark)
+}
+
+/**
  * A portrait motion cover's bands as the controls see them: the clip's own
  * frame, under its scrim at its lightest where the controls start (light ink)
  * and at its darkest at the foot of the screen (dark ink).

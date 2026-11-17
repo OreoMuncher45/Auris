@@ -188,10 +188,18 @@ private fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
 /** Whether a surface's bands moved by more than a few levels of eight-bit colour. */
 internal fun inkSurfaceMoved(previous: InkSurface?, next: InkSurface?): Boolean {
     if (previous == null || next == null) return previous !== next
-    if (previous.light.size != next.light.size) return true
-    for (i in previous.light.indices) {
-        val a = previous.light[i]
-        val b = next.light[i]
+    // Both sides: light ink is judged on [InkSurface.light], dark ink on
+    // [InkSurface.dark], and either can move while the other stands still.
+    return bandsMoved(previous.light, next.light) ||
+        bandsMoved(previous.dark, next.dark) ||
+        previous.darkOverlay != next.darkOverlay
+}
+
+private fun bandsMoved(previous: IntArray, next: IntArray): Boolean {
+    if (previous.size != next.size) return true
+    for (i in previous.indices) {
+        val a = previous[i]
+        val b = next[i]
         for (shift in intArrayOf(16, 8, 0)) {
             if (kotlin.math.abs(((a shr shift) and 0xFF) - ((b shr shift) and 0xFF)) > SURFACE_MOVE_LEVELS) return true
         }

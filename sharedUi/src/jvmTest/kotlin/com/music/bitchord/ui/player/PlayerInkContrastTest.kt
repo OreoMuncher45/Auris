@@ -177,6 +177,39 @@ class PlayerInkContrastTest {
     }
 
     @Test
+    fun aDarkOnlyMoveIsStillPublished() {
+        // The lightest pixels hold still while the darkest move: dark ink is
+        // judged on the darkest, so this must not be suppressed.
+        val before = InkSurface(light = intArrayOf(white), dark = intArrayOf(grey(0xC0)))
+        val after = InkSurface(light = intArrayOf(white), dark = intArrayOf(grey(0x20)))
+        assertTrue(inkSurfaceMoved(before, after))
+        assertTrue(inkSurfaceMoved(before, InkSurface(intArrayOf(white), intArrayOf(grey(0xC0)), darkOverlay = 0.2f)))
+        assertTrue(inkSurfaceMoved(before, InkSurface(intArrayOf(white, white), intArrayOf(grey(0xC0), grey(0xC0)))))
+        assertFalse(inkSurfaceMoved(before, InkSurface(intArrayOf(white), intArrayOf(grey(0xC1)))))
+    }
+
+    @Test
+    fun aShortPortraitClipIsJudgedOverTheMeshBelowItToo() {
+        // A bright clip alone would carry dark ink with no grade; below a
+        // shorter clip the controls stand on a dark mesh under the clip's
+        // scrim as well. The ink has to hold over both, as drawn.
+        val clip = portraitClipInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
+        val mesh = meshInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { grey(0x18) }))
+        val clipOnly = resolveInk(whiteSleeveRed.accent, clip, alphas)
+        val composed = portraitOverMeshInkSurface(clip, mesh)
+        val choice = resolveInk(whiteSleeveRed.accent, composed, alphas)
+        assertHolds(choice, composed)
+        // What the clip alone would have chosen, with its own grade, fails
+        // over the mesh below it; the composed surface is what catches that.
+        val meshBelow = scrimmed(scrimmed(scrimmed(grey(0x18), MESH_SCRIM_BOTTOM), HERO_WASH_MAX), 0.70f)
+        val toward = if (clipOnly.dark) white else black
+        assertFalse(
+            inkHolds(clipOnly.fg.toArgb(), blendArgb(toward, meshBelow, clipOnly.wash), alphas),
+            "the clip-only choice $clipOnly should fail over the mesh below the clip",
+        )
+    }
+
+    @Test
     fun theBannerWashIsJudgedOverTheGradeNotUnderIt() {
         // The renderer grades the mesh's scrim white, then lays the banner's
         // black wash over both. Judged in that order, a dark ink over a
