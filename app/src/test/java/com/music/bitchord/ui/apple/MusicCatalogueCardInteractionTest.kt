@@ -38,6 +38,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 // The plain Application, as the other interaction tests use: the card needs
@@ -91,6 +92,10 @@ class MusicCatalogueCardInteractionTest {
         compose.onNodeWithText("Spotify or YouTube Music").assertDoesNotExist()
     }
 
+    // Native graphics, so the text is measured with real font metrics: the
+    // default legacy mode fakes them, and a test of where a line breaks
+    // would be measuring nothing.
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Test
     fun `the title stays whole on a narrow screen at a large font size`() {
         // 320dp wide at twice the font size: the title naming both services
@@ -107,7 +112,10 @@ class MusicCatalogueCardInteractionTest {
         val layouts = mutableListOf<TextLayoutResult>()
         node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
         val layout = layouts.single()
-        assertFalse("title was cut short", layout.hasVisualOverflow)
-        assertTrue("title should wrap at this size", layout.lineCount > 1)
+        val lines = (0 until layout.lineCount).map { line ->
+            layout.layoutInput.text.text.substring(layout.getLineStart(line), layout.getLineEnd(line, visibleEnd = true))
+        }
+        assertFalse("title was cut short: $lines", layout.hasVisualOverflow)
+        assertTrue("title should wrap at this size: $lines", layout.lineCount > 1)
     }
 }
