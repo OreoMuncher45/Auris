@@ -222,8 +222,9 @@ internal fun PortraitControlDeck(
             //
             // The gap above it also gives up the scrubber's drop: the lyric
             // line and the scrubber go down by that much, and the transport
-            // stays where it is. See [SCRUBBER_DROP].
-            Spacer(Modifier.height(8.dp + controlSpread / 2 - scrubberDropOf(controlSpread)))
+            // stays where it is. See [SCRUBBER_DROP]. It also gives up the
+            // badge slot's extra height. See [scrubberToTransportGap].
+            Spacer(Modifier.height(scrubberToTransportGap(controlSpread)))
 
             TransportRow(
                 isPlaying = isPlaying,
