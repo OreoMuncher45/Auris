@@ -85,6 +85,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.animation.VectorConverter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
@@ -559,47 +560,53 @@ internal const val TOP_SCRIM_FRACTION = 0.14f
  * which is a change of record rather than a change of frame.
  */
 @Composable
-private fun rememberPlayerInk(
+internal fun rememberPlayerInk(
     palette: State<LivePalette?>,
     fromClip: Boolean,
     fallback: Color,
 ): State<Color> {
-    val target by remember(palette, fromClip, fallback) {
-        derivedStateOf {
-            val live = palette.value
-            if (fromClip && live != null) live.palette.fg else fallback
-        }
+    // Read only by the effect below, never by composition: a clip's new ink
+    // must not recompose the player that provides it — see the note above.
+    val currentFallback = rememberUpdatedState(fallback)
+    val ink = remember {
+        Animatable(Snapshot.withoutReadObservation { inkTarget(palette, fromClip, fallback) }, Color.VectorConverter(fallback.colorSpace))
     }
-    val spec = remember(fromClip) {
-        tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+    LaunchedEffect(palette, fromClip) {
+        val spec = tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+        snapshotFlow { inkTarget(palette, fromClip, currentFallback.value) }
+            .collectLatest { ink.animateTo(it, spec) }
     }
-    return animateColorAsState(
-        targetValue = target,
-        animationSpec = spec,
-        label = "playerInk",
-    )
+    return ink.asState()
+}
+
+private fun inkTarget(palette: State<LivePalette?>, fromClip: Boolean, fallback: Color): Color {
+    val live = palette.value
+    return if (fromClip && live != null) live.palette.fg else fallback
 }
 
 /**
  * The halo the ink wears, as a state.
  *
  * Light ink needs the dark halo and the reverse, so the halo follows the ink
- * — and it is read from the ink's state rather than from a value, for the
- * reason [rememberPlayerInk] gives.
+ * — and it is read from the ink's state in an effect rather than in
+ * composition, for the reason [rememberPlayerInk] gives: a flip of the halo
+ * must not recompose the player either.
  */
 @Composable
-private fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
-    val target by remember(ink) {
-        derivedStateOf {
-            if (ink.value.isLightInk()) PLAYER_GLOW_ON_LIGHT else PLAYER_GLOW_ON_DARK
-        }
+internal fun rememberPlayerInkGlow(ink: State<Color>): State<Color> {
+    val glow = remember(ink) {
+        Animatable(Snapshot.withoutReadObservation { glowFor(ink.value) }, Color.VectorConverter(PLAYER_GLOW_ON_LIGHT.colorSpace))
     }
-    return animateColorAsState(
-        targetValue = target,
-        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
-        label = "playerInkGlow",
-    )
+    LaunchedEffect(ink) {
+        val spec = tween<Color>(durationMillis = PLAYER_INK_FADE_MS)
+        snapshotFlow { glowFor(ink.value) }
+            .collectLatest { glow.animateTo(it, spec) }
+    }
+    return glow.asState()
 }
+
+private fun glowFor(ink: Color): Color =
+    if (ink.isLightInk()) PLAYER_GLOW_ON_LIGHT else PLAYER_GLOW_ON_DARK
 
 /**
  * The player's colours, handed down to everything inside it.
