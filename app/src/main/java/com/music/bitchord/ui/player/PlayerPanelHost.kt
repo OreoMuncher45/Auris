@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,19 +20,15 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.components.GlassActionMenu
 import com.music.bitchord.ui.components.LocalAppBackdrop
 import com.music.bitchord.ui.components.SongActionsPresentation
-import com.music.bitchord.ui.components.backdrop.backdrops.rememberSnapshotBackdrop
-import com.music.bitchord.ui.components.backdrop.backdrops.snapshotBackdropSource
+import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
+import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
 import com.music.bitchord.ui.components.heldMenuUsesGlass
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import dev.chrisbanes.haze.HazeState
-import kotlinx.coroutines.delay
 
 /** The dim behind the player while it is part-way open. */
 private const val PLAYER_SCRIM_ALPHA = 0.32f
-
-/** Longer than the menu's exit, so it never loses its frost on the way out. */
-private const val MENU_STILL_RELEASE_MS = 400L
 
 /**
  * The player, raised: one panel in the app's own window, grown out of the
@@ -95,24 +90,20 @@ internal fun PlayerPanelHost(
     // Where the panel's root starts in the window, so the button's window
     // coordinates can be turned into the menu's.
     var rootOrigin by remember { mutableStateOf(Offset.Zero) }
-    // What the glass menu below blurs: a still of the player, taken as the
-    // menu opens, rather than the player live — the page's backdrop layer is
-    // under the player and would show through it. Live, every tick of the
-    // progress bar, every frame of the canvas and the mesh's drift re-recorded
-    // the whole player and re-ran the menu's blur under it; nobody watches the
-    // player move behind an open menu. The still is a quarter-scale picture
-    // and the blur runs on it only when the menu itself moves. Ported from
-    // Zenith (rezapranata089-bit/Zenith, GPL-3.0).
-    val playerBackdrop = rememberSnapshotBackdrop()
+    // What the glass menu below samples: the player itself, live, so the
+    // glass shows the Canvas video and everything else behind it as it plays
+    // rather than a still taken when the menu opened. The page's backdrop
+    // layer is under the player and would show through it, so the player
+    // records into a layer of its own.
+    //
+    // Recorded only while the menu is up; closed, the player draws exactly as
+    // it would without this. Open, it costs no copy of anything: the layer is
+    // the player's RenderNode, which the menu's glass draws by reference,
+    // clipped to the menu's own rectangle at the glass's reduced capture
+    // scale, so a new video frame only re-runs the glass's blur and lens over
+    // that small offscreen.
+    val playerBackdrop = rememberLayerBackdrop()
     val menuUsesGlass = menuSong != null && heldMenuUsesGlass(reduceDynamicBlur)
-    LaunchedEffect(menuUsesGlass) {
-        if (menuUsesGlass) {
-            playerBackdrop.capture()
-        } else {
-            delay(MENU_STILL_RELEASE_MS)
-            playerBackdrop.release()
-        }
-    }
     PlayerPanel(
         dock = activeDock,
         motion = motion.takeIf { !reducePlayerMotion },
@@ -159,7 +150,11 @@ internal fun PlayerPanelHost(
             }
         },
     ) {
-        Box(Modifier.fillMaxSize().snapshotBackdropSource(playerBackdrop)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .then(if (menuUsesGlass) Modifier.layerBackdrop(playerBackdrop) else Modifier),
+        ) {
             CompositionLocalProvider(LocalPlayerDock provides activeDock) {
                 nowPlaying(song)
             }
