@@ -300,7 +300,7 @@ internal fun GlassNowPlaying(
         label = "accessoryPressScale",
     )
 
-    val artSize = if (isInline) 32.dp else 40.dp
+    val art = MiniArt.of(isInline)
     val glyphSlot = if (isInline) 32.dp else 40.dp
     val glyphSize = if (isInline) 24.dp else 32.dp
 
@@ -353,22 +353,24 @@ internal fun GlassNowPlaying(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = if (isInline) 8.dp else 12.dp,
-                    vertical = if (isInline) 4.dp else 8.dp,
+                    start = art.padStart,
+                    end = art.padEnd,
+                    top = art.padVertical,
+                    bottom = art.padVertical,
                 ),
         ) {
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(artSize)
+                    .size(art.size)
                     // Whichever of the two densities is on screen is the one
                     // the player flies to: only one is composed at rest.
-                    .playerDockArt(dock, if (isInline) 6.dp else 8.dp)
-                    .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
+                    .playerDockArt(dock, art.corner)
+                    .clip(art.shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
+            Spacer(Modifier.width(art.gap))
             if (isInline) {
                 Text(
                     text = song.title,

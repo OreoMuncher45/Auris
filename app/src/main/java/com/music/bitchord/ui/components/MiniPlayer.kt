@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -114,32 +115,54 @@ private val SPINNER_SIZE = 22.dp
 private val TRANSPORT_GAP = 8.dp
 
 /**
- * Vertical padding, which with the 40dp artwork sets the bar's height at 56dp
- * and so its pill radius at 28.
+ * The mini player's cover and the row around it, as every pill that draws one
+ * lays it out: [MiniPlayer], the glass bar's docked player ([GlassNowPlaying])
+ * and the player panel's stand-in for either
+ * ([com.music.bitchord.ui.player.PlayerPanel]) all read it from here. The panel's
+ * copy is what the player's cover hands over to when it closes, so a figure
+ * that differed between them showed as the cover jumping on landing.
+ *
+ * [Inline] is the glass bar folded beside its tab circles; [Expanded] is every
+ * other pill. Each entry builds its [shape] once, so recomposing a row — every
+ * play/pause does — allocates nothing for it.
+ *
+ * The ends are padded more than the top and bottom because a pill's ends are
+ * semicircles: at the cover's top corner the curve has already come in from
+ * the side, and padding the ends by the vertical figure would leave the cover
+ * touching it.
  */
-private val ROW_PADDING_VERTICAL = 8.dp
+internal enum class MiniArt(
+    /** The cover's side. */
+    val size: Dp,
+    /** Its corner, and the one the player's cover lands on when it closes here. */
+    val corner: Dp,
+    /** Row padding before the cover. */
+    val padStart: Dp,
+    /** Row padding after the transport. */
+    val padEnd: Dp,
+    /** Row padding above and below. */
+    val padVertical: Dp,
+    /** Between the cover and the title. */
+    val gap: Dp,
+) {
+    Inline(size = 32.dp, corner = 6.dp, padStart = 8.dp, padEnd = 8.dp, padVertical = 4.dp, gap = 8.dp),
+    Expanded(size = 40.dp, corner = 8.dp, padStart = 12.dp, padEnd = 12.dp, padVertical = 8.dp, gap = 10.dp),
+    ;
+
+    val shape: Shape = RoundedCornerShape(corner)
+
+    companion object {
+        fun of(inline: Boolean): MiniArt = if (inline) Inline else Expanded
+    }
+}
 
 /**
- * Horizontal padding, deliberately larger than the vertical.
- *
- * A pill's ends are semicircles, so the edge nearest the artwork is not the
- * one beside it but the one curving away above and below it. At the artwork's
- * top corner that edge has already come 8.4dp in from the left — level with
- * where square corners would have put the whole side. Padding the ends by the
- * vertical figure would leave the artwork touching the curve; 12 clears it
- * with room, and reads as centred rather than jammed into the round.
+ * The bar's outline. Percent rather than a dp figure, so the corner stays
+ * exactly half the height if the row's contents ever change it — which is what
+ * keeps a pill a pill instead of a rounded rectangle. Same idiom as
+ * [FloatingBottomBar] directly below it, so the two shapes are the same family.
  */
-private val ROW_PADDING_HORIZONTAL = 12.dp
-
-/**
- * The artwork's corner, on the 8dp every other thumbnail in the app carries.
- *
- * It used to be 7, picked so the bar's corner could sit concentric with it.
- * A pill has no corner to be concentric with — its radius is whatever half the
- * height happens to be — so that constraint is gone and the artwork can go
- * back to matching [SongRow].
- */
-private val ART_CORNER = 8.dp
+private val PillShape = RoundedCornerShape(percent = 50)
 
 /** Distance that makes a horizontal drag an intentional track change. */
 private val TRACK_SWIPE_THRESHOLD = 72.dp
@@ -415,11 +438,8 @@ fun MiniPlayer(
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
-    // percent rather than a dp figure, so the corner stays exactly half the
-    // height if the row's contents ever change it — which is what keeps a pill
-    // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
-    // directly below it, so the two shapes are the same family.
-    val shape = RoundedCornerShape(percent = 50)
+    val shape = PillShape
+    val art = MiniArt.Expanded
     Box(
         modifier = modifier
             .padding(horizontal = BAR_GUTTER)
@@ -459,8 +479,10 @@ fun MiniPlayer(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = ROW_PADDING_HORIZONTAL,
-                    vertical = ROW_PADDING_VERTICAL,
+                    start = art.padStart,
+                    end = art.padEnd,
+                    top = art.padVertical,
+                    bottom = art.padVertical,
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -468,13 +490,13 @@ fun MiniPlayer(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(40.dp)
-                    .playerDockArt(dock, ART_CORNER)
-                    .clip(RoundedCornerShape(ART_CORNER))
-                    .thumbnailBorder(RoundedCornerShape(ART_CORNER))
+                    .size(art.size)
+                    .playerDockArt(dock, art.corner)
+                    .clip(art.shape)
+                    .thumbnailBorder(art.shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(art.gap))
             // The bar's title, reported for the handover: the player's own
             // title flies here when the sheet closes, and lands on these words
             // rather than near them. The title alone, not the whole column —

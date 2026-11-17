@@ -75,6 +75,7 @@ import com.music.bitchord.ui.components.GLASS_EDGE_WIDTH
 import com.music.bitchord.ui.components.MiniPlayerNextGlyph
 import com.music.bitchord.ui.components.glassContentColor
 import com.music.bitchord.ui.components.liquidGlass
+import com.music.bitchord.ui.components.MiniArt
 import com.music.bitchord.ui.components.miniPlayerGestures
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
@@ -335,8 +336,9 @@ private fun PanelMiniRow(
     val haptics = rememberHaptics()
     val contentColor = if (glass) glassContentColor() else MaterialTheme.colorScheme.onBackground
     val secondary = if (glass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
-    val artSize: Dp = if (inline) 32.dp else 40.dp
-    val artCorner: Dp = if (inline) 6.dp else 8.dp
+    // The pill's own figures, not a copy of them: the player's cover lands on
+    // the pill's art, and this row stands in for the pill while it does.
+    val art = MiniArt.of(inline)
     val glyphSlot: Dp = if (inline) 32.dp else 40.dp
     val glyphSize: Dp = if (inline) 24.dp else 32.dp
     Box(
@@ -366,24 +368,25 @@ private fun PanelMiniRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = if (inline) 8.dp else 12.dp,
-                    vertical = if (inline) 4.dp else 8.dp,
+                    start = art.padStart,
+                    end = art.padEnd,
+                    top = art.padVertical,
+                    bottom = art.padVertical,
                 ),
         ) {
-            val artShape = RoundedCornerShape(artCorner)
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(artSize)
+                    .size(art.size)
                     // The player's own cover is the one that flies; this one
                     // stands aside while it does.
                     .graphicsLayer { alpha = if (dock.coversMiniArt) 0f else 1f }
-                    .clip(artShape)
-                    .then(if (glass) Modifier else Modifier.thumbnailBorder(artShape))
+                    .clip(art.shape)
+                    .then(if (glass) Modifier else Modifier.thumbnailBorder(art.shape))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            Spacer(Modifier.width(if (inline) 8.dp else 10.dp))
+            Spacer(Modifier.width(art.gap))
             if (inline) {
                 Text(
                     text = song.title,
