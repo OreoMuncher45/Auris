@@ -1813,14 +1813,25 @@ class PlaybackService : MediaLibraryService() {
 
     /**
      * The stream a Cast receiver can open for [item], or null when there is none
-     * it can: a file on this phone, or a source that needs headers the
+     * it can: a file on this phone that is not a download of something it
+     * can stream instead, or a source that needs headers the
      * receiver cannot send. Runs the same resolver the player's own data source
      * does, so the receiver is handed the URL the phone would have played.
      */
     private suspend fun resolveForCast(item: MediaItem): CastStream? = withContext(Dispatchers.IO) {
         val uri = item.localConfiguration?.uri ?: return@withContext null
         val resolver = streamResolver ?: return@withContext null
-        val resolved = resolver.resolveDataSpec(DataSpec(uri)).uri
+        // A downloaded track's item plays its own file, which the receiver
+        // cannot reach. Cast the stream it would have been queued as instead,
+        // built the way [swapPointFor] builds an upgrade's base, so a
+        // source-backed download resolves through its source as it would
+        // have before it was saved.
+        val castUri = if (uri.scheme == "file" || uri.scheme == "content") {
+            item.toSong().toStreamMediaItem().localConfiguration?.uri ?: return@withContext null
+        } else {
+            uri
+        }
+        val resolved = resolver.resolveDataSpec(DataSpec(castUri)).uri
         if (resolved.scheme != "http" && resolved.scheme != "https") {
             null
         } else {
