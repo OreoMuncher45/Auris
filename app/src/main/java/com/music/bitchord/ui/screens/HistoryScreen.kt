@@ -5,8 +5,6 @@ import com.music.bitchord.ui.components.rememberSongKeys
 import com.music.bitchord.R
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.LaunchedEffect
@@ -14,7 +12,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.IntOffset
 import com.music.bitchord.ui.MainViewModel
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +30,8 @@ import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
+import com.music.bitchord.ui.components.ROW_REMOVAL_FADE_OUT
+import com.music.bitchord.ui.components.ROW_REMOVAL_PLACEMENT
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.songListSkeleton
 
@@ -106,8 +105,8 @@ fun HistoryScreen(
                         Modifier
                             .animateItem(
                                 fadeInSpec = null,
-                                fadeOutSpec = HISTORY_ROW_FADE_OUT,
-                                placementSpec = HISTORY_ROW_PLACEMENT,
+                                fadeOutSpec = ROW_REMOVAL_FADE_OUT,
+                                placementSpec = ROW_REMOVAL_PLACEMENT,
                             )
                             .then(removalPulse(removalFailure?.takeIf { it.token == song.feedbackToken })),
                     ) {
@@ -137,12 +136,6 @@ fun HistoryScreen(
         }
     }
 }
-
-private val HISTORY_ROW_FADE_OUT = tween<Float>(durationMillis = 150, easing = FastOutLinearInEasing)
-private val HISTORY_ROW_PLACEMENT = tween<IntOffset>(
-    durationMillis = 220,
-    easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
-)
 
 /**
  * One soft dip in opacity on the row whose removal YouTube refused, so the

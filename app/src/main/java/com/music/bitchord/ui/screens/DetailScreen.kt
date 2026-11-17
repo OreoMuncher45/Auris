@@ -41,6 +41,8 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import com.music.bitchord.ui.components.LazyContent
 import com.music.bitchord.ui.components.rememberShelfKeys
 import com.music.bitchord.ui.components.uniqueKeys
+import com.music.bitchord.ui.components.ROW_REMOVAL_FADE_OUT
+import com.music.bitchord.ui.components.ROW_REMOVAL_PLACEMENT
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -430,6 +432,7 @@ fun DetailScreen(
     // position, a row taken out of the middle renamed every row below it, and
     // the list disposed and rebuilt each of them instead of moving them up.
     val rowKeys = remember(queue) { uniqueKeys(queue) { it.videoId } }
+    val cacheFolder = page.browseId == CACHE_FOLDER_BROWSE_ID
     // Read at tap time, so a row's click lambda captures only its own key and
     // stays equal when the rows around it change; see [rowKeys].
     val currentQueue by rememberUpdatedState(queue)
@@ -737,33 +740,51 @@ fun DetailScreen(
                                 song.copy(thumbnailUrl = page.thumbnailUrl)
                             }
                         }
-                        SongRow(
-                            song = rowSong,
-                            onClick = {
-                                val at = currentRowKeys.indexOf(rowKey)
-                                if (at >= 0) currentOnSongClick(currentQueue, at)
-                            },
-                            onLongPress = { onSongLongPress(song) },
-                            onSwipeToQueue = { onSongSwipe(song) },
-                            rowBackground = Color.Transparent,
-                            // The track's place on the release, not its place in
-                            // what the filter — or a sort — left standing.
-                            trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
-                            subtitleColor = palette.onBackgroundVariant,
-                            downloadedTint = downloadedTint,
-                            isCurrent = isCurrent,
-                            isPlaying = isCurrent && isPlaying,
-                            activeTint = palette.accent,
-                            searchPlayingStyle = true,
-                        )
-                        if (position < matches.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(
-                                    start = if (numbered) NUMBERED_ROW_DIVIDER_INSET else ROW_DIVIDER_INSET,
-                                ),
-                                thickness = 0.5.dp,
-                                color = palette.divider,
+                        val row: @Composable () -> Unit = {
+                            SongRow(
+                                song = rowSong,
+                                onClick = {
+                                    val at = currentRowKeys.indexOf(rowKey)
+                                    if (at >= 0) currentOnSongClick(currentQueue, at)
+                                },
+                                onLongPress = { onSongLongPress(song) },
+                                onSwipeToQueue = { onSongSwipe(song) },
+                                rowBackground = Color.Transparent,
+                                // The track's place on the release, not its place in
+                                // what the filter — or a sort — left standing.
+                                trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
+                                subtitleColor = palette.onBackgroundVariant,
+                                downloadedTint = downloadedTint,
+                                isCurrent = isCurrent,
+                                isPlaying = isCurrent && isPlaying,
+                                activeTint = palette.accent,
+                                searchPlayingStyle = true,
                             )
+                            if (position < matches.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(
+                                        start = if (numbered) NUMBERED_ROW_DIVIDER_INSET else ROW_DIVIDER_INSET,
+                                    ),
+                                    thickness = 0.5.dp,
+                                    color = palette.divider,
+                                )
+                            }
+                        }
+                        // The Cached songs folder is the one detail page a
+                        // row is taken off in front of the listener, from the
+                        // song menu's Remove from cache, so it is the one that
+                        // animates the removal — the same motion as History.
+                        // Every other page keeps its rows as they were.
+                        if (cacheFolder) {
+                            Column(
+                                Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = ROW_REMOVAL_FADE_OUT,
+                                    placementSpec = ROW_REMOVAL_PLACEMENT,
+                                ),
+                            ) { row() }
+                        } else {
+                            row()
                         }
                     }
                 }
