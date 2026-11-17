@@ -93,6 +93,7 @@ internal object SpotifyToken {
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
         cachedSession = null
+        epoch++
         // The kept copies go too: a refusal is the backend saying these are
         // done with, and a cold start must not bring them back. Under the same
         // lock as [restore], so a restore cannot finish publishing the old
@@ -107,6 +108,14 @@ internal object SpotifyToken {
      * these should wait on one.
      */
     private val stateLock = Any()
+
+    /**
+     * Bumped by every [invalidate]. Work that reaches the network captures it
+     * first and publishes only if it is unchanged, checked under [stateLock]:
+     * a harvest or mint started for the listener who just left must not land
+     * in the cache the next one reads. The network work itself holds no lock.
+     */
+    @Volatile private var epoch = 0L
 
     // ---- Kept across process starts ----------------------------------------
 
@@ -297,6 +306,7 @@ internal object SpotifyToken {
                 Log.w(TAG, "SpotifyToken.init was never called; no context for the harvest")
                 return@withLock null
             }
+            val startEpoch = epoch
 
             // The session page is needed by the first request after this one
             // (its client version and the client token both come off it), and
@@ -313,21 +323,30 @@ internal object SpotifyToken {
                 return@withLock null
             }
 
-            if (mode == Mode.SIGNED_IN) {
-                cachedAccessToken = harvested.token
-                accessTokenExpiresAtMs = harvested.expiresAt
-                harvested.clientId?.let { cachedClientId = it }
-            } else {
-                cachedAnonymousToken = harvested.token
-                anonymousTokenExpiresAtMs = harvested.expiresAt
-                // Only when nothing better exists: the client id feeds the
-                // client-token request, and the listener's own client id is the
-                // one the rest of the app's signed-in calls should be using.
-                if (cachedClientId == null) {
-                    harvested.clientId?.let { anonymousClientId = it }
+            val published = synchronized(stateLock) {
+                if (epoch != startEpoch) return@synchronized false
+                if (mode == Mode.SIGNED_IN) {
+                    cachedAccessToken = harvested.token
+                    accessTokenExpiresAtMs = harvested.expiresAt
+                    harvested.clientId?.let { cachedClientId = it }
+                } else {
+                    cachedAnonymousToken = harvested.token
+                    anonymousTokenExpiresAtMs = harvested.expiresAt
+                    // Only when nothing better exists: the client id feeds the
+                    // client-token request, and the listener's own client id is the
+                    // one the rest of the app's signed-in calls should be using.
+                    if (cachedClientId == null) {
+                        harvested.clientId?.let { anonymousClientId = it }
+                    }
                 }
+                keep(mode, harvested, cookie)
+                true
             }
-            keep(mode, harvested, cookie)
+            if (!published) {
+                // Minted for a session that was invalidated mid-harvest.
+                Log.w(TAG, "discarding a token harvested before the session changed")
+                return@withLock null
+            }
             Log.d(
                 TAG,
                 "harvested ${if (mode == Mode.ANONYMOUS) "anonymous " else ""}access token, " +
@@ -527,6 +546,7 @@ internal object SpotifyToken {
     @Synchronized
     fun clientToken(): String? {
         restore()
+        val startEpoch = epoch
         val now = System.currentTimeMillis()
         cachedClientToken?.let { if (now < clientTokenExpiresAtMs - 30_000) return it }
 
@@ -595,12 +615,16 @@ internal object SpotifyToken {
         val ttlSeconds = granted["expires_after_seconds"]?.jsonPrimitive?.contentOrNull
             ?.toLongOrNull() ?: 3600L
 
-        cachedClientToken = token
-        clientTokenExpiresAtMs = now + ttlSeconds * 1000
-        store()?.edit()
-            ?.putString(K_CLIENT, token)
-            ?.putLong(K_CLIENT_EXPIRES, clientTokenExpiresAtMs)
-            ?.apply()
+        synchronized(stateLock) {
+            // Minted for a session that has since been invalidated: not this one's.
+            if (epoch != startEpoch) return null
+            cachedClientToken = token
+            clientTokenExpiresAtMs = now + ttlSeconds * 1000
+            store()?.edit()
+                ?.putString(K_CLIENT, token)
+                ?.putLong(K_CLIENT_EXPIRES, clientTokenExpiresAtMs)
+                ?.apply()
+        }
         Log.d(TAG, "minted client token, good for ${ttlSeconds}s")
         return token
     }
@@ -643,12 +667,15 @@ internal object SpotifyToken {
     @Synchronized
     private fun session(): SessionInfo? {
         cachedSession?.let { return it }
+        val startEpoch = epoch
         val prefs = store()
         val keptDevice = prefs?.getString(K_DEVICE_ID, null)
         val keptVersion = prefs?.getString(K_CLIENT_VERSION, null)
         val versionAge = System.currentTimeMillis() - (prefs?.getLong(K_CLIENT_VERSION_AT, 0L) ?: 0L)
         if (keptDevice != null && keptVersion != null && versionAge in 0 until SESSION_MAX_AGE_MS) {
-            return SessionInfo(keptVersion, keptDevice).also { cachedSession = it }
+            return SessionInfo(keptVersion, keptDevice).also { kept ->
+                synchronized(stateLock) { if (epoch == startEpoch) cachedSession = kept }
+            }
         }
 
         val request = Request.Builder()
@@ -688,12 +715,18 @@ internal object SpotifyToken {
             clientVersion,
             keptDevice ?: deviceId ?: java.util.UUID.randomUUID().toString(),
         )
-        cachedSession = session
-        prefs?.edit()
-            ?.putString(K_DEVICE_ID, session.deviceId)
-            ?.putString(K_CLIENT_VERSION, session.clientVersion)
-            ?.putLong(K_CLIENT_VERSION_AT, System.currentTimeMillis())
-            ?.apply()
+        // Still this caller's answer either way; only cached and kept when no
+        // invalidation came in while the page was being read.
+        synchronized(stateLock) {
+            if (epoch == startEpoch) {
+                cachedSession = session
+                prefs?.edit()
+                    ?.putString(K_DEVICE_ID, session.deviceId)
+                    ?.putString(K_CLIENT_VERSION, session.clientVersion)
+                    ?.putLong(K_CLIENT_VERSION_AT, System.currentTimeMillis())
+                    ?.apply()
+            }
+        }
         return session
     }
 }
