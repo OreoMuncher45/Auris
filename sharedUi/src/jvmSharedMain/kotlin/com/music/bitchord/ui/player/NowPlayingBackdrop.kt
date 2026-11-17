@@ -40,6 +40,9 @@ import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
+import com.music.bitchord.ui.graphics.argbPixels
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -74,6 +77,15 @@ internal fun BoxScope.PortraitBackdrop(
     fullArtworkBlur: @Composable (Modifier) -> Unit,
     heroHeight: Dp,
     heroWash: () -> Float,
+    /**
+     * Where the mesh or the legacy blobs publish the colours they show under
+     * the chrome, for the ink to be judged against — see [resolveInk]. Read
+     * only by the ink's own effect, so publishing recomposes nothing.
+     */
+    inkSurfaces: PlayerInkSurfaces,
+    /** The ink's grade over the main view's scrim, read in draw. */
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     // Anchored to the sleeve's bottom edge, so the screen carries on in the
     // colours the artwork ended in rather than in a quantiser's idea of what
@@ -127,6 +139,9 @@ internal fun BoxScope.PortraitBackdrop(
             liveFrames = meshLiveFrames,
             trackKey = trackKey,
             modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+            inkSurfaces = inkSurfaces,
+            inkBlackWash = inkBlackWash,
+            inkWhiteWash = inkWhiteWash,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
         // Not drawn once the full-cover blur has taken the screen: a
@@ -143,6 +158,9 @@ internal fun BoxScope.PortraitBackdrop(
                 lift = lift,
                 liftFrom = liftFrom,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+                inkSurfaces = inkSurfaces,
+                inkBlackWash = inkBlackWash,
+                inkWhiteWash = inkWhiteWash,
             )
         }
     }
@@ -317,9 +335,20 @@ private fun PlayerMeshBackdrop(
     modifier: Modifier = Modifier,
     lift: () -> Dp = { 0.dp },
     liftFrom: () -> Dp = { 0.dp },
+    inkSurfaces: PlayerInkSurfaces,
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames)
+    }
+    // What the chrome stands on, read off the mesh itself: a 32-texel image,
+    // averaged into bands off the main thread whenever the mesh changes.
+    LaunchedEffect(mesh) {
+        val image = mesh?.image ?: return@LaunchedEffect
+        inkSurfaces.main = withContext(Dispatchers.Default) {
+            meshInkSurface(bandAverages(image.argbPixels(), image.width, image.height))
+        }
     }
     ArtworkMeshBackdrop(
         mesh = mesh,
@@ -327,6 +356,8 @@ private fun PlayerMeshBackdrop(
         modifier = modifier,
         lift = lift,
         liftFrom = liftFrom,
+        blackWash = inkBlackWash,
+        whiteWash = inkWhiteWash,
     )
 }
 
@@ -343,15 +374,24 @@ private fun LegacyMeshBackdrop(
     liveFrames: Flow<ImageBitmap?>?,
     trackKey: String,
     modifier: Modifier = Modifier,
+    inkSurfaces: PlayerInkSurfaces,
+    inkBlackWash: () -> Float,
+    inkWhiteWash: () -> Float,
 ) {
     // One frame at a time: the legacy backdrop takes a picture, not a stream.
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(liveFrames) {
         liveFrames?.collectLatest { frame = it }
     }
+    val palette = rememberArtworkColors(imageUrl, frame)
+    // The blobs' own colours, published for the ink — four colours and a
+    // base, so cheap enough to read wherever the palette lands.
+    LaunchedEffect(palette) { inkSurfaces.main = legacyMeshInkSurface(palette) }
     MeshGradientBackground(
-        palette = rememberArtworkColors(imageUrl, frame),
+        palette = palette,
         trackKey = trackKey,
         modifier = modifier,
+        blackWash = inkBlackWash,
+        whiteWash = inkWhiteWash,
     )
 }

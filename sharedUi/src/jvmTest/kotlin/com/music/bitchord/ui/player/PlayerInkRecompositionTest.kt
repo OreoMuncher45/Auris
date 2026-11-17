@@ -64,7 +64,11 @@ class PlayerInkRecompositionTest {
         fromClip: Boolean,
     ) {
         screenCount++
-        val ink = rememberPlayerInk(palette = live, fromClip = fromClip, fallback = sleeveInk.value)
+        val ink = rememberPlayerInk(
+            palette = live,
+            fromClip = fromClip,
+            sleeve = NowPlayingPalette(fg = sleeveInk.value),
+        ).ink
         val glow = rememberPlayerInkGlow(ink)
         CompositionLocalProvider(LocalPlayerInk provides ink, LocalPlayerInkGlow provides glow) {
             repeat(READERS) { Reader() }
@@ -89,6 +93,10 @@ class PlayerInkRecompositionTest {
                 var now = startNs
                 var frames = 0
                 while (now - startNs <= ms * 1_000_000L) {
+                    // The ink is judged on Dispatchers.Default; give that a
+                    // moment to land before each frame, as a real frame
+                    // interval would.
+                    Thread.sleep(2)
                     repeat(4) { yield() }
                     clock.sendFrame(now)
                     repeat(4) { yield() }

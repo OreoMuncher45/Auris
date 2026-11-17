@@ -26,10 +26,37 @@ import kotlin.math.sqrt
  */
 @Immutable
 internal data class NowPlayingPalette(
-    /** Title, transport, filled progress, and every icon at rest. */
+    /**
+     * Title, transport, filled progress, and every icon at rest — as judged
+     * from the sleeve alone. The player re-judges the same [accent] against
+     * the backdrop it actually draws (see [resolveInk]); this is what it shows
+     * until that backdrop has been read.
+     */
     val fg: Color,
     val alphas: NowPlayingAlphas = NowPlayingAlphas(),
+    /** The record's colour the ink is built from, before its lightness is chosen. */
+    val accent: InkAccent = NeutralInkAccent,
 )
+
+/**
+ * The colour the ink is made of — the sleeve's secondary hue and its chroma —
+ * and the lightness it prefers on each side: [lightL] when the ink is light,
+ * [darkL] when it is dark. Only the lightness moves when the backdrop asks for
+ * more contrast; the hue never does, so the ink stays this record's colour.
+ */
+@Immutable
+internal data class InkAccent(
+    val hue: Float,
+    val chroma: Float,
+    val lightL: Float,
+    val darkL: Float,
+) {
+    /** This accent at OKLCH lightness [l], giving up chroma (never hue) to stay in gamut. */
+    fun at(l: Float): Color = Oklch(l.coerceIn(0f, 1f), chroma, hue).toColor()
+}
+
+/** A sleeve with no colour worth tinting with: neutral ink. */
+internal val NeutralInkAccent = InkAccent(hue = 0f, chroma = 0f, lightL = 0.94f, darkL = 0.20f)
 
 /**
  * The player's opacity roles. Keeping them here rather than as literals at
@@ -69,19 +96,19 @@ internal fun computeNowPlayingPalette(art: List<Int>): NowPlayingPalette {
     val accent = secondaryAccent(buckets, total)
     val brightBackdrop = controlLuminance(visible) >= BRIGHT_BACKDROP_LUMINANCE
 
-    val fg = when {
-        accent == null -> if (brightBackdrop) DARK_NEUTRAL_INK else LIGHT_NEUTRAL_INK
-        brightBackdrop -> accent.copy(
-            l = (accent.l - DARK_INK_DROP).coerceIn(DARK_INK_MIN_L, DARK_INK_MAX_L),
+    val inkAccent = if (accent == null) {
+        NeutralInkAccent
+    } else {
+        InkAccent(
+            hue = accent.hue,
             chroma = accent.chroma.coerceIn(MIN_INK_CHROMA, MAX_INK_CHROMA),
-        ).toColor()
-        else -> accent.copy(
-            l = (accent.l + LIGHT_INK_LIFT).coerceIn(LIGHT_INK_MIN_L, LIGHT_INK_MAX_L),
-            chroma = accent.chroma.coerceIn(MIN_INK_CHROMA, MAX_INK_CHROMA),
-        ).toColor()
+            lightL = (accent.l + LIGHT_INK_LIFT).coerceIn(LIGHT_INK_MIN_L, LIGHT_INK_MAX_L),
+            darkL = (accent.l - DARK_INK_DROP).coerceIn(DARK_INK_MIN_L, DARK_INK_MAX_L),
+        )
     }
+    val fg = inkAccent.at(if (brightBackdrop) inkAccent.darkL else inkAccent.lightL)
 
-    return NowPlayingPalette(fg = fg)
+    return NowPlayingPalette(fg = fg, accent = inkAccent)
 }
 
 private class Accent(val oklch: Oklch, val weight: Float)
@@ -307,8 +334,6 @@ private const val LIGHT_INK_MAX_L = 0.86f
 private const val MIN_INK_CHROMA = 0.09f
 private const val MAX_INK_CHROMA = 0.22f
 
-private val DARK_NEUTRAL_INK = Oklch(0.20f, 0f, 0f).toColor()
-private val LIGHT_NEUTRAL_INK = Oklch(0.94f, 0f, 0f).toColor()
 
 /** Binary-search steps for the largest in-gamut chroma; far below a JND. */
 private const val GAMUT_STEPS = 18

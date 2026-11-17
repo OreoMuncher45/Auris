@@ -103,12 +103,17 @@ fun MeshGradientBackground(
      * many cards are on screen.
      */
     animated: Boolean = true,
+    /**
+     * The player ink's grade over the scrim: black under light ink, white under
+     * dark. Read in the draw phase, so a fade between them never recomposes.
+     * Nothing outside the player passes one.
+     */
+    blackWash: () -> Float = { 0f },
+    whiteWash: () -> Float = { 0f },
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
-    val tuned = (palette.colors.ifEmpty { FallbackColors } + FallbackColors)
-        .take(4)
-        .map { it.tuned() }
+    val tuned = palette.drawnColors()
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
@@ -184,7 +189,7 @@ fun MeshGradientBackground(
             val radius = size.maxDimension * 0.62f
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(color.copy(alpha = 0.85f), color.copy(alpha = 0f)),
+                    colors = listOf(color.copy(alpha = BLOB_ALPHA), color.copy(alpha = 0f)),
                     center = center,
                     radius = radius,
                 ),
@@ -193,12 +198,15 @@ fun MeshGradientBackground(
             )
         }
 
-        // Gentle scrim so white text stays legible over bright art.
+        // Gentle scrim so white text stays legible over bright art, with the
+        // player ink's grade folded into the same draw.
+        val black = blackWash()
+        val white = whiteWash()
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(
-                    Color.Black.copy(alpha = 0.10f),
-                    Color.Black.copy(alpha = 0.38f),
+                    gradedScrimStop(LEGACY_SCRIM_TOP, black, white),
+                    gradedScrimStop(LEGACY_SCRIM_BOTTOM, black, white),
                 ),
             ),
         )
@@ -324,6 +332,35 @@ private fun Color.hsl(): FloatArray =
     FloatArray(3).also { ColorUtils.colorToHSL(toArgb(), it) }
 
 /** Boost saturation and clamp lightness so any artwork yields a rich, non-muddy mesh. */
+/** The four colours [MeshGradientBackground] actually paints for [this] palette. */
+private fun MeshPalette.drawnColors(): List<Color> =
+    (colors.ifEmpty { FallbackColors } + FallbackColors).take(4).map { it.tuned() }
+
+private const val LEGACY_SCRIM_TOP = 0.10f
+private const val LEGACY_SCRIM_BOTTOM = 0.38f
+
+/** How strongly each blob is painted at its centre over the dimmed base. */
+private const val BLOB_ALPHA = 0.85f
+
+/**
+ * What the player's chrome can land on over [MeshGradientBackground]: each
+ * blob at full strength over the dimmed base, and the base itself between
+ * them. The blobs drift, so any of them may sit under any control; each is a
+ * band the ink has to hold over — at the scrim's lightest for light ink, at
+ * its darkest for dark.
+ */
+internal fun legacyMeshInkSurface(palette: MeshPalette): InkSurface {
+    val drawn = palette.drawnColors()
+    val base = drawn.first().dimmed().toArgb()
+    val shown = IntArray(drawn.size + 1) { i ->
+        if (i == drawn.size) base else blendArgb(drawn[i].toArgb(), base, BLOB_ALPHA)
+    }
+    return InkSurface(
+        light = IntArray(shown.size) { scrimmed(shown[it], LEGACY_SCRIM_TOP) },
+        dark = IntArray(shown.size) { scrimmed(shown[it], LEGACY_SCRIM_BOTTOM) },
+    )
+}
+
 private fun Color.tuned(): Color {
     val hsl = FloatArray(3)
     ColorUtils.colorToHSL(toArgb(), hsl)

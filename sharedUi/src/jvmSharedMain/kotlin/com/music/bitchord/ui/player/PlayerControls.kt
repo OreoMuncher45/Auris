@@ -1578,7 +1578,9 @@ internal fun OutputCaption(
         Text(
             text = if (badge.inParty) jamName else outputName,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-            color = ink.copy(alpha = alphas.tertiary),
+            // Text, so it takes the text role: the tertiary role is for icons
+            // and only promises them 3:1 — see [inkHolds].
+            color = ink.copy(alpha = alphas.secondary),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
