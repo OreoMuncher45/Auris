@@ -2097,11 +2097,13 @@ fun NowPlayingScreen(
     // the backdrop then reports what it actually shows — the live blur of a
     // playing cover included — through [publishPanelInk].
     //
-    // The backdrop's report has the last word: each one bumps [panelShown],
-    // and a still-copy read that finishes after one is dropped, so a slow
-    // prewarm can never put the still surface back under a live blur. A plain
-    // counter, not state: nothing composes off it.
-    val panelShown = remember { intArrayOf(0) }
+    // While the backdrop is mounted and has said what it shows, it alone
+    // publishes: the still-copy read only stands in before then, and its
+    // result is dropped if the backdrop has spoken by the time it lands — so
+    // a still surface can never be put back under a live blur, paused or not.
+    // The backdrop gives the authority back when it leaves the screen. A
+    // plain flag, not state: nothing composes off it.
+    val panelDisplayed = remember { booleanArrayOf(false) }
     fun panelInkSurface(image: ImageBitmap) =
         fullBlurInkSurface(bandBounds(image.argbPixels(), image.width, image.height))
     // A live blur lands up to thirty times a second, and its bands drift by
@@ -2112,15 +2114,15 @@ fun NowPlayingScreen(
     }
     val publishPanelInk: suspend (ImageBitmap) -> Unit = remember(inkSurfaces) {
         { image ->
-            panelShown[0]++
+            panelDisplayed[0] = true
             publishPanel(withContext(Dispatchers.Default) { panelInkSurface(image) })
         }
     }
     LaunchedEffect(fullArtworkBlurImage) {
         val image = fullArtworkBlurImage ?: return@LaunchedEffect
-        val seen = panelShown[0]
+        if (panelDisplayed[0]) return@LaunchedEffect
         val next = withContext(Dispatchers.Default) { panelInkSurface(image) }
-        if (panelShown[0] == seen) publishPanel(next)
+        if (!panelDisplayed[0]) publishPanel(next)
     }
     // The ink, as states.
     //
@@ -2182,6 +2184,9 @@ fun NowPlayingScreen(
     )
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
+            // Moving between the portrait and landscape players keeps it; only
+            // leaving the screen hands the panel's surface back to the prewarm.
+            DisposableEffect(Unit) { onDispose { panelDisplayed[0] = false } }
             FullArtworkBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
                 liveFrames = currentLiveBlurFrames.value,
