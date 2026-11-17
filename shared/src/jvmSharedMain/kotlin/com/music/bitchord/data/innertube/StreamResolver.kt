@@ -1031,6 +1031,37 @@ object StreamResolver {
     }
 
     /**
+     * Whether [url] is part of a live broadcast's HLS delivery: its playlist on
+     * `manifest.googlevideo.com`, or a segment whose path carries the same
+     * `live/1` and `source/yt_live_broadcast` markers [isLiveUrl] reads from a
+     * query. Both change from one refresh to the next, so a disk cache that
+     * answers them by URL replays a stale playlist and never sees a new
+     * segment; see `AudioCache.playbackFactory`.
+     *
+     * String checks only: this runs on every open of a segment.
+     */
+    fun isLiveDeliveryUrl(url: String): Boolean {
+        if (!url.startsWith("https://")) return false
+        val hostEnd = url.indexOf('/', startIndex = 8).let { if (it < 0) url.length else it }
+        val host = url.substring(8, hostEnd)
+        if (!host.endsWith(".googlevideo.com")) return false
+        if (host == "manifest.googlevideo.com") return true
+        val path = url.substring(hostEnd)
+        return path.contains("/live/1/") || path.contains("/source/yt_live_broadcast/") || isLiveUrl(url)
+    }
+
+    /**
+     * Video ids [liveHlsStream] has served as a live broadcast, so the cache in
+     * front of the resolver can stop writing their playlist under the track's
+     * key. Bounded the way [UploadedTracks] is.
+     */
+    private val liveIds = ConcurrentHashMap.newKeySet<String>()
+    private const val MAX_LIVE_REMEMBERED = 256
+
+    /** Whether [videoId] was last resolved to a live broadcast's HLS playlist. */
+    fun isKnownLive(videoId: String): Boolean = videoId in liveIds
+
+    /**
      * The HLS playlist of a live broadcast, or null when [videoId] is not live
      * or has none. Media3 plays it through `HlsMediaSource` — the `.m3u8` ending
      * is what [com.music.bitchord.playback.StreamContainer.manifestMimeOf] reads.
@@ -1046,6 +1077,8 @@ object StreamResolver {
                     extractor.streamType == StreamType.AUDIO_LIVE_STREAM
                 extractor.hlsUrl.takeIf { live && it.isNotBlank() }?.let {
                     TrackLog.d(TAG, "live stream $videoId served from its HLS playlist")
+                    if (liveIds.size >= MAX_LIVE_REMEMBERED) liveIds.clear()
+                    liveIds.add(videoId)
                     Stream(url = it, kbps = 0, mimeType = "application/x-mpegURL")
                 }
             }

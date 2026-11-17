@@ -1020,6 +1020,13 @@ object AudioCache {
      * Wraps [upstream] so everything played is written to disk on the way
      * through, and anything already there is served without a request.
      * Local file and content URIs bypass disk caching to prevent redundant writes.
+     *
+     * So does a live broadcast. Its HLS playlist is fetched again every target
+     * duration from the same URL, and the cache would answer every refresh
+     * with the first copy: the player would see no new segments and stall,
+     * while refreshing at Media3's unchanged-playlist cadence (half the target
+     * duration) for nothing. Its segments are never played twice, so writing
+     * them is disk wear and battery with no reader. See [isLiveDelivery].
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
         val cacheDs = cacheFactory(upstream).createDataSource()
@@ -1034,7 +1041,7 @@ object AudioCache {
 
             override fun open(dataSpec: DataSpec): Long {
                 val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content") {
+                activeDs = if (scheme == "file" || scheme == "content" || isLiveDelivery(dataSpec.uri)) {
                     upstreamDs
                 } else {
                     cacheDs
@@ -1051,6 +1058,17 @@ object AudioCache {
                 activeDs.close()
             }
         }
+    }
+
+    /**
+     * Whether [uri] reads part of a live broadcast: the track's own virtual URI
+     * once its id resolved live (the master playlist), or a googlevideo
+     * playlist or segment of one. Cheap enough for every segment open.
+     */
+    private fun isLiveDelivery(uri: Uri): Boolean = when (uri.scheme) {
+        "bitchord" -> uri.getQueryParameter("v")?.let(StreamResolver::isKnownLive) == true
+        "https" -> StreamResolver.isLiveDeliveryUrl(uri.toString())
+        else -> false
     }
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
