@@ -55,6 +55,14 @@ internal object SpotifyToken {
     @Volatile private var appContext: Context? = null
 
     @Volatile private var cachedAccessToken: String? = null
+
+    /**
+     * The cookie [cachedAccessToken] was minted from. Memory only. A hit is a
+     * hit only for the cookie the caller is asking with: the settings write
+     * lands before the [invalidate] that follows it, and in between the old
+     * listener's token must not be handed to the new one.
+     */
+    @Volatile private var cachedAccessCookie: String? = null
     @Volatile private var accessTokenExpiresAtMs = 0L
     @Volatile private var cachedClientId: String? = null
 
@@ -85,6 +93,7 @@ internal object SpotifyToken {
 
     fun invalidate() = synchronized(stateLock) {
         cachedAccessToken = null
+        cachedAccessCookie = null
         accessTokenExpiresAtMs = 0L
         cachedClientId = null
         cachedAnonymousToken = null
@@ -160,6 +169,7 @@ internal object SpotifyToken {
                 val token = prefs.getString(K_ACCESS, null)
                 if (expires != null && token != null) {
                     cachedAccessToken = token
+                    cachedAccessCookie = cookie
                     accessTokenExpiresAtMs = expires
                     prefs.getString(K_ACCESS_CLIENT_ID, null)?.let { cachedClientId = it }
                 }
@@ -296,14 +306,22 @@ internal object SpotifyToken {
 
         val now = System.currentTimeMillis()
         if (mode == Mode.SIGNED_IN) {
-            cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
+            cachedAccessToken?.takeIf { cachedAccessCookie == cookie }
+                ?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
         } else {
             cachedAnonymousToken?.let { if (now < anonymousTokenExpiresAtMs - 30_000) return it }
         }
 
         return harvestMutex.withLock {
             val stillNow = System.currentTimeMillis()
-            val live = if (mode == Mode.SIGNED_IN) cachedAccessToken else cachedAnonymousToken
+            // A call queued behind an invalidation asked for a session that is
+            // gone; whatever is cached now belongs to the next one.
+            if (epoch != startEpoch) return@withLock null
+            val live = if (mode == Mode.SIGNED_IN) {
+                cachedAccessToken?.takeIf { cachedAccessCookie == cookie }
+            } else {
+                cachedAnonymousToken
+            }
             val liveExpiry = if (mode == Mode.SIGNED_IN) accessTokenExpiresAtMs else anonymousTokenExpiresAtMs
             live?.let { if (stillNow < liveExpiry - 30_000) return@withLock it }
 
@@ -332,6 +350,7 @@ internal object SpotifyToken {
                 if (epoch != startEpoch) return@synchronized false
                 if (mode == Mode.SIGNED_IN) {
                     cachedAccessToken = harvested.token
+                    cachedAccessCookie = cookie
                     accessTokenExpiresAtMs = harvested.expiresAt
                     harvested.clientId?.let { cachedClientId = it }
                 } else {
