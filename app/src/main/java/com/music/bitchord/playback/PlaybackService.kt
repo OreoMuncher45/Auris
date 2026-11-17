@@ -3403,9 +3403,11 @@ class PlaybackService : MediaLibraryService() {
         // player's copy of it lags behind by however long reconcile is held off
         // — read from the copy, a batch that had already landed counted as
         // missing and the same station was sent again.
+        // Counted on every track change, so playing through AutoPlay's tracks
+        // moves the baseline [refreshAutoplayIfQueueEmpty] compares against
+        // and is not mistaken for an edit that shrank the tail.
         val queuedAutoplay = partyAutoplayWaiting(party, current.videoId)
-            ?: (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
-                .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
+            ?: autoplayAheadOf(exoPlayer).also { autoplayAheadSeen = it }
         val needed = MAX_QUEUED_AUTOPLAY - queuedAutoplay
         if (needed <= 0) return
         if (autoplaySeed == current.videoId) return
@@ -3578,15 +3580,34 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-    /** Re-arms AutoPlay when an external queue edit exposes an empty tail. */
+    /**
+     * AutoPlay tracks ahead of the current one when last counted, so a queue
+     * edit can tell that it shrank AutoPlay's tail.
+     */
+    private var autoplayAheadSeen = 0
+
+    private fun autoplayAheadOf(exoPlayer: Player): Int {
+        var n = 0
+        for (i in exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount) {
+            if (exoPlayer.getMediaItemAt(i).fromAutoplay) n++
+        }
+        return n
+    }
+
+    /** Re-arms AutoPlay when an external queue edit empties or shrinks its tail. */
     private fun refreshAutoplayIfQueueEmpty() {
         val exoPlayer = player ?: return
+        val aheadBefore = autoplayAheadSeen
+        val aheadNow = autoplayAheadOf(exoPlayer)
+        autoplayAheadSeen = aheadNow
         if (!autoplayQueueNeedsRefresh(
                 enabled = autoplayEnabled(ListenTogether.state.value),
                 repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
                 currentIndex = exoPlayer.currentMediaItemIndex,
                 itemCount = exoPlayer.mediaItemCount,
                 loadInProgress = autoplayLoadJob?.isActive == true,
+                autoplayAhead = aheadNow,
+                autoplayAheadBefore = aheadBefore,
             )
         ) {
             return

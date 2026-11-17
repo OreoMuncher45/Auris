@@ -58,7 +58,9 @@ fun autoplaySupplierId(party: ListenTogether.State): String? {
  * A completed load normally leaves its seed behind to de-duplicate the several
  * player callbacks caused by one queue edit. If that edit leaves the current
  * track with nothing after it, however, the seed is no longer useful: keeping
- * it would make an enabled AutoPlay queue stay empty forever.
+ * it would make an enabled AutoPlay queue stay empty forever. The same goes
+ * for an edit that shrinks AutoPlay's tail ([autoplayAhead] now, against
+ * [autoplayAheadBefore] at the previous edit).
  */
 fun autoplayQueueNeedsRefresh(
     enabled: Boolean,
@@ -66,11 +68,16 @@ fun autoplayQueueNeedsRefresh(
     currentIndex: Int,
     itemCount: Int,
     loadInProgress: Boolean,
+    autoplayAhead: Int = 0,
+    autoplayAheadBefore: Int = 0,
 ): Boolean = enabled &&
     !repeatAll &&
     !loadInProgress &&
     currentIndex >= 0 &&
-    currentIndex == itemCount - 1
+    (currentIndex == itemCount - 1 ||
+        // Removing some of AutoPlay's tracks leaves a tail that is shorter but
+        // not empty; that needs topping up too.
+        (autoplayAhead < autoplayAheadBefore && autoplayAhead < MAX_QUEUED_AUTOPLAY))
 
 /**
  * Finds the YouTube id that should seed AutoPlay for a song.
