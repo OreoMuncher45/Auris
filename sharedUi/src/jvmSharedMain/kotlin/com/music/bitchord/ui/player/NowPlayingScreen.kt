@@ -2036,9 +2036,12 @@ fun NowPlayingScreen(
     // Only on the open, settled player in front of the listener: a change that
     // lands while it is collapsed, docking or in the background just swaps the
     // cover. Remembered, as the screen recomposes off the position tick.
-    val trackMotionVisible: () -> Boolean = remember(collapse, dock, dockFrame, lifecycle) {
+    //
+    // The collapse is the portrait sleeve's alone: in landscape the lyrics and
+    // the queue open beside the artwork, which stays in full view.
+    val trackMotionVisible: () -> Boolean = remember(collapse, dock, dockFrame, lifecycle, landscape) {
         {
-            collapse.p() == 0f && dockT() >= 1f &&
+            (landscape || collapse.p() == 0f) && dockT() >= 1f &&
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
