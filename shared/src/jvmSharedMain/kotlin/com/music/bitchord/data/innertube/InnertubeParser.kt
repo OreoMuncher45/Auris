@@ -628,6 +628,43 @@ object InnertubeParser {
         return PlaylistShelfPage(songs, suggested, token)
     }
 
+    /**
+     * A playlist continuation page, read from its own item list, or null when
+     * the response isn't in that shape and needs the general walk.
+     *
+     * Later pages of a playlist come back as
+     * `onResponseReceivedActions → appendContinuationItemsAction →
+     * continuationItems`: about a hundred track rows and, last, the
+     * `continuationItemRenderer` for the next page. That is all there is.
+     * A continuation has no header, no library state and no description, so
+     * the general first-page reading ([parsePlaylistShelf] failing over to
+     * [collectSongsDeep], [continuationToken], [parseBrowseHeader],
+     * [parseLibraryState], [parseDescription]) walked the whole ~1 MB tree about
+     * a dozen times per page to find nothing on most of those walks. It cost
+     * about 16 ms a page on a warm desktop JVM, several times that on a phone,
+     * and it sits between one request and the next.
+     *
+     * Strict on purpose: any item that isn't a track row or the continuation
+     * renderer (a podcast episode, a "Suggestions" shelf) returns null, so
+     * those pages keep the reading that knows about them.
+     */
+    fun parsePlaylistContinuation(root: JsonElement): PlaylistShelfPage? {
+        val items = root.a("onResponseReceivedActions")
+            ?.firstNotNullOfOrNull { it.o("appendContinuationItemsAction").a("continuationItems") }
+            ?: return null
+        val out = LinkedHashMap<String, Song>()
+        var token: String? = null
+        for (item in items) {
+            val row = item.o("musicResponsiveListItemRenderer")
+            when {
+                row != null -> parseResponsiveListItem(row, NO_CREDIT)?.let { out[it.videoId] = it }
+                item.o("continuationItemRenderer") != null -> token = token ?: continuationToken(item)
+                else -> return null
+            }
+        }
+        return PlaylistShelfPage(out.values.toList(), emptyList(), token)
+    }
+
     /** One page of saved library cards, plus the token for the next page. */
     data class LibraryItemPage(val items: List<ShelfItem>, val continuation: String?)
 
@@ -940,6 +977,9 @@ object InnertubeParser {
         val albumId: String? = null,
         val albumName: String? = null,
     )
+
+    /** What a page with no header credits its rows with: nothing. See [pageCredit]. */
+    private val NO_CREDIT = Credits()
 
     /**
      * The artist and album a run list links out to, and every credited artist.

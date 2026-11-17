@@ -95,7 +95,8 @@ class PlaylistLoadTimingTest {
                 java.io.File(dir).mkdirs()
                 java.io.File(dir, "${browseId}_p${requests + 1}.json").writeText(raw.toString())
             }
-            val shelf = InnertubeParser.parsePlaylistShelf(raw)
+            // Read the way YtMusicRepository.moreSongs reads it.
+            val shelf = InnertubeParser.parsePlaylistContinuation(raw) ?: InnertubeParser.parsePlaylistShelf(raw)
             val deep = if (shelf == null) InnertubeParser.collectSongsDeep(raw) else null
             val next = shelf?.continuation ?: InnertubeParser.continuationToken(raw)
             val c = System.nanoTime()
@@ -148,6 +149,16 @@ class PlaylistParseTimingTest {
         val t = System.nanoTime()
         repeat(runs) { pages.forEach { old(it) } }
         println("[timing] parse old: ${(System.nanoTime() - t) / 1_000 / runs / pages.size}us/page")
+        repeat(30) { pages.forEach { InnertubeParser.parsePlaylistContinuation(it) } }
+        val n = System.nanoTime()
+        repeat(runs) { pages.forEach { InnertubeParser.parsePlaylistContinuation(it) } }
+        println("[timing] parse new: ${(System.nanoTime() - n) / 1_000 / runs / pages.size}us/page")
+        pages.forEach { root ->
+            val fast = InnertubeParser.parsePlaylistContinuation(root)!!
+            org.junit.Assert.assertEquals(InnertubeParser.collectSongsDeep(root), fast.songs)
+            org.junit.Assert.assertEquals(InnertubeParser.continuationToken(root), fast.continuation)
+        }
+        println("[timing] new parse equals old on ${pages.size} recorded pages")
         val d = System.nanoTime()
         repeat(10) { java.io.File(dir).listFiles { f -> f.name.endsWith(".json") }!!.forEach { kotlinx.serialization.json.Json.parseToJsonElement(it.readText()) } }
         println("[timing] json decode: ${(System.nanoTime() - d) / 1_000 / 10 / pages.size}us/page")

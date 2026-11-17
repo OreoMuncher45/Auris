@@ -689,9 +689,19 @@ object YtMusicRepository {
         )
     }
 
-    /** The page [SongPage.continuation] points at. */
+    /**
+     * The page [SongPage.continuation] points at.
+     *
+     * Read from the continuation's own item list when it has one (see
+     * [InnertubeParser.parsePlaylistContinuation]), which is what every
+     * playlist page after the first is. [pageOf] stays as the fallback for
+     * any other shape.
+     */
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
-        pageOf(Innertube.browseContinuation(token))
+        val response = Innertube.browseContinuation(token)
+        InnertubeParser.parsePlaylistContinuation(response)
+            ?.let { SongPage(it.songs, it.continuation) }
+            ?: pageOf(response)
     }
 
     /**
@@ -774,7 +784,8 @@ object YtMusicRepository {
             // Same shelf-scoping as pageOf: a playlist (Liked Music and the
             // Library Songs auto-playlist included) is read from its own
             // shelf so a trailing "Suggested tracks" shelf never joins in.
-            val shelf = InnertubeParser.parsePlaylistShelf(response)
+            val shelf = InnertubeParser.parsePlaylistContinuation(response)
+                ?: InnertubeParser.parsePlaylistShelf(response)
             (shelf?.songs ?: InnertubeParser.collectSongsDeep(response)).forEach { out[it.videoId] = it }
             val token = shelf?.continuation ?: InnertubeParser.continuationToken(response)
             if (token == null || page++ >= MAX_PAGES) break
