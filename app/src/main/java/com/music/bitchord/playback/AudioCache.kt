@@ -420,14 +420,25 @@ object AudioCache {
      * Runs on the caller's thread rather than off in [scope], so that a caller
      * about to re-open the track can be sure the old bytes are gone first.
      * Call it off the main thread.
+     *
+     * @param keepComplete spare every entry that is on disk in full. For a
+     *   failure that was the network's rather than the file's — a dropped
+     *   connection, an expired URL, no connection at all. A complete entry is
+     *   never written to again, so it cannot be the half-filled seam this
+     *   exists to clear, and throwing it away for a network error is how
+     *   playing offline used to delete the very songs it was playing.
      */
-    fun discard(uri: Uri) {
+    fun discard(uri: Uri, keepComplete: Boolean = false) {
         val exact = keyFactory.buildCacheKey(DataSpec(uri))
         val about = mediaIdIn(uri)
         val family = uri.getQueryParameter("v")?.let { videoId ->
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
         (family + exact).distinct().forEach { key ->
+            if (keepComplete && isComplete(key)) {
+                TrackLog.d(TAG, "kept complete cache entry $key through a network failure", about = about)
+                return@forEach
+            }
             runCatching { cache.removeResource(key) }
                 .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
@@ -542,8 +553,8 @@ object AudioCache {
                 when {
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}"
-                    else -> videoId
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { offlineSibling(videoId, it) ?: it }
+                    else -> offlineSibling(videoId, videoId) ?: videoId
                 }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -564,6 +575,55 @@ object AudioCache {
             ?: spec.key
             ?: spec.uri.toString()
     }
+
+    /**
+     * With no connection, the complete copy of [videoId] the cache holds under
+     * a sibling key, when [preferred] — the key the current settings name —
+     * holds nothing at all.
+     *
+     * Which key a track lands under depends on settings that can change after
+     * it was cached: ranking a source above YouTube, or turning Dolby Atmos
+     * off, moves it from `videoId` to `videoId#alt2` or `#alt2-noatmos`.
+     * Online that only costs a re-download. Offline it made a track the Cached
+     * songs folder lists — fully on disk — fail to play at all, because the
+     * player asked for an empty entry and the network to fill it was not there.
+     *
+     * Only offline, and only for a copy that is complete: a complete entry is
+     * never written to again, so reading it cannot start the mixed-file seam
+     * [keyFactory] keeps renditions apart to prevent.
+     *
+     * The span lookup goes first: nearly every open is of an entry that
+     * already holds something, and that answer is an in-memory index read.
+     * Offline is read from [AppSettings.effectiveOffline], a flow a network
+     * callback keeps current, so no open pays a ConnectivityManager binder
+     * call.
+     */
+    private fun offlineSibling(videoId: String, preferred: String): String? {
+        if (!::cache.isInitialized) return null
+        if (cache.getCachedSpans(preferred).isNotEmpty() || !isOffline()) return null
+        return siblingKeysOf(videoId).filter { it != preferred }.firstOrNull(::isComplete)
+    }
+
+    /**
+     * Every key [keyFactory] can file a YouTube [videoId]'s ordinary playback
+     * under, in the order a fallback should try them: the plain entry first,
+     * then the current `#alt2` buckets.
+     */
+    private fun siblingKeysOf(videoId: String): List<String> =
+        listOf(videoId, "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
+
+    /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
+    private fun isComplete(key: String): Boolean = runCatching {
+        val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        length > 0 && cache.isCached(key, 0, length)
+    }.getOrDefault(false)
+
+    /**
+     * Whether playback cannot reach the network right now: the offline switch
+     * is on, or no validated network has been there for the grace period.
+     * See [AppSettings.effectiveOffline].
+     */
+    fun isOffline(): Boolean = AppSettings.effectiveOffline.value
 
     /**
      * Splits the `#alt` bucket in two along whatever this process currently
