@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
@@ -44,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -51,13 +53,17 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -114,32 +120,96 @@ private val SPINNER_SIZE = 22.dp
 private val TRANSPORT_GAP = 8.dp
 
 /**
- * Vertical padding, which with the 40dp artwork sets the bar's height at 56dp
- * and so its pill radius at 28.
+ * The mini player's cover and the row around it, as every pill that draws one
+ * lays it out: [MiniPlayer], the glass bar's docked player ([GlassNowPlaying])
+ * and the player panel's stand-in for either
+ * ([com.music.bitchord.ui.player.PlayerPanel]) all read it from here. The panel's
+ * copy is what the player's cover hands over to when it closes, so a figure
+ * that differed between them showed as the cover jumping on landing.
+ *
+ * [Inline] is the glass bar folded beside its tab circles; [Expanded] is every
+ * other pill. The shape is the shared [CircleShape], so recomposing a row —
+ * every play/pause does — allocates nothing for it.
+ *
+ * The cover is a circle sitting on the centre of the pill's left end cap, so
+ * the two curves run parallel with an even ring of glass between them. Where
+ * the cap's centre is depends on the pill's height:
+ *
+ * - Inline, the cover (32 + 4 above and below) sets the height at 40, so the
+ *   cap's radius is 20 and its centre is 20 in; a 4dp start pad puts the
+ *   cover's centre there too, with a 4dp ring all round.
+ * - Expanded, the pill has always been 60 tall: the title and artist lines
+ *   (44) with 8 above and below. A 48dp cover padded 6 on the start, top and
+ *   bottom keeps it at 60, now set by the cover, and sits on the centre of the
+ *   radius-30 cap with a 6dp ring.
+ *
+ * [padStart] is the least the cover is inset by. A pill that ends up taller
+ * than these figures — [GlassNavBar]'s folded row stretches its player to the
+ * tab pill beside it, and a larger system font grows the expanded row — moves
+ * the cover further in, through [miniArtPadding], so it stays on the cap's
+ * centre and the ring stays even, just wider.
+ *
+ * The far end keeps its larger pad, since the transport there is square.
  */
-private val ROW_PADDING_VERTICAL = 8.dp
+internal enum class MiniArt(
+    /** The cover's diameter. */
+    val size: Dp,
+    /** Row padding before the cover. */
+    val padStart: Dp,
+    /** Row padding after the transport. */
+    val padEnd: Dp,
+    /** Row padding above and below. */
+    val padVertical: Dp,
+    /** Between the cover and the title. */
+    val gap: Dp,
+) {
+    Inline(size = 32.dp, padStart = 4.dp, padEnd = 8.dp, padVertical = 4.dp, gap = 12.dp),
+    Expanded(size = 48.dp, padStart = 6.dp, padEnd = 12.dp, padVertical = 6.dp, gap = 10.dp),
+    ;
+
+    val shape: Shape = CircleShape
+
+    /**
+     * The corner the player's cover lands on when it closes here: half the
+     * cover, so the flight's corner blend ends on exactly this circle.
+     */
+    val corner: Dp = size / 2
+
+    companion object {
+        fun of(inline: Boolean): MiniArt = if (inline) Inline else Expanded
+    }
+}
 
 /**
- * Horizontal padding, deliberately larger than the vertical.
+ * [art]'s row padding, with the cover kept on the centre of the pill's end cap
+ * however tall the pill turns out.
  *
- * A pill's ends are semicircles, so the edge nearest the artwork is not the
- * one beside it but the one curving away above and below it. At the artwork's
- * top corner that edge has already come 8.4dp in from the left — level with
- * where square corners would have put the whole side. Padding the ends by the
- * vertical figure would leave the artwork touching the curve; 12 clears it
- * with room, and reads as centred rather than jammed into the round.
+ * The row is measured once, inset by [MiniArt.padStart]. Where the pill is
+ * taller than that inset assumes — stretched by its parent (the stretch reaches
+ * the row through `propagateMinConstraints`), or grown by a larger font — the
+ * content is shifted in by the difference, taken from the end pad. Shifting
+ * rather than re-measuring keeps it to one measure, and means the panel's copy
+ * of the row, stretched to the pill's measured height, arrives at the same
+ * offsets as the pill it stands in for.
  */
-private val ROW_PADDING_HORIZONTAL = 12.dp
+internal fun Modifier.miniArtPadding(art: MiniArt): Modifier = layout { measurable, constraints ->
+    val start = art.padStart.roundToPx()
+    val end = art.padEnd.roundToPx()
+    val vertical = art.padVertical.roundToPx()
+    val placeable = measurable.measure(constraints.offset(horizontal = -(start + end), vertical = -2 * vertical))
+    val width = constraints.constrainWidth(placeable.width + start + end)
+    val height = constraints.constrainHeight(placeable.height + 2 * vertical)
+    val shift = ((height - art.size.roundToPx()) / 2 - start).coerceIn(0, end)
+    layout(width, height) { placeable.placeRelative(start + shift, vertical) }
+}
 
 /**
- * The artwork's corner, on the 8dp every other thumbnail in the app carries.
- *
- * It used to be 7, picked so the bar's corner could sit concentric with it.
- * A pill has no corner to be concentric with — its radius is whatever half the
- * height happens to be — so that constraint is gone and the artwork can go
- * back to matching [SongRow].
+ * The bar's outline. Percent rather than a dp figure, so the corner stays
+ * exactly half the height if the row's contents ever change it — which is what
+ * keeps a pill a pill instead of a rounded rectangle. Same idiom as
+ * [FloatingBottomBar] directly below it, so the two shapes are the same family.
  */
-private val ART_CORNER = 8.dp
+private val PillShape = RoundedCornerShape(percent = 50)
 
 /** Distance that makes a horizontal drag an intentional track change. */
 private val TRACK_SWIPE_THRESHOLD = 72.dp
@@ -415,11 +485,8 @@ fun MiniPlayer(
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
-    // percent rather than a dp figure, so the corner stays exactly half the
-    // height if the row's contents ever change it — which is what keeps a pill
-    // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
-    // directly below it, so the two shapes are the same family.
-    val shape = RoundedCornerShape(percent = 50)
+    val shape = PillShape
+    val art = MiniArt.Expanded
     Box(
         modifier = modifier
             .padding(horizontal = BAR_GUTTER)
@@ -458,23 +525,20 @@ fun MiniPlayer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = ROW_PADDING_HORIZONTAL,
-                    vertical = ROW_PADDING_VERTICAL,
-                ),
+                .miniArtPadding(art),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(40.dp)
-                    .playerDockArt(dock, ART_CORNER)
-                    .clip(RoundedCornerShape(ART_CORNER))
-                    .thumbnailBorder(RoundedCornerShape(ART_CORNER))
+                    .size(art.size)
+                    .playerDockArt(dock, art.corner)
+                    .clip(art.shape)
+                    .thumbnailBorder(art.shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(art.gap))
             // The bar's title, reported for the handover: the player's own
             // title flies here when the sheet closes, and lands on these words
             // rather than near them. The title alone, not the whole column —
