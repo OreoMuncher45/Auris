@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -29,6 +31,7 @@ import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.haptics.Haptic
@@ -239,7 +242,7 @@ internal class DockFrame {
 
 /**
  * Horizontal fling skips tracks; the artwork follows the finger through
- * [setSwipeOffset] so the gesture has something to hold on to.
+ * [motion] so the gesture has something to hold on to.
  *
  * Stands down while the pipeline or cast dialog is up or a panel's list is
  * scrolling, and answers [onBlockedControl] instead of skipping while a party
@@ -255,40 +258,83 @@ internal fun Modifier.skipSwipeGesture(
     onBlockedControl: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
-    setSwipeOffset: (Float) -> Unit,
+    motion: TrackChangeMotion,
 ): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, controlsLocked) {
         if (pipelineOpen || castOpen || panelScrolling) return@pointerInput
         var total = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { total = 0f },
-            onDragCancel = { setSwipeOffset(0f) },
-            onDragEnd = {
-                // The same two buzzes the transport glyphs give, so swiping the
-                // sleeve and tapping skip feel like one gesture with two
-                // spellings.
-                val crossed = total <= -swipeThreshold || total >= swipeThreshold
-                when {
-                    // Still tracks the finger and still springs back, so the
-                    // sleeve does not feel dead — it just says why it did not
-                    // move on.
-                    controlsLocked -> if (crossed) onBlockedControl()
-                    total <= -swipeThreshold -> {
-                        haptics.play(Haptic.SkipNext)
-                        onNext()
+        // One per gesture block, fed the changes the detector already hands
+        // over: the release's speed is what lets a quick flick skip.
+        val velocity = VelocityTracker()
+        val flingVelocity = SWIPE_FLING_DP_PER_S.dp.toPx()
+        // Whether this block holds the art. The detector doesn't call
+        // onDragCancel when the block itself is cancelled — a key changing
+        // mid-drag, or the gesture leaving the screen — so the hold is let go
+        // of on the way out instead of leaving the art under a finger that has
+        // gone.
+        var holding = false
+        // When the finger last moved sideways, so a release after a pause
+        // isn't read as the flick that came before it.
+        var lastMoveNanos = 0L
+        try {
+            detectHorizontalDragGestures(
+                onDragStart = {
+                    total = 0f
+                    velocity.resetTracking()
+                    holding = true
+                    motion.dragStart()
+                },
+                onDragCancel = {
+                    holding = false
+                    motion.springBack()
+                },
+                onDragEnd = {
+                    holding = false
+                    val direction = trackSwipeDirection(
+                        total = total,
+                        velocity = releaseVelocity(
+                            velocity = velocity.calculateVelocity().x,
+                            sinceLastMoveMs = (System.nanoTime() - lastMoveNanos) / 1_000_000L,
+                        ),
+                        threshold = swipeThreshold,
+                        flingVelocity = flingVelocity,
+                    )
+                    when {
+                        // Still tracks the finger and still springs back, so the
+                        // sleeve does not feel dead — it just says why it did not
+                        // move on.
+                        controlsLocked -> {
+                            if (direction != 0) onBlockedControl()
+                            motion.springBack()
+                        }
+                        // Nowhere to go: back it comes, as for a short drag.
+                        direction == 1 && !motion.hasNext -> motion.springBack()
+                        // The same two buzzes the transport glyphs give, so swiping
+                        // the sleeve and tapping skip feel like one gesture with two
+                        // spellings. The art leaves before the call, so it is already
+                        // moving the frame the finger lifts.
+                        direction == 1 -> {
+                            haptics.play(Haptic.SkipNext)
+                            motion.commit(1)
+                            onNext()
+                        }
+                        direction == -1 -> {
+                            haptics.play(Haptic.SkipPrevious)
+                            motion.commit(-1)
+                            onPrevious()
+                        }
+                        else -> motion.springBack()
                     }
-                    total >= swipeThreshold -> {
-                        haptics.play(Haptic.SkipPrevious)
-                        onPrevious()
-                    }
-                }
-                setSwipeOffset(0f)
-            },
-            onHorizontalDrag = { _, delta ->
-                total += delta
-                // Damped: it's a hint, not a drag-to-position.
-                setSwipeOffset(total * 0.35f)
-            },
-        )
+                },
+                onHorizontalDrag = { change, delta ->
+                    total += delta
+                    velocity.addPointerInputChange(change)
+                    lastMoveNanos = System.nanoTime()
+                    motion.drag(total, swipeThreshold)
+                },
+            )
+        } finally {
+            if (holding) motion.springBack()
+        }
     }
 
 /**

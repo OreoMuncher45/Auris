@@ -1,7 +1,5 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -30,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -261,8 +260,7 @@ internal fun BoxScope.PortraitSleeve(
     dock: PlayerDock?,
     dockFrame: DockFrame,
     sleeveLayer: GraphicsLayer,
-    swipeSettle: Animatable<Float, AnimationVector1D>,
-    swipeThreshold: Float,
+    trackMotion: TrackChangeMotion,
     swipeHintShown: () -> Boolean,
     swipeHintNext: () -> Boolean,
     hasNext: Boolean,
@@ -270,7 +268,7 @@ internal fun BoxScope.PortraitSleeve(
     hazeState: HazeState,
     heroClipShown: Boolean,
     canvasCover: MutableFloatState,
-    art: PlayerArtwork,
+    liveArt: PlayerArtwork,
     canvasRendered: MutableState<Boolean>,
     headerUncrop: () -> Float,
     heroT: () -> Float,
@@ -294,6 +292,10 @@ internal fun BoxScope.PortraitSleeve(
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
 ) {
+    // The cover on its way out until it has gone, then the playing track's —
+    // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
+    // so the swap recomposes the sleeve and nothing around it.
+    val art = trackMotion.sleeveArt(song.videoId, liveArt)
     // The sleeve proper — card, banner and thumbnail in turn, see
     // [sleeveRect]. Separate from the slot below, which keeps the
     // card's place for the stats line and the gestures: a banner
@@ -350,7 +352,7 @@ internal fun BoxScope.PortraitSleeve(
                 val scale = if (t >= 1f) open else 1f + (open - 1f) * t
                 scaleX = scale
                 scaleY = scale
-                translationX = swipeSettle.value * (1f - p()) * (1f - share) * t
+                translationX = trackMotion.offset() * (1f - p()) * (1f - share) * t
             }
             // Haze must observe the drawable layer itself, the
             // banner included — a source on the surrounding layout
@@ -362,7 +364,8 @@ internal fun BoxScope.PortraitSleeve(
                 // is no clip mounted to hand it to. The clip is gone
                 // by the collapse's half, so the sleeve is whole
                 // again by the time it unmounts.
-                alpha = if (heroClipShown) 1f - canvasCover.floatValue else 1f
+                alpha = (if (heroClipShown) 1f - canvasCover.floatValue else 1f) *
+                    trackMotion.alpha()
             }
             .graphicsLayer {
                 val shown = geometry.sleeveShown()
@@ -401,34 +404,26 @@ internal fun BoxScope.PortraitSleeve(
             // The banner dissolves into the backdrop from the title
             // down to the stage's bottom, and firms back up as it
             // collapses.
-            .drawWithContent {
-                drawContent()
-                val shown = geometry.sleeveShown()
-                if (shown > 0f) {
+            //
+            // The ramp is built once per size and only its strength
+            // changes: erasing `shown × ramp` with DstOut leaves
+            // `1 − shown × ramp`, the same alpha the old DstIn mask
+            // rebuilt as a fresh 17-stop gradient on every draw.
+            .drawWithCache {
+                val ramp = bannerDissolveRamp(
                     // The title's row, in the sleeve's own pixels:
                     // the old stage bottom recovered out of the
                     // [HERO_ART_ZOOM] extension, plus the half
                     // [ART_TITLE_GAP] the row sits below it.
-                    val fadeStart = size.height / HERO_ART_ZOOM +
-                        ART_TITLE_GAP.toPx() / 2f
-                    // Eased, not linear: alpha holds near full as
-                    // the title begins, gives way through the
-                    // credits and settles at the stage's bottom
-                    // with no crease at either end.
-                    val steps = 16
-                    val colorStops = Array(steps + 1) { index ->
-                        val t = index / steps.toFloat()
-                        val eased = t * t * (3f - 2f * t)
-                        t to Color.Black.copy(alpha = 1f - shown * eased)
+                    startY = size.height / HERO_ART_ZOOM + ART_TITLE_GAP.toPx() / 2f,
+                    endY = size.height * ART_FADE_END_FRACTION,
+                )
+                onDrawWithContent {
+                    drawContent()
+                    val shown = geometry.sleeveShown()
+                    if (shown > 0f) {
+                        drawRect(brush = ramp, alpha = shown.coerceAtMost(1f), blendMode = BlendMode.DstOut)
                     }
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colorStops = colorStops,
-                            startY = fadeStart,
-                            endY = size.height * ART_FADE_END_FRACTION,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
                 }
             },
     ) {
@@ -470,7 +465,7 @@ internal fun BoxScope.PortraitSleeve(
                     }
                     scaleX = scale
                     scaleY = scale
-                    translationX = swipeSettle.value * (1f - p()) * share * t
+                    translationX = trackMotion.offset() * (1f - p()) * share * t
                     // Its own corners only once it is smaller than
                     // the sleeve; as the whole card it takes the
                     // sleeve's clip, as it always did.
@@ -602,10 +597,16 @@ internal fun BoxScope.PortraitSleeve(
                     } else {
                         1f
                     }
+                    // A track change in the banner moves the picture inside
+                    // its frame rather than the frame — see [bannerZoomFor] —
+                    // and only as far as the banner is open.
+                    val shift = trackMotion.offset() * geometry.bannerShare() * (1f - p()) * dockT()
                     val scale = lerpFloat(1f, bannerScale, banner) *
-                        lerpFloat(cardZoom, 1f, banner)
+                        lerpFloat(cardZoom, 1f, banner) *
+                        bannerZoomFor(shift, size.width)
                     scaleX = scale
                     scaleY = scale
+                    translationX = shift
                     // The card's own corners on the picture, so a
                     // zoomed-out picture keeps the card's shape
                     // instead of showing square corners inside it.
@@ -712,6 +713,9 @@ internal fun BoxScope.PortraitSleeve(
                     // banner's clip gives above.
                     pausedForTransition = panels.lyricsOpen || panels.queueOpen || panels.queueDragging ||
                         collapseStarted() || dockMoving() || !sheetSettled,
+                    // On the view itself: a Compose layer's alpha over a
+                    // TextureView isn't reliably composited.
+                    presentationAlpha = { trackMotion.alpha() },
                     onRenderedChanged = { canvasRendered.value = it },
                     onFrameCaptured = {
                         if (!tabletArtworkBackdrop && !panels.lyricsOpen && !panels.queueOpen) {
@@ -763,7 +767,7 @@ internal fun BoxScope.PortraitSleeve(
                 val idle = geometry.cardScale()
                 scaleX = idle
                 scaleY = idle
-                translationX = swipeSettle.value * (1f - p())
+                translationX = trackMotion.offset() * (1f - p())
             }
             // Collapsed, the sleeve is the way back: tapping the
             // thumbnail puts the queue or the lyrics away again.
@@ -821,7 +825,7 @@ internal fun BoxScope.PortraitSleeve(
                 }
                 .size(16.dp)
                 .graphicsLayer {
-                    alpha = (abs(swipeSettle.value) / swipeThreshold)
+                    alpha = abs(trackMotion.hint())
                         .coerceIn(0f, 1f) * (1f - p()) * hintAlpha
                 },
         )
@@ -924,4 +928,19 @@ internal class PlayerMeasures {
      * position into the same space as the two edges above.
      */
     var dismissBandSpace by mutableStateOf<LayoutCoordinates?>(null)
+}
+
+/**
+ * How much of the banner the dissolve takes away, from none at [startY] to all
+ * of it at [endY]. Eased, not linear: the picture holds near full as the title
+ * begins, gives way through the credits and settles at the stage's bottom with
+ * no crease at either end.
+ */
+internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
+    val steps = 16
+    val colorStops = Array(steps + 1) { index ->
+        val t = index / steps.toFloat()
+        t to Color.Black.copy(alpha = t * t * (3f - 2f * t))
+    }
+    return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }

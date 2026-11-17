@@ -1,7 +1,5 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -123,7 +121,7 @@ internal fun LandscapeNowPlaying(
     lyricsShareEnabled: Boolean,
     lyricPicker: LyricsPicker,
     showRevertCue: () -> Boolean,
-    swipeSettle: Animatable<Float, AnimationVector1D>,
+    trackMotion: TrackChangeMotion,
     volume: PlayerVolume,
     art: PlayerArtwork,
     openPlaybackOrigin: () -> Unit,
@@ -217,10 +215,14 @@ internal fun LandscapeNowPlaying(
                 fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
             },
             artwork = { artworkModifier ->
+                // The outgoing cover until it has left — see
+                // [TrackChangeMotion.shownKey]. Read in here, so the swap
+                // recomposes the artwork and not the player around it.
+                val shownArt = trackMotion.sleeveArt(song.videoId, art)
                 LandscapeArtwork(
-                    artRequest = art.request,
-                    artLoaded = art.loaded,
-                    onArtState = art::onState,
+                    artRequest = shownArt.request,
+                    artLoaded = shownArt.loaded,
+                    onArtState = shownArt::onState,
                     canvas = canvas,
                     canvasRendered = clipState.rendered,
                     isPlaying = isPlaying,
@@ -270,7 +272,8 @@ internal fun LandscapeNowPlaying(
                             val scale = if (t >= 1f) landscapeArtScale else 1f + (landscapeArtScale - 1f) * t
                             scaleX = scale
                             scaleY = scale
-                            translationX = if (t >= 1f) swipeSettle.value else swipeSettle.value * t
+                            translationX = if (t >= 1f) trackMotion.offset() else trackMotion.offset() * t
+                            alpha = trackMotion.alpha()
                         }
                         // With a panel up the sleeve is the way back to
                         // the player, as the portrait thumbnail is.
