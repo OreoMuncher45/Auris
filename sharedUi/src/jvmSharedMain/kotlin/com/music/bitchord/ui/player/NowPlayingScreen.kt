@@ -584,6 +584,9 @@ internal class PlayerInkStates(
     /** The same over a Spotify Canvas's deck dim. */
     val canvasBlackWash: State<Float>,
     val canvasWhiteWash: State<Float>,
+    /** The same over a portrait motion cover's scrim. */
+    val portraitBlackWash: State<Float>,
+    val portraitWhiteWash: State<Float>,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -594,12 +597,14 @@ internal fun rememberPlayerInk(
     sleeve: NowPlayingPalette,
     surfaces: PlayerInkSurfaces = remember { PlayerInkSurfaces() },
     surface: InkSurfaceKind = InkSurfaceKind.MAIN,
+    portraitClip: Boolean = false,
 ): PlayerInkStates {
     // Read only by the effect below, never by composition: a clip's new ink,
     // or a backdrop's new colours, must not recompose the player that
     // provides the ink — see the note above.
     val currentSleeve = rememberUpdatedState(sleeve)
     val currentSurface = rememberUpdatedState(surface)
+    val currentPortraitClip = rememberUpdatedState(portraitClip)
     val ink = remember {
         val first = Snapshot.withoutReadObservation { palette.value }
         Animatable(
@@ -613,6 +618,8 @@ internal fun rememberPlayerInk(
     val panelWhite = remember { Animatable(0f) }
     val canvasBlack = remember { Animatable(0f) }
     val canvasWhite = remember { Animatable(0f) }
+    val portraitBlack = remember { Animatable(0f) }
+    val portraitWhite = remember { Animatable(0f) }
     LaunchedEffect(palette, fromClip, surfaces) {
         val inkSpec = tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
         val washSpec = tween<Float>(durationMillis = PLAYER_INK_FADE_MS)
@@ -623,6 +630,7 @@ internal fun rememberPlayerInk(
                 main = surfaces.main,
                 panel = surfaces.panel,
                 surface = currentSurface.value,
+                portraitClip = currentPortraitClip.value,
             )
         }
             // The judging is a few hundred contrast checks: off the main thread.
@@ -639,6 +647,8 @@ internal fun rememberPlayerInk(
                     val canvasSpec = tween<Float>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
                     launch { canvasBlack.animateTo(out.canvasBlack, canvasSpec) }
                     launch { canvasWhite.animateTo(out.canvasWhite, canvasSpec) }
+                    launch { portraitBlack.animateTo(out.portraitBlack, washSpec) }
+                    launch { portraitWhite.animateTo(out.portraitWhite, washSpec) }
                 }
             }
     }
@@ -651,6 +661,8 @@ internal fun rememberPlayerInk(
             panelWhiteWash = panelWhite.asState(),
             canvasBlackWash = canvasBlack.asState(),
             canvasWhiteWash = canvasWhite.asState(),
+            portraitBlackWash = portraitBlack.asState(),
+            portraitWhiteWash = portraitWhite.asState(),
         )
     }
 }
@@ -662,6 +674,7 @@ private data class InkInputs(
     val main: InkSurface?,
     val panel: InkSurface?,
     val surface: InkSurfaceKind,
+    val portraitClip: Boolean,
 )
 
 /** The ink and the grades, settled. */
@@ -673,6 +686,8 @@ private data class InkOutcome(
     val panelWhite: Float,
     val canvasBlack: Float,
     val canvasWhite: Float,
+    val portraitBlack: Float,
+    val portraitWhite: Float,
 )
 
 /**
@@ -694,18 +709,29 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     } else {
         null
     }
+    // A portrait motion cover that isn't a Canvas keeps the sleeve's ink, as
+    // it always has, but stands it on the clip's own frame under its scrim.
+    // That scrim lies over the mesh as well, so it carries the grade instead.
+    val portrait = if (!fromClip && inputs.portraitClip && live?.source == LiveColorSource.LIVE_ART) {
+        live.surface?.let { resolveInk(owner.accent, it, owner.alphas) }
+    } else {
+        null
+    }
     val fg = when {
         fromClip && live != null -> canvas?.fg ?: live.palette.fg
         inputs.surface == InkSurfaceKind.PANEL -> panel?.fg ?: owner.fg
+        portrait != null -> portrait.fg
         else -> main?.fg ?: owner.fg
     }
     fun InkResolution?.black() = if (this == null || dark) 0f else wash
     fun InkResolution?.white() = if (this != null && dark) wash else 0f
+    val meshGraded = if (portrait != null) null else main
     return InkOutcome(
         fg,
-        main.black(), main.white(),
+        meshGraded.black(), meshGraded.white(),
         panel.black(), panel.white(),
         canvas.black(), canvas.white(),
+        portrait.black(), portrait.white(),
     )
 }
 
@@ -2070,18 +2096,32 @@ fun NowPlayingScreen(
     // copy as soon as it exists, so the ink is ready before the panel opens;
     // the backdrop then reports what it actually shows — the live blur of a
     // playing cover included — through [publishPanelInk].
+    //
+    // The backdrop's report has the last word: each one bumps [panelShown],
+    // and a still-copy read that finishes after one is dropped, so a slow
+    // prewarm can never put the still surface back under a live blur. A plain
+    // counter, not state: nothing composes off it.
+    val panelShown = remember { intArrayOf(0) }
+    fun panelInkSurface(image: ImageBitmap) =
+        fullBlurInkSurface(bandBounds(image.argbPixels(), image.width, image.height))
+    // A live blur lands up to thirty times a second, and its bands drift by
+    // levels nobody sees. Only a real move is published, so the ink is
+    // re-judged when it could change and not otherwise.
+    fun publishPanel(next: InkSurface) {
+        if (inkSurfaceMoved(inkSurfaces.panel, next)) inkSurfaces.panel = next
+    }
     val publishPanelInk: suspend (ImageBitmap) -> Unit = remember(inkSurfaces) {
         { image ->
-            val next = withContext(Dispatchers.Default) {
-                fullBlurInkSurface(bandAverages(image.argbPixels(), image.width, image.height))
-            }
-            // A live blur lands up to thirty times a second, and its average
-            // drifts by levels nobody sees. Only a real move is published, so
-            // the ink is re-judged when it could change and not otherwise.
-            if (inkSurfaceMoved(inkSurfaces.panel, next)) inkSurfaces.panel = next
+            panelShown[0]++
+            publishPanel(withContext(Dispatchers.Default) { panelInkSurface(image) })
         }
     }
-    LaunchedEffect(fullArtworkBlurImage) { fullArtworkBlurImage?.let { publishPanelInk(it) } }
+    LaunchedEffect(fullArtworkBlurImage) {
+        val image = fullArtworkBlurImage ?: return@LaunchedEffect
+        val seen = panelShown[0]
+        val next = withContext(Dispatchers.Default) { panelInkSurface(image) }
+        if (panelShown[0] == seen) publishPanel(next)
+    }
     // The ink, as states.
     //
     // The ink follows a playing clip and the backdrop under it, so it changes
@@ -2102,6 +2142,9 @@ fun NowPlayingScreen(
         } else {
             InkSurfaceKind.MAIN
         },
+        // A portrait motion cover runs the screen behind the controls, under
+        // a scrim of its own — that, not the mesh beneath it, is the surface.
+        portraitClip = canvasFirstPortrait && clipState.rendered,
     )
     val playerInkState = inkStates.ink
     // The halo follows the ink: dark under light ink, light under dark. It is
@@ -2523,17 +2566,26 @@ fun NowPlayingScreen(
 
         if (canvasFirstPortrait && clipState.rendered) {
             // The image remains visible through the controls; a plain scrim
-            // protects text and touch targets without erasing the video.
+            // protects text and touch targets without erasing the video. The
+            // ink's grade rides in the same gradient, ramping in above the
+            // controls, and the clip's cover is folded into each stop rather
+            // than given a layer — all read here, in draw.
             Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = clipState.cover.floatValue }
-                    .background(
+                Modifier.matchParentSize().drawBehind {
+                    val cover = clipState.cover.floatValue
+                    if (cover <= 0f) return@drawBehind
+                    val black = inkStates.portraitBlackWash.value
+                    val white = inkStates.portraitWhiteWash.value
+                    drawRect(
                         Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.40f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.70f),
+                            colorStops = Array(PORTRAIT_CLIP_SCRIM_POSITIONS.size) { i ->
+                                val share = PORTRAIT_CLIP_WASH_SHARE[i]
+                                val stop = gradedScrimStop(PORTRAIT_CLIP_SCRIM_ALPHAS[i], black * share, white * share)
+                                PORTRAIT_CLIP_SCRIM_POSITIONS[i] to stop.copy(alpha = stop.alpha * cover)
+                            },
                         ),
-                    ),
+                    )
+                },
             )
         }
 

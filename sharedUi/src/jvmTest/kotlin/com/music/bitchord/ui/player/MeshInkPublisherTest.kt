@@ -20,11 +20,11 @@ import kotlin.test.assertTrue
  */
 class MeshInkPublisherTest {
 
-    private class FakeMesh(val bands: IntArray)
+    private class FakeMesh(val bands: BandBounds)
 
     private val white = 0xFFFFFFFF.toInt()
-    private val bright = FakeMesh(IntArray(INK_BANDS) { white })
-    private val navy = FakeMesh(IntArray(INK_BANDS) { 0xFF1B2440.toInt() })
+    private val bright = FakeMesh(BandBounds.uniform(IntArray(INK_BANDS) { white }))
+    private val navy = FakeMesh(BandBounds.uniform(IntArray(INK_BANDS) { 0xFF1B2440.toInt() }))
 
     private fun InkSurface.sameAs(other: InkSurface) =
         light.contentEquals(other.light) && dark.contentEquals(other.dark)

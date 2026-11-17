@@ -53,7 +53,30 @@ private const val BLACK_ARGB = 0xFF000000.toInt()
  * is what dark ink has to hold against.
  */
 @Immutable
-internal class InkSurface(val light: IntArray, val dark: IntArray)
+internal class InkSurface(
+    val light: IntArray,
+    val dark: IntArray,
+    /**
+     * Black a renderer lays *over* the grade on the dark side — the banner's
+     * wash, drawn above the mesh whose scrim carries the grade. Applied after
+     * the white grade when judging dark ink, in the order it is drawn.
+     */
+    val darkOverlay: Float = 0f,
+)
+
+/**
+ * The extremes of each horizontal strip of a picture: its lightest and its
+ * darkest cell. A broad bright patch under one control can hide in a strip's
+ * average; it cannot hide in its lightest cell. Light ink is judged against
+ * [lightest], dark ink against [darkest].
+ */
+@Immutable
+internal class BandBounds(val lightest: IntArray, val darkest: IntArray) {
+    companion object {
+        /** A picture with no variation across each strip. */
+        fun uniform(colors: IntArray) = BandBounds(colors, colors)
+    }
+}
 
 /**
  * What the player settled on for one surface: the ink, whether it is the dark
@@ -151,7 +174,9 @@ internal fun resolveInk(
     class Side(val index: Int, val wash: Float, val ink: Int)
 
     fun firstHolding(inks: List<Int>, bands: IntArray, toward: Int, wash: Float): Int {
-        val shown = IntArray(bands.size) { blendArgb(toward, bands[it], wash) }
+        // The grade first, then anything drawn over it — the renderer's order.
+        val overlay = if (toward == WHITE_ARGB) surface.darkOverlay else 0f
+        val shown = IntArray(bands.size) { scrimmed(blendArgb(toward, bands[it], wash), overlay) }
         return inks.indexOfFirst { ink -> shown.all { inkHolds(ink, it, alphas) } }
     }
 
@@ -210,6 +235,63 @@ internal fun bandAverages(pixels: IntArray, width: Int, height: Int, bands: Int 
         val to = ((band + 1) * height / bands).coerceAtLeast(from + 1).coerceAtMost(height)
         averageRows(pixels, width, from, to)
     }
+}
+
+/** How many cells across each strip [bandBounds] compares. */
+internal const val INK_COLUMNS = 6
+
+/**
+ * The lightest and darkest cell of each of [bands] strips of a [width] x
+ * [height] ARGB image, cells [columns] across — by WCAG luminance.
+ */
+internal fun bandBounds(
+    pixels: IntArray,
+    width: Int,
+    height: Int,
+    bands: Int = INK_BANDS,
+    columns: Int = INK_COLUMNS,
+): BandBounds {
+    require(width > 0 && height > 0 && pixels.size >= width * height)
+    val cols = columns.coerceIn(1, width)
+    val lightest = IntArray(bands)
+    val darkest = IntArray(bands)
+    for (band in 0 until bands) {
+        val top = band * height / bands
+        val bottom = ((band + 1) * height / bands).coerceAtLeast(top + 1).coerceAtMost(height)
+        var maxL = -1f
+        var minL = 2f
+        for (col in 0 until cols) {
+            val left = col * width / cols
+            val right = ((col + 1) * width / cols).coerceAtLeast(left + 1).coerceAtMost(width)
+            val cell = averageCell(pixels, width, left, right, top, bottom)
+            val l = wcagLuminance(cell)
+            if (l > maxL) { maxL = l; lightest[band] = cell }
+            if (l < minL) { minL = l; darkest[band] = cell }
+        }
+    }
+    return BandBounds(lightest, darkest)
+}
+
+private fun averageCell(pixels: IntArray, width: Int, left: Int, right: Int, top: Int, bottom: Int): Int {
+    var red = 0L
+    var green = 0L
+    var blue = 0L
+    var count = 0
+    for (row in top until bottom) {
+        val base = row * width
+        for (x in left until right) {
+            val pixel = pixels[base + x]
+            red += (pixel shr 16) and 0xFF
+            green += (pixel shr 8) and 0xFF
+            blue += pixel and 0xFF
+            count++
+        }
+    }
+    if (count == 0) return BLACK_ARGB
+    return (0xFF shl 24) or
+        ((red / count).toInt() shl 16) or
+        ((green / count).toInt() shl 8) or
+        (blue / count).toInt()
 }
 
 /** Mean colour of rows [from] until [to] of an ARGB image [width] wide. */
@@ -295,12 +377,12 @@ internal const val CANVAS_DECK_DIM = 0.5f
  * The full-cover blur's bands under its scrim: each band at the top of its
  * stretch of the gradient for light ink, at the bottom for dark.
  */
-internal fun fullBlurInkSurface(bandColors: IntArray): InkSurface {
-    val n = bandColors.size
+internal fun fullBlurInkSurface(bounds: BandBounds): InkSurface {
+    val n = bounds.lightest.size
     fun at(fraction: Float) = scrimAlphaAt(fraction, FULL_BLUR_SCRIM_POSITIONS, FULL_BLUR_SCRIM_ALPHAS)
     return InkSurface(
-        light = IntArray(n) { scrimmed(bandColors[it], at(it.toFloat() / n)) },
-        dark = IntArray(n) { scrimmed(bandColors[it], at((it + 1f) / n)) },
+        light = IntArray(n) { scrimmed(bounds.lightest[it], at(it.toFloat() / n)) },
+        dark = IntArray(n) { scrimmed(bounds.darkest[it], at((it + 1f) / n)) },
     )
 }
 
@@ -309,17 +391,20 @@ internal fun fullBlurInkSurface(bandColors: IntArray): InkSurface {
  * the chrome starts for light ink, and under the full scrim plus the banner's
  * wash for dark — whichever band ends up behind whichever control.
  */
-internal fun meshInkSurface(bandColors: IntArray): InkSurface {
+internal fun meshInkSurface(bounds: BandBounds): InkSurface {
     val lightest = MESH_SCRIM_TOP + (MESH_SCRIM_BOTTOM - MESH_SCRIM_TOP) * MESH_CHROME_TOP
     return InkSurface(
-        light = IntArray(bandColors.size) { scrimmed(bandColors[it], lightest) },
-        dark = IntArray(bandColors.size) { scrimmed(scrimmed(bandColors[it], MESH_SCRIM_BOTTOM), HERO_WASH_MAX) },
+        light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], lightest) },
+        // The mesh's scrim carries the grade; the banner's wash is drawn over
+        // both, so it is applied after the grade — see [InkSurface.darkOverlay].
+        dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], MESH_SCRIM_BOTTOM) },
+        darkOverlay = HERO_WASH_MAX,
     )
 }
 
 /** What the mesh backdrop shows before it has ever had a mesh: its flat fallback. */
 internal fun fallbackMeshInkSurface(): InkSurface =
-    meshInkSurface(IntArray(INK_BANDS) { FallbackBackdrop.toArgb() })
+    meshInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { FallbackBackdrop.toArgb() }))
 
 /**
  * Publishes the surface of the mesh [ArtworkMeshBackdrop] is actually showing.
@@ -332,7 +417,7 @@ internal fun fallbackMeshInkSurface(): InkSurface =
  * re-reads the retained mesh rather than publishing the fallback under it.
  */
 internal class MeshInkPublisher<M : Any>(
-    private val bands: suspend (M) -> IntArray,
+    private val bands: suspend (M) -> BandBounds,
     private val publish: (InkSurface) -> Unit,
 ) {
     private var shown: M? = null
@@ -345,9 +430,32 @@ internal class MeshInkPublisher<M : Any>(
 }
 
 /** A Spotify Canvas frame's bands under the dim the deck brings with it. */
-internal fun canvasInkSurface(bandColors: IntArray): InkSurface {
-    val shown = IntArray(bandColors.size) { scrimmed(bandColors[it], CANVAS_DECK_DIM) }
-    return InkSurface(light = shown, dark = shown)
+internal fun canvasInkSurface(bounds: BandBounds): InkSurface = InkSurface(
+    light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], CANVAS_DECK_DIM) },
+    dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], CANVAS_DECK_DIM) },
+)
+
+/**
+ * The scrim over a portrait motion cover that runs the screen behind the
+ * controls: where its stops sit, its black, and how much of the ink's grade
+ * each stop carries. The grade ramps in above the controls rather than
+ * dimming the clip where it is the picture.
+ */
+internal val PORTRAIT_CLIP_SCRIM_POSITIONS = floatArrayOf(0f, 0.25f, 0.40f, 1f)
+internal val PORTRAIT_CLIP_SCRIM_ALPHAS = floatArrayOf(0f, 0f, 0f, 0.70f)
+internal val PORTRAIT_CLIP_WASH_SHARE = floatArrayOf(0f, 0f, 1f, 1f)
+
+/**
+ * A portrait motion cover's bands as the controls see them: the clip's own
+ * frame, under its scrim at its lightest where the controls start (light ink)
+ * and at its darkest at the foot of the screen (dark ink).
+ */
+internal fun portraitClipInkSurface(bounds: BandBounds): InkSurface {
+    val top = scrimAlphaAt(MESH_CHROME_TOP, PORTRAIT_CLIP_SCRIM_POSITIONS, PORTRAIT_CLIP_SCRIM_ALPHAS)
+    return InkSurface(
+        light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], top) },
+        dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], PORTRAIT_CLIP_SCRIM_ALPHAS.last()) },
+    )
 }
 
 /** WCAG relative luminance of a [Color], for tests and callers holding one. */

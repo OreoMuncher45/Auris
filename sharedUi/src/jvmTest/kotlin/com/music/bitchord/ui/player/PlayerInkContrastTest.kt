@@ -27,8 +27,10 @@ class PlayerInkContrastTest {
         val bands = if (choice.dark) surface.dark else surface.light
         val toward = if (choice.dark) white else black
         val ink = choice.fg.toArgb()
+        val overlay = if (choice.dark) surface.darkOverlay else 0f
         bands.forEach { band ->
-            val shown = blendArgb(toward, band, choice.wash)
+            // The grade, then anything the renderer lays over it.
+            val shown = scrimmed(blendArgb(toward, band, choice.wash), overlay)
             assertTrue(
                 inkHolds(ink, shown, alphas),
                 "ink ${Integer.toHexString(ink)} fails over ${Integer.toHexString(shown)}",
@@ -109,10 +111,57 @@ class PlayerInkContrastTest {
     fun aSurfaceIsRepublishedOnlyWhenItReallyMoves() {
         // A live blur lands up to thirty times a second; only a move the eye
         // could see re-judges the ink.
-        fun surface(level: Int) = fullBlurInkSurface(IntArray(INK_BANDS) { grey(level) })
+        fun surface(level: Int) = fullBlurInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { grey(level) }))
         assertTrue(inkSurfaceMoved(null, surface(100)), "the first surface is always published")
         assertFalse(inkSurfaceMoved(surface(100), surface(102)), "a drift of a couple of levels is not")
         assertTrue(inkSurfaceMoved(surface(100), surface(120)), "a real change is")
+    }
+
+    @Test
+    fun aBrightPatchCannotHideInItsStripsAverage() {
+        // A dark strip with a broad white patch at one side: its average is
+        // a dark grey light ink holds on, but the patch is what sits behind
+        // one of the controls. The strip's lightest cell must decide.
+        val width = 60
+        val height = 30
+        val pixels = IntArray(width * height) { i -> if (i % width < 12) white else grey(0x10) }
+        val average = bandAverages(pixels, width, height)
+        val bounds = bandBounds(pixels, width, height)
+        assertTrue(wcagLuminance(bounds.lightest[0]) > 0.9f, "the patch survives in the bounds")
+        assertTrue(wcagLuminance(average[0]) < 0.25f, "and is lost in the average")
+        val surface = meshInkSurface(bounds)
+        val choice = resolveInk(NeutralInkAccent, surface, alphas)
+        assertHolds(choice, surface)
+        // And over the patch itself, as drawn.
+        val patch = scrimmed(white, MESH_SCRIM_TOP + (MESH_SCRIM_BOTTOM - MESH_SCRIM_TOP) * 0.40f)
+        if (!choice.dark) {
+            assertTrue(inkHolds(choice.fg.toArgb(), blendArgb(black, patch, choice.wash), alphas))
+        }
+    }
+
+    @Test
+    fun theBannerWashIsJudgedOverTheGradeNotUnderIt() {
+        // The renderer grades the mesh's scrim white, then lays the banner's
+        // black wash over both. Judged in that order, a dark ink over a
+        // light mesh still holds once the banner's black lands on top.
+        val surface = meshInkSurface(BandBounds.uniform(intArrayOf(grey(0xE8), grey(0xDC), grey(0xD0))))
+        assertEquals(HERO_WASH_MAX, surface.darkOverlay)
+        val choice = resolveInk(whiteSleeveRed.accent, surface, alphas)
+        assertTrue(choice.dark)
+        surface.dark.forEach { band ->
+            val drawn = scrimmed(blendArgb(white, band, choice.wash), HERO_WASH_MAX)
+            assertTrue(inkHolds(choice.fg.toArgb(), drawn, alphas), "fails over ${Integer.toHexString(drawn)}")
+        }
+    }
+
+    @Test
+    fun aPortraitClipIsJudgedUnderItsOwnScrim() {
+        // A white portrait clip: the controls stand on the clip itself, under
+        // a scrim that is clear where they start. Whatever ink is chosen has
+        // to hold there, graded through that scrim.
+        val surface = portraitClipInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
+        val choice = resolveInk(whiteSleeveRed.accent, surface, alphas)
+        assertHolds(choice, surface)
     }
 
     // --- The cases from the ticket ------------------------------------------
@@ -145,7 +194,7 @@ class PlayerInkContrastTest {
     fun pureWhiteCoverOverItsBlurIsGraded() {
         // A white cover's blur under its 34-64 % scrim is light grey at the
         // top and mid grey at the bottom: neither side holds ungraded.
-        val surface = fullBlurInkSurface(IntArray(INK_BANDS) { white })
+        val surface = fullBlurInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
         val choice = resolveInk(NeutralInkAccent, surface, alphas)
         assertTrue(choice.wash > 0f)
         assertHolds(choice, surface)
@@ -157,7 +206,7 @@ class PlayerInkContrastTest {
         // red, with no grade. Under the scrim and the banner's wash the foot
         // of the screen is a light grey, so the red may deepen a step or two
         // to keep the device name at 4.5:1 — never lighten, never change hue.
-        val surface = meshInkSurface(intArrayOf(white, white, white))
+        val surface = meshInkSurface(BandBounds.uniform(intArrayOf(white, white, white)))
         val choice = resolveInk(whiteSleeveRed.accent, surface, alphas)
         assertTrue(choice.dark)
         assertEquals(0f, choice.wash)
@@ -173,7 +222,7 @@ class PlayerInkContrastTest {
         // name sits. Text at the secondary role cannot reach 4.5:1 on mid grey
         // at any lightness, so the ink stays dark and red and the foot of the
         // mesh is lifted a little instead.
-        val surface = meshInkSurface(intArrayOf(grey(0xE8), grey(0xDC), grey(0xD0)))
+        val surface = meshInkSurface(BandBounds.uniform(intArrayOf(grey(0xE8), grey(0xDC), grey(0xD0))))
         val choice = resolveInk(whiteSleeveRed.accent, surface, alphas)
         assertTrue(choice.dark)
         assertTrue(choice.wash in 0.01f..0.25f, "grade ${choice.wash}")
@@ -184,7 +233,7 @@ class PlayerInkContrastTest {
     @Test
     fun darkCoverIsLeftAlone() {
         val navy = computeNowPlayingPalette(List(850) { rgb(0x1B2440) } + List(150) { rgb(0xFF8A3D) })
-        val surface = meshInkSurface(intArrayOf(rgb(0x26324F), rgb(0x1A2440), rgb(0x0F1526)))
+        val surface = meshInkSurface(BandBounds.uniform(intArrayOf(rgb(0x26324F), rgb(0x1A2440), rgb(0x0F1526))))
         val choice = resolveInk(navy.accent, surface, alphas)
         assertFalse(choice.dark)
         assertEquals(0f, choice.wash)
@@ -194,7 +243,7 @@ class PlayerInkContrastTest {
     @Test
     fun canvasIsJudgedUnderItsDim() {
         // A white Canvas under the deck's half dim is mid grey.
-        val surface = canvasInkSurface(IntArray(INK_BANDS) { white })
+        val surface = canvasInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
         val choice = resolveInk(NeutralInkAccent, surface, alphas)
         assertHolds(choice, surface)
     }
@@ -211,7 +260,7 @@ class PlayerInkContrastTest {
 
     @Test
     fun theGradeIsTheLeastThatHolds() {
-        val surface = fullBlurInkSurface(IntArray(INK_BANDS) { white })
+        val surface = fullBlurInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
         val choice = resolveInk(NeutralInkAccent, surface, alphas)
         val bands = if (choice.dark) surface.dark else surface.light
         val toward = if (choice.dark) white else black

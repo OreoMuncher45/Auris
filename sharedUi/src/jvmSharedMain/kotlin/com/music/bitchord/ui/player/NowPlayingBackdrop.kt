@@ -365,7 +365,7 @@ private fun PlayerMeshBackdrop(
             bands = { shown ->
                 val image = shown.image
                 withContext(Dispatchers.Default) {
-                    bandAverages(image.argbPixels(), image.width, image.height)
+                    bandBounds(image.argbPixels(), image.width, image.height)
                 }
             },
             publish = { inkSurfaces.main = it },
