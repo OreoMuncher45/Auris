@@ -4695,6 +4695,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * for. A page that adds nothing new (below) is the other exit, for a feed
      * that loops back on itself instead of running dry.
      *
+     * The next page is asked for as soon as this one's token is read, not
+     * after Main has merged and published it — see [followContinuations]. The
+     * chain is still one request at a time; only the gaps are gone.
+     *
      * An endless mix — a Super Mix, an artist radio — has no last page, so
      * following its continuation here would fetch one page after another for
      * as long as the app is alive. Its next page is kept on the page instead
@@ -4702,53 +4706,71 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * [loadMoreDetail].
      */
     private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
+        val endless = browseId.isEndlessMix()
+        // Every id the chain has produced so far, first page included, for the
+        // loop guard below. Only the request side touches it, one page at a time.
+        val seen = HashSet<String>()
+        _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
+            (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
+            page.suggestedSongs.mapTo(seen) { it.videoId }
+        }
         viewModelScope.launch {
-            // Publish and draw the first response before spending the shared
-            // connection on page two. On a long playlist the continuation can
-            // otherwise start in the same main-loop turn as the state update,
-            // making a ready first screen feel as if it were still loading.
-            delay(150)
-            var next: String? = token
-            while (next != null) {
-                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
+            followContinuations(
+                token = token,
+                fetch = { next -> YtMusicRepository.moreSongs(next).getOrNull() },
+                nextToken = { fetched ->
+                    // A page with nothing new on it means the feed has looped
+                    // back rather than run dry with a token still attached.
+                    // An endless mix hands its next page to the screen instead
+                    // (below), so it never asks for a second one here.
+                    val fresh = fetched.songs.count { seen.add(it.videoId) } +
+                        fetched.suggested.count { seen.add(it.videoId) }
+                    fetched.continuation.takeIf { fresh > 0 && !endless }
+                },
+                // Publish and draw the first response before page two lands on
+                // it. Only the publish waits: the request is already out, so
+                // this no longer adds to the time the full list takes.
+                holdFirstMillis = 150,
+            ) { batch ->
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
-                if (index < 0) return@launch
+                if (index < 0) return@followContinuations false
                 val current = stack[index]
-                val existing = (current.songs as? UiState.Success)?.data ?: return@launch
+                val existing = (current.songs as? UiState.Success)?.data ?: return@followContinuations false
                 val known = existing.mapTo(HashSet()) { it.videoId }
-                val rawAdded = fetched.songs.filter { known.add(it.videoId) }
-                val added = rawAdded.withoutBlockedArtists().withArtwork(artworkFallback)
+                val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
+                val added = ArrayList<Song>()
+                val addedSuggested = ArrayList<Song>()
+                var anyNew = false
+                for (fetched in batch) {
+                    val rawAdded = fetched.songs.filter { known.add(it.videoId) }
+                    // Suggestions can arrive on a later page than the real
+                    // tracks, once the playlist's own continuation runs dry —
+                    // see parsePlaylistShelf — so they're tracked separately
+                    // rather than folded into [known].
+                    val rawSuggested = fetched.suggested
+                        .filter { it.videoId !in known && knownSuggested.add(it.videoId) }
+                    anyNew = anyNew || rawAdded.isNotEmpty() || rawSuggested.isNotEmpty()
+                    added += rawAdded.withoutBlockedArtists().withArtwork(artworkFallback)
+                    addedSuggested += rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
+                }
                 if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
                     LikedCache.mergeBottom(listenerKey(), added)
                 }
-                // Suggestions can arrive on a later page than the real
-                // tracks, once the playlist's own continuation runs dry —
-                // see parsePlaylistShelf — so they're tracked separately
-                // rather than folded into [known].
-                val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
-                val rawSuggested = fetched.suggested
-                    .filter { it.videoId !in known && knownSuggested.add(it.videoId) }
-                val addedSuggested = rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
-                // A page with nothing new on it means the feed has looped back
-                // rather than run dry with a token still attached.
-                if (rawAdded.isEmpty() && rawSuggested.isEmpty()) return@launch
-                _detailStack.value = stack.toMutableList().also {
-                    it[index] = current.copy(
-                        songs = UiState.Success(existing + added),
-                        suggestedSongs = current.suggestedSongs + addedSuggested,
-                    )
-                }
-                next = fetched.continuation
-                if (browseId.isEndlessMix()) {
-                    // Hand the next page to the screen instead of taking it
-                    // here: the mix grows when the listener reaches the end of
-                    // the list, and not one request at a time in the dark.
-                    _detailStack.value = _detailStack.value.map { page ->
-                        if (page.browseId == browseId) page.copy(continuation = next) else page
+                if (anyNew) {
+                    _detailStack.value = stack.toMutableList().also {
+                        it[index] = current.copy(
+                            songs = UiState.Success(existing + added),
+                            suggestedSongs = current.suggestedSongs + addedSuggested,
+                            // Hand the next page to the screen instead of taking
+                            // it here: the mix grows when the listener reaches
+                            // the end of the list, and not one request at a time
+                            // in the dark. See [loadMoreDetail].
+                            continuation = if (endless) batch.last().continuation else current.continuation,
+                        )
                     }
-                    return@launch
                 }
+                true
             }
         }
     }
