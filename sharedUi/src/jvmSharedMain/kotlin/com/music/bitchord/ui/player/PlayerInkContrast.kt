@@ -317,6 +317,33 @@ internal fun meshInkSurface(bandColors: IntArray): InkSurface {
     )
 }
 
+/** What the mesh backdrop shows before it has ever had a mesh: its flat fallback. */
+internal fun fallbackMeshInkSurface(): InkSurface =
+    meshInkSurface(IntArray(INK_BANDS) { FallbackBackdrop.toArgb() })
+
+/**
+ * Publishes the surface of the mesh [ArtworkMeshBackdrop] is actually showing.
+ *
+ * That backdrop keeps the last mesh it was given while the next one is null,
+ * and draws its flat fallback only if it has never had one. This follows the
+ * same rule. The mesh on screen is recorded the moment it arrives, before any
+ * work that could be cancelled: a track change that lands mid-calculation
+ * cancels the calculation, not the record, so the null that follows still
+ * re-reads the retained mesh rather than publishing the fallback under it.
+ */
+internal class MeshInkPublisher<M : Any>(
+    private val bands: suspend (M) -> IntArray,
+    private val publish: (InkSurface) -> Unit,
+) {
+    private var shown: M? = null
+
+    suspend fun onMesh(mesh: M?) {
+        if (mesh != null) shown = mesh
+        val current = shown
+        publish(if (current == null) fallbackMeshInkSurface() else meshInkSurface(bands(current)))
+    }
+}
+
 /** A Spotify Canvas frame's bands under the dim the deck brings with it. */
 internal fun canvasInkSurface(bandColors: IntArray): InkSurface {
     val shown = IntArray(bandColors.size) { scrimmed(bandColors[it], CANVAS_DECK_DIM) }
