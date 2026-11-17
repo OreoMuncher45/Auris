@@ -359,7 +359,7 @@ import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.replay.ReplayScreen
 import com.music.bitchord.ui.replay.cards
 import com.music.bitchord.ui.replay.ReplayShareSheet
-import com.music.bitchord.ui.replay.ReplayStories
+import com.music.bitchord.ui.replay.RecordStage
 import com.music.bitchord.ui.replay.ReplayStoryPage
 import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
@@ -4740,17 +4740,24 @@ private fun BitChordApp(
         // covers the window: on a tablet the page is only the left half of the
         // row, and a story laid out inside it would run alongside the player
         // instead of over it.
-        nav.replayStory?.let { start ->
+        nav.replayStory?.let {
             replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
-                ReplayStories(
+                RecordStage(
                     summary = summary,
-                    start = start,
+                    holder = accountState.value?.name.orEmpty(),
+                    memberSince = replay.memberSince,
                     onClose = { nav.replayStory = null },
-                    onShare = { card ->
-                        nav.replaySharePage = card
-                        nav.showReplayShare = true
+                    onPlaySong = { song ->
+                        pageActions.playRadio(
+                            song,
+                            QueueSource(context.getString(R.string.replay), PlaybackSourceType.REPLAY),
+                        )
                     },
-                    paused = nav.showReplayShare,
+                    onPlayAll = { songs ->
+                        nav.replayStory = null
+                        if (songs.isNotEmpty()) pageActions.playWithResume(songs, 0)
+                    },
+                    reduceMotion = reducePlayerMotion,
                 )
             }
         }
