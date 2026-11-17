@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composition
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Recomposer
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.Color
@@ -42,6 +43,8 @@ class PlayerInkRecompositionTest {
     }
 
     private var screenCount = 0
+    /** The ink the screen provides, so the harness can tell when it has settled. */
+    private var inkState: State<Color>? = null
     private var readerCount = 0
     private var bystanderCount = 0
 
@@ -69,6 +72,7 @@ class PlayerInkRecompositionTest {
             fromClip = fromClip,
             sleeve = NowPlayingPalette(fg = sleeveInk.value),
         ).ink
+        inkState = ink
         val glow = rememberPlayerInkGlow(ink)
         CompositionLocalProvider(LocalPlayerInk provides ink, LocalPlayerInkGlow provides glow) {
             repeat(READERS) { Reader() }
@@ -85,36 +89,42 @@ class PlayerInkRecompositionTest {
             val runner = launch(clock) { recomposer.runRecomposeAndApplyChanges() }
             val sleeveInk = mutableStateOf(Color.White)
             val live = mutableStateOf<LivePalette?>(
-                LivePalette(NowPlayingPalette(fg = Color(0xFFFFC0C0)), LiveColorSource.CANVAS),
+                LivePalette(NowPlayingPalette(fg = LIVE_INK_BEFORE), LiveColorSource.CANVAS),
             )
             val composition = Composition(NoNodes, recomposer)
             composition.setContent { Screen(sleeveInk, live, fromClip) }
-            suspend fun pump(ms: Long, startNs: Long): Int {
-                var now = startNs
+            var now = 0L
+            // Frames until the provided ink has landed on [target], then a few
+            // more so nothing still in flight is missed. The ink is judged on
+            // Dispatchers.Default, so the wait is on that result arriving and
+            // the animation finishing — bounded, rather than a fixed sleep.
+            suspend fun settleOn(target: Color): Int {
+                val deadline = System.nanoTime() + SETTLE_TIMEOUT_NS
                 var frames = 0
-                while (now - startNs <= ms * 1_000_000L) {
-                    // The ink is judged on Dispatchers.Default; give that a
-                    // moment to land before each frame, as a real frame
-                    // interval would.
-                    Thread.sleep(2)
+                var after = 0
+                while (after < TRAILING_FRAMES) {
+                    check(System.nanoTime() < deadline) {
+                        "the ink never settled on $target (stuck at ${inkState?.value})"
+                    }
+                    Thread.sleep(1)
                     repeat(4) { yield() }
                     clock.sendFrame(now)
                     repeat(4) { yield() }
                     Snapshot.sendApplyNotifications()
                     now += FRAME_NS
                     frames++
+                    if (inkState?.value == target) after++
                 }
                 return frames
             }
-            // Settle the first ink before counting.
-            pump(PLAYER_INK_FADE_MS + 100L, 0L)
+            settleOn(if (fromClip) LIVE_INK_BEFORE else Color.White)
             screenCount = 0
             readerCount = 0
             bystanderCount = 0
 
             change(sleeveInk, live)
             Snapshot.sendApplyNotifications()
-            val frames = pump(PLAYER_INK_FADE_MS + 100L, 10_000_000_000L)
+            val frames = settleOn(NEW_INK)
 
             composition.dispose()
             recomposer.cancel()
@@ -125,7 +135,7 @@ class PlayerInkRecompositionTest {
     @Test
     fun liveInkChangeRecomposesOnlyItsReaders() {
         val run = drive(fromClip = true) { _, live ->
-            live.value = LivePalette(NowPlayingPalette(fg = Color(0xFF203040)), LiveColorSource.CANVAS)
+            live.value = LivePalette(NowPlayingPalette(fg = NEW_INK), LiveColorSource.CANVAS)
         }
         println("live ink change over ${run.frames} frames: screen=${run.screen}, readers=${run.readers}, bystanders=${run.bystanders}")
         assertTrue(run.readers > READERS, "the readers should animate to the new ink")
@@ -135,7 +145,7 @@ class PlayerInkRecompositionTest {
 
     @Test
     fun trackChangeRecomposesTheScreenOnce() {
-        val run = drive(fromClip = false) { sleeve, _ -> sleeve.value = Color(0xFF203040) }
+        val run = drive(fromClip = false) { sleeve, _ -> sleeve.value = NEW_INK }
         println("track ink change over ${run.frames} frames: screen=${run.screen}, readers=${run.readers}, bystanders=${run.bystanders}")
         assertTrue(run.readers > READERS, "the readers should animate to the new ink")
         // Once, for the new sleeve ink it reads itself — never per frame.
@@ -147,5 +157,9 @@ class PlayerInkRecompositionTest {
         const val READERS = 5
         const val BYSTANDERS = 40
         const val FRAME_NS = 16_666_667L
+        const val SETTLE_TIMEOUT_NS = 5_000_000_000L
+        const val TRAILING_FRAMES = 3
+        val LIVE_INK_BEFORE = Color(0xFFFFC0C0)
+        val NEW_INK = Color(0xFF203040)
     }
 }
