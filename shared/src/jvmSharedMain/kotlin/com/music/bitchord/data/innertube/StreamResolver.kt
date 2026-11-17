@@ -842,11 +842,20 @@ object StreamResolver {
     private fun probe(url: String): Probe {
         val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
         val start = if (length != null && length > AUTH_BOUNDARY_BYTES + PROBE_READ_BYTES) AUTH_BOUNDARY_BYTES else 0L
-        // Capped so start + window cannot overflow for hosts with an unbounded range.
-        val window = minOf(PlayerClient.rangeBytesFor(url), PROBE_READ_BYTES)
-        val end = minOf(start + window, length ?: Long.MAX_VALUE) - 1
+        // The same window the real fetch asks for, so a URL that serves small
+        // reads and refuses playback-sized ones is caught here. A host with no
+        // range cap of its own reports Long.MAX_VALUE, which must not be added
+        // to [start]: that overflows into a negative end and a 416 read as a
+        // refusal. Its real fetch asks for the rest of the file, so the probe
+        // does too.
+        val window = PlayerClient.rangeBytesFor(url)
+        val range = when {
+            window != Long.MAX_VALUE -> "bytes=$start-${minOf(start + window, length ?: Long.MAX_VALUE) - 1}"
+            length != null -> "bytes=$start-${length - 1}"
+            else -> "bytes=$start-"
+        }
         val builder = okhttp3.Request.Builder().url(url)
-            .header("Range", "bytes=$start-$end")
+            .header("Range", range)
         val sentHeaders = mediaHeadersFor(url)
         sentHeaders.forEach { (name, value) -> builder.header(name, value) }
         return try {
@@ -869,7 +878,7 @@ object StreamResolver {
                     TrackLog.w(
                         TAG,
                         "probe $verdict: HTTP ${response.code} type=$contentType " +
-                            "range=bytes=$start-$end ${describeMediaUrl(url)} " +
+                            "range=$range ${describeMediaUrl(url)} " +
                             "sent=${sentHeaders.keys.sorted()}",
                     )
                 }
