@@ -581,6 +581,9 @@ internal class PlayerInkStates(
     /** The same over the full-cover blur's scrim. */
     val panelBlackWash: State<Float>,
     val panelWhiteWash: State<Float>,
+    /** The same over a Spotify Canvas's deck dim. */
+    val canvasBlackWash: State<Float>,
+    val canvasWhiteWash: State<Float>,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -608,6 +611,8 @@ internal fun rememberPlayerInk(
     val mainWhite = remember { Animatable(0f) }
     val panelBlack = remember { Animatable(0f) }
     val panelWhite = remember { Animatable(0f) }
+    val canvasBlack = remember { Animatable(0f) }
+    val canvasWhite = remember { Animatable(0f) }
     LaunchedEffect(palette, fromClip, surfaces) {
         val inkSpec = tween<Color>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
         val washSpec = tween<Float>(durationMillis = PLAYER_INK_FADE_MS)
@@ -630,6 +635,10 @@ internal fun rememberPlayerInk(
                     launch { mainWhite.animateTo(out.mainWhite, washSpec) }
                     launch { panelBlack.animateTo(out.panelBlack, washSpec) }
                     launch { panelWhite.animateTo(out.panelWhite, washSpec) }
+                    // On the ink's own clock: a Canvas regrades as it plays.
+                    val canvasSpec = tween<Float>(durationMillis = if (fromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS)
+                    launch { canvasBlack.animateTo(out.canvasBlack, canvasSpec) }
+                    launch { canvasWhite.animateTo(out.canvasWhite, canvasSpec) }
                 }
             }
     }
@@ -640,6 +649,8 @@ internal fun rememberPlayerInk(
             mainWhiteWash = mainWhite.asState(),
             panelBlackWash = panelBlack.asState(),
             panelWhiteWash = panelWhite.asState(),
+            canvasBlackWash = canvasBlack.asState(),
+            canvasWhiteWash = canvasWhite.asState(),
         )
     }
 }
@@ -660,6 +671,8 @@ private data class InkOutcome(
     val mainWhite: Float,
     val panelBlack: Float,
     val panelWhite: Float,
+    val canvasBlack: Float,
+    val canvasWhite: Float,
 )
 
 /**
@@ -675,15 +688,25 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     val owner = if (fromClip && live != null) live.palette else inputs.sleeve
     val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas) }
     val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas) }
+    // A Canvas that owns the screen is its own surface, graded over its dim.
+    val canvas = if (fromClip && live != null) {
+        live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
+    } else {
+        null
+    }
     val fg = when {
-        fromClip && live != null ->
-            live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas).fg } ?: live.palette.fg
+        fromClip && live != null -> canvas?.fg ?: live.palette.fg
         inputs.surface == InkSurfaceKind.PANEL -> panel?.fg ?: owner.fg
         else -> main?.fg ?: owner.fg
     }
     fun InkResolution?.black() = if (this == null || dark) 0f else wash
     fun InkResolution?.white() = if (this != null && dark) wash else 0f
-    return InkOutcome(fg, main.black(), main.white(), panel.black(), panel.white())
+    return InkOutcome(
+        fg,
+        main.black(), main.white(),
+        panel.black(), panel.white(),
+        canvas.black(), canvas.white(),
+    )
 }
 
 /**
@@ -2510,6 +2533,8 @@ fun NowPlayingScreen(
             deckShown = spotifyCanvasPresentation && clipState.spotifyControlsOpen,
             presentation = spotifyCanvasPresentation,
             hazeState = playerHaze,
+            inkBlackWash = { inkStates.canvasBlackWash.value },
+            inkWhiteWash = { inkStates.canvasWhiteWash.value },
         )
 
         Column(

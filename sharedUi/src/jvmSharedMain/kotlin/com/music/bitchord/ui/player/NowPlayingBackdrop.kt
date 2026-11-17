@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -223,6 +224,12 @@ internal fun BoxScope.SpotifyCanvasChrome(
     deckShown: Boolean,
     presentation: Boolean,
     hazeState: HazeState,
+    /**
+     * The ink's grade over the dim — black under light ink, white under dark —
+     * for a frame no ink holds on under the dim alone. Read in draw.
+     */
+    inkBlackWash: () -> Float = { 0f },
+    inkWhiteWash: () -> Float = { 0f },
 ) {
     // Spotify Canvas keeps its pixels sharp across the whole phone. Pure
     // glass blur belongs only under the temporary lower control deck,
@@ -307,10 +314,17 @@ internal fun BoxScope.SpotifyCanvasChrome(
     )
     val spotifyCanvasDimShowing by remember { derivedStateOf { spotifyCanvasDim.value > 0f } }
     if (presentation || spotifyCanvasDimShowing) {
+        // One rect, drawn with the dim and the ink's grade folded together,
+        // and everything read here in draw: neither the deck's fade nor the
+        // grade recomposes, and it needs no layer of its own. The grade fades
+        // with the deck, as the controls it is for do.
         Box(
-            Modifier.matchParentSize()
-                .graphicsLayer { alpha = spotifyCanvasDim.value }
-                .background(Color.Black),
+            Modifier.matchParentSize().drawBehind {
+                val dim = spotifyCanvasDim.value
+                if (dim <= 0f) return@drawBehind
+                val deck = (dim / CANVAS_DECK_DIM).coerceIn(0f, 1f)
+                drawRect(gradedScrimStop(dim, inkBlackWash() * deck, inkWhiteWash() * deck))
+            },
         )
     }
 }
