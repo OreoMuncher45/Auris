@@ -2,6 +2,7 @@ package com.music.bitchord.data.canvas
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -89,7 +90,115 @@ internal object SpotifyToken {
         anonymousClientId = null
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
+        // The kept copies go too: a refusal is the backend saying these are
+        // done with, and a cold start must not bring them back.
+        restored = true
+        store()?.edit()?.apply { TOKEN_KEYS.forEach(::remove) }?.apply()
     }
+
+    // ---- Kept across process starts ----------------------------------------
+
+    /**
+     * Where the tokens above are kept between process starts.
+     *
+     * Minting one means loading the whole web player in an offscreen WebView,
+     * which measured 2.8–3.9 s on a cold start, ahead of every Spotify request
+     * the app makes and the home page first among them. A token is good for the
+     * lifetime the page stated whether or not the process that harvested it is
+     * still alive, so a cold start inside that window reuses it instead.
+     *
+     * App-private, beside the `sp_dc` cookie these are minted from, which
+     * outlives every one of them. The listener's token is kept with a hash of
+     * the cookie it came from and is never restored under another.
+     */
+    private fun store(): SharedPreferences? =
+        appContext?.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+
+    /** Whether [restore] has run; it reads the store once per process. */
+    @Volatile private var restored = false
+
+    /**
+     * Reads the kept tokens into the in-memory cache, once.
+     *
+     * Lazily, from the first caller rather than from [init]: that runs on the
+     * main thread at process start, and the callers here are already off it.
+     * Only live tokens are adopted; an expired one is the same as none.
+     */
+    private fun restore() {
+        if (restored) return
+        synchronized(this) {
+            if (restored) return
+            restored = true
+            val prefs = store() ?: return
+            val now = System.currentTimeMillis()
+            fun live(expiresKey: String) = prefs.getLong(expiresKey, 0L).takeIf { now < it - 30_000 }
+
+            val cookie = AppSettings.spotifySpdcToken.value
+            if (cookie.isNotBlank() && prefs.getString(K_ACCESS_COOKIE, null) == cookieKey(cookie)) {
+                val expires = live(K_ACCESS_EXPIRES)
+                val token = prefs.getString(K_ACCESS, null)
+                if (expires != null && token != null) {
+                    cachedAccessToken = token
+                    accessTokenExpiresAtMs = expires
+                    prefs.getString(K_ACCESS_CLIENT_ID, null)?.let { cachedClientId = it }
+                }
+            }
+            val anonymousExpires = live(K_ANONYMOUS_EXPIRES)
+            val anonymous = prefs.getString(K_ANONYMOUS, null)
+            if (anonymousExpires != null && anonymous != null) {
+                cachedAnonymousToken = anonymous
+                anonymousTokenExpiresAtMs = anonymousExpires
+                prefs.getString(K_ANONYMOUS_CLIENT_ID, null)?.let { anonymousClientId = it }
+            }
+            val clientExpires = live(K_CLIENT_EXPIRES)
+            val client = prefs.getString(K_CLIENT, null)
+            if (clientExpires != null && client != null) {
+                cachedClientToken = client
+                clientTokenExpiresAtMs = clientExpires
+            }
+        }
+    }
+
+    /** Writes [harvested] beside the cache it just landed in. Off the caller's thread. */
+    private fun keep(mode: Mode, harvested: HarvestedToken, cookie: String?) {
+        val editor = store()?.edit() ?: return
+        if (mode == Mode.SIGNED_IN) {
+            if (cookie.isNullOrBlank()) return
+            editor.putString(K_ACCESS, harvested.token)
+                .putLong(K_ACCESS_EXPIRES, harvested.expiresAt)
+                .putString(K_ACCESS_COOKIE, cookieKey(cookie))
+            harvested.clientId?.let { editor.putString(K_ACCESS_CLIENT_ID, it) }
+        } else {
+            editor.putString(K_ANONYMOUS, harvested.token)
+                .putLong(K_ANONYMOUS_EXPIRES, harvested.expiresAt)
+            harvested.clientId?.let { editor.putString(K_ANONYMOUS_CLIENT_ID, it) }
+        }
+        editor.apply()
+    }
+
+    /** The cookie, as something that can be compared but not replayed. */
+    private fun cookieKey(cookie: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(cookie.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    private const val STORE = "bitchord_spotify_tokens"
+    private const val K_ACCESS = "access"
+    private const val K_ACCESS_EXPIRES = "access_expires"
+    private const val K_ACCESS_COOKIE = "access_cookie"
+    private const val K_ACCESS_CLIENT_ID = "access_client_id"
+    private const val K_ANONYMOUS = "anonymous"
+    private const val K_ANONYMOUS_EXPIRES = "anonymous_expires"
+    private const val K_ANONYMOUS_CLIENT_ID = "anonymous_client_id"
+    private const val K_CLIENT = "client"
+    private const val K_CLIENT_EXPIRES = "client_expires"
+
+    /** Everything [invalidate] drops. */
+    private val TOKEN_KEYS = listOf(
+        K_ACCESS, K_ACCESS_EXPIRES, K_ACCESS_COOKIE, K_ACCESS_CLIENT_ID,
+        K_ANONYMOUS, K_ANONYMOUS_EXPIRES, K_ANONYMOUS_CLIENT_ID,
+        K_CLIENT, K_CLIENT_EXPIRES,
+    )
 
     /**
      * The current bearer token, or null when there is no cookie to mint one
@@ -138,6 +247,7 @@ internal object SpotifyToken {
     private suspend fun token(mode: Mode): String? {
         val cookie = AppSettings.spotifySpdcToken.value.takeIf { mode == Mode.SIGNED_IN }
         if (mode == Mode.SIGNED_IN && cookie.isNullOrBlank()) return null
+        restore()
 
         val now = System.currentTimeMillis()
         if (mode == Mode.SIGNED_IN) {
@@ -180,6 +290,7 @@ internal object SpotifyToken {
                     harvested.clientId?.let { anonymousClientId = it }
                 }
             }
+            keep(mode, harvested, cookie)
             Log.d(
                 TAG,
                 "harvested ${if (mode == Mode.ANONYMOUS) "anonymous " else ""}access token, " +
@@ -365,6 +476,7 @@ internal object SpotifyToken {
      */
     @Synchronized
     fun clientToken(): String? {
+        restore()
         val now = System.currentTimeMillis()
         cachedClientToken?.let { if (now < clientTokenExpiresAtMs - 30_000) return it }
 
@@ -435,6 +547,10 @@ internal object SpotifyToken {
 
         cachedClientToken = token
         clientTokenExpiresAtMs = now + ttlSeconds * 1000
+        store()?.edit()
+            ?.putString(K_CLIENT, token)
+            ?.putLong(K_CLIENT_EXPIRES, clientTokenExpiresAtMs)
+            ?.apply()
         Log.d(TAG, "minted client token, good for ${ttlSeconds}s")
         return token
     }
