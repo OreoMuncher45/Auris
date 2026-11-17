@@ -215,10 +215,14 @@ internal fun LandscapeNowPlaying(
                 fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
             },
             artwork = { artworkModifier ->
+                // The outgoing cover until it has left — see
+                // [TrackChangeMotion.shownKey]. Read in here, so the swap
+                // recomposes the artwork and not the player around it.
+                val shownArt = trackMotion.sleeveArt(song.videoId, art)
                 LandscapeArtwork(
-                    artRequest = art.request,
-                    artLoaded = art.loaded,
-                    onArtState = art::onState,
+                    artRequest = shownArt.request,
+                    artLoaded = shownArt.loaded,
+                    onArtState = shownArt::onState,
                     canvas = canvas,
                     canvasRendered = clipState.rendered,
                     isPlaying = isPlaying,
@@ -269,6 +273,7 @@ internal fun LandscapeNowPlaying(
                             scaleX = scale
                             scaleY = scale
                             translationX = if (t >= 1f) trackMotion.offset() else trackMotion.offset() * t
+                            alpha = trackMotion.alpha()
                         }
                         // With a panel up the sleeve is the way back to
                         // the player, as the portrait thumbnail is.

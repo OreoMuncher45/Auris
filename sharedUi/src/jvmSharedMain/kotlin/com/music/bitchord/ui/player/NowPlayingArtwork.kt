@@ -261,7 +261,6 @@ internal fun BoxScope.PortraitSleeve(
     dockFrame: DockFrame,
     sleeveLayer: GraphicsLayer,
     trackMotion: TrackChangeMotion,
-    swipeThreshold: Float,
     swipeHintShown: () -> Boolean,
     swipeHintNext: () -> Boolean,
     hasNext: Boolean,
@@ -269,7 +268,7 @@ internal fun BoxScope.PortraitSleeve(
     hazeState: HazeState,
     heroClipShown: Boolean,
     canvasCover: MutableFloatState,
-    art: PlayerArtwork,
+    liveArt: PlayerArtwork,
     canvasRendered: MutableState<Boolean>,
     headerUncrop: () -> Float,
     heroT: () -> Float,
@@ -293,6 +292,10 @@ internal fun BoxScope.PortraitSleeve(
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
 ) {
+    // The cover on its way out until it has gone, then the playing track's —
+    // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
+    // so the swap recomposes the sleeve and nothing around it.
+    val art = trackMotion.sleeveArt(song.videoId, liveArt)
     // The sleeve proper — card, banner and thumbnail in turn, see
     // [sleeveRect]. Separate from the slot below, which keeps the
     // card's place for the stats line and the gestures: a banner
@@ -361,7 +364,8 @@ internal fun BoxScope.PortraitSleeve(
                 // is no clip mounted to hand it to. The clip is gone
                 // by the collapse's half, so the sleeve is whole
                 // again by the time it unmounts.
-                alpha = if (heroClipShown) 1f - canvasCover.floatValue else 1f
+                alpha = (if (heroClipShown) 1f - canvasCover.floatValue else 1f) *
+                    trackMotion.alpha()
             }
             .graphicsLayer {
                 val shown = geometry.sleeveShown()
@@ -593,10 +597,16 @@ internal fun BoxScope.PortraitSleeve(
                     } else {
                         1f
                     }
+                    // A track change in the banner moves the picture inside
+                    // its frame rather than the frame — see [bannerZoomFor] —
+                    // and only as far as the banner is open.
+                    val shift = trackMotion.offset() * geometry.bannerShare() * (1f - p()) * dockT()
                     val scale = lerpFloat(1f, bannerScale, banner) *
-                        lerpFloat(cardZoom, 1f, banner)
+                        lerpFloat(cardZoom, 1f, banner) *
+                        bannerZoomFor(shift, size.width)
                     scaleX = scale
                     scaleY = scale
+                    translationX = shift
                     // The card's own corners on the picture, so a
                     // zoomed-out picture keeps the card's shape
                     // instead of showing square corners inside it.
@@ -703,6 +713,9 @@ internal fun BoxScope.PortraitSleeve(
                     // banner's clip gives above.
                     pausedForTransition = panels.lyricsOpen || panels.queueOpen || panels.queueDragging ||
                         collapseStarted() || dockMoving() || !sheetSettled,
+                    // On the view itself: a Compose layer's alpha over a
+                    // TextureView isn't reliably composited.
+                    presentationAlpha = { trackMotion.alpha() },
                     onRenderedChanged = { canvasRendered.value = it },
                     onFrameCaptured = {
                         if (!tabletArtworkBackdrop && !panels.lyricsOpen && !panels.queueOpen) {
@@ -812,7 +825,7 @@ internal fun BoxScope.PortraitSleeve(
                 }
                 .size(16.dp)
                 .graphicsLayer {
-                    alpha = (abs(trackMotion.offset()) / swipeThreshold)
+                    alpha = abs(trackMotion.hint())
                         .coerceIn(0f, 1f) * (1f - p()) * hintAlpha
                 },
         )

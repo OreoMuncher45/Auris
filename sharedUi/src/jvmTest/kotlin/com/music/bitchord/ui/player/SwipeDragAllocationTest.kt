@@ -60,11 +60,12 @@ class SwipeDragAllocationTest {
         }
         val after = runBlocking(SteppingClock()) {
             coroutineScope {
-                val motion = TrackChangeMotion(this)
+                val motion = TrackChangeMotion("track", this)
+                motion.widthPx = 1080f
                 motion.dragStart()
                 val bytes = allocatedBytesSuspending {
                     repeat(moves) { i ->
-                        motion.drag(i.toFloat())
+                        motion.drag(i.toFloat(), threshold = 200f)
                         yield()
                     }
                 }

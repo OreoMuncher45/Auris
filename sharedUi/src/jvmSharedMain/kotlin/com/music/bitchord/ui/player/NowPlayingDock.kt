@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -29,6 +31,7 @@ import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.haptics.Haptic
@@ -259,36 +262,55 @@ internal fun Modifier.skipSwipeGesture(
 ): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, controlsLocked) {
         if (pipelineOpen || castOpen || panelScrolling) return@pointerInput
         var total = 0f
+        // One per gesture block, fed the changes the detector already hands
+        // over: the release's speed is what lets a quick flick skip.
+        val velocity = VelocityTracker()
+        val flingVelocity = SWIPE_FLING_DP_PER_S.dp.toPx()
         detectHorizontalDragGestures(
             onDragStart = {
                 total = 0f
+                velocity.resetTracking()
                 motion.dragStart()
             },
             onDragCancel = { motion.springBack() },
             onDragEnd = {
-                // The same two buzzes the transport glyphs give, so swiping the
-                // sleeve and tapping skip feel like one gesture with two
-                // spellings.
-                val crossed = total <= -swipeThreshold || total >= swipeThreshold
+                val direction = trackSwipeDirection(
+                    total = total,
+                    velocity = velocity.calculateVelocity().x,
+                    threshold = swipeThreshold,
+                    flingVelocity = flingVelocity,
+                )
                 when {
                     // Still tracks the finger and still springs back, so the
                     // sleeve does not feel dead — it just says why it did not
                     // move on.
-                    controlsLocked -> if (crossed) onBlockedControl()
-                    total <= -swipeThreshold -> {
+                    controlsLocked -> {
+                        if (direction != 0) onBlockedControl()
+                        motion.springBack()
+                    }
+                    // Nowhere to go: back it comes, as for a short drag.
+                    direction == 1 && !motion.hasNext -> motion.springBack()
+                    // The same two buzzes the transport glyphs give, so swiping
+                    // the sleeve and tapping skip feel like one gesture with two
+                    // spellings. The art leaves before the call, so it is already
+                    // moving the frame the finger lifts.
+                    direction == 1 -> {
                         haptics.play(Haptic.SkipNext)
+                        motion.commit(1)
                         onNext()
                     }
-                    total >= swipeThreshold -> {
+                    direction == -1 -> {
                         haptics.play(Haptic.SkipPrevious)
+                        motion.commit(-1)
                         onPrevious()
                     }
+                    else -> motion.springBack()
                 }
-                motion.springBack()
             },
-            onHorizontalDrag = { _, delta ->
+            onHorizontalDrag = { change, delta ->
                 total += delta
-                motion.drag(total)
+                velocity.addPointerInputChange(change)
+                motion.drag(total, swipeThreshold)
             },
         )
     }
