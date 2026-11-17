@@ -60,7 +60,7 @@ package com.music.bitchord.playback.audio
  *   2. Dynamic runtime direct-playback detection via [DirectAudioProbe].
  *   3. Authoritative route negotiation via [OutputNegotiator].
  *   4. Rock-solid, glitch-free output via [androidx.media3.exoplayer.audio.DefaultAudioSink] and [android.media.AudioTrack].
- *   5. Isolated direct USB probe and transport via [com.music.bitchord.playback.audio.usb.UsbDirectManager].
+ *   5. Direct USB through the exclusive usbdevfs session in [com.music.bitchord.playback.usb.ExclusiveUsbOutput].
  */
 object AAudioEvaluation {
     const val IS_INTEGRATED: Boolean = false

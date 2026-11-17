@@ -22,7 +22,6 @@ import com.music.bitchord.playback.audio.PcmEncoding
 import com.music.bitchord.playback.audio.TransportType
 import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
-import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -106,7 +105,6 @@ object AudioOutputStatus {
         val exclusiveUsbActive: Boolean = false,
         /** Rate/bit depth on the wire, or why the session is not running. */
         val exclusiveUsbDetail: String? = null,
-        val directUsbProbe: DirectUsbProbeResult? = null,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
         val directPlaybackSelected: Boolean = false,
@@ -207,7 +205,6 @@ object AudioOutputStatus {
                 bitPerfectMixer == other.bitPerfectMixer &&
                 exclusiveUsbActive == other.exclusiveUsbActive &&
                 exclusiveUsbDetail == other.exclusiveUsbDetail &&
-                directUsbProbe == other.directUsbProbe &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
                 directPlaybackSelected == other.directPlaybackSelected &&
@@ -256,7 +253,6 @@ object AudioOutputStatus {
             result = 31 * result + (bitPerfectMixer?.hashCode() ?: 0)
             result = 31 * result + exclusiveUsbActive.hashCode()
             result = 31 * result + (exclusiveUsbDetail?.hashCode() ?: 0)
-            result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
             result = 31 * result + directPlaybackSelected.hashCode()
@@ -289,7 +285,6 @@ object AudioOutputStatus {
         preferred: AudioDeviceInfo?,
         floatEnabled: Boolean,
         routeKind: AudioRouting.Kind? = null,
-        directUsbProbe: DirectUsbProbeResult? = null,
         directSupport: DirectAudioProbe.DirectSupport? = null,
         bluetoothTelemetry: BluetoothTelemetry? = null,
         systemMixerRateHz: Int? = null,
@@ -333,24 +328,20 @@ object AudioOutputStatus {
             else -> null
         }
 
-        val isDirectUsbViable = directUsbProbe?.isViable == true && isUsbDevice
+        // The DIRECT_USB transport is published by the exclusive session once
+        // it is actually open (see publishExclusiveUsb), never inferred here.
         val isDirectAudioTrack = directSupport?.isDirectSupported == true && computedRouteKind != AudioRouting.Kind.PHONE
         val transport = when {
-            isDirectUsbViable -> TransportType.DIRECT_USB
             isDirectAudioTrack -> TransportType.AUDIO_TRACK_DIRECT
             else -> TransportType.AUDIO_TRACK
         }
 
         val fallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled
         val (reason, detail) = when {
-            isDirectUsbViable -> Pair(FallbackReason.NONE, null)
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
                 Pair(FallbackReason.ROUTE_LIMITATION, "Speaker output capped at 16-bit to avoid OEM mixer distortion")
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
-                Pair(
-                    if (directUsbProbe?.isViable == false) FallbackReason.DIRECT_USB_UNAVAILABLE else FallbackReason.ROUTE_LIMITATION,
-                    directUsbProbe?.diagnosticReason ?: "USB route does not advertise Float32 output",
-                )
+                Pair(FallbackReason.ROUTE_LIMITATION, "USB route does not advertise Float32 output")
             computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
                 val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
                 Pair(FallbackReason.ROUTE_LIMITATION, "Bluetooth route$btCode does not advertise Float32 output")
@@ -376,7 +367,6 @@ object AudioOutputStatus {
             fallbackReason = reason,
             fallbackDetail = detail,
             systemMixerRateHz = systemMixerRateHz,
-            directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             directPlaybackSupported = directSupport?.isDirectSupported == true,
             directPlaybackSelected = isDirectAudioTrack,
