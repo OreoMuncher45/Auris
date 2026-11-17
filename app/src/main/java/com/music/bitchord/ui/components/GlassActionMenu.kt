@@ -159,20 +159,32 @@ fun GlassActionMenu(
                         ?: configuration.screenHeightDp.dp.roundToPx()
                     val marginPx = MENU_MARGIN.roundToPx()
                     val gapPx = MENU_GAP.roundToPx()
+                    // Never under a side cutout or a side navigation bar
+                    // either: the same safe area, across.
+                    val left = glassMenuSafeStart(
+                        inset = safeDrawing.getLeft(this, layoutDirection),
+                        hostStart = hostOffsetInWindow.x,
+                    ) + marginPx
+                    val right = glassMenuSafeEnd(
+                        hostSize = widthPx,
+                        windowSize = windowInfo.containerSize.width,
+                        inset = safeDrawing.getRight(this, layoutDirection),
+                        hostStart = hostOffsetInWindow.x,
+                    ) - marginPx
                     val menuWidthPx = menuWidth.roundToPx()
-                        .coerceAtMost((widthPx - marginPx * 2).coerceAtLeast(0))
+                        .coerceAtMost((right - left).coerceAtLeast(0))
                     val slot = glassMenuSlot(
                         anchorTop = anchor.top,
                         anchorBottom = anchor.bottom,
                         // Never under the status bar, the cutout or the
                         // gesture bar: the band is the window's safe area
                         // in this host's coordinates, less the margins.
-                        top = glassMenuSafeTop(safeDrawing.getTop(this), hostOffsetInWindow.y) + marginPx,
-                        bottom = glassMenuSafeBottom(
-                            hostHeight = heightPx,
-                            windowHeight = windowInfo.containerSize.height,
-                            insetBottom = safeDrawing.getBottom(this),
-                            hostTop = hostOffsetInWindow.y,
+                        top = glassMenuSafeStart(safeDrawing.getTop(this), hostOffsetInWindow.y) + marginPx,
+                        bottom = glassMenuSafeEnd(
+                            hostSize = heightPx,
+                            windowSize = windowInfo.containerSize.height,
+                            inset = safeDrawing.getBottom(this),
+                            hostStart = hostOffsetInWindow.y,
                         ) - marginPx,
                         gap = gapPx,
                         minRoom = MENU_MIN_ROOM.roundToPx(),
@@ -185,8 +197,8 @@ fun GlassActionMenu(
                             maxHeight = slot.maxHeight,
                         ),
                     )
-                    val x = glassMenuX(anchor.right, widthPx, menuWidthPx, marginPx)
-                    val y = glassMenuY(slot, anchor.top, anchor.bottom, gapPx, placeable.height)
+                    val x = glassMenuX(anchor.right, left, right, menuWidthPx)
+                    val y = glassMenuY(slot, placeable.height)
                     layout(widthPx, heightPx) { placeable.place(x, y) }
                 }
                 .graphicsLayer {
@@ -238,13 +250,15 @@ private class GlassMenuSide {
 }
 
 /**
- * Which side of the button the menu opens on, and the most it may grow there.
+ * Which side of the button the menu opens on, and the stretch of the band it
+ * may fill there.
  *
  * [top] and [bottom] are the usable band of the host, already shrunk by its
- * margins. The cap is the room on the chosen side alone, so a menu taller than
- * that scrolls rather than crossing back over its own button or out of the
- * band — and it never depends on the menu's own height, which is what lets the
- * menu be measured and placed in a single pass.
+ * margins. The slot is the room on the chosen side *within* that band: it
+ * starts one gap off the button, or at the band's edge if the button itself
+ * is outside the band, so a menu at the cap never leaves the band or crosses
+ * back over its own button. It never depends on the menu's own height, which
+ * is what lets the menu be measured and placed in a single pass.
  */
 internal fun glassMenuSlot(
     anchorTop: Int,
@@ -254,32 +268,49 @@ internal fun glassMenuSlot(
     gap: Int,
     minRoom: Int,
 ): GlassMenuSlot {
-    val roomBelow = (bottom - anchorBottom - gap).coerceAtLeast(0)
-    val roomAbove = (anchorTop - gap - top).coerceAtLeast(0)
+    val belowStart = (anchorBottom + gap).coerceIn(top, maxOf(top, bottom))
+    val aboveEnd = (anchorTop - gap).coerceIn(top, maxOf(top, bottom))
+    val roomBelow = (bottom - belowStart).coerceAtLeast(0)
+    val roomAbove = (aboveEnd - top).coerceAtLeast(0)
     val below = roomBelow >= minRoom || roomBelow >= roomAbove
-    return GlassMenuSlot(below = below, maxHeight = if (below) roomBelow else roomAbove)
+    return if (below) {
+        GlassMenuSlot(below = true, maxHeight = roomBelow, edge = belowStart)
+    } else {
+        GlassMenuSlot(below = false, maxHeight = roomAbove, edge = aboveEnd)
+    }
 }
 
-/** See [glassMenuSlot]. */
-internal data class GlassMenuSlot(val below: Boolean, val maxHeight: Int)
+/**
+ * See [glassMenuSlot]. [edge] is the menu's top when it hangs [below] the
+ * button, and its bottom when it stands above it.
+ */
+internal data class GlassMenuSlot(val below: Boolean, val maxHeight: Int, val edge: Int)
 
-/** The menu's top: hung under the button, or standing on top of it. */
-internal fun glassMenuY(slot: GlassMenuSlot, anchorTop: Int, anchorBottom: Int, gap: Int, menuHeight: Int): Int =
-    if (slot.below) anchorBottom + gap else anchorTop - gap - menuHeight
-
-/** The menu's left: right edge on the button's, kept inside the margins. */
-internal fun glassMenuX(anchorRight: Int, hostWidth: Int, menuWidth: Int, margin: Int): Int =
-    (anchorRight - menuWidth).coerceIn(margin, (hostWidth - margin - menuWidth).coerceAtLeast(margin))
-
-/** The top of the window's safe area in a host whose top sits at [hostTop] in the window. */
-internal fun glassMenuSafeTop(insetTop: Int, hostTop: Int): Int = (insetTop - hostTop).coerceAtLeast(0)
+/** The menu's top: hung from the slot's top edge, or standing on its bottom one. */
+internal fun glassMenuY(slot: GlassMenuSlot, menuHeight: Int): Int =
+    if (slot.below) slot.edge else slot.edge - menuHeight
 
 /**
- * The bottom of the window's safe area in a host [hostHeight] tall whose top
- * sits at [hostTop] in the window. A window height of zero (not known yet)
- * falls back to the host's own bottom.
+ * The menu's left: right edge on the button's, kept inside [left]..[right],
+ * the host's safe band across with the margins already taken off.
  */
-internal fun glassMenuSafeBottom(hostHeight: Int, windowHeight: Int, insetBottom: Int, hostTop: Int): Int {
-    val windowBottom = if (windowHeight > 0) windowHeight - hostTop else hostHeight
-    return (minOf(hostHeight, windowBottom - insetBottom)).coerceAtLeast(0)
+internal fun glassMenuX(anchorRight: Int, left: Int, right: Int, menuWidth: Int): Int =
+    (anchorRight - menuWidth).coerceIn(left, (right - menuWidth).coerceAtLeast(left))
+
+/**
+ * Where the window's safe area starts (its top, or its left) in a host whose
+ * own start sits at [hostStart] in the window, given the window's [inset] on
+ * that side.
+ */
+internal fun glassMenuSafeStart(inset: Int, hostStart: Int): Int = (inset - hostStart).coerceAtLeast(0)
+
+/**
+ * Where the window's safe area ends (its bottom, or its right) in a host
+ * [hostSize] long whose start sits at [hostStart] in the window, given the
+ * window's [inset] on that side. A window size of zero (not known yet) falls
+ * back to the host's own end.
+ */
+internal fun glassMenuSafeEnd(hostSize: Int, windowSize: Int, inset: Int, hostStart: Int): Int {
+    val windowEnd = if (windowSize > 0) windowSize - hostStart else hostSize
+    return minOf(hostSize, windowEnd - inset).coerceAtLeast(0)
 }

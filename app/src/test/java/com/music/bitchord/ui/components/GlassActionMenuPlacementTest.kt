@@ -35,7 +35,7 @@ class GlassActionMenuPlacementTest {
         val slot = glassMenuSlot(lowTop, lowBottom, top, bottom, gap, minRoom)
         // Far taller than the room: the measured height is the cap.
         val height = slot.maxHeight
-        val y = glassMenuY(slot, lowTop, lowBottom, gap, height)
+        val y = glassMenuY(slot, height)
         assertEquals("starts exactly at the top of the band", top, y)
         assertEquals("ends one gap above the button", lowTop - gap, y + height)
     }
@@ -43,7 +43,7 @@ class GlassActionMenuPlacementTest {
     @Test
     fun aShortMenuAboveTheButtonStandsOnIt() {
         val slot = glassMenuSlot(lowTop, lowBottom, top, bottom, gap, minRoom)
-        val y = glassMenuY(slot, lowTop, lowBottom, gap, 400)
+        val y = glassMenuY(slot, 400)
         assertEquals(lowTop - gap - 400, y)
     }
 
@@ -51,7 +51,7 @@ class GlassActionMenuPlacementTest {
     fun aButtonNearTheTopOpensDownwardsAndStaysAboveTheBandsBottom() {
         val slot = glassMenuSlot(100, 188, top, bottom, gap, minRoom)
         assertTrue(slot.below)
-        val y = glassMenuY(slot, 100, 188, gap, slot.maxHeight)
+        val y = glassMenuY(slot, slot.maxHeight)
         assertEquals(188 + gap, y)
         assertEquals(bottom, y + slot.maxHeight)
     }
@@ -64,47 +64,67 @@ class GlassActionMenuPlacementTest {
     }
 
     @Test
-    fun aButtonOutsideTheBandLeavesNoNegativeRoom() {
-        val slot = glassMenuSlot(0, 8, top = 40, bottom = 60, gap = gap, minRoom = minRoom)
+    fun aButtonOutsideTheBandStillKeepsTheMenuInsideIt() {
+        // The button sits above the band [40, 60] entirely.
+        val slot = glassMenuSlot(anchorTop = 0, anchorBottom = 8, top = 40, bottom = 60, gap = gap, minRoom = minRoom)
         assertTrue(slot.maxHeight >= 0)
+        val y = glassMenuY(slot, slot.maxHeight)
+        assertTrue("top $y inside the band", y >= 40)
+        assertTrue("bottom ${y + slot.maxHeight} inside the band", y + slot.maxHeight <= 60)
+        // And below it.
+        val under = glassMenuSlot(anchorTop = 90, anchorBottom = 98, top = 40, bottom = 60, gap = gap, minRoom = minRoom)
+        val underY = glassMenuY(under, under.maxHeight)
+        assertTrue(underY >= 40 && underY + under.maxHeight <= 60)
     }
 
     @Test
     fun theMenuLinesUpWithTheButtonsRightEdgeInsideTheMargins() {
-        assertEquals(1000 - 825, glassMenuX(anchorRight = 1000, hostWidth = 1080, menuWidth = 825, margin = 33))
+        // No side insets: the band across is just the margins.
+        assertEquals(1000 - 825, glassMenuX(anchorRight = 1000, left = 33, right = 1080 - 33, menuWidth = 825))
         // A button at the left edge cannot drag the menu past the margin.
-        assertEquals(33, glassMenuX(anchorRight = 100, hostWidth = 1080, menuWidth = 825, margin = 33))
+        assertEquals(33, glassMenuX(anchorRight = 100, left = 33, right = 1080 - 33, menuWidth = 825))
         // Nor past the right margin.
-        assertEquals(1080 - 33 - 825, glassMenuX(anchorRight = 1080, hostWidth = 1080, menuWidth = 825, margin = 33))
+        assertEquals(1080 - 33 - 825, glassMenuX(anchorRight = 1080, left = 33, right = 1080 - 33, menuWidth = 825))
+    }
+
+    @Test
+    fun aSideCutoutPushesTheMenuInwards() {
+        // A 120px cutout on the left, hosted at the window's origin.
+        val left = glassMenuSafeStart(inset = 120, hostStart = 0) + 33
+        val right = glassMenuSafeEnd(hostSize = 1080, windowSize = 1080, inset = 0, hostStart = 0) - 33
+        assertEquals(153, glassMenuX(anchorRight = 200, left = left, right = right, menuWidth = 825))
+        // And a side navigation bar on the right.
+        val rightWithBar = glassMenuSafeEnd(hostSize = 1080, windowSize = 1080, inset = 126, hostStart = 0) - 33
+        assertEquals(1080 - 126 - 33 - 825, glassMenuX(anchorRight = 1080, left = 33, right = rightWithBar, menuWidth = 825))
     }
 
     @Test
     fun theBandStartsBelowTheStatusBarAndEndsAboveTheGestureBar() {
         // A 2400px window with a 110px status bar and a 63px gesture bar,
         // hosted at the window's origin.
-        assertEquals(110, glassMenuSafeTop(insetTop = 110, hostTop = 0))
-        assertEquals(2400 - 63, glassMenuSafeBottom(hostHeight = 2400, windowHeight = 2400, insetBottom = 63, hostTop = 0))
+        assertEquals(110, glassMenuSafeStart(inset = 110, hostStart = 0))
+        assertEquals(2400 - 63, glassMenuSafeEnd(hostSize = 2400, windowSize = 2400, inset = 63, hostStart = 0))
     }
 
     @Test
     fun aMenuOpenedUpwardsNeverReachesUnderTheStatusBar() {
-        val safeTop = glassMenuSafeTop(insetTop = 110, hostTop = 0) + 12
-        val safeBottom = glassMenuSafeBottom(2400, 2400, 63, 0) - 12
+        val safeTop = glassMenuSafeStart(inset = 110, hostStart = 0) + 12
+        val safeBottom = glassMenuSafeEnd(2400, 2400, 63, 0) - 12
         val slot = glassMenuSlot(lowTop, lowBottom, safeTop, safeBottom, gap, minRoom)
-        val y = glassMenuY(slot, lowTop, lowBottom, gap, slot.maxHeight)
+        val y = glassMenuY(slot, slot.maxHeight)
         assertEquals(safeTop, y)
     }
 
     @Test
     fun aHostBelowTheWindowTopOnlyLosesWhatIsLeftOfTheBar() {
-        assertEquals(30, glassMenuSafeTop(insetTop = 110, hostTop = 80))
-        assertEquals(0, glassMenuSafeTop(insetTop = 110, hostTop = 200))
+        assertEquals(30, glassMenuSafeStart(inset = 110, hostStart = 80))
+        assertEquals(0, glassMenuSafeStart(inset = 110, hostStart = 200))
         // The host's own bottom stays the limit when it ends above the gesture bar.
-        assertEquals(1500, glassMenuSafeBottom(hostHeight = 1500, windowHeight = 2400, insetBottom = 63, hostTop = 200))
+        assertEquals(1500, glassMenuSafeEnd(hostSize = 1500, windowSize = 2400, inset = 63, hostStart = 200))
     }
 
     @Test
     fun anUnknownWindowHeightFallsBackToTheHost() {
-        assertEquals(2400 - 63, glassMenuSafeBottom(hostHeight = 2400, windowHeight = 0, insetBottom = 63, hostTop = 0))
+        assertEquals(2400 - 63, glassMenuSafeEnd(hostSize = 2400, windowSize = 0, inset = 63, hostStart = 0))
     }
 }
