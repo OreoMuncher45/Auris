@@ -3245,6 +3245,9 @@ class PlaybackService : MediaLibraryService() {
         // that format again. Carry the decoder's own facts across instead of
         // leaving stats naming the stream just replaced.
         currentAudioInputFormat = incoming.audioFormat ?: currentAudioInputFormat
+        // The standby has only ever decoded its first item, so what its
+        // renderer reports is that track's — see [audioFormatFor].
+        if (incoming.audioFormat != null) audioFormatFor = incoming.currentMediaItem?.mediaId
         activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(incoming.audioFormat?.sampleMimeType)
         applySpatialAudioEnabled()
         applySimulatedAtmosEnabled()
@@ -6963,8 +6966,15 @@ class PlaybackService : MediaLibraryService() {
 
     private fun publishNerdStats() {
         val player = player ?: return
-        val format = player.audioFormat
         val mediaId = player.currentMediaItem?.mediaId
+        // The renderer keeps describing the outgoing track until it has read a
+        // sample of the incoming one, and reports a read-ahead item's format
+        // before the queue reaches it — see [audioFormatFor]. A snapshot built
+        // from either labelled one track with another's codec, rate and
+        // bitrate. Until the renderer speaks for this track, build from what
+        // the source claimed alone; the format listener and the progress
+        // sampler both ask again.
+        val format = player.audioFormat.takeIf { mediaId == null || audioFormatFor == mediaId }
         val measured = format?.measure()
         // DSD reaches the renderer already decimated to PCM (DsdExtractor), so
         // its sample mime is `audio/raw`; the extractor leaves `dsd64` and the
