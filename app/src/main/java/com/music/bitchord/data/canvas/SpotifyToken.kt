@@ -14,6 +14,8 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -90,6 +92,7 @@ internal object SpotifyToken {
         anonymousClientId = null
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
+        cachedSession = null
         // The kept copies go too: a refusal is the backend saying these are
         // done with, and a cold start must not bring them back.
         restored = true
@@ -192,12 +195,18 @@ internal object SpotifyToken {
     private const val K_ANONYMOUS_CLIENT_ID = "anonymous_client_id"
     private const val K_CLIENT = "client"
     private const val K_CLIENT_EXPIRES = "client_expires"
+    private const val K_DEVICE_ID = "device_id"
+    private const val K_CLIENT_VERSION = "client_version"
+    private const val K_CLIENT_VERSION_AT = "client_version_at"
 
-    /** Everything [invalidate] drops. */
+    /** How long a kept client version is sent before the page is read again. */
+    private const val SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000L
+
+    /** Everything [invalidate] drops. The device id stays: it is the install's. */
     private val TOKEN_KEYS = listOf(
         K_ACCESS, K_ACCESS_EXPIRES, K_ACCESS_COOKIE, K_ACCESS_CLIENT_ID,
         K_ANONYMOUS, K_ANONYMOUS_EXPIRES, K_ANONYMOUS_CLIENT_ID,
-        K_CLIENT, K_CLIENT_EXPIRES,
+        K_CLIENT, K_CLIENT_EXPIRES, K_CLIENT_VERSION, K_CLIENT_VERSION_AT,
     )
 
     /**
@@ -268,8 +277,15 @@ internal object SpotifyToken {
                 return@withLock null
             }
 
-            val harvested = withContext(Dispatchers.Main) {
-                harvestViaWebView(context, cookie, acceptAnonymous = mode == Mode.ANONYMOUS)
+            // The session page is needed by the first request after this one
+            // (its client version and the client token both come off it), and
+            // it does not need the token — so it is read while the web player
+            // loads instead of after it.
+            val harvested = coroutineScope {
+                launch(Dispatchers.IO) { session() }
+                withContext(Dispatchers.Main) {
+                    harvestViaWebView(context, cookie, acceptAnonymous = mode == Mode.ANONYMOUS)
+                }
             }
             if (harvested == null) {
                 Log.w(TAG, "token harvest failed or timed out")
@@ -580,9 +596,26 @@ internal object SpotifyToken {
      * blob it embeds for itself, the device id from the `sp_t` cookie it hands
      * out to every visitor. Fetched once and held for the process: neither
      * changes inside a session.
+     *
+     * Kept across process starts too, so a cold start with a live token goes
+     * straight to its request rather than reading the page first. The device id
+     * is the install's for good, as the browser cookie it stands for would be;
+     * the client version is trusted for [SESSION_MAX_AGE_MS], about one of
+     * Spotify's daily builds, and [invalidate] drops it with the tokens.
+     *
+     * Synchronized so the read started beside the harvest and the first
+     * request's headers share one fetch rather than racing two.
      */
+    @Synchronized
     private fun session(): SessionInfo? {
         cachedSession?.let { return it }
+        val prefs = store()
+        val keptDevice = prefs?.getString(K_DEVICE_ID, null)
+        val keptVersion = prefs?.getString(K_CLIENT_VERSION, null)
+        val versionAge = System.currentTimeMillis() - (prefs?.getLong(K_CLIENT_VERSION_AT, 0L) ?: 0L)
+        if (keptDevice != null && keptVersion != null && versionAge in 0 until SESSION_MAX_AGE_MS) {
+            return SessionInfo(keptVersion, keptDevice).also { cachedSession = it }
+        }
 
         val request = Request.Builder()
             .url("https://open.spotify.com")
@@ -617,8 +650,16 @@ internal object SpotifyToken {
             return null
         }
 
-        val session = SessionInfo(clientVersion, deviceId ?: java.util.UUID.randomUUID().toString())
+        val session = SessionInfo(
+            clientVersion,
+            keptDevice ?: deviceId ?: java.util.UUID.randomUUID().toString(),
+        )
         cachedSession = session
+        prefs?.edit()
+            ?.putString(K_DEVICE_ID, session.deviceId)
+            ?.putString(K_CLIENT_VERSION, session.clientVersion)
+            ?.putLong(K_CLIENT_VERSION_AT, System.currentTimeMillis())
+            ?.apply()
         return session
     }
 }
