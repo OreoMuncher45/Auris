@@ -14,6 +14,16 @@
 package com.music.bitchord.ui.apple
 
 import android.app.Application
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -79,5 +89,25 @@ class MusicCatalogueCardInteractionTest {
     fun `an unrelated search leaves the card out`() {
         setCard(query = "equalizer")
         compose.onNodeWithText("Spotify or YouTube Music").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the title stays whole on a narrow screen at a large font size`() {
+        // 320dp wide at twice the font size: the title naming both services
+        // wraps rather than losing its end to an ellipsis.
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
+                Box(Modifier.width(320.dp)) {
+                    MusicCatalogueSettings(search = SettingsSearch(""), sheets = sheets)
+                }
+            }
+        }
+        val node = compose.onNodeWithText("Spotify or YouTube Music").fetchSemanticsNode()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
+        val layout = layouts.single()
+        assertFalse("title was cut short", layout.hasVisualOverflow)
+        assertTrue("title should wrap at this size", layout.lineCount > 1)
     }
 }

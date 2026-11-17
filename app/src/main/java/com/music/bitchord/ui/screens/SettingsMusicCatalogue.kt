@@ -76,6 +76,9 @@ internal fun MusicCatalogueSettings(
                     }
                 },
                 onClick = { sheets.pickingHomeProvider = true },
+                // Wraps rather than cutting off a service name at large font
+                // sizes or on a narrow screen.
+                titleMaxLines = 3,
             )
         }
     }
