@@ -87,6 +87,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.ContainerBitrate
 import com.music.bitchord.playback.audio.BitPerfectMixer
+import com.music.bitchord.playback.audio.ExclusiveSession
+import com.music.bitchord.playback.audio.bitperfect.MixerSession
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.audio.JamesDspConfig
 import com.music.bitchord.playback.audio.JamesDspNative
@@ -593,6 +595,37 @@ class PlaybackService : MediaLibraryService() {
      * both players' sinks.
      */
     private val exclusiveUsb by lazy { ExclusiveUsbOutput(this) }
+
+    /** Android 14's bit-perfect mixer at integer precision; see [MixerSession]. */
+    private val mixerSession by lazy {
+        MixerSession(this, AUDIO_ATTRIBUTES.platformAudioAttributes)
+    }
+
+    /**
+     * Whether Android lists a USB output, kept current by [outputDeviceCallback]
+     * so the per-buffer [chosenExclusiveSession] never makes a binder call.
+     */
+    @Volatile private var usbOutputPresent = false
+
+    private fun refreshUsbOutputPresent() {
+        usbOutputPresent = BitPerfectMixer.usbOutput(audioManager) != null
+    }
+
+    /**
+     * The mixer-free output bit-perfect playback should use right now, or
+     * null for the ordinary path. Read per buffer by the sinks, so it only
+     * looks at cached state.
+     *
+     * Direct USB first, when a DAC has granted access: nothing of Android's
+     * is in the path at all. Then, on Android 14+, the framework's own
+     * bit-perfect mixer at the track's integer precision.
+     */
+    private fun chosenExclusiveSession(): ExclusiveSession? {
+        if (!AppSettings.bitPerfect.value) return null
+        if (exclusiveUsbWanted()) return exclusiveUsb
+        if (android.os.Build.VERSION.SDK_INT >= 34 && usbOutputPresent) return mixerSession
+        return null
+    }
     private val usbDacMonitor by lazy { UsbDacMonitor(this, scope) }
     /** Last availability line this service put in the signal-path row. */
     private var lastUsbAvailabilityDetail: String? = null
@@ -605,6 +638,7 @@ class PlaybackService : MediaLibraryService() {
             // picker for "go back to following the system", so a stuck choice
             // would be a picker that had quietly broken the obvious behaviour.
             AudioRouting.forget()
+            refreshUsbOutputPresent()
             requestOutputReconfiguration()
         }
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
@@ -615,6 +649,7 @@ class PlaybackService : MediaLibraryService() {
             if (removedDevices.any { it.id == AudioRouting.selectedId.value }) {
                 AudioRouting.forget()
             }
+            refreshUsbOutputPresent()
             requestOutputReconfiguration()
         }
     }
@@ -1011,7 +1046,10 @@ class PlaybackService : MediaLibraryService() {
             // usbdevfs has no AudioTrack to pause; the writer's own gate has
             // to follow the listener's transport state. playWhenReady stays
             // true while buffering, so this does not lock out seek pre-fill.
-            if (AppSettings.bitPerfect.value) exclusiveUsb.setPaused(!playWhenReady)
+            if (AppSettings.bitPerfect.value) {
+                exclusiveUsb.setPaused(!playWhenReady)
+                mixerSession.setPaused(!playWhenReady)
+            }
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
@@ -1654,6 +1692,7 @@ class PlaybackService : MediaLibraryService() {
         // through, and again at every handoff.
         sparePlayer.audioSessionId = exoPlayer.audioSessionId
         audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null)
+        refreshUsbOutputPresent()
         applyOutputRoute()
         return exoPlayer to sparePlayer
     }
@@ -7803,11 +7842,11 @@ class PlaybackService : MediaLibraryService() {
                 // userspace USB session, when a DAC has granted access. The
                 // sink only engages it at the source rate; anything else stays
                 // on AudioTrack and says so.
-                exclusiveSession = { exclusiveUsb },
+                exclusiveSession = { chosenExclusiveSession() },
                 // Do not attempt a claim until there is a DAC on the bus and
                 // the listener has granted direct access. The sink re-reads
                 // this per buffer, so a grant while a track plays is adopted.
-                exclusiveWanted = { exclusiveUsbWanted() },
+                exclusiveWanted = { chosenExclusiveSession() != null },
                 // A decoded Float32 buffer cannot name the source's depth on
                 // its own; the stream's own figure is the honest hint for the
                 // wire format (otherwise the DAC alt falls back to 16-bit).
@@ -7911,7 +7950,10 @@ class PlaybackService : MediaLibraryService() {
             bluetoothTelemetry = btTelemetry,
         )
 
-        AudioOutputStatus.publishBitPerfectMixer(
+        // While the integer-precision mixer session is open it owns the
+        // framework's preference; asking here for the sink's Float32/PCM16
+        // would replace it under the playing track.
+        if (!mixerSession.isOpen) AudioOutputStatus.publishBitPerfectMixer(
             BitPerfectMixer.apply(
                 manager = manager,
                 device = activeDevice,
@@ -8303,6 +8345,7 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.bitPerfect.collect { enabled ->
                 if (enabled) ensureUsbPermission()
                 exclusiveUsb.setWanted(exclusiveUsbWanted())
+                if (!enabled) mixerSession.reset()
                 publishExclusiveUsbAvailability()
                 requestOutputReconfiguration()
             }
@@ -9077,6 +9120,7 @@ class PlaybackService : MediaLibraryService() {
         // Close the usbdevfs session and let go of the monitor before the
         // service goes; the next one re-opens it on its first configure.
         exclusiveUsb.release()
+        mixerSession.release()
         usbDacMonitor.release()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
