@@ -62,8 +62,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cached
@@ -979,47 +981,11 @@ private fun HomeShortcutGrid(
                             }
                             index == replayIndex && onOpenReplay != null ->
                                 HomeTile(stringResource(Res.string.replay), onOpenReplay, null, tile) {
-                                    // The Replay card's own gradient and note,
-                                    // the note at the card's size and corner.
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(REPLAY_GRADIENT)
-                                            .padding(6.dp),
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(Res.drawable.ic_note),
-                                            contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.9f),
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .height(18.dp)
-                                                .aspectRatio(LOGO_ASPECT),
-                                        )
-                                    }
+                                    ReplayTileArt()
                                 }
                             flowItem != null ->
                                 HomeTile(flowItem.title, onFlowClick, null, tile) {
-                                    // The Flow card's own gradient and note, at
-                                    // the card's size. Its clip is not played
-                                    // here: a looping decoder for a 48dp
-                                    // thumbnail is the costliest thing a tile
-                                    // could do, and the gradient is Flow's mark.
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(FLOW_GRADIENT),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            imageVector = BitChordIcons.MusicNote,
-                                            contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.92f),
-                                            modifier = Modifier.size(40.dp),
-                                        )
-                                    }
+                                    FlowTileArt()
                                 }
                         }
                     }
@@ -1032,6 +998,62 @@ private fun HomeShortcutGrid(
             }
         }
     }
+}
+
+/**
+ * The Replay card in miniature, for its quick-access tile: the card's gradient,
+ * its note in the top-end corner and its title at the bottom-start. The
+ * subtitle is left out, since it can't be read at 48dp. A straight scale of the
+ * card would set the title at 7sp, so the note and title are rounded up to
+ * sizes that stay sharp.
+ */
+@Composable
+private fun ReplayTileArt() {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(REPLAY_GRADIENT)
+            .padding(5.dp),
+    ) {
+        Icon(
+            painter = painterResource(Res.drawable.ic_note),
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .height(9.dp)
+                .aspectRatio(LOGO_ASPECT),
+        )
+        Text(
+            text = stringResource(Res.string.replay),
+            color = Color.White,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 10.sp,
+            maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomStart),
+        )
+    }
+}
+
+/**
+ * Flow's cover for its quick-access tile: a still of the first frame of the
+ * card's square clip (`flow_square.mp4`), at tile size. It stays still because
+ * a looping decoder is too much to spend on a 48dp thumbnail. The gradient
+ * behind it shows only until the still decodes.
+ */
+@Composable
+private fun FlowTileArt() {
+    Image(
+        painter = painterResource(Res.drawable.flow_cover),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(FLOW_GRADIENT),
+    )
 }
 
 /** One quick-access tile: artwork, then the name beside it. */
@@ -1070,7 +1092,7 @@ private val REPLAY_GRADIENT = Brush.linearGradient(
     listOf(Color(0xFFFF375F), Color(0xFFFF9F0A), Color(0xFFBF5AF2)),
 )
 
-/** Flow's gradient, behind its note until the mix has a clip. */
+/** Flow's gradient, behind its tile's still until it decodes. */
 private val FLOW_GRADIENT = Brush.linearGradient(
     listOf(Color(0xFF1D1B4F), Color(0xFF6D2FD8), Color(0xFFFF4B7A)),
 )
@@ -1603,11 +1625,7 @@ private fun ReplayPickCard(onClick: () -> Unit) {
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(12.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(Color(0xFFFF375F), Color(0xFFFF9F0A), Color(0xFFBF5AF2)),
-                    ),
-                )
+                .background(REPLAY_GRADIENT)
                 .padding(14.dp),
         ) {
             Icon(
