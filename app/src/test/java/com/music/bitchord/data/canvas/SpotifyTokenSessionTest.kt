@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -43,6 +44,15 @@ class SpotifyTokenSessionTest {
             .apply { isAccessible = true }
             .newInstance(token, future, cookie)
 
+    private fun get(name: String): Any? =
+        SpotifyToken::class.java.getDeclaredField(name).apply { isAccessible = true }.get(SpotifyToken)
+
+    /** The decision every cache hit makes, on the snapshot it read. */
+    private fun usable(snapshot: Any, cookie: String?): Boolean =
+        snapshot.javaClass.getDeclaredMethod("usableFor", String::class.java, Long::class.javaPrimitiveType)
+            .apply { isAccessible = true }
+            .invoke(snapshot, cookie, System.currentTimeMillis()) as Boolean
+
     private fun mutex(): Mutex =
         SpotifyToken::class.java.getDeclaredField("harvestMutex").apply { isAccessible = true }.get(SpotifyToken) as Mutex
 
@@ -72,6 +82,23 @@ class SpotifyTokenSessionTest {
         // The same cache still answers the session it was minted for.
         AppSettings.spotifySpdcToken.value = "cookie-A"
         assertEquals("token-for-A", SpotifyToken.accessToken())
+    }
+
+    @Test
+    fun aLookupThatReadTheOldSnapshotCannotHandItToTheNewCookie() = runBlocking {
+        // A lookup reads the one reference once, then decides on what it read
+        // with usableFor(cookie, now). Pause it right there: it holds A's
+        // snapshot while the cache moves on to B's.
+        set("access", cachedToken("token-for-A", "cookie-A"))
+        val heldByThePausedLookup = get("access")!!
+        set("access", cachedToken("token-for-B", "cookie-B"))
+        AppSettings.spotifySpdcToken.value = "cookie-B"
+
+        // Resumed with B's cookie, the decision it makes on the snapshot it
+        // holds refuses A's token...
+        assertFalse(usable(heldByThePausedLookup, "cookie-B"))
+        // ...and the cache as it now stands answers B with B's.
+        assertEquals("token-for-B", SpotifyToken.accessToken())
     }
 
     @Test
