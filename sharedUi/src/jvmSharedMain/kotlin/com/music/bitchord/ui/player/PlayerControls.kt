@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -310,7 +311,8 @@ internal fun PlayerScrubber(
             // Smaller than the player's default box, so the times can sit just
             // under the bar instead of well under it. 12dp of bar + 16dp of
             // reach is a 28dp target along a bar the width of the screen.
-            touchPadding = 16.dp,
+            activeHeight = SEEK_ACTIVE_HEIGHT,
+            touchPadding = SEEK_TOUCH_PADDING,
         )
         Box(
             modifier = Modifier
@@ -321,7 +323,12 @@ internal fun PlayerScrubber(
                 // under the bar, sat in it. A tap on "0:16" landed on the
                 // slider and started a scrub. Laid out after the slider instead
                 // of over it, they are out of its reach.
-                .padding(top = 2.dp),
+                .padding(top = SCRUBBER_LABEL_GAP)
+                // Taller than the times, so the quality badge sits a little
+                // lower than them and its tap target can fill the slot
+                // (see [PlaybackQualityLabel]). A minimum rather than a fixed
+                // height, so a large font scale grows it instead of clipping.
+                .heightIn(min = SCRUBBER_LABEL_SLOT),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -361,6 +368,36 @@ internal fun PlayerScrubber(
         }
     }
 }
+
+/** The seek bar's invisible reach above and below its drawn bar. See [ThinSlider]'s `touchPadding`. */
+internal val SEEK_TOUCH_PADDING = 16.dp
+
+/** The seek bar's height while held: [ThinSlider]'s default `activeHeight`. */
+internal val SEEK_ACTIVE_HEIGHT = 12.dp
+
+/** The space between the seek bar's touch box and the labels under it. */
+internal val SCRUBBER_LABEL_GAP = 2.dp
+
+/**
+ * How tall the slot under the seek bar is, and so how tall the quality badge's
+ * tap target is.
+ *
+ * The badge used to get only its glyph row, about 17dp, 2dp below a seek box
+ * the width of the screen. A tap aimed at the word that landed a little high
+ * started a scrub, and the scrub starts on the finger going down. 28dp gives
+ * the badge a target as tall as the seek box above it.
+ */
+internal val SCRUBBER_LABEL_SLOT = 28.dp
+
+/**
+ * How much taller the scrubber is for [SCRUBBER_LABEL_SLOT] than it was when
+ * the slot only wrapped the times (about 17dp). The portrait deck takes this
+ * back out of the gap above the transport, so the buttons stay put.
+ */
+internal val SCRUBBER_SLOT_GROWTH = 11.dp
+
+/** Space either side of the quality badge's word, inside its tap target. */
+internal val QUALITY_BADGE_TAP_PADDING = 16.dp
 
 /** The colour the panel draws the handoff's effect in: violet for tone, amber for a filter ride. */
 private val AUTOMIX_EQ_ACCENT = Color(0xFFC084FC)
@@ -483,15 +520,20 @@ internal fun PlaybackQualityLabel(
     // the measurement behind it, one tap away rather than in a dialog
     // somewhere else.
     var details by remember { mutableStateOf(false) }
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
         LosslessOrStats(
             isLoading = isLoading,
             stillRacing = song.videoId in racingLossless,
             losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
             effectiveQuality = effectiveQuality,
             nerdStats = nerdStats,
+            // The whole slot's height, and some width either side of the word,
+            // is the target. The padding is inside the clickable so it adds to
+            // what a finger can hit. See [SCRUBBER_LABEL_SLOT].
             modifier = Modifier
-                .clickable(enabled = nerdStats != null) { details = true },
+                .fillMaxHeight()
+                .clickable(enabled = nerdStats != null) { details = true }
+                .padding(horizontal = QUALITY_BADGE_TAP_PADDING),
         )
         val measured = nerdStats
         if (details && measured != null) {

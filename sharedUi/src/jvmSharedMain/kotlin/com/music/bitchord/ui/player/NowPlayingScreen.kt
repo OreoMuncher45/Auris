@@ -378,7 +378,7 @@ private val SCRUBBER_DROP = 16.dp
  * The drop is taken out of that gap, so a screen with little to spare takes
  * less of it rather than closing the gap to nothing.
  */
-private val SCRUBBER_MIN_GAP = 6.dp
+internal val SCRUBBER_MIN_GAP = 6.dp
 
 /**
  * How far the volume row and the button row are lifted off the player's foot.
@@ -435,6 +435,17 @@ private val BACKDROP_LIFT = 48.dp
  */
 internal fun scrubberDropOf(spread: Dp): Dp =
     (8.dp + spread / 2 - SCRUBBER_MIN_GAP).coerceIn(0.dp, SCRUBBER_DROP)
+
+/**
+ * The gap between the scrubber and the transport on the portrait deck.
+ *
+ * It gives up the scrubber's drop (see [SCRUBBER_DROP]) and the height the
+ * quality badge's slot added (see [SCRUBBER_SLOT_GROWTH]), so the transport
+ * stays where it was. It never goes under [SCRUBBER_MIN_GAP].
+ */
+internal fun scrubberToTransportGap(spread: Dp): Dp =
+    (8.dp + spread / 2 - scrubberDropOf(spread) - SCRUBBER_SLOT_GROWTH)
+        .coerceAtLeast(SCRUBBER_MIN_GAP)
 
 /**
  * How much the hero banner's still artwork is scaled past its frame, measured
