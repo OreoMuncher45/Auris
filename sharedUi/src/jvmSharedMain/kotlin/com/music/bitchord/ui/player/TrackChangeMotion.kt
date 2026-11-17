@@ -82,6 +82,18 @@ internal fun bannerZoomFor(offset: Float, width: Float): Float {
 }
 
 /**
+ * How much of the banner's frame a picture moved by [offset] still covers, as
+ * the opacity it may be drawn at: whole within [bannerSlack], falling to
+ * nothing at the farthest a track change takes it.
+ */
+internal fun bannerCoverage(offset: Float, width: Float): Float {
+    if (width <= 0f) return 1f
+    val slack = bannerSlack(width)
+    val farthest = width * BANNER_EXIT_FRACTION
+    return ((farthest - abs(offset)) / (farthest - slack)).coerceIn(0f, 1f)
+}
+
+/**
  * Which way a change the listener didn't ask for here moved: what a swipe or a
  * transport button said, if it said so within [TRACK_HINT_TTL_MS]; otherwise
  * where the new track sits in the queue against the old one. A change that
@@ -134,8 +146,15 @@ internal class TrackChangeMotion(initialKey: String, private val scope: Coroutin
     /** Sideways offset of the art, in pixels. */
     fun offset(): Float = if (dragging) dragOffset.floatValue else settle.value
 
-    /** The art's opacity. */
-    fun alpha(): Float = fade.value
+    /**
+     * The art's opacity. In the banner, never whole while the picture is
+     * further out than its zoom covers: past that the frame's edge is bare,
+     * and the backdrop may show there only through a picture still fading.
+     */
+    fun alpha(): Float {
+        val alpha = fade.value
+        return if (banner) alpha * bannerCoverage(offset(), widthPx) else alpha
+    }
 
     /** How far along a skip the drag is, signed: past ±1 a release skips. */
     fun hint(): Float = if (dragging) dragHint.floatValue else hintSettle.value

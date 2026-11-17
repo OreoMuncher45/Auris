@@ -52,6 +52,11 @@ class TrackChangeMotionTest {
             val zoom = bannerZoomFor(shift, width)
             assertTrue(width * (zoom - 1f) / 2f >= shift - 1e-3f, "edge shows at $shift")
         }
+        // Past the slack the picture can only be drawn partly see-through,
+        // so a bare edge is never shown under a whole picture.
+        assertEquals(1f, bannerCoverage(slack, width))
+        assertEquals(0f, bannerCoverage(width * BANNER_EXIT_FRACTION, width))
+        assertTrue(bannerCoverage(slack + 1f, width) < 1f)
         assertEquals(1f, bannerZoomFor(0f, width))
         assertEquals(BANNER_ZOOM, bannerZoomFor(500f, width), 1e-4f)
     }
@@ -192,6 +197,11 @@ class TrackChangeMotionTest {
         assertTrue(s.alphas.min() <= 0.01f, "faded through the backdrop")
         assertEquals(1f, motion.alpha())
         assertEquals(0f, motion.offset(), 0.5f)
+        // Whole only within the slack: no frame shows a bare edge under a whole picture.
+        val slack = bannerSlack(1000f)
+        s.offsets.zip(s.alphas).forEach { (offset, alpha) ->
+            if (kotlin.math.abs(offset) > slack + 0.5f) assertTrue(alpha < 1f, "whole at $offset")
+        }
     }
 
     @Test
