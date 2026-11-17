@@ -105,6 +105,16 @@ class PlayerInkContrastTest {
         assertEquals(accent.at(accent.darkL), whiteSleeveRed.fg)
     }
 
+    @Test
+    fun aSurfaceIsRepublishedOnlyWhenItReallyMoves() {
+        // A live blur lands up to thirty times a second; only a move the eye
+        // could see re-judges the ink.
+        fun surface(level: Int) = fullBlurInkSurface(IntArray(INK_BANDS) { grey(level) })
+        assertTrue(inkSurfaceMoved(null, surface(100)), "the first surface is always published")
+        assertFalse(inkSurfaceMoved(surface(100), surface(102)), "a drift of a couple of levels is not")
+        assertTrue(inkSurfaceMoved(surface(100), surface(120)), "a real change is")
+    }
+
     // --- The cases from the ticket ------------------------------------------
 
     @Test

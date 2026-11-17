@@ -181,10 +181,10 @@ internal fun rememberLivePalette(
  * one that does not.
  */
 private fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
-    inkMoved(previous.palette, next.palette) || surfaceMoved(previous.surface, next.surface)
+    inkMoved(previous.palette, next.palette) || inkSurfaceMoved(previous.surface, next.surface)
 
-/** Whether a Canvas's bands moved by more than a few levels of eight-bit colour. */
-private fun surfaceMoved(previous: InkSurface?, next: InkSurface?): Boolean {
+/** Whether a surface's bands moved by more than a few levels of eight-bit colour. */
+internal fun inkSurfaceMoved(previous: InkSurface?, next: InkSurface?): Boolean {
     if (previous == null || next == null) return previous !== next
     if (previous.light.size != next.light.size) return true
     for (i in previous.light.indices) {

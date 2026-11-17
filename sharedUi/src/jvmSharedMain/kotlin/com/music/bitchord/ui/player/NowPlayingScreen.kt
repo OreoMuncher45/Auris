@@ -2066,15 +2066,22 @@ fun NowPlayingScreen(
     // [resolveInk]. Written by the backdrops' own effects and read only by the
     // ink's, so neither recomposes this screen.
     val inkSurfaces = remember { PlayerInkSurfaces() }
-    // The full-cover blur's bands, read off the blurred copy once it exists,
-    // off the main thread. Gone with the copy, so a new cover's ink is never
-    // judged against the last cover's blur.
-    LaunchedEffect(fullArtworkBlurImage) {
-        val image = fullArtworkBlurImage
-        inkSurfaces.panel = if (image == null) null else withContext(Dispatchers.Default) {
-            fullBlurInkSurface(bandAverages(image.argbPixels(), image.width, image.height))
+    // The full-cover blur's bands, off the main thread. Read off the still
+    // copy as soon as it exists, so the ink is ready before the panel opens;
+    // the backdrop then reports what it actually shows — the live blur of a
+    // playing cover included — through [publishPanelInk].
+    val publishPanelInk: suspend (ImageBitmap) -> Unit = remember(inkSurfaces) {
+        { image ->
+            val next = withContext(Dispatchers.Default) {
+                fullBlurInkSurface(bandAverages(image.argbPixels(), image.width, image.height))
+            }
+            // A live blur lands up to thirty times a second, and its average
+            // drifts by levels nobody sees. Only a real move is published, so
+            // the ink is re-judged when it could change and not otherwise.
+            if (inkSurfaceMoved(inkSurfaces.panel, next)) inkSurfaces.panel = next
         }
     }
+    LaunchedEffect(fullArtworkBlurImage) { fullArtworkBlurImage?.let { publishPanelInk(it) } }
     // The ink, as states.
     //
     // The ink follows a playing clip and the backdrop under it, so it changes
@@ -2138,6 +2145,7 @@ fun NowPlayingScreen(
                 modifier = backdropModifier,
                 blackWash = { inkStates.panelBlackWash.value },
                 whiteWash = { inkStates.panelWhiteWash.value },
+                onShown = publishPanelInk,
             )
         }
     }

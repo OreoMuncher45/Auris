@@ -205,11 +205,18 @@ fun FullArtworkBlurBackdrop(
      */
     blackWash: () -> Float = { 0f },
     whiteWash: () -> Float = { 0f },
+    /**
+     * Told which image this backdrop is actually showing — the live blur
+     * while a cover is playing, the still one otherwise — so the ink can be
+     * judged against it. Called from an effect, never from composition.
+     */
+    onShown: suspend (ImageBitmap) -> Unit = {},
 ) {
     // The blur of the frame, re-blurred as the frame changes. While there is
     // one it *is* the backdrop.
     val liveBlur = rememberLiveBlurImage(liveFrames)
     val shown = liveBlur ?: image
+    LaunchedEffect(shown) { shown?.let { onShown(it) } }
     val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (shown != null) 1f else 0f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
