@@ -145,7 +145,7 @@ fun RecordStage(
 
     val loaded = press
     if (loaded == null || loaded.isEmpty) {
-        RecordLoading()
+        RecordLoading(onClose = onClose)
         return
     }
 
@@ -943,9 +943,18 @@ private fun RecordPosterSheet(
 }
 
 @Composable
-private fun RecordLoading() {
+private fun RecordLoading(onClose: () -> Unit) {
     Box(Modifier.fillMaxSize().background(RecordInk.Stage), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(color = RecordInk.Cream.copy(alpha = 0.6f))
+        // A spinner is not a place to be trapped. The month files are a disk
+        // read and this is the one screen where that read is on the way in, so
+        // the way out stays on screen for the whole of it.
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding(),
+        ) {
+            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.close), tint = RecordInk.Cream)
+        }
     }
 }
 
