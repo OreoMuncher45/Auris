@@ -1602,4 +1602,7 @@
     <string name="podcasts_enabled_subtitle">Turn off the tab, the shelves and the search filter. Downloads already on the device stay.</string>
     <string name="hide_status_bar_in_player">Hide status bar in player</string>
     <string name="hide_status_bar_in_player_subtitle">Hides the clock, battery and notification icons while the main player is open</string>
+    <string name="cached_song_partial">บางส่วน</string>
+    <string name="remove_from_cache">นำออกจากแคช</string>
+    <string name="removed_from_cache">นำออกจากแคชเพลงแล้ว</string>
 </resources>

@@ -1486,4 +1486,7 @@
     <string name="auris_pass_since">MEMBER SINCE</string>
     <string name="auris_pass_device">THIS DEVICE</string>
     <string name="auris_pass_unnamed">Auris listener</string>
+    <string name="cached_song_partial">Partial</string>
+    <string name="remove_from_cache">Remove from cache</string>
+    <string name="removed_from_cache">Removed from the song cache</string>
 </resources>

@@ -106,6 +106,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -2671,7 +2672,11 @@ private fun BitChordApp(
         // after this check for the connection to have changed under it. This is
         // the one place that knows the tap was for forty tracks and can say so
         // once, rather than leaving forty identical failed rows to be read.
-        val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow
+        // A copy out of the song cache spends no data, so Wi-Fi only does not
+        // refuse a batch that asked for one — [Downloads.prepare] still refuses
+        // the tracks in it the cache turns out not to hold whole.
+        val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow &&
+            songs.none { Downloads.wantsCachedCopy(it.videoId) }
         // Two refusals, two reasons: blaming the Wi-Fi setting for an offline
         // switch would send the listener to the wrong page.
         val offlineRefusal = AppSettings.effectiveOffline.value
@@ -2767,6 +2772,24 @@ private fun BitChordApp(
             song
         }
         startDownload(listOf(withDuration), null)
+    }
+    // The Cached songs folder's downloads. The song cache already holds these
+    // tracks, so they are saved from its copy — no data spent, no connection
+    // needed — rather than fetched afresh at the Download quality setting. See
+    // [Downloads.preferCachedCopy]. The folder's own second line ("YouTube ·
+    // 4.2 MB") is the cache's, not the file's, and stays behind.
+    val downloadFromCache: (List<Song>) -> Unit = { songs ->
+        val cleaned = songs.map { it.copy(downloadFormat = null, localDateAddedSeconds = null) }
+        Downloads.preferCachedCopy(cleaned.map { it.videoId })
+        startDownload(cleaned, null)
+    }
+    val removedFromCacheMessage = stringResource(R.string.removed_from_cache)
+    // Takes a track out of the song cache, from its menu. An open Cached songs
+    // folder re-reads itself off [AudioCache.contentsChanged].
+    val removeFromCache: (Song) -> Unit = { song ->
+        scope.launch {
+            if (AudioCache.remove(song.videoId) > 0) showQueueNotice(removedFromCacheMessage)
+        }
     }
 
     // Content padding leaves room for the frosted bar above and the tab bar
@@ -3537,6 +3560,15 @@ private fun BitChordApp(
             val openFolder = detail?.browseId
                 ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
                 ?.takeIf { it.isFolder && !fromPlayer }
+            // Asked of the cache's index off the main thread as the menu opens,
+            // so "Remove from cache" is only offered for a track it holds.
+            // Re-asked when the cache changes, which is what drops the row
+            // once the track has gone. One lookup per menu, never per row.
+            val cacheVersion by AudioCache.contentsChanged.collectAsStateWithLifecycle()
+            val inCache by produceState(false, song.videoId, cacheVersion) {
+                value = song.localUri == null &&
+                    withContext(Dispatchers.IO) { AudioCache.holds(song.videoId) }
+            }
             SongActionsSheet(
                 song = song,
                 presentation = presentation,
@@ -3548,7 +3580,15 @@ private fun BitChordApp(
                 // Stays open: the row it replaces itself with is the
                 // progress, and closing the sheet would hide the only
                 // answer to "did that work?".
-                onDownload = { downloadSong(song) },
+                // From the Cached songs folder, the cache's own copy is the
+                // download — the same as the folder's Download all.
+                onDownload = {
+                    if (!fromPlayer && detail?.browseId == CACHE_FOLDER_BROWSE_ID) {
+                        downloadFromCache(listOf(song))
+                    } else {
+                        downloadSong(song)
+                    }
+                },
                 // The other direction: a device file going up to the
                 // server. Closed first, unlike a download — progress and
                 // the summary notice live outside the sheet.
@@ -3591,6 +3631,14 @@ private fun BitChordApp(
                         sheets.songMenu.song = null
                         viewModel.removeFromPlaylist(it.browseId, song)
                     }
+                },
+                onRemoveFromCache = if (inCache) {
+                    {
+                        sheets.songMenu.song = null
+                        removeFromCache(song)
+                    }
+                } else {
+                    null
                 },
                 // The folders are the listener's own, so these are offered
                 // whether or not anyone is signed in — a folder is the answer
@@ -4839,6 +4887,7 @@ private fun BitChordApp(
                 addToQueue = addSongsToQueue,
                 playNext = playSongsNext,
                 download = startDownload,
+                downloadFromCache = downloadFromCache,
                 withBrowseSongs = withBrowseSongs,
             ),
             smartDownloadPodcast = ::smartDownloadPodcast,
@@ -6228,6 +6277,8 @@ private data class TrackListActions(
     val addToQueue: (List<Song>) -> Unit,
     val playNext: (List<Song>) -> Unit,
     val download: (List<Song>, DownloadTarget?) -> Unit,
+    /** The Cached songs folder's download: the cache's own copies, saved from disk. */
+    val downloadFromCache: (List<Song>) -> Unit,
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
 )
 
@@ -6670,22 +6721,29 @@ private fun RootOverlays(
             // What the target carries that the tracks don't is the
             // release's own name and cover, which is exactly what the
             // record wants.
-            onDownloadAll = act { songs ->
-                tracks.download(
-                    songs,
-                    target.browseId
-                        ?.takeIf { target.type != BrowseType.ARTIST }
-                        ?.let { id ->
-                            DownloadTarget(
-                                id = id,
-                                title = target.title,
-                                subtitle = target.subtitle,
-                                thumbnailUrl = target.thumbnailUrl,
-                                playlist = target.type == BrowseType.PLAYLIST,
-                            )
-                        },
-                )
-            }.takeIf { remote },
+            // The Cached songs folder is the one local page with a Download
+            // all: its tracks are not on the device as files yet, only in the
+            // song cache, and saving them from there needs no network.
+            onDownloadAll = if (target.browseId == CACHE_FOLDER_BROWSE_ID) {
+                act { songs -> tracks.downloadFromCache(songs) }
+            } else {
+                act { songs ->
+                    tracks.download(
+                        songs,
+                        target.browseId
+                            ?.takeIf { target.type != BrowseType.ARTIST }
+                            ?.let { id ->
+                                DownloadTarget(
+                                    id = id,
+                                    title = target.title,
+                                    subtitle = target.subtitle,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    playlist = target.type == BrowseType.PLAYLIST,
+                                )
+                            },
+                    )
+                }.takeIf { remote }
+            },
             // The same link a share off YouTube Music's own overflow
             // gives — built from the browse id rather than fetched,
             // since nothing about it depends on the tracks or the
