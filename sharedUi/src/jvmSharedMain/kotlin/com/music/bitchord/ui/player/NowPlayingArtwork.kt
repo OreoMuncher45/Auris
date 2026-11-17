@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -401,34 +402,26 @@ internal fun BoxScope.PortraitSleeve(
             // The banner dissolves into the backdrop from the title
             // down to the stage's bottom, and firms back up as it
             // collapses.
-            .drawWithContent {
-                drawContent()
-                val shown = geometry.sleeveShown()
-                if (shown > 0f) {
+            //
+            // The ramp is built once per size and only its strength
+            // changes: erasing `shown × ramp` with DstOut leaves
+            // `1 − shown × ramp`, the same alpha the old DstIn mask
+            // rebuilt as a fresh 17-stop gradient on every draw.
+            .drawWithCache {
+                val ramp = bannerDissolveRamp(
                     // The title's row, in the sleeve's own pixels:
                     // the old stage bottom recovered out of the
                     // [HERO_ART_ZOOM] extension, plus the half
                     // [ART_TITLE_GAP] the row sits below it.
-                    val fadeStart = size.height / HERO_ART_ZOOM +
-                        ART_TITLE_GAP.toPx() / 2f
-                    // Eased, not linear: alpha holds near full as
-                    // the title begins, gives way through the
-                    // credits and settles at the stage's bottom
-                    // with no crease at either end.
-                    val steps = 16
-                    val colorStops = Array(steps + 1) { index ->
-                        val t = index / steps.toFloat()
-                        val eased = t * t * (3f - 2f * t)
-                        t to Color.Black.copy(alpha = 1f - shown * eased)
+                    startY = size.height / HERO_ART_ZOOM + ART_TITLE_GAP.toPx() / 2f,
+                    endY = size.height * ART_FADE_END_FRACTION,
+                )
+                onDrawWithContent {
+                    drawContent()
+                    val shown = geometry.sleeveShown()
+                    if (shown > 0f) {
+                        drawRect(brush = ramp, alpha = shown.coerceAtMost(1f), blendMode = BlendMode.DstOut)
                     }
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colorStops = colorStops,
-                            startY = fadeStart,
-                            endY = size.height * ART_FADE_END_FRACTION,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
                 }
             },
     ) {
@@ -924,4 +917,19 @@ internal class PlayerMeasures {
      * position into the same space as the two edges above.
      */
     var dismissBandSpace by mutableStateOf<LayoutCoordinates?>(null)
+}
+
+/**
+ * How much of the banner the dissolve takes away, from none at [startY] to all
+ * of it at [endY]. Eased, not linear: the picture holds near full as the title
+ * begins, gives way through the credits and settles at the stage's bottom with
+ * no crease at either end.
+ */
+internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
+    val steps = 16
+    val colorStops = Array(steps + 1) { index ->
+        val t = index / steps.toFloat()
+        t to Color.Black.copy(alpha = t * t * (3f - 2f * t))
+    }
+    return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }
