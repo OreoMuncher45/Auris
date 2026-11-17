@@ -10,9 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -27,8 +29,10 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,6 +64,12 @@ fun GlassActionMenu(
     modifier: Modifier = Modifier,
     /** How wide the menu wants to be. Never wider than the host's own width. */
     menuWidth: Dp = 300.dp,
+    /**
+     * Where this composable's root sits in the window, so the window's system
+     * bars can be measured from it. The player's panel fills the window, so
+     * this is zero there unless the panel is still settling.
+     */
+    hostOffsetInWindow: IntOffset = IntOffset.Zero,
     /** The rows. The panel is bounded to the room beside the button; the rows bring their own scroll. */
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -103,6 +113,10 @@ fun GlassActionMenu(
     val shape = RoundedCornerShape(MENU_RADIUS)
 
     val configuration = LocalConfiguration.current
+    // Handles only: their values are read while the menu is placed, so a bar
+    // appearing or going relayouts the menu without recomposing it.
+    val safeDrawing = WindowInsets.safeDrawing
+    val windowInfo = LocalWindowInfo.current
     // Written while the menu is placed and read while it is drawn, in the same
     // frame: which side it opened on, for the corner its entrance grows from.
     // A plain field, not state — the side never has to recompose anything.
@@ -150,8 +164,16 @@ fun GlassActionMenu(
                     val slot = glassMenuSlot(
                         anchorTop = anchor.top,
                         anchorBottom = anchor.bottom,
-                        top = marginPx,
-                        bottom = heightPx - marginPx,
+                        // Never under the status bar, the cutout or the
+                        // gesture bar: the band is the window's safe area
+                        // in this host's coordinates, less the margins.
+                        top = glassMenuSafeTop(safeDrawing.getTop(this), hostOffsetInWindow.y) + marginPx,
+                        bottom = glassMenuSafeBottom(
+                            hostHeight = heightPx,
+                            windowHeight = windowInfo.containerSize.height,
+                            insetBottom = safeDrawing.getBottom(this),
+                            hostTop = hostOffsetInWindow.y,
+                        ) - marginPx,
                         gap = gapPx,
                         minRoom = MENU_MIN_ROOM.roundToPx(),
                     )
@@ -248,3 +270,16 @@ internal fun glassMenuY(slot: GlassMenuSlot, anchorTop: Int, anchorBottom: Int, 
 /** The menu's left: right edge on the button's, kept inside the margins. */
 internal fun glassMenuX(anchorRight: Int, hostWidth: Int, menuWidth: Int, margin: Int): Int =
     (anchorRight - menuWidth).coerceIn(margin, (hostWidth - margin - menuWidth).coerceAtLeast(margin))
+
+/** The top of the window's safe area in a host whose top sits at [hostTop] in the window. */
+internal fun glassMenuSafeTop(insetTop: Int, hostTop: Int): Int = (insetTop - hostTop).coerceAtLeast(0)
+
+/**
+ * The bottom of the window's safe area in a host [hostHeight] tall whose top
+ * sits at [hostTop] in the window. A window height of zero (not known yet)
+ * falls back to the host's own bottom.
+ */
+internal fun glassMenuSafeBottom(hostHeight: Int, windowHeight: Int, insetBottom: Int, hostTop: Int): Int {
+    val windowBottom = if (windowHeight > 0) windowHeight - hostTop else hostHeight
+    return (minOf(hostHeight, windowBottom - insetBottom)).coerceAtLeast(0)
+}

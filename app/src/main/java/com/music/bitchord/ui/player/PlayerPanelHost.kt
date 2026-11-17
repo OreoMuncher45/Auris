@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.components.GlassActionMenu
@@ -147,7 +148,11 @@ internal fun PlayerPanelHost(
                     bottom = menuAnchor.bottom - rootOrigin.y.toInt(),
                 )
                 CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
-                    GlassActionMenu(anchor = local, onDismiss = onDismissMenu) {
+                    GlassActionMenu(
+                        anchor = local,
+                        onDismiss = onDismissMenu,
+                        hostOffsetInWindow = IntOffset(rootOrigin.x.toInt(), rootOrigin.y.toInt()),
+                    ) {
                         songMenuBody(menuSong, SongActionsPresentation.Glass)
                     }
                 }

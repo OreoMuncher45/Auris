@@ -77,4 +77,34 @@ class GlassActionMenuPlacementTest {
         // Nor past the right margin.
         assertEquals(1080 - 33 - 825, glassMenuX(anchorRight = 1080, hostWidth = 1080, menuWidth = 825, margin = 33))
     }
+
+    @Test
+    fun theBandStartsBelowTheStatusBarAndEndsAboveTheGestureBar() {
+        // A 2400px window with a 110px status bar and a 63px gesture bar,
+        // hosted at the window's origin.
+        assertEquals(110, glassMenuSafeTop(insetTop = 110, hostTop = 0))
+        assertEquals(2400 - 63, glassMenuSafeBottom(hostHeight = 2400, windowHeight = 2400, insetBottom = 63, hostTop = 0))
+    }
+
+    @Test
+    fun aMenuOpenedUpwardsNeverReachesUnderTheStatusBar() {
+        val safeTop = glassMenuSafeTop(insetTop = 110, hostTop = 0) + 12
+        val safeBottom = glassMenuSafeBottom(2400, 2400, 63, 0) - 12
+        val slot = glassMenuSlot(lowTop, lowBottom, safeTop, safeBottom, gap, minRoom)
+        val y = glassMenuY(slot, lowTop, lowBottom, gap, slot.maxHeight)
+        assertEquals(safeTop, y)
+    }
+
+    @Test
+    fun aHostBelowTheWindowTopOnlyLosesWhatIsLeftOfTheBar() {
+        assertEquals(30, glassMenuSafeTop(insetTop = 110, hostTop = 80))
+        assertEquals(0, glassMenuSafeTop(insetTop = 110, hostTop = 200))
+        // The host's own bottom stays the limit when it ends above the gesture bar.
+        assertEquals(1500, glassMenuSafeBottom(hostHeight = 1500, windowHeight = 2400, insetBottom = 63, hostTop = 200))
+    }
+
+    @Test
+    fun anUnknownWindowHeightFallsBackToTheHost() {
+        assertEquals(2400 - 63, glassMenuSafeBottom(hostHeight = 2400, windowHeight = 0, insetBottom = 63, hostTop = 0))
+    }
 }
