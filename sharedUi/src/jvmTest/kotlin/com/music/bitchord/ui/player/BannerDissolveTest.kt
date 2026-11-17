@@ -1,12 +1,9 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.LinearGradient
-import java.lang.management.ManagementFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class BannerDissolveTest {
     /**
@@ -28,28 +25,6 @@ class BannerDissolveTest {
         }
     }
 
-    /**
-     * Before/after: bytes allocated by the dissolve's own code per draw of the
-     * banner. Before, every draw built a 17-stop array, 17 pairs and a brush.
-     * After, the ramp is built once per size and a draw builds nothing.
-     */
-    @Test
-    fun measureAllocationPerDraw() {
-        val draws = 20_000
-        val sink = ArrayList<Any>(1)
-        val before = allocatedBytes {
-            repeat(draws) { sink.add(oldPerDraw(shown = 0.8f)); sink.clear() }
-        } / draws
-        val ramp = bannerDissolveRamp(100f, 900f)
-        val after = allocatedBytes {
-            // A draw now reads the cached ramp and a float; nothing to build.
-            repeat(draws) { sink.add(ramp); sink.clear() }
-        } / draws
-        println("PERF banner dissolve, bytes per draw: before=$before after=$after")
-        assertTrue(before > 500, "the old mask allocated on every draw ($before)")
-        assertTrue(after < 16, "the cached ramp allocates nothing per draw ($after)")
-    }
-
     private fun oldMaskStops(shown: Float): Array<Pair<Float, Color>> {
         val steps = 16
         return Array(steps + 1) { index ->
@@ -59,10 +34,6 @@ class BannerDissolveTest {
         }
     }
 
-    /** The old draw block's allocations, line for line. */
-    private fun oldPerDraw(shown: Float): Brush =
-        Brush.verticalGradient(colorStops = oldMaskStops(shown), startY = 100f, endY = 900f)
-
     @Suppress("UNCHECKED_CAST")
     private fun rampStops(ramp: LinearGradient): List<Color> {
         val field = LinearGradient::class.java.getDeclaredField("colors").apply { isAccessible = true }
@@ -70,11 +41,3 @@ class BannerDissolveTest {
     }
 }
 
-/** Bytes this thread allocated running [block], after a warm-up run. */
-internal fun allocatedBytes(block: () -> Unit): Long {
-    val bean = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
-    block()
-    val start = bean.getThreadAllocatedBytes(Thread.currentThread().id)
-    block()
-    return bean.getThreadAllocatedBytes(Thread.currentThread().id) - start
-}

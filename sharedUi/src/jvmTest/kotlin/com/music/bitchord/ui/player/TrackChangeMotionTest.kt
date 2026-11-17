@@ -244,7 +244,6 @@ class TrackChangeMotionTest {
         motion.onTrackChanged("c", 2)
         settle()
         observer.dispose()
-        println("PERF track change, composition-visible writes: $shownKeyWrites for 2 changes")
         assertEquals(2, shownKeyWrites)
     }
 }
