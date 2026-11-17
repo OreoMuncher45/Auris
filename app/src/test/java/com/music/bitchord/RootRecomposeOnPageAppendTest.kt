@@ -27,6 +27,10 @@ import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.PartyMember
+import com.music.bitchord.data.listentogether.PartyPlayback
+import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.PlaybackService
@@ -40,6 +44,7 @@ import com.music.bitchord.ui.theme.BitChordTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -173,11 +178,30 @@ class RootRecomposeOnPageAppendTest {
 
     private data class Counts(val root: Int, val slot: Int, val detail: Int, val total: Int)
 
+    /** A playlist of [songs] as the only page on the detail stack. */
+    private fun MainViewModel.open(songs: List<Song>) {
+        detailStackFlow().value = listOf(page(songs))
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private val partyFlow: MutableStateFlow<ListenTogether.State>
+        get() = ListenTogether::class.java.getDeclaredField("_state")
+            .apply { isAccessible = true }
+            .get(null) as MutableStateFlow<ListenTogether.State>
+
+    @After fun leaveParty() {
+        partyFlow.value = ListenTogether.State()
+    }
+
     /**
-     * Opens [first] as the only detail page, then hands each of [publishes]
-     * to the stack a frame apart and counts what recomposed.
+     * Sets the app up with [setUp], then runs each of [publishes] a frame
+     * apart and counts what recomposed.
      */
-    private fun measure(name: String, first: List<Song>, publishes: List<List<Song>>): Counts {
+    private fun measure(
+        name: String,
+        setUp: (MainViewModel) -> Unit,
+        publishes: List<(MainViewModel) -> Unit>,
+    ): Counts {
         val counter = Counter()
         var recomposer: Recomposer? = null
         var vm: MainViewModel? = null
@@ -204,8 +228,8 @@ class RootRecomposeOnPageAppendTest {
         compose.mainClock.advanceTimeByFrame()
         compose.waitForIdle()
 
-        val stack = vm!!.detailStackFlow()
-        stack.value = listOf(page(first))
+        val viewModel = vm!!
+        setUp(viewModel)
         repeat(30) { compose.mainClock.advanceTimeByFrame() }
         compose.waitForIdle()
 
@@ -225,8 +249,8 @@ class RootRecomposeOnPageAppendTest {
 
         counter.runs.clear()
         counter.rereads = 0
-        publishes.forEach { songs ->
-            stack.value = listOf(page(songs))
+        publishes.forEach { publish ->
+            publish(viewModel)
             compose.mainClock.advanceTimeByFrame()
             compose.waitForIdle()
         }
@@ -252,7 +276,11 @@ class RootRecomposeOnPageAppendTest {
 
     @Test fun `appending playlist pages recomposes the detail screen, not the root`() {
         val pages = (1..PAGES).map { p -> List(100 * (p + 1)) { song(it) } }
-        val counts = measure("append", first = List(100) { song(it) }, publishes = pages)
+        val counts = measure(
+            "append",
+            setUp = { it.open(List(100) { i -> song(i) }) },
+            publishes = pages.map { songs -> { vm: MainViewModel -> vm.open(songs) } },
+        )
         assertTrue("the detail screen sees every page", counts.detail >= PAGES)
         assertEquals("root recomposes on page append", 0, counts.root)
     }
@@ -260,12 +288,61 @@ class RootRecomposeOnPageAppendTest {
     @Test fun `matching rows in place recomposes the detail screen, not the root`() {
         val pending = List(100) { song(it, matched = false) }
         val matches = (1..MATCHES).map { m -> List(100) { song(it, matched = it < m) } }
-        val counts = measure("match", first = pending, publishes = matches)
+        val counts = measure(
+            "match",
+            setUp = { it.open(pending) },
+            publishes = matches.map { songs -> { vm: MainViewModel -> vm.open(songs) } },
+        )
         assertTrue("the detail screen sees every match", counts.detail >= MATCHES)
         assertEquals("root recomposes on a row match", 0, counts.root)
     }
 
+    /**
+     * A listener in a party, with a playlist open. What the server and the
+     * clock keep sending while a track plays: a `state` heartbeat (the same
+     * track, a later playhead), a `pong` (a new round trip) and a `members`
+     * frame (the same members, seen later). None of it changes anything the
+     * root draws.
+     */
+    @Test fun `party heartbeats do not recompose the root`() {
+        val track = PartyTrack(videoId = "v0", title = "Track 0")
+        val members = listOf(
+            PartyMember(memberId = "host", displayName = "Host", isHost = true, connected = true),
+            PartyMember(memberId = "me", displayName = "Me", connected = true),
+        )
+        val party = ListenTogether.State(
+            code = "ABCDEF",
+            you = members[1],
+            members = members,
+            playback = PartyPlayback(seq = 1, track = track, isPlaying = true, startedBy = "host"),
+            connection = ListenTogether.Connection.LIVE,
+            clockSynced = true,
+            roundTripMs = 40,
+        )
+        val beats = (1..HEARTBEATS).map { i ->
+            { _: MainViewModel ->
+                partyFlow.value = when (i % 3) {
+                    0 -> party.copy(
+                        playback = party.playback.copy(seq = 1L + i, positionMs = i * 5_000L, anchorMs = i * 5_000L),
+                    )
+                    1 -> party.copy(roundTripMs = 40L + i)
+                    else -> party.copy(members = members.map { it.copy(lastSeenMs = i * 1_000L) })
+                }
+            }
+        }
+        val counts = measure(
+            "party",
+            setUp = {
+                partyFlow.value = party
+                it.open(List(100) { i -> song(i) })
+            },
+            publishes = beats,
+        )
+        assertEquals("root recomposes on a party heartbeat", 0, counts.root)
+    }
+
     private companion object {
+        const val HEARTBEATS = 9
         const val PAGES = 5
         const val MATCHES = 10
     }

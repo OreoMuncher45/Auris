@@ -793,7 +793,13 @@ internal fun BitChordApp(
         sheets.browseMenu.target = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
-    val partyState by ListenTogether.state.collectAsStateWithLifecycle()
+    // The party as the root sees it (see [PartyHeadPolicy]). The state is
+    // republished for every heartbeat, pong and member sighting while a party
+    // plays, and read whole here each one recomposed this whole composable.
+    val partyStateSource = ListenTogether.state.collectAsStateWithLifecycle()
+    val partyState = remember(partyStateSource) {
+        derivedStateOf(PartyHeadPolicy) { partyStateSource.value }
+    }.value
     // The same answer the playback service acts on, rather than a second one
     // derived here — see [autoplayEnabledFor]. Drawing the local preference in
     // a party made the toggle lie in both directions: a listener whose own
@@ -6158,6 +6164,30 @@ private object DetailHeadPolicy : SnapshotMutationPolicy<DetailPage?> {
                 a.title == b.title &&
                 a.type == b.type &&
                 a.thumbnailUrl == b.thumbnailUrl
+            )
+}
+
+/**
+ * When two party states are the same to the app root: the same membership
+ * and lock, and the same track started by the same member with the same
+ * AutoPlay setting. That is all [BitChordApp] reads off the party. The
+ * playhead, the clock and when each member was last seen change with every
+ * frame the server sends, and the player reads those for itself.
+ */
+private object PartyHeadPolicy : SnapshotMutationPolicy<ListenTogether.State> {
+    override fun equivalent(a: ListenTogether.State, b: ListenTogether.State): Boolean =
+        a === b || (
+            a.inParty == b.inParty &&
+                a.controlsLocked == b.controlsLocked &&
+                a.playback.autoplayEnabled == b.playback.autoplayEnabled &&
+                a.playback.track?.videoId == b.playback.track?.videoId &&
+                a.playback.startedBy == b.playback.startedBy &&
+                a.playback.startedByName == b.playback.startedByName &&
+                a.members.size == b.members.size &&
+                a.members.indices.all {
+                    a.members[it].memberId == b.members[it].memberId &&
+                        a.members[it].displayName == b.members[it].displayName
+                }
             )
 }
 
