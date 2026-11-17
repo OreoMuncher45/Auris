@@ -1222,8 +1222,9 @@ private fun BitChordApp(
     val versions = remember { VersionSwitchState() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
-    // The lyric settings are watched too, so turning a source on or off applies
-    // to the track already playing rather than only the next one.
+    // The lyric settings are watched too, so turning a source on or off,
+    // reordering them or changing the syllable preference applies to the track
+    // already playing rather than only the next one.
     //
     // The duration and the settings are watched inside the effect rather than
     // read as keys: a key is read in BitChordApp's body, which would then
@@ -1234,8 +1235,10 @@ private fun BitChordApp(
         combine(
             AppSettings.syncedLyrics,
             AppSettings.lyricsSources,
+            AppSettings.lyricsSourceOrder,
+            AppSettings.prioritizeSyllableSync,
             snapshotFlow { player.durationMs },
-        ) { _, _, durationMs -> durationMs }.collectLatest { durationMs ->
+        ) { _, _, _, _, durationMs -> durationMs }.collectLatest { durationMs ->
             player.song?.let {
                 viewModel.loadLyrics(
                     it.videoId,

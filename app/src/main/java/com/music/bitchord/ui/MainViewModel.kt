@@ -700,7 +700,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * than leaving the last answer sitting on a player that would now find a
      * different one.
      */
-    private var lyricsFor: Pair<String, Set<LyricsSource>>? = null
+    private var lyricsFor: LyricsLookupKey? = null
 
     /**
      * Called as the playing track changes; cheap no-op when already loaded.
@@ -725,7 +725,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             emptySet()
         }
-        val key = videoId to sources
+        val key = LyricsLookupKey(
+            videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+        )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
@@ -5636,3 +5638,15 @@ private const val FLOW_MOOD_POOL_SIZE = 240
  * what was never played.
  */
 private const val FLOW_RECENT_LIMIT = 50
+
+/**
+ * What one lyrics lookup for the playing track was made under. The order and
+ * the syllable preference pick a different answer from the same providers, so
+ * a change in either is a new lookup, as switching a source on or off is.
+ */
+internal data class LyricsLookupKey(
+    val videoId: String,
+    val sources: Set<LyricsSource>,
+    val order: List<LyricsSource>,
+    val prioritizeSyllableSync: Boolean,
+)
