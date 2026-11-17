@@ -200,7 +200,7 @@ internal fun Modifier.miniArtPadding(art: MiniArt): Modifier = layout { measurab
     val width = constraints.constrainWidth(placeable.width + start + end)
     val height = constraints.constrainHeight(placeable.height + 2 * vertical)
     val shift = ((height - art.size.roundToPx()) / 2 - start).coerceIn(0, end)
-    layout(width, height) { placeable.place(start + shift, vertical) }
+    layout(width, height) { placeable.placeRelative(start + shift, vertical) }
 }
 
 /**
