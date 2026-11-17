@@ -296,6 +296,12 @@ fun SettingsScreen(
             }
         }
 
+        // The catalogue switch, first thing on the index and still found by
+        // the search there. Not on a category page: it belongs to none of them.
+        if (openCategory == null) {
+            MusicCatalogueSettings(search = search, sheets = sheets)
+        }
+
         if (openCategory == null && !searchActive) {
             // The index: one row per category. Each opens a page of its own;
             // the search field above reaches into all of them at once.
