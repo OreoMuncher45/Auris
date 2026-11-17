@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
@@ -123,19 +124,28 @@ private val TRANSPORT_GAP = 8.dp
  * that differed between them showed as the cover jumping on landing.
  *
  * [Inline] is the glass bar folded beside its tab circles; [Expanded] is every
- * other pill. Each entry builds its [shape] once, so recomposing a row — every
- * play/pause does — allocates nothing for it.
+ * other pill. The shape is the shared [CircleShape], so recomposing a row —
+ * every play/pause does — allocates nothing for it.
  *
- * The ends are padded more than the top and bottom because a pill's ends are
- * semicircles: at the cover's top corner the curve has already come in from
- * the side, and padding the ends by the vertical figure would leave the cover
- * touching it.
+ * The cover is a circle sitting on the centre of the pill's left end cap, so
+ * the two curves run parallel with an even ring of glass between them. Where
+ * the cap's centre is depends on the pill's height:
+ *
+ * - Inline, the cover (32 + 4 above and below) sets the height at 40, so the
+ *   cap's radius is 20 and its centre is 20 in; a 4dp start pad puts the
+ *   cover's centre there too, with a 4dp ring all round.
+ * - Expanded, the pill has always been 60 tall: the title and artist lines
+ *   (44) with 8 above and below. A 48dp cover padded 6 on the start, top and
+ *   bottom keeps it at 60, now set by the cover, and sits on the centre of the
+ *   radius-30 cap with a 6dp ring. A larger system font can still make the
+ *   text the taller of the two; the cover then stays centred top to bottom
+ *   and the ring grows above and below it.
+ *
+ * The far end keeps its larger pad, since the transport there is square.
  */
 internal enum class MiniArt(
-    /** The cover's side. */
+    /** The cover's diameter. */
     val size: Dp,
-    /** Its corner, and the one the player's cover lands on when it closes here. */
-    val corner: Dp,
     /** Row padding before the cover. */
     val padStart: Dp,
     /** Row padding after the transport. */
@@ -145,11 +155,17 @@ internal enum class MiniArt(
     /** Between the cover and the title. */
     val gap: Dp,
 ) {
-    Inline(size = 32.dp, corner = 6.dp, padStart = 8.dp, padEnd = 8.dp, padVertical = 4.dp, gap = 8.dp),
-    Expanded(size = 40.dp, corner = 8.dp, padStart = 12.dp, padEnd = 12.dp, padVertical = 8.dp, gap = 10.dp),
+    Inline(size = 32.dp, padStart = 4.dp, padEnd = 8.dp, padVertical = 4.dp, gap = 12.dp),
+    Expanded(size = 48.dp, padStart = 6.dp, padEnd = 12.dp, padVertical = 6.dp, gap = 10.dp),
     ;
 
-    val shape: Shape = RoundedCornerShape(corner)
+    val shape: Shape = CircleShape
+
+    /**
+     * The corner the player's cover lands on when it closes here: half the
+     * cover, so the flight's corner blend ends on exactly this circle.
+     */
+    val corner: Dp = size / 2
 
     companion object {
         fun of(inline: Boolean): MiniArt = if (inline) Inline else Expanded
