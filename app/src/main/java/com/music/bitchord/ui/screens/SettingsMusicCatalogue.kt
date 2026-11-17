@@ -1,10 +1,12 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -51,11 +53,28 @@ internal fun MusicCatalogueSettings(
         footer = stringResource(R.string.home_provider_subtitle),
     ) {
         row(title, stringResource(R.string.home_provider), *MUSIC_CATALOGUE_KEYWORDS) {
+            // The catalogue in force goes under the title rather than on the
+            // right, where it would be measured first and leave the title,
+            // which names both services, to be cut short at large font sizes.
+            val subtitle = stringResource(R.string.music_catalogue_row_subtitle)
             SettingsRow(
                 icon = Icons.Rounded.Album,
                 title = title,
-                subtitle = stringResource(R.string.music_catalogue_row_subtitle),
-                value = homeProvider.localizedLabel(),
+                subtitleContent = {
+                    Column {
+                        Text(
+                            text = homeProvider.localizedLabel(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 5,
+                        )
+                    }
+                },
                 onClick = { sheets.pickingHomeProvider = true },
             )
         }
