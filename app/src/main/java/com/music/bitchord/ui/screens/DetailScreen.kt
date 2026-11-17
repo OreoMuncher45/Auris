@@ -425,6 +425,16 @@ fun DetailScreen(
     // list. When no filter is active, matches contains the full running order
     // and plays the complete release/playlist from the tapped position.
     val queue = remember(matches) { matches.map { it.value } }
+    // One key per row from what the row is — its track, and which copy of it
+    // when a playlist repeats one — rather than where it sits. Keyed on the
+    // position, a row taken out of the middle renamed every row below it, and
+    // the list disposed and rebuilt each of them instead of moving them up.
+    val rowKeys = remember(queue) { uniqueKeys(queue) { it.videoId } }
+    // Read at tap time, so a row's click lambda captures only its own key and
+    // stays equal when the rows around it change; see [rowKeys].
+    val currentQueue by rememberUpdatedState(queue)
+    val currentRowKeys by rememberUpdatedState(rowKeys)
+    val currentOnSongClick by rememberUpdatedState(onSongClick)
     val suggested = remember(page.suggestedSongs, query) {
         page.suggestedSongs.matching(query).map { it.value }
     }
@@ -711,10 +721,11 @@ fun DetailScreen(
                     }
                     itemsIndexed(
                         items = matches,
-                        key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                        key = { position, _ -> rowKeys[position] },
                         contentType = { _, _ -> LazyContent.SONG_ROW },
                     ) { position, entry ->
                         val song = entry.value
+                        val rowKey = rowKeys[position]
                         val isCurrent = song.isSameTrackAs(currentSong)
                         // Made once per row rather than on every recomposition of
                         // it: a fresh copy each time is a new Song for the row to
@@ -729,7 +740,8 @@ fun DetailScreen(
                         SongRow(
                             song = rowSong,
                             onClick = {
-                                onSongClick(queue, position)
+                                val at = currentRowKeys.indexOf(rowKey)
+                                if (at >= 0) currentOnSongClick(currentQueue, at)
                             },
                             onLongPress = { onSongLongPress(song) },
                             onSwipeToQueue = { onSongSwipe(song) },
