@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <poll.h>
 #include <linux/usbdevice_fs.h>
 #include <linux/usb/ch9.h>
 
@@ -36,6 +37,12 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // ── Float → PCM conversion ──────────────────────────────────────────
+
+static inline int64_t nowMs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
 
 static inline float clampf(float v) { return v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v); }
 
@@ -303,9 +310,13 @@ static int submitRingUrb(UsbAudioContext *ctx, const int *pktSizes, int numPacke
 static int reapOldestUrb(UsbAudioContext *ctx, int timeoutMs) {
     struct usbdevfs_urb *c = nullptr;
 
-    // Poll with 125µs interval matching USB high-speed microframe timing.
-    int iterations = timeoutMs * 8;  // 8 iterations per ms (125µs each)
-    for (int i = 0; i < iterations; i++) {
+    // Sleep in poll() until usbdevfs has a completed URB to hand back: it
+    // raises POLLOUT on the fd exactly then. The old loop slept 125 µs at a
+    // time and asked again, which woke the CPU up to 8000 times a second
+    // whenever the ring was full — i.e. for the whole of steady playback.
+    // Now the thread wakes once per completion (one URB = 1 ms of audio).
+    const int64_t deadline = nowMs() + timeoutMs;
+    for (;;) {
         int ret = ioctl(ctx->fd, USBDEVFS_REAPURBNDELAY, &c);
         if (ret == 0 && c != nullptr) {
             // Check if this is a feedback URB (not an audio URB)
@@ -323,9 +334,22 @@ static int reapOldestUrb(UsbAudioContext *ctx, int timeoutMs) {
             LOGE("reapOldestUrb: error errno=%d (%s)", errno, strerror(errno));
             return -1;
         }
-        usleep(125);  // 125µs = 1 USB microframe
+        const int64_t remaining = deadline - nowMs();
+        if (remaining <= 0) return -2;  // timeout
+        struct pollfd pfd = {ctx->fd, POLLOUT, 0};
+        const int ready = poll(&pfd, 1, static_cast<int>(remaining));
+        if (ready < 0 && errno != EINTR) {
+            LOGE("reapOldestUrb: poll errno=%d (%s)", errno, strerror(errno));
+            return -1;
+        }
+        // A detached device raises POLLERR/POLLHUP. With nothing left to
+        // reap, polling again would return at once and spin until the
+        // deadline, so give up now.
+        if (ready > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) && !(pfd.revents & POLLOUT)) {
+            LOGE("reapOldestUrb: device gone (revents=0x%x)", pfd.revents);
+            return -1;
+        }
     }
-    return -2;  // timeout
 }
 
 /**
