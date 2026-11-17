@@ -83,7 +83,7 @@ internal object SpotifyToken {
         appContext = context.applicationContext
     }
 
-    fun invalidate() {
+    fun invalidate() = synchronized(stateLock) {
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         cachedClientId = null
@@ -94,10 +94,19 @@ internal object SpotifyToken {
         clientTokenExpiresAtMs = 0L
         cachedSession = null
         // The kept copies go too: a refusal is the backend saying these are
-        // done with, and a cold start must not bring them back.
+        // done with, and a cold start must not bring them back. Under the same
+        // lock as [restore], so a restore cannot finish publishing the old
+        // listener's token after this has cleared it.
         restored = true
         store()?.edit()?.apply { TOKEN_KEYS.forEach(::remove) }?.apply()
     }
+
+    /**
+     * Guards [restore] against [invalidate]. Its own lock, not this object's
+     * monitor: [session] holds that across a network call, and neither of
+     * these should wait on one.
+     */
+    private val stateLock = Any()
 
     // ---- Kept across process starts ----------------------------------------
 
@@ -129,7 +138,7 @@ internal object SpotifyToken {
      */
     private fun restore() {
         if (restored) return
-        synchronized(this) {
+        synchronized(stateLock) {
             if (restored) return
             restored = true
             val prefs = store() ?: return
@@ -186,6 +195,18 @@ internal object SpotifyToken {
             .joinToString("") { "%02x".format(it) }
 
     private const val STORE = "bitchord_spotify_tokens"
+
+    private val SPOTIFY_ORIGINS = listOf("https://open.spotify.com/", "https://accounts.spotify.com/")
+
+    /**
+     * The shared client with a deadline on the whole call, for the session
+     * page. The token harvest waits for that read, and the shared client's
+     * timeouts are per read: a page trickling in could hold the harvest past
+     * its own deadline and every harvest queued behind it.
+     */
+    private val sessionClient by lazy {
+        Http.client.newBuilder().callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
     private const val K_ACCESS = "access"
     private const val K_ACCESS_EXPIRES = "access_expires"
     private const val K_ACCESS_COOKIE = "access_cookie"
@@ -346,6 +367,19 @@ internal object SpotifyToken {
             if (cookie != null) {
                 setCookie("https://open.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
                 setCookie("https://accounts.spotify.com/", "sp_dc=$cookie; Domain=.spotify.com; Path=/; Secure")
+                flush()
+            } else {
+                // A listener who has signed out leaves their cookie in the
+                // jar, and the page would mint *their* token for the visitor's
+                // harvest — which is then kept on disk as the visitor's. Both
+                // the host-only and the domain-wide form are expired, since
+                // which one a cookie used is not recorded.
+                SPOTIFY_ORIGINS.forEach { origin ->
+                    val host = origin.substringAfter("://").trimEnd('/')
+                    setCookie(origin, "sp_dc=; Max-Age=0; Path=/")
+                    setCookie(origin, "sp_dc=; Max-Age=0; Path=/; Domain=$host")
+                    setCookie(origin, "sp_dc=; Max-Age=0; Path=/; Domain=.spotify.com")
+                }
                 flush()
             }
         }
@@ -622,7 +656,7 @@ internal object SpotifyToken {
             .header("User-Agent", CANVAS_UA)
             .build()
         val (html, deviceId) = runCatching {
-            Http.client.newCall(request).execute().use { response ->
+            sessionClient.newCall(request).execute().use { response ->
                 val body = response.body?.string()
                 val spT = response.headers("Set-Cookie").firstNotNullOfOrNull { header ->
                     Regex("""sp_t=([^;]+)""").find(header)?.groupValues?.get(1)
