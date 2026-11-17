@@ -2915,7 +2915,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val generation = homeLoadGeneration.get()
         val cacheOwner = homeCacheOwner(identity)
         val outcome = runCatching { SpotifyHomeSource.page(homeFacet.value) }.getOrNull() ?: return
-        if (identity != listenerKey() || outcome.isEmpty) return
+        // A load that started meanwhile owns the page now; this answer is older.
+        if (!isCurrentHomeLoad(identity, generation) || outcome.isEmpty) return
         homeSeenTitles.clear()
         _homeHeader.value = outcome.header
         _homeRaw.value = outcome.shelves
@@ -3042,7 +3043,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         var coreLanded = false
         YtMusicRepository.home().onSuccess { feed ->
-            if (identity != listenerKey()) return@onSuccess
+            // As in [refreshSpotifyHome]: a newer load owns the page.
+            if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
             val shelves = feed.shelves.withoutBlockedArtists().withoutRepeatsOf(emptyList())
@@ -3056,7 +3058,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         recent?.await()?.onSuccess { shelf ->
-            if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+            if (isCurrentHomeLoad(identity, generation)) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
         }
         // As in [loadHome]: only a page with the core feed in it is kept.
         if (coreLanded) keepHomeCache(identity, generation, cacheOwner)
