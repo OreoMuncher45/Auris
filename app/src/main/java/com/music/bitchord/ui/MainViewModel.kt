@@ -2789,7 +2789,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } ?: return@launch
             if (!isCurrentHomeLoad(identity, generation)) return@launch
             if (catalogue != homeCatalogue() || homeFacet.value.isNotEmpty()) return@launch
-            if (_home.value is UiState.Success || _homeRaw.value.isNotEmpty()) return@launch
+            // Only into a page still loading: a fresh page is newer, and a
+            // fresh error is this load's answer — a page from yesterday drawn
+            // over it would have nothing left in flight to replace it.
+            if (_home.value !is UiState.Loading || _homeRaw.value.isNotEmpty()) return@launch
             val shelves = kept.shelves.withoutBlockedArtists()
             if (shelves.isEmpty()) return@launch
             homeCachedRaw = shelves
@@ -3015,6 +3018,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return@coroutineScope
         }
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        var coreLanded = false
         YtMusicRepository.home().onSuccess { feed ->
             if (identity != listenerKey()) return@onSuccess
             homeContinuation = feed.continuation
@@ -3026,12 +3030,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 homeCachedRaw = null
                 _homeShowingCached.value = false
                 publishHome()
+                coreLanded = true
             }
         }
         recent?.await()?.onSuccess { shelf ->
             if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
         }
-        if (identity == listenerKey()) keepHomeCache(identity, homeLoadGeneration.get())
+        // As in [loadHome]: only a page with the core feed in it is kept.
+        if (coreLanded && identity == listenerKey()) keepHomeCache(identity, homeLoadGeneration.get())
     }
 
     /**

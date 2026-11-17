@@ -799,7 +799,8 @@ private fun BitChordApp(
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     // Time to full display is the home page with shelves on it, not the
-    // skeleton: reported once, on the first frame after the feed lands, so
+    // skeleton: reported once, on the first frame with shelves on it — last
+    // launch's cached page when there is one, the fresh feed otherwise — so
     // `Fully drawn` in logcat (and Macrobenchmark's TTFD) is the number a
     // listener waits for. A no-op on every later frame.
     ReportDrawnWhen { homeState is UiState.Success }
