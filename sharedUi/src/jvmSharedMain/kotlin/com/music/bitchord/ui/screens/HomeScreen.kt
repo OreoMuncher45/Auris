@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import com.music.bitchord.ui.components.artworkDeparture
 import com.music.bitchord.ui.components.rememberArtworkTap
 import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.ShelfSnap
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import com.music.bitchord.ui.components.LazyContent
@@ -535,6 +536,9 @@ private fun RecentShelf(
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    // A column is most of the row wide, so a fling turns one
+                    // page of four tracks rather than skating past several.
+                    snap = ShelfSnap.OneItemPerFling,
                 ) {
                     itemsIndexed(
                         columns,
