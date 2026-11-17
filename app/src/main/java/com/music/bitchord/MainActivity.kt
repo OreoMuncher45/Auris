@@ -117,6 +117,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.SnapshotMutationPolicy
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -694,9 +695,10 @@ private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     }
 }
 
+// Internal, not private, for RootRecomposeOnPageAppendTest only.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BitChordApp(
+internal fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
@@ -1046,15 +1048,30 @@ private fun BitChordApp(
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
     val detailStackState = viewModel.detailStack.collectAsStateWithLifecycle()
-    val detailStack by detailStackState
-    val detail = detailStack.lastOrNull()
+    // The open page as the root sees it: changes only when something the root
+    // reads off it does (see [DetailHeadPolicy]). Every page of a playlist that
+    // arrives, and every row a Spotify page matches, publishes a new
+    // [DetailPage]; read directly here, each one recomposed this whole
+    // composable. Only [RootPage], which reads [detailStackState] itself,
+    // needs those. Its songs can therefore lag here: read them, and anything
+    // else outside the policy, off [detailStackState].
+    val detail = remember(detailStackState) {
+        derivedStateOf(DetailHeadPolicy) { detailStackState.value.lastOrNull() }
+    }.value
+    val detailStackIds by remember(detailStackState) {
+        derivedStateOf(structuralEqualityPolicy()) { detailStackState.value.map { it.browseId } }
+    }
     val likeStatusesState = viewModel.likeStatuses.collectAsStateWithLifecycle()
     val likeStatuses by likeStatusesState
 
     // Settings has no tab of its own — it sits on top of whatever tab was
     // selected. A pushed album/artist page (from the player, search, etc.)
     // should surface above it rather than being hidden behind it.
-    LaunchedEffect(detail) { if (detail != null) nav.showSettings = false }
+    // Every publish of the open page, as when this was keyed on the page.
+    LaunchedEffect(detailStackState) {
+        snapshotFlow { detailStackState.value.lastOrNull() }
+            .collect { if (it != null) nav.showSettings = false }
+    }
     LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
     LaunchedEffect(nav.showSettings) {
         if (!nav.showSettings) {
@@ -1131,7 +1148,7 @@ private fun BitChordApp(
         id?.let { Downloads.recordIdOf(it) ?: it }?.takeIf { it in savedCollections }
     }
     LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
-        val openPage = detail ?: return@LaunchedEffect
+        val openPage = detailStackState.value.lastOrNull() ?: return@LaunchedEffect
         val open = openPage.browseId
         // A downloaded playlist's page is a snapshot of the same folder and goes
         // stale for the same reasons — and it is the one page a delete can empty
@@ -1345,8 +1362,8 @@ private fun BitChordApp(
     val detailListState = detail?.browseId?.let { browseId ->
         detailListStates.forPage(browseId)
     } ?: remember { LazyListState() }
-    LaunchedEffect(detailStack.map { it.browseId }) {
-        detailListStates.keepOnly(detailStack.mapTo(HashSet()) { it.browseId })
+    LaunchedEffect(detailStackIds) {
+        detailListStates.keepOnly(detailStackIds.toHashSet())
     }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
@@ -6124,6 +6141,24 @@ private fun RootPage(
             },
         )
     }
+}
+
+/**
+ * When two tops of the detail stack are the same page to the app root: the
+ * same page, with the same title, type and artwork. Those, and whether a page
+ * is open at all, are all [BitChordApp] reads off it. The songs, the
+ * continuation and the suggestions change with every page that arrives, and
+ * only the page itself draws them.
+ */
+private object DetailHeadPolicy : SnapshotMutationPolicy<DetailPage?> {
+    override fun equivalent(a: DetailPage?, b: DetailPage?): Boolean =
+        a === b || (
+            a != null && b != null &&
+                a.browseId == b.browseId &&
+                a.title == b.title &&
+                a.type == b.type &&
+                a.thumbnailUrl == b.thumbnailUrl
+            )
 }
 
 /**
