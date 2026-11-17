@@ -136,6 +136,11 @@ fun rememberLiveBlurImage(frames: Flow<ImageBitmap?>?): ImageBitmap? {
  * thread, and cached by URL. Drawing it thereafter is one bilinear image sample.
  * The small decode and CPU pass are staggered by the caller after a song change,
  * so they never land on the track hand-off itself.
+ *
+ * On a skip to a cover that has not been blurred yet, the last cover's blur is
+ * held until the new one is ready, rather than dropped to null for the length
+ * of the decode, which faded the backdrop to its fallback grey between every
+ * two songs. [FullArtworkBlurBackdrop] crossfades from one to the other.
  */
 @Composable
 fun rememberFullArtworkBlurImage(
@@ -144,10 +149,20 @@ fun rememberFullArtworkBlurImage(
     prepare: Boolean = true,
 ): ImageBitmap? {
     val context = LocalPlatformContext.current
-    var image by remember(imageUrl) { mutableStateOf(imageUrl?.let(fullBlurCache::get)) }
+    // Not keyed on the URL: see the doc above.
+    var image by remember { mutableStateOf(imageUrl?.let(fullBlurCache::get)) }
 
     LaunchedEffect(imageUrl, artPx, prepare) {
-        if (!prepare || imageUrl == null || image != null) return@LaunchedEffect
+        if (imageUrl == null) {
+            // No cover at all: nothing to hold on to.
+            image = null
+            return@LaunchedEffect
+        }
+        fullBlurCache[imageUrl]?.let {
+            image = it
+            return@LaunchedEffect
+        }
+        if (!prepare) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
             // Same URL as the player's 1200px sleeve, so this is a small decode
             // from Coil's shared fetch/disk result rather than another download.
@@ -217,19 +232,50 @@ fun FullArtworkBlurBackdrop(
     val liveBlur = rememberLiveBlurImage(liveFrames)
     val shown = liveBlur ?: image
     LaunchedEffect(shown) { shown?.let { onShown(it) } }
-    val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (shown != null) 1f else 0f,
-        animationSpec = tween(320, easing = FastOutSlowInEasing),
-        label = "preparedBackdropImage",
-    )
+    // One cover's blur crossfading straight into the next on a skip, with the
+    // outgoing one held underneath for the length of the fade only. The fade
+    // is an Animatable read in the layer, so it composes nothing per frame;
+    // outside a skip there is one image drawn, as before.
+    val imageAlpha = remember { Animatable(if (shown != null) 1f else 0f) }
+    var under by remember { mutableStateOf<ImageBitmap?>(null) }
+    val stillShown = remember { mutableStateOf(image) }
+    LaunchedEffect(image) {
+        val outgoing = stillShown.value
+        stillShown.value = image
+        when {
+            image == null -> imageAlpha.animateTo(0f, tween(320, easing = FastOutSlowInEasing))
+            // A live blur follows a playing clip frame by frame and is on top
+            // of this either way: a still changing under it needs no fade.
+            liveBlur != null -> imageAlpha.snapTo(1f)
+            outgoing != null && outgoing !== image && imageAlpha.value > 0f -> {
+                under = outgoing
+                try {
+                    imageAlpha.snapTo(0f)
+                    imageAlpha.animateTo(1f, tween(320, easing = FastOutSlowInEasing))
+                } finally {
+                    under = null
+                }
+            }
+            else -> imageAlpha.animateTo(1f, tween(320, easing = FastOutSlowInEasing))
+        }
+    }
     Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
+        under?.let { bitmap ->
+            val painter = remember(bitmap) { BitmapPainter(bitmap) }
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         shown?.let { bitmap ->
             val painter = remember(bitmap) { BitmapPainter(bitmap) }
             Image(
                 painter = painter,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha },
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha.value },
             )
         }
 
