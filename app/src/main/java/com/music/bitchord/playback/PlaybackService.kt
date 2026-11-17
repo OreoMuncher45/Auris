@@ -1826,7 +1826,13 @@ class PlaybackService : MediaLibraryService() {
         // built the way [swapPointFor] builds an upgrade's base, so a
         // source-backed download resolves through its source as it would
         // have before it was saved.
+        //
+        // Only a download qualifies. A file the listener opened from their own
+        // storage has nothing online behind it; its media id is its own path,
+        // so asking the resolver would only spend a lookup on a URI it cannot
+        // answer. One map read, no I/O.
         val castUri = if (uri.scheme == "file" || uri.scheme == "content") {
+            if (item.mediaId !in Downloads.saved.value) return@withContext null
             item.toSong().toStreamMediaItem().localConfiguration?.uri ?: return@withContext null
         } else {
             uri
