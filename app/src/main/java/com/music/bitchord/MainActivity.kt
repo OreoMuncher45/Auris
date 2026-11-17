@@ -5581,6 +5581,9 @@ private fun RootPage(
             // tracks. A hero card is a cover with a title laid over it, which
             // is not what a Spotify card is.
             leadHero = homeProvider != HomeProvider.SPOTIFY,
+            // Spotify's home opens with a grid of tiles and has no Quick Picks
+            // row, so Replay and Flow join the grid as tiles of their own.
+            leadingCardsAsTiles = homeProvider == HomeProvider.SPOTIFY,
             signedIn = signedIn,
             onSignIn = { sheets.webSession = WebSessionMode.SIGN_IN },
             signInBannerDismissed = signInBannerDismissed,

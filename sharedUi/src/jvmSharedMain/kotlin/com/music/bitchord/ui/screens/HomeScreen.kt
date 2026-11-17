@@ -212,6 +212,13 @@ fun HomeScreen(
      * enough, and the feed's own shelf is already the card row it needs.
      */
     onOpenQuickPicks: (() -> Unit)? = null,
+    /**
+     * Whether Replay and Flow are tiles in the quick-access grid rather than
+     * square cards. Spotify's home: its page opens with a grid of tiles and
+     * no Quick Picks row, and two cards under the grid never lined up with
+     * it. Every other catalogue keeps the cards at the head of Quick Picks.
+     */
+    leadingCardsAsTiles: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -290,12 +297,26 @@ fun HomeScreen(
                     // than a row, and not a shelf — a shelf would put a heading
                     // over it and a carousel would stretch two tiles across a
                     // phone screen.
-                    header?.shortcuts?.takeIf { it.isNotEmpty() }?.let { shortcuts ->
+                    //
+                    // On Spotify's home Replay and Flow are two more of these
+                    // tiles, after the shortcuts: the grid is the page's top,
+                    // and cards of another size under it never lined up.
+                    val shortcuts = header?.shortcuts.orEmpty()
+                    val replayTile = if (leadingCardsAsTiles) onOpenReplay else null
+                    val flowTile = if (leadingCardsAsTiles) flowItem else null
+                    if (shortcuts.isNotEmpty() || replayTile != null || flowTile != null) {
                         item(key = "home:shortcuts") {
                             HomeShortcutGrid(
                                 shortcuts = shortcuts,
                                 onItemClick = { item -> onItemClick(item, SHORTCUT_SHELF_TITLE) },
                                 onItemLongPress = onItemLongPress,
+                                onOpenReplay = replayTile,
+                                flowItem = flowTile,
+                                onFlowClick = {
+                                    if (flowTile != null) {
+                                        onFlowClick?.invoke() ?: onItemClick(flowTile, FlowRules.FLOW_SHELF_TITLE)
+                                    }
+                                },
                             )
                         }
                     }
@@ -308,9 +329,10 @@ fun HomeScreen(
                         onItemLongPress = onItemLongPress,
                         currentSong = currentSong,
                         isPlaying = isPlaying,
-                        flowItem = flowItem,
+                        // Already in the grid as tiles, so not drawn again as cards.
+                        flowItem = if (leadingCardsAsTiles) null else flowItem,
                         onFlowClick = onFlowClick,
-                        onOpenReplay = onOpenReplay,
+                        onOpenReplay = if (leadingCardsAsTiles) null else onOpenReplay,
                         onOpenQuickPicks = onOpenQuickPicks,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
@@ -903,13 +925,22 @@ private fun HomePill(
  * of artwork and the name beside it, the way Spotify's own home opens. The
  * names are the listener's — their liked songs, the things they jumped back
  * into — so the grid is the one part of the page that is unmistakably theirs.
+ *
+ * On Spotify's home, Replay and Flow follow the shortcuts as two more tiles
+ * ([onOpenReplay], [flowItem]), so they share the grid's columns rather than
+ * sitting under it as cards of another size.
  */
 @Composable
 private fun HomeShortcutGrid(
     shortcuts: List<ShelfItem>,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
+    onOpenReplay: (() -> Unit)? = null,
+    flowItem: ShelfItem? = null,
+    onFlowClick: () -> Unit = {},
 ) {
+    val replayIndex = if (onOpenReplay != null) shortcuts.size else -1
+    val total = shortcuts.size + (if (onOpenReplay != null) 1 else 0) + (if (flowItem != null) 1 else 0)
     BoxWithConstraints {
         // Two columns on a phone; a wider window gets more, so the tiles do
         // not stretch into banners.
@@ -917,51 +948,84 @@ private fun HomeShortcutGrid(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
+                // The bottom is every shelf's own (26dp), so whatever follows
+                // the grid sits as far below it as one shelf does below another.
+                .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 4.dp, bottom = 26.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            shortcuts.chunked(columns).forEach { rowItems ->
+            for (rowStart in 0 until total step columns) {
+                val rowEnd = minOf(rowStart + columns, total)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    rowItems.forEach { item ->
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .longPressMenuClickable(
-                                    onClick = { onItemClick(item) },
-                                    onLongClick = onItemLongPress?.let { { it(item) } },
-                                )
-                                .contextClick(onItemLongPress?.let { { it(item) } }),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            AsyncImage(
-                                model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                text = item.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
+                    for (index in rowStart until rowEnd) {
+                        val tile = Modifier.weight(1f)
+                        when {
+                            index < shortcuts.size -> {
+                                val item = shortcuts[index]
+                                val longPress = onItemLongPress?.let { { it(item) } }
+                                HomeTile(item.title, { onItemClick(item) }, longPress, tile) {
+                                    AsyncImage(
+                                        model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    )
+                                }
+                            }
+                            index == replayIndex && onOpenReplay != null ->
+                                HomeTile(stringResource(Res.string.replay), onOpenReplay, null, tile) {
+                                    // The Replay card's own gradient and note,
+                                    // the note at the card's size and corner.
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(REPLAY_GRADIENT)
+                                            .padding(6.dp),
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(Res.drawable.ic_note),
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.9f),
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .height(18.dp)
+                                                .aspectRatio(LOGO_ASPECT),
+                                        )
+                                    }
+                                }
+                            flowItem != null ->
+                                HomeTile(flowItem.title, onFlowClick, null, tile) {
+                                    // The Flow card's own gradient and note, at
+                                    // the card's size. Its clip is not played
+                                    // here: a looping decoder for a 48dp
+                                    // thumbnail is the costliest thing a tile
+                                    // could do, and the gradient is Flow's mark.
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(FLOW_GRADIENT),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = BitChordIcons.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.92f),
+                                            modifier = Modifier.size(40.dp),
+                                        )
+                                    }
+                                }
                         }
                     }
                     // A row with one tile short of a full row still has to
                     // fill the width, or the tile it does have stretches.
-                    repeat(columns - rowItems.size) {
+                    repeat(columns - (rowEnd - rowStart)) {
                         Spacer(Modifier.weight(1f))
                     }
                 }
@@ -969,6 +1033,47 @@ private fun HomeShortcutGrid(
         }
     }
 }
+
+/** One quick-access tile: artwork, then the name beside it. */
+@Composable
+private fun HomeTile(
+    title: String,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier,
+    art: @Composable () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongClick)
+            .contextClick(onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        art()
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Replay's gradient: the card's and the tile's. */
+private val REPLAY_GRADIENT = Brush.linearGradient(
+    listOf(Color(0xFFFF375F), Color(0xFFFF9F0A), Color(0xFFBF5AF2)),
+)
+
+/** Flow's gradient, behind its note until the mix has a clip. */
+private val FLOW_GRADIENT = Brush.linearGradient(
+    listOf(Color(0xFF1D1B4F), Color(0xFF6D2FD8), Color(0xFFFF4B7A)),
+)
 
 /** ic_note's viewport, 374 x 521. */
 private const val LOGO_ASPECT = 374f / 521f
