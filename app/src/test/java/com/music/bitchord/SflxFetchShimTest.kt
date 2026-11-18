@@ -52,7 +52,10 @@ class SflxFetchShimTest {
         val js = preamble()
         assertTrue("extensions need URL", js.contains("globalThis.URL = function (input, base)"))
         assertTrue("extensions need URLSearchParams", js.contains("globalThis.URLSearchParams = function (init)"))
-        assertTrue("only defined when the engine lacks it", js.contains("if (typeof URL === 'undefined')"))
+        assertFalse(
+            "must override the engine's href-only URL stub, not defer to it",
+            js.contains("if (typeof URL === 'undefined')"),
+        )
     }
 
     @Test
