@@ -9,54 +9,108 @@ LocaleStringsTest useful without weakening its assertion.
 from __future__ import annotations
 
 import argparse
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Dict, List, Set, Tuple
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 RESOURCE_ROOTS = (
-    Path("app/src/main/res"),
-    Path("sharedUi/src/commonMain/composeResources"),
+    REPO_ROOT / "app/src/main/res",
+    REPO_ROOT / "sharedUi/src/commonMain/composeResources",
 )
+LANGUAGE_SOURCE = (
+    REPO_ROOT
+    / "app/src/main/java/com/music/bitchord/ui/components/AppLanguageDialog.kt"
+)
+RESOURCE_TYPES = ("string", "plurals", "string-array")
+ResourceKey = Tuple[str, str]
 
 
-def entries(path: Path) -> dict[str, str]:
-    """Return translatable resource names and their serialized XML."""
+def supported_languages() -> Set[str]:
+    """Read the app's supported language tags from its single source."""
+    source = LANGUAGE_SOURCE.read_text(encoding="utf-8")
+    tags = set(re.findall(r'AppLanguage\("([^"]+)"', source))
+    if not tags:
+        raise RuntimeError(f"No supported languages found in {LANGUAGE_SOURCE}")
+    return tags
+
+
+def entries(path: Path) -> Dict[ResourceKey, str]:
+    """Return translatable resource type/name pairs and their serialized XML."""
     root = ET.fromstring(path.read_text(encoding="utf-8"))
-    result: dict[str, str] = {}
+    result: Dict[ResourceKey, str] = {}
     for child in root:
         name = child.get("name")
         if not name or child.get("translatable") == "false":
             continue
-        result[name] = ET.tostring(child, encoding="unicode")
+        key = (child.tag, name)
+        result[key] = ET.tostring(child, encoding="unicode")
     return result
 
 
-def names(path: Path) -> set[str]:
-    """Return every resource name present in a resource file."""
+def names(path: Path) -> Set[ResourceKey]:
+    """Return every translatable resource type/name pair in a resource file."""
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     return {
-        child.get("name")
+        (child.tag, child.get("name"))
         for child in root
-        if child.get("name")
+        if child.get("name") and child.get("translatable") != "false"
     }
+
+
+def locale_directories(resource_root: Path, languages: Set[str]) -> List[Path]:
+    """Return locale directories, including region variants, but not configs."""
+    directories = []
+    for directory in resource_root.glob("values-*"):
+        qualifier = directory.name[len("values-"):]
+        language = qualifier.split("-", 1)[0].lower()
+        if language in languages:
+            directories.append(directory)
+    return sorted(directories)
+
+
+def insert_entries(text: str, missing: Dict[ResourceKey, str]) -> str:
+    """Insert resources immediately before the real closing resources tag."""
+    closing = re.search(r"</resources\s*>\s*\Z", text)
+    if closing is None:
+        raise ValueError("Resource file has no closing </resources> tag")
+
+    addition = "\n".join(f"    {missing[key].strip()}" for key in missing)
+    prefix = text[: closing.start()].rstrip()
+    return f"{prefix}\n{addition}\n</resources>\n"
 
 
 def fill(base_file: Path, locale_file: Path, check: bool) -> int:
     base = entries(base_file)
-    missing = [name for name in base if name not in names(locale_file)]
+    if not locale_file.exists():
+        if check:
+            print(f"{locale_file}: missing resource file")
+            return len(base)
+        locale_file.parent.mkdir(parents=True, exist_ok=True)
+        locale_file.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n</resources>\n',
+            encoding="utf-8",
+        )
+
+    locale_names = names(locale_file)
+    missing = {
+        key: xml
+        for key, xml in base.items()
+        if key not in locale_names
+    }
     if not missing:
         return 0
 
     if check:
         print(f"{locale_file}: missing {len(missing)} keys")
-        for name in missing:
-            print(f"  {name}")
+        for resource_type, name in missing:
+            print(f"  {resource_type}:{name}")
         return len(missing)
 
     text = locale_file.read_text(encoding="utf-8")
-    addition = "\n".join(f"    {base[name].strip()}" for name in missing)
-    text = text.replace("</resources>", f"{addition}\n</resources>")
-    locale_file.write_text(text, encoding="utf-8")
+    locale_file.write_text(insert_entries(text, missing), encoding="utf-8")
     print(f"{locale_file}: added {len(missing)} keys")
     return len(missing)
 
@@ -70,13 +124,23 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    languages = supported_languages() - {"en"}
     missing_total = 0
     for resource_root in RESOURCE_ROOTS:
         base_file = resource_root / "values" / "strings.xml"
         if not base_file.is_file():
             continue
-        for locale_dir in sorted(resource_root.glob("values-*")):
-            locale_file = locale_dir / "strings.xml"
+
+        directories = locale_directories(resource_root, languages)
+        exact_directories = {f"values-{tag}" for tag in languages}
+        for tag in sorted(languages):
+            locale_file = resource_root / f"values-{tag}" / "strings.xml"
+            missing_total += fill(base_file, locale_file, args.check)
+
+        for directory in directories:
+            if directory.name in exact_directories:
+                continue
+            locale_file = directory / "strings.xml"
             if locale_file.is_file():
                 missing_total += fill(base_file, locale_file, args.check)
 
