@@ -41,6 +41,28 @@ jobs:
           -keystore bitchord-fork.jks \
           -storepass android \
           -alias forkdebug
+        keytool -certreq \
+          -keystore bitchord-fork.jks \
+          -storepass android \
+          -keypass android \
+          -alias forkdebug \
+          -file "$RUNNER_TEMP/fork-certreq.pem"
+        actual_fingerprint=$(
+          keytool -list -v \
+            -keystore bitchord-fork.jks \
+            -storepass android \
+            -alias forkdebug |
+          sed -n 's/^[[:space:]]*SHA256: //p' |
+          tr -d ':' |
+          tr '[:upper:]' '[:lower:]'
+        )
+        # Public SHA-256 certificate fingerprint from Auris v3.1. A different
+        # key would sign APKs that cannot update the installed app.
+        expected_fingerprint="385af3b4b3f5b4357b7bb271fd71b267fad4d536be87e44f2057b0c2de8971ce"
+        if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+          echo "Unexpected signing certificate: $actual_fingerprint" >&2
+          exit 1
+        fi
         {
           echo "storeFile=bitchord-fork.jks"
           echo "storePassword=android"
