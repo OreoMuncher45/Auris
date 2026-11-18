@@ -48,6 +48,32 @@ class PlayerInkContrastTest {
     // --- The arithmetic -----------------------------------------------------
 
     @Test
+    fun lightInkKeepsTheArtworkHueInsteadOfClimbingToWhite() {
+        // A blue-violet sleeve. The uncapped ladder let the light candidates
+        // climb to OKLCH L=1, where gamut mapping has no chroma left to give:
+        // the transport came out white even with "Use artwork" on.
+        val accent = InkAccent(hue = 265f, chroma = 0.16f, lightL = 0.80f, darkL = 0.25f)
+        val surface = InkSurface(light = intArrayOf(rgb(0x101018)), dark = intArrayOf(rgb(0x101018)))
+        val choice = resolveInk(accent, surface, alphas)
+        val ink = choice.fg.toArgb()
+        val r = (ink shr 16) and 0xFF
+        val g = (ink shr 8) and 0xFF
+        val b = ink and 0xFF
+        val spread = maxOf(r, g, b) - minOf(r, g, b)
+        assertTrue(
+            spread > 24,
+            "the sleeve's hue should survive in the ink, got ${Integer.toHexString(ink)}",
+        )
+        assertFalse(
+            r > 235 && g > 235 && b > 235,
+            "near-white ink is the bug, not a tint: ${Integer.toHexString(ink)}",
+        )
+        // The cap must not cost the contrast the resolver exists for.
+        assertHolds(choice, surface)
+    }
+
+
+    @Test
     fun contrastRatioMatchesWcagEndpoints() {
         assertEquals(21f, contrastRatio(1f, 0f), 0.001f)
         assertEquals(1f, contrastRatio(0.3f, 0.3f), 0.001f)

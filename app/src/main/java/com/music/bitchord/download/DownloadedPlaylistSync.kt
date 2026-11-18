@@ -209,7 +209,7 @@ object DownloadedPlaylistSync {
                 )
                 continue
             }
-            val missing = missingFromPlaylist(remote, onDisk, deleted)
+            val missing = missingFromPlaylist(remote, onDisk, deleted, collection.videoIds.toSet())
             if (missing.isEmpty()) continue
             Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
             Downloads.markRequested(collection.id, missing.map { it.videoId })
@@ -258,10 +258,16 @@ object DownloadedPlaylistSync {
  *    playlist still names it. The deletion is the more specific instruction
  *    and it came later, so it wins over "this playlist is downloaded whole".
  *
- * What is *not* a rule: whether the record remembers asking for the track.
- * The record is pruned to the files still on the disk when it is read, so
- * asking it would call a hand-deleted track new — which is exactly how those
- * tracks came back before [Downloads.deletedByHand] existed.
+ * What the collection already asked for also counts, and this is the rule
+ * that stopped the queue refilling itself: the on-disk set is a projection,
+ * and it is not complete. A cold start can read it before the index is ready,
+ * and a file saved under a fetched id does not necessarily list the id the
+ * playlist asked for. Judged on disk alone, every one of those tracks looked
+ * new again on the next launch, so completed downloads — and ones the
+ * listener had cleared from the queue — were re-enqueued on every restart.
+ * [alreadyRequested] is the collection's own record, which survives a restart
+ * and says these were already taken care of. A hand-deleted track is still
+ * covered by [deletedByHand], which is the more specific instruction.
  *
  * Split out as plain arguments so the rules can be tested without a device, a
  * network or a playlist: they are the whole of what makes this correct.
@@ -270,9 +276,11 @@ internal fun missingFromPlaylist(
     remote: List<Song>,
     onDisk: Set<String>,
     deletedByHand: Set<String>,
+    alreadyRequested: Set<String> = emptySet(),
 ): List<Song> = remote.filter { song ->
     song.videoId !in onDisk &&
         song.videoId !in deletedByHand &&
+        song.videoId !in alreadyRequested &&
         !song.isDeviceFile()
 }
 
