@@ -59,8 +59,9 @@ import org.robolectric.annotation.Config
  * device numbers come from gfxinfo.
  *
  * A measuring tool rather than a check, so it only runs when asked:
- * `MENU_PROBE=1 ./gradlew :app:testProdDebugUnitTest --tests '*MenuOpenCostProbe*'`,
- * and the numbers are printed as `PROBE` lines.
+ * `MENU_PROBE=1 ./gradlew :app:testProdDebugUnitTest --tests '*MenuOpenCostProbe*' --info`,
+ * and the numbers are printed as `PROBE` lines (test output needs `--info`).
+ * Allocation is reported as n/a where the JVM doesn't measure it.
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.runtime.ExperimentalComposeRuntimeApi::class, androidx.compose.runtime.tooling.ComposeToolingApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -99,7 +100,10 @@ class MenuOpenCostProbe {
         .getMethod("getThreadMXBean").invoke(null)!!
     private val allocMethod = Class.forName("com.sun.management.ThreadMXBean")
         .getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+    // -1 when the JVM has allocation measurement switched off.
     private fun allocated(): Long = allocMethod.invoke(threadBean, Thread.currentThread().id) as Long
+
+    private fun kb(from: Long, to: Long): String = if (from < 0 || to < 0) "n/a" else "${(to - from) / 1024}"
 
     private fun measure(name: String, content: @Composable (open: Boolean, close: () -> Unit) -> Unit) {
         Assume.assumeTrue("set MENU_PROBE=1 to run", System.getenv("MENU_PROBE") == "1")
@@ -135,7 +139,7 @@ class MenuOpenCostProbe {
             compose.mainClock.advanceTimeByFrame()
             compose.waitForIdle()
             val first = counter.enters
-            val aFirst = allocated() - a0
+            val aFirst = allocated()
             var later = 0
             var framesRecomposing = 0
             repeat(36) { // ~600 ms
@@ -146,9 +150,9 @@ class MenuOpenCostProbe {
                 later += d
                 if (d > 0) framesRecomposing++
             }
-            val aTotal = allocated() - a0
+            val aTotal = allocated()
             if (run > 0) {
-                results += "first=$first later=$later framesRecomposing=$framesRecomposing allocFirstKB=${aFirst / 1024} allocWindowKB=${aTotal / 1024}"
+                results += "first=$first later=$later framesRecomposing=$framesRecomposing allocFirstKB=${kb(a0, aFirst)} allocWindowKB=${kb(a0, aTotal)}"
             }
             open = false
             androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
@@ -206,7 +210,7 @@ class MenuOpenCostProbe {
     }
 
     @Test
-    fun anchoredMenu() = measure("AnchoredMenu(NowPlaying)") { open, close ->
+    fun anchoredMenu() = measure("AnchoredMenu(standalone, Now Playing rows, no player backdrop)") { open, close ->
         Box(Modifier.fillMaxSize()) {
             val presence = rememberMenuPresence(expanded = open)
             if (presence.isShowing) {
