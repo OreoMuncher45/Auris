@@ -738,7 +738,9 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
     }
 
     val state = active[song.videoId]
-    if (state is DownloadState.Failed) shownFailure[0] = state
+    // Recorded only while the menu is open: one that arrives during the exit
+    // is drawn but not seen, so it stays for the next opening.
+    if (state is DownloadState.Failed && LocalMenuInteractive.current) shownFailure[0] = state
     when (state) {
         is DownloadState.Queued -> ActionRow(
             icon = Icons.Rounded.Downloading,
