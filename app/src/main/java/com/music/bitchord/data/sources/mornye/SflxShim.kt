@@ -34,6 +34,9 @@ package com.music.bitchord.data.sources.mornye
  *  - `fetch`/`http` return the web `Response` shape extensions branch on
  *    (`ok`, `status`, `json()`, `text()`, `headers.get()`), and they are
  *    subject to the same host allowlist the extension declared in its manifest.
+ *    Both are **synchronous**, as they are in the mobile host these extensions
+ *    were written for: a request is answered on the next line, and `await` on
+ *    that value still works.
  *  - the pure-JS utilities are real implementations rather than stubs, because
  *    a wrong HMAC is worse than a missing one: extensions that sign requests
  *    (Spotify's TOTP, most of the signed backends) get a real SHA-1/HMAC-SHA1
@@ -47,10 +50,12 @@ package com.music.bitchord.data.sources.mornye
  *    [SflxHost] replaces `file.download` with a capturer, which is how an
  *    extension's own resolution logic — the part that knows the API — is made
  *    to hand over the URL it would have downloaded.
- *  - `session`/`auth` (the `signedSession` capability) are not implemented.
- *    They answer with a specific "this host cannot do signed sessions" result,
- *    so an extension requiring one reports *that* instead of a type error three
- *    frames deep inside its own code.
+ *  - `session` is real when the host supplies a session client: bootstrap,
+ *    grant exchange and signed requests live in [SflxSignedSession]. Without
+ *    one, it answers with a specific "this host cannot do signed sessions"
+ *    result, so an extension requiring one reports *that* instead of a type
+ *    error three frames deep inside its own code. `auth` is still a named
+ *    refusal: it is the interactive half no extension in the store uses.
  */
 internal object SflxShim {
 
@@ -652,6 +657,57 @@ internal object SflxShim {
                     arrayBuffer: function () { throw new Error('Not implemented'); }
                 };
             }
+
+            // `fetch` is the same synchronous request, not a Promise.
+            //
+            // The mobile host this stands in for answers `fetch(url, opts)`
+            // with a response object at once; an extension reads `res.status`
+            // on the next line. Our shared `fetch` was async, so every one of
+            // those reads was `undefined`, every request looked like "no
+            // result", and Amazon retried its way through the whole ladder:
+            // "initSession config.json status: undefined", "Using fallback
+            // random session", then no search results at all. The reference
+            // host's own bridge comments on exactly this (Mornye-Python,
+            // `mornye/extensions/_bridge.js`).
+            //
+            // `await fetch(...)` still works: awaiting a plain value yields it.
+            globalThis.fetch = function (url, options) {
+                var opts = options && typeof options === 'object' ? options : {};
+                var method = String(opts.method || 'GET').toUpperCase();
+                var headers = opts.headers && typeof opts.headers === 'object' ? opts.headers : {};
+                var body = opts.body === undefined || opts.body === null
+                    ? null
+                    : (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body));
+                var res = __sflx_http(url, method, headers, body) || {};
+                var bodyText = typeof res.body === 'string' ? res.body : '';
+                var responseHeaders = res.headers && typeof res.headers === 'object' ? res.headers : {};
+                if (typeof responseHeaders.get !== 'function') {
+                    responseHeaders.get = function (name) {
+                        if (name === null || name === undefined) return null;
+                        var wanted = String(name).toLowerCase();
+                        for (var key in responseHeaders) {
+                            if (key !== 'get' && String(key).toLowerCase() === wanted) {
+                                return String(responseHeaders[key]);
+                            }
+                        }
+                        return null;
+                    };
+                }
+                return {
+                    ok: !!res.ok,
+                    status: typeof res.status === 'number' ? res.status : 0,
+                    statusCode: typeof res.status === 'number' ? res.status : 0,
+                    statusText: res.statusText || (res.ok ? 'OK' : 'Error'),
+                    url: res.url || __sflx_goString(url),
+                    body: bodyText,
+                    headers: responseHeaders,
+                    text: function () { return bodyText; },
+                    json: function () {
+                        try { return JSON.parse(bodyText); } catch (e) { return null; }
+                    },
+                    arrayBuffer: function () { throw new Error('Not implemented'); }
+                };
+            };
 
             globalThis.http = {
                 get: function (url, headers) { return __sflx_http(url, 'GET', headers, null); },
