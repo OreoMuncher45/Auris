@@ -17,12 +17,13 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.ui.components.GlassActionMenu
 import com.music.bitchord.ui.components.LocalAppBackdrop
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
 import com.music.bitchord.ui.components.heldMenuUsesGlass
+import com.music.bitchord.ui.components.menu.AnchoredMenu
+import com.music.bitchord.ui.components.menu.rememberMenuPresence
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import dev.chrisbanes.haze.HazeState
@@ -62,8 +63,12 @@ internal fun PlayerPanelHost(
     onPrevious: () -> Unit,
     /** The track the player's own ⋯ menu is open on, if it is. */
     menuSong: Song?,
-    /** That menu's button, in window coordinates. */
-    menuAnchor: IntRect?,
+    /**
+     * That menu's button, in window coordinates. A function, read only while
+     * the menu is placed: the button moves every frame the player does, and a
+     * value would recompose whoever passed it on each of those frames.
+     */
+    menuAnchor: () -> IntRect?,
     onDismissMenu: () -> Unit,
     songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit,
     nowPlaying: @Composable (Song) -> Unit,
@@ -103,7 +108,12 @@ internal fun PlayerPanelHost(
     // scale, so a new video frame only re-runs the glass's blur and lens over
     // that small offscreen.
     val playerBackdrop = rememberLayerBackdrop()
-    val menuUsesGlass = menuSong != null && heldMenuUsesGlass(reduceDynamicBlur)
+    // The menu stays up for its exit spring after it is dismissed, and so does
+    // the layer its glass samples; the track it showed is kept for those frames.
+    val menuPresence = rememberMenuPresence(expanded = menuSong != null)
+    val shownSong = remember { arrayOfNulls<Song>(1) }
+    if (menuSong != null) shownSong[0] = menuSong
+    val menuUsesGlass = menuPresence.isShowing && heldMenuUsesGlass(reduceDynamicBlur)
     PlayerPanel(
         dock = activeDock,
         motion = motion.takeIf { !reducePlayerMotion },
@@ -131,20 +141,24 @@ internal fun PlayerPanelHost(
             // The track menu, hung off the three-dot button. Same surface and
             // same rows as the long-press menu, anchored to the button rather
             // than lifted out of a held row.
-            if (menuSong != null && menuAnchor != null) {
-                val local = IntRect(
-                    left = menuAnchor.left - rootOrigin.x.toInt(),
-                    top = menuAnchor.top - rootOrigin.y.toInt(),
-                    right = menuAnchor.right - rootOrigin.x.toInt(),
-                    bottom = menuAnchor.bottom - rootOrigin.y.toInt(),
-                )
+            val menuTrack = shownSong[0]
+            if (menuPresence.isShowing && menuTrack != null) {
                 CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
-                    GlassActionMenu(
-                        anchor = local,
+                    AnchoredMenu(
+                        presence = menuPresence,
+                        // Both read while the menu is placed, so a player still
+                        // settling moves the menu without recomposing anything.
+                        anchor = {
+                            menuAnchor()?.let {
+                                val x = rootOrigin.x.toInt()
+                                val y = rootOrigin.y.toInt()
+                                IntRect(it.left - x, it.top - y, it.right - x, it.bottom - y)
+                            }
+                        },
                         onDismiss = onDismissMenu,
-                        hostOffsetInWindow = IntOffset(rootOrigin.x.toInt(), rootOrigin.y.toInt()),
+                        hostOffsetInWindow = { IntOffset(rootOrigin.x.toInt(), rootOrigin.y.toInt()) },
                     ) {
-                        songMenuBody(menuSong, SongActionsPresentation.Glass)
+                        songMenuBody(menuTrack, SongActionsPresentation.Glass)
                     }
                 }
             }

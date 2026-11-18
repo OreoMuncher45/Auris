@@ -4726,7 +4726,7 @@ private fun BitChordApp(
                     onNext = { controller?.seekToNextMediaItem() },
                     onPrevious = { controller?.seekToPrevious() },
                     menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
-                    menuAnchor = sheets.playerMenuAnchor,
+                    menuAnchor = { sheets.playerMenuAnchor },
                     onDismissMenu = { sheets.songMenu.song = null },
                     songMenuBody = songMenuBody,
                     nowPlaying = nowPlaying,
@@ -7682,6 +7682,11 @@ internal class RootSheets {
      * window, and the menu is drawn in that same window — the glass samples
      * the artwork behind it, and a menu in another window would refract a
      * different picture from the one it is sitting on.
+     *
+     * The button reports itself every frame the player moves, so this is only
+     * ever read while the menu is placed (see PlayerPanelHost's menuAnchor),
+     * never in composition: a composition read here recomposed the app root
+     * on each of those frames.
      */
     var playerMenuAnchor by mutableStateOf<androidx.compose.ui.unit.IntRect?>(null)
     // Whether the player's album/artist lookup (below, for the current track)

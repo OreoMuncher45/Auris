@@ -94,6 +94,8 @@ import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.menu.MenuDivider
+import com.music.bitchord.ui.components.menu.MenuRow
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
@@ -247,7 +249,7 @@ fun SongActionsSheet(
      * popup a held row lifts into — see [HeldContextMenu], which draws the
      * held row itself above them; [SongActionsPresentation.Glass] is the same
      * rows over the app's liquid glass, for the menu that hangs off the
-     * player's three-dot button — see [GlassActionMenu].
+     * player's three-dot button — see [com.music.bitchord.ui.components.menu.AnchoredMenu].
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
@@ -612,11 +614,7 @@ private fun GroupSeparator(palette: ArtworkPalette) {
             thickness = 0.5.dp,
             color = palette.divider,
         )
-        ActionRowStyle.Glass -> HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-            thickness = 0.5.dp,
-            color = palette.divider,
-        )
+        ActionRowStyle.Glass -> MenuDivider(palette.divider)
         ActionRowStyle.Sheet -> HorizontalDivider(
             modifier = Modifier.padding(vertical = 6.dp),
             thickness = 0.5.dp,
@@ -1007,15 +1005,27 @@ internal fun ActionRow(
         menu -> MaterialTheme.colorScheme.onSurface
         else -> MaterialTheme.colorScheme.onBackground
     }
+    if (glass) {
+        // The anchored menu's own row; see MenuRow.
+        MenuRow(
+            icon = icon,
+            label = label,
+            ink = foreground,
+            value = value,
+            valueColor = accent,
+            iconTint = tint,
+            enabled = enabled,
+            onClick = onClick,
+        )
+        return
+    }
     val alpha = if (enabled) 1f else 0.4f
     val iconView: @Composable () -> Unit = {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = (tint ?: foreground).copy(alpha = alpha),
-            // The glass menu treats the glyph as a small horizontal hint beside
-            // the label so more rows fit in the panel hanging off the button.
-            modifier = Modifier.size(if (menu) 20.dp else if (glass) 18.dp else 22.dp),
+            modifier = Modifier.size(if (menu) 20.dp else 22.dp),
         )
     }
     Row(
@@ -1025,9 +1035,6 @@ internal fun ActionRow(
             .then(
                 when {
                     menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                    // Compact hint rows: small glyph leading, tight padding so
-                    // the panel hanging off the button fits more options.
-                    glass -> Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp, vertical = 8.dp)
                     else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
                 },
             ),
@@ -1045,7 +1052,7 @@ internal fun ActionRow(
             // Context menus sit on glass; semi-bold keeps the label legible
             // over a busy blurred backdrop.
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = if (menu || glass) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = if (menu) FontWeight.SemiBold else FontWeight.Normal,
             ),
             color = foreground.copy(alpha = alpha),
             maxLines = if (menu) 2 else Int.MAX_VALUE,
@@ -1077,14 +1084,30 @@ internal fun ActionRow(
 @Composable
 private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkPalette) {
     val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
-    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
+    val spinner: @Composable () -> Unit = {
+        CircularProgressIndicator(
+            color = palette.onBackgroundVariant,
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+    if (LocalActionRowStyle.current == ActionRowStyle.Glass) {
+        MenuRow(
+            icon = icon,
+            label = label,
+            ink = palette.onBackground,
+            enabled = false,
+            trailing = spinner,
+            onClick = null,
+        )
+        return
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(
                 when {
                     menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                    glass -> Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp, vertical = 10.dp)
                     else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
                 },
             ),
@@ -1103,11 +1126,7 @@ private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkP
             color = palette.onBackground.copy(alpha = 0.4f),
             modifier = Modifier.weight(1f),
         )
-        CircularProgressIndicator(
-            color = palette.onBackgroundVariant,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(16.dp),
-        )
+        spinner()
     }
 }
 
