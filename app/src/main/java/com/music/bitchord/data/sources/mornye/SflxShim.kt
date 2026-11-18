@@ -431,8 +431,12 @@ internal object SflxShim {
                 }
                 return out.join('/');
             }
-            if (typeof URL === 'undefined') {
-                globalThis.URL = function (input, base) {
+            // Assigned unconditionally, not guarded on `typeof URL`: the
+            // engine's own POLYFILLS already define a `URL` that is little
+            // more than an href holder — no searchParams, no real relative
+            // resolution — so the guard saw "URL exists" and left Amazon with
+            // a parser that still could not read one deeplink.
+            globalThis.URL = function (input, base) {
                     var raw = String(input === undefined ? '' : input).trim();
                     var baseUrl = (base === undefined || base === null) ? null : new globalThis.URL(String(base));
                     var schemeMatch = /^([A-Za-z][A-Za-z0-9+.\-]*):/.exec(raw);
@@ -504,8 +508,7 @@ internal object SflxShim {
                     this.searchParams = new globalThis.URLSearchParams(query);
                     this.toString = function () { return this.href; };
                     this.toJSON = function () { return this.href; };
-                };
-            }
+            };
 
             if (typeof globalThis.crypto === 'undefined') {
                 // Extensions use this for device ids and cache-busting nonces, not

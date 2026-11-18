@@ -11,7 +11,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import java.io.File
 import java.io.OutputStream
+import java.net.URI
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -169,6 +171,15 @@ object Downloader {
         sink: OutputStream,
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
+        // A Mornye extension that answers in segments — Tidal serves every
+        // lossless tier that way — has those parts assembled into one local
+        // file by `SflxHost`, so the "URL" here is `file:///…`, not an address.
+        // OkHttp refuses that scheme outright ("Expected URL scheme 'http' or
+        // 'https' but was 'file'"), which is what made every such download fail
+        // after the audio had already been fetched. Read the file instead.
+        if (url.startsWith("file:", ignoreCase = true)) {
+            return@withContext copyLocalFile(url, sink, onProgress)
+        }
         val request = Request.Builder().url(url)
             .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
@@ -201,6 +212,37 @@ object Downloader {
             if (written == 0L) error("Download failed: nothing was sent")
             Log.d(TAG, "fetched ${written}B directly")
             written
+        }
+    }
+
+    /**
+     * The `file://` half of [fetchDirect]: the bytes are already on disk, so
+     * this is a copy with the same progress and short-write rules as a fetch.
+     */
+    private fun copyLocalFile(
+        url: String,
+        sink: OutputStream,
+        onProgress: (written: Long, total: Long) -> Unit,
+    ): Long {
+        val file = runCatching { File(URI(url)) }.getOrElse {
+            error("Download failed: '$url' is not a readable file URL")
+        }
+        if (!file.isFile) error("Download failed: ${file.absolutePath} is not a file")
+        val total = file.length()
+        file.inputStream().use { source ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            var written = 0L
+            while (true) {
+                val read = source.read(buffer)
+                if (read == -1) break
+                sink.write(buffer, 0, read)
+                written += read
+                if (total > 0) onProgress(written, total)
+            }
+            sink.flush()
+            if (written == 0L) error("Download failed: ${file.name} is empty")
+            Log.d(TAG, "copied ${written}B from ${file.name}")
+            return written
         }
     }
 
