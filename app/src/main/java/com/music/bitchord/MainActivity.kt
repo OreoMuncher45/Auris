@@ -7850,7 +7850,7 @@ private fun LibrarySort.localizedLabel(): String = when (this) {
  */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
-private fun FrostedSortMenu(
+internal fun FrostedSortMenu(
     hazeState: HazeState,
     selected: SongSort,
     onSelect: (SongSort) -> Unit,
