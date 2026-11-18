@@ -2114,7 +2114,9 @@ object Downloads {
      * for the same track is a different instance and stays to be seen.
      */
     fun dismissFailure(videoId: String, shown: DownloadState.Failed) {
-        if (_active.value[videoId] === shown) clear(videoId)
+        // Checked and removed in one update: a retry or a newer failure that
+        // lands between a separate check and the removal is left in place.
+        _active.update { if (it[videoId] === shown) it - videoId else it }
     }
 
     private const val KEY_SAVED = "downloaded_tracks"

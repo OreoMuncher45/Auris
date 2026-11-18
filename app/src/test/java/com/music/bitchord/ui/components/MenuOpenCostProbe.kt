@@ -61,7 +61,9 @@ import org.robolectric.annotation.Config
  * A measuring tool rather than a check, so it only runs when asked:
  * `MENU_PROBE=1 ./gradlew :app:testProdDebugUnitTest --tests '*MenuOpenCostProbe*' --info`,
  * and the numbers are printed as `PROBE` lines (test output needs `--info`).
- * Allocation is reported as n/a where the JVM doesn't measure it.
+ * Allocation is reported as n/a where the JVM doesn't measure it. Runs on
+ * x86_64 and macOS arm64; Linux arm64 excludes the class in Gradle (no
+ * Conscrypt build for Robolectric there), so the command prints nothing.
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.runtime.ExperimentalComposeRuntimeApi::class, androidx.compose.runtime.tooling.ComposeToolingApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -95,13 +97,25 @@ class MenuOpenCostProbe {
         error("no recomposer")
     }
 
-    // java.lang.management is on the JVM but not on the android.jar test classpath.
-    private val threadBean: Any = Class.forName("java.lang.management.ManagementFactory")
-        .getMethod("getThreadMXBean").invoke(null)!!
-    private val allocMethod = Class.forName("com.sun.management.ThreadMXBean")
-        .getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
-    // -1 when the JVM has allocation measurement switched off.
-    private fun allocated(): Long = allocMethod.invoke(threadBean, Thread.currentThread().id) as Long
+    // java.lang.management is on the JVM but not on the android.jar test
+    // classpath, hence reflection. Null where the JVM lacks the extension or
+    // doesn't support allocation measurement; the scope counts still print.
+    private val allocationSampler: (() -> Long)? by lazy {
+        runCatching {
+            val bean = Class.forName("java.lang.management.ManagementFactory")
+                .getMethod("getThreadMXBean").invoke(null)!!
+            val ext = Class.forName("com.sun.management.ThreadMXBean")
+            if (!ext.isInstance(bean)) return@runCatching null
+            if (ext.getMethod("isThreadAllocatedMemorySupported").invoke(bean) != true) return@runCatching null
+            val method = ext.getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+            val sample: () -> Long = { method.invoke(bean, Thread.currentThread().id) as Long }
+            sample
+        }.getOrNull()
+    }
+
+    // -1 when unavailable, which kb() reports as n/a; -1 is also what the JVM
+    // returns while allocation measurement is switched off.
+    private fun allocated(): Long = allocationSampler?.let { runCatching(it).getOrDefault(-1L) } ?: -1L
 
     private fun kb(from: Long, to: Long): String = if (from < 0 || to < 0) "n/a" else "${(to - from) / 1024}"
 
