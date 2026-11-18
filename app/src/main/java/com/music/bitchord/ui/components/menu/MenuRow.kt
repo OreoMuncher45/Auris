@@ -50,10 +50,13 @@ internal fun MenuRow(
 ) {
     val alpha = if (enabled) 1f else 0.4f
     val menu = density == MenuDensity.Menu
+    // Dimmed by enabled alone: a row in a closing menu stops answering but
+    // keeps its look for the exit.
+    val interactive = enabled && LocalMenuInteractive.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(enabled = interactive, onClick = onClick) else Modifier)
             .then(
                 if (menu) {
                     Modifier

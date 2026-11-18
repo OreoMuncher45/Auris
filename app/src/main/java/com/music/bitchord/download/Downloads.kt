@@ -2108,9 +2108,13 @@ object Downloads {
      */
     internal const val WIFI_ONLY_REFUSAL = "Downloads are set to Wi-Fi only"
 
-    /** Dropped when the sheet is reopened; a failure is worth showing once. */
-    fun dismissFailure(videoId: String) {
-        if (_active.value[videoId] is DownloadState.Failed) clear(videoId)
+    /**
+     * Drops [shown], the failure a row displayed, once that row goes away; a
+     * failure is worth showing once. Nothing newer is dropped: a later failure
+     * for the same track is a different instance and stays to be seen.
+     */
+    fun dismissFailure(videoId: String, shown: DownloadState.Failed) {
+        if (_active.value[videoId] === shown) clear(videoId)
     }
 
     private const val KEY_SAVED = "downloaded_tracks"

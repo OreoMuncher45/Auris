@@ -1,13 +1,11 @@
 package com.music.bitchord.ui.components.menu
 
 import android.app.Application
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composition
 import androidx.compose.runtime.ExperimentalComposeRuntimeApi
 import androidx.compose.runtime.RecomposeScope
@@ -21,14 +19,16 @@ import androidx.compose.runtime.tooling.CompositionObserver
 import androidx.compose.runtime.tooling.ObservableComposition
 import androidx.compose.runtime.tooling.setObserver
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.music.bitchord.ui.AndroidAppUiHost
 import com.music.bitchord.ui.AppUi
@@ -68,14 +68,18 @@ class AnchoredMenuTest {
                 Box(Modifier.fillMaxSize()) {
                     val presence = rememberMenuPresence(expanded)
                     if (presence.isShowing) {
-                        AnchoredMenu(presence = presence, anchor = { anchor }, onDismiss = { expanded = false }) {
-                            Text(
-                                "Row",
-                                Modifier
-                                    .testTag(ROW)
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clickable { taps++ },
+                        AnchoredMenu(
+                            presence = presence,
+                            anchor = { anchor },
+                            onDismiss = { expanded = false },
+                            modifier = Modifier.testTag(MENU),
+                        ) {
+                            MenuRow(
+                                icon = Icons.Rounded.Check,
+                                label = "Row",
+                                ink = Color.White,
+                                modifier = Modifier.testTag(ROW),
+                                onClick = { taps++ },
                             )
                         }
                     }
@@ -116,17 +120,43 @@ class AnchoredMenuTest {
     fun theMenuStaysUpForItsExitAndThenLeaves() {
         expanded = false
         frame()
-        compose.onNodeWithTag(ROW).assertExists()
+        compose.onNodeWithTag(MENU).assertExists()
         settle()
+        compose.onNodeWithTag(MENU).assertDoesNotExist()
+    }
+
+    @Test
+    fun aClosingMenusRowsLeaveTheAccessibilityTree() {
+        compose.onNodeWithTag(ROW).assertExists()
+        expanded = false
+        frame()
+        // Still drawn for the exit, but nothing a screen reader can reach.
+        compose.onNodeWithTag(MENU).assertExists()
         compose.onNodeWithTag(ROW).assertDoesNotExist()
     }
 
     @Test
-    fun aRowTappedWhileTheMenuClosesDoesNothing() {
-        compose.onNodeWithTag(ROW).assertIsDisplayed()
+    fun aPressThatStartedBeforeTheCloseDoesNothingWhenReleased() {
+        compose.onNodeWithTag(ROW).performTouchInput { down(center) }
+        frame()
         expanded = false
         frame()
-        compose.onNodeWithTag(ROW).performClick()
+        compose.onNodeWithTag(MENU).performTouchInput { up() }
+        frame()
+        assertEquals(0, taps)
+    }
+
+    @Test
+    fun aRowTappedWhileTheMenuClosesDoesNothing() {
+        // The row leaves the semantics tree as the menu closes, so the tap
+        // goes where the row is drawn rather than to the row's node.
+        val row = compose.onNodeWithTag(ROW).getUnclippedBoundsInRoot()
+        val at = with(compose.density) {
+            Offset(((row.left + row.right) / 2).toPx(), ((row.top + row.bottom) / 2).toPx())
+        }
+        expanded = false
+        frame()
+        compose.onNodeWithTag(MENU).performTouchInput { click(at) }
         frame()
         assertEquals(0, taps)
     }
@@ -151,5 +181,6 @@ class AnchoredMenuTest {
 
     private companion object {
         const val ROW = "row"
+        const val MENU = "menu"
     }
 }

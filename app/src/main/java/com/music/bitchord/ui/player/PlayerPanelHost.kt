@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -113,6 +114,13 @@ internal fun PlayerPanelHost(
     val menuPresence = rememberMenuPresence(expanded = menuSong != null)
     val shownSong = remember { arrayOfNulls<Song>(1) }
     if (menuSong != null) shownSong[0] = menuSong
+    // One key per opening, kept through the exit: a menu reopened while the
+    // last one was still closing starts on its action list, not on whatever
+    // picker the last one was showing. A new track in the same open menu
+    // keeps the key, and with it the picker.
+    val openingKey = remember(menuSong != null) { Any() }
+    val shownOpening = remember { arrayOfNulls<Any>(1) }
+    if (menuSong != null) shownOpening[0] = openingKey
     val menuUsesGlass = menuPresence.isShowing && heldMenuUsesGlass(reduceDynamicBlur)
     PlayerPanel(
         dock = activeDock,
@@ -158,7 +166,9 @@ internal fun PlayerPanelHost(
                         onDismiss = onDismissMenu,
                         hostOffsetInWindow = { IntOffset(rootOrigin.x.toInt(), rootOrigin.y.toInt()) },
                     ) {
-                        songMenuBody(menuTrack, SongActionsPresentation.Glass)
+                        key(shownOpening[0]) {
+                            songMenuBody(menuTrack, SongActionsPresentation.Glass)
+                        }
                     }
                 }
             }

@@ -94,6 +94,7 @@ import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
 import com.music.bitchord.ui.components.menu.MenuDivider
 import com.music.bitchord.ui.components.menu.MenuRow
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -729,11 +730,16 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
 
     // A failure is worth stating once. Leaving it set would have the row still
     // reporting last week's dead connection the next time the sheet is opened.
+    // Only the failure this row actually showed is cleared: a menu stays up
+    // for its exit, and a failure arriving in those frames has not been seen.
+    val shownFailure = remember(song.videoId) { arrayOfNulls<DownloadState.Failed>(1) }
     DisposableEffect(song.videoId) {
-        onDispose { Downloads.dismissFailure(song.videoId) }
+        onDispose { shownFailure[0]?.let { Downloads.dismissFailure(song.videoId, it) } }
     }
 
-    when (val state = active[song.videoId]) {
+    val state = active[song.videoId]
+    if (state is DownloadState.Failed) shownFailure[0] = state
+    when (state) {
         is DownloadState.Queued -> ActionRow(
             icon = Icons.Rounded.Downloading,
             label = stringResource(R.string.queued),
@@ -847,7 +853,7 @@ private fun SleepTimerPicker(
                 .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = onBack, enabled = LocalMenuInteractive.current) {
                 Icon(
                     Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = stringResource(R.string.back),
@@ -920,7 +926,7 @@ private fun SleepOption(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = LocalMenuInteractive.current, onClick = onClick)
             .padding(horizontal = 22.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

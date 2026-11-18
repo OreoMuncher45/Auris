@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -30,12 +32,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.heldMenuSurface
 import com.music.bitchord.ui.utils.containSheetGestures
@@ -148,6 +155,7 @@ fun AnchoredMenu(
     // frame: which side it opened on, for the corner its entrance grows from.
     // A plain field, not state — the side never has to recompose anything.
     val side = remember { MenuSide() }
+    val closeLabel = stringResource(R.string.close)
 
     Box(
         modifier = modifier
@@ -165,11 +173,14 @@ fun AnchoredMenu(
                 .background(colors.scrim)
                 .then(
                     if (expanded) {
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onDismiss,
-                        )
+                        Modifier
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClickLabel = closeLabel,
+                                onClick = onDismiss,
+                            )
+                            .semantics { contentDescription = closeLabel }
                     } else {
                         Modifier
                     },
@@ -241,17 +252,33 @@ fun AnchoredMenu(
                 }
                 .heldMenuSurface(shape, colors.plate, colors.hairline, reduceDynamicBlur),
         ) {
-            // No verticalScroll here: the rows bring their own, and a
-            // scrollable inside a scrollable is measured with infinite height
-            // and crashes. The cap above is what lets theirs work.
-            Column(Modifier.padding(vertical = MenuTokens.PanelPadding), content = content)
-            // A row tapped while the menu is already on its way out would run
-            // its action twice. A sibling drawn over the rows takes the touch
-            // first, so they never see it.
+            // A row activated while the menu is already on its way out would
+            // run its action twice. Three ways in, three guards: the rows read
+            // LocalMenuInteractive and stop being clickable (which also ends
+            // a press that began before the close, and keyboard activation);
+            // the closing panel leaves the accessibility tree; and a sibling
+            // drawn over the rows takes any new touch first.
+            CompositionLocalProvider(LocalMenuInteractive provides expanded) {
+                // No verticalScroll here: the rows bring their own, and a
+                // scrollable inside a scrollable is measured with infinite
+                // height and crashes. The cap above is what lets theirs work.
+                Column(
+                    Modifier
+                        .then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })
+                        .padding(vertical = MenuTokens.PanelPadding),
+                    content = content,
+                )
+            }
             if (!expanded) Box(Modifier.matchParentSize().swallowTouches())
         }
     }
 }
+
+/**
+ * False while the menu around a row is closing. A row that can be activated
+ * reads it so that it can't be once its menu has been dismissed.
+ */
+internal val LocalMenuInteractive = compositionLocalOf { true }
 
 /** Which side of the button the menu opened on — see [AnchoredMenu]. */
 private class MenuSide {
