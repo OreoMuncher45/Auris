@@ -1,13 +1,10 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.RatingTarget
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
-import com.music.bitchord.data.model.SearchFilter
-import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.sources.SourceRegistry
-import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
 
@@ -76,19 +73,23 @@ fun autoplayQueueNeedsRefresh(
     currentIndex == itemCount - 1
 
 /**
- * Finds the YouTube id that should seed AutoPlay for a song. Module tracks do not
- * carry YouTube ids, so they are matched on YouTube before the radio request.
+ * Finds the YouTube id that should seed AutoPlay for a song.
+ *
+ * Spotify rows and source-backed rows do not carry YouTube ids, so they are
+ * matched on YouTube before the radio request. The same resolution path rates
+ * such a row through the recording behind it, so the radio and the heart
+ * always agree on which YouTube recording the row names.
  */
-suspend fun youtubeSeedFor(song: Song): String? {
-    if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
-    val target = TrackMatcher.targetOf(song)
-    val query = TrackMatcher.queries(target).firstOrNull() ?: return null
-    return YtMusicRepository.search(query, SearchFilter.SONGS)
-        .getOrNull()
-        ?.filterIsInstance<SearchResult.Track>()
-        ?.map { it.song }
-        ?.let { TrackMatcher.best(it, target) }
-        ?.videoId
+suspend fun youtubeSeedFor(song: Song): String? =
+    youtubeSeedFor(song) { RatingTarget.resolve(it) }
+
+/** [youtubeSeedFor], with the row resolution supplied so the radio seed can be tested. */
+internal suspend fun youtubeSeedFor(
+    song: Song,
+    resolve: suspend (Song) -> String?,
+): String? {
+    if (!RatingTarget.isRowId(song.videoId)) return song.videoId
+    return resolve(song)
 }
 
 /**
@@ -100,6 +101,21 @@ suspend fun loadAutoplayTracks(
     existing: List<Song>,
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
+): Result<List<Song>> = loadAutoplayTracks(
+    existing = existing,
+    seedSong = seedSong,
+    limit = limit,
+    radio = { YtMusicRepository.radio(it) },
+    resolve = { RatingTarget.resolve(it) },
+)
+
+/** [loadAutoplayTracks], with the catalogue calls supplied so the radio boundary can be tested. */
+internal suspend fun loadAutoplayTracks(
+    existing: List<Song>,
+    seedSong: Song,
+    limit: Int,
+    radio: suspend (String) -> Result<List<Song>>,
+    resolve: suspend (Song) -> String?,
 ): Result<List<Song>> {
     // One algorithm, whichever catalogue the listener browses: YouTube
     // Music's radio, seeded from the song that is playing. A Spotify track is
@@ -109,8 +125,8 @@ suspend fun loadAutoplayTracks(
     // The seed song is unchanged — a Spotify-provider session still continues
     // from the song that is playing — and the queue-entry mapping below is
     // shared, so the batch lands in the queue looking exactly like any other.
-    val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-    val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    val seed = youtubeSeedFor(seedSong, resolve) ?: return Result.success(emptyList())
+    val related = radio(seed).getOrElse { return Result.failure(it) }
     val extra = QueueBuilder.extend(existing, related, limit)
         .filterNot(com.music.bitchord.data.settings.AppSettings::isSongBlocked)
     if (extra.isEmpty()) return Result.success(emptyList())
