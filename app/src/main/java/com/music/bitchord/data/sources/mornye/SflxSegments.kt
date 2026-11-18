@@ -64,6 +64,64 @@ internal object SflxSegments {
     }
 
     /**
+     * A segmented start as an HLS media playlist, so the song is *streamed*.
+     *
+     * Assembling first meant the listener waited for the whole track before a
+     * note played: forty hi-res parts on a slow connection outlast the 20s a
+     * substitution is allowed, so the resolve returned nothing and the track
+     * never started. A playlist lets Media3 fetch the init segment and play
+     * while the rest is still on the network, which is what streaming means.
+     *
+     * The extension's first part is the initialisation segment — Tidal builds
+     * the list as `[initURL].concat(mediaURLs)` — so it becomes `EXT-X-MAP`
+     * and the rest become media segments, exactly the shape [ManifestFile]
+     * already reads back into one `.flac` for a download.
+     *
+     * [durationMs] is the track's length where the search row knew it. HLS
+     * wants a duration per segment; spreading the real length across the parts
+     * keeps the player's timeline and seeking honest instead of inventing a
+     * track twice as long as the song.
+     */
+    fun playlist(
+        directory: File,
+        extensionId: String,
+        key: String,
+        segments: List<ModuleStreamSegment>,
+        durationMs: Long?,
+    ): File? {
+        val usable = segments.filter { it.url.isNotBlank() }
+        // An init segment alone is not a song.
+        if (usable.size < 2) return null
+        if (!directory.isDirectory && !directory.mkdirs()) return null
+        val media = usable.drop(1)
+        val seconds = durationMs?.takeIf { it > 0 }?.let { it / 1000.0 / media.size } ?: 10.0
+        val targetDuration = kotlin.math.ceil(seconds).toInt().coerceAtLeast(1)
+        val body = buildString {
+            append("#EXTM3U\n#EXT-X-VERSION:7\n")
+            append("#EXT-X-TARGETDURATION:").append(targetDuration).append('\n')
+            append("#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n")
+            append("#EXT-X-MAP:URI=\"").append(usable.first().url).append("\"\n")
+            for (segment in media) {
+                append(String.format(java.util.Locale.US, "#EXTINF:%.3f,\n", seconds))
+                append(segment.url).append('\n')
+            }
+            append("#EXT-X-ENDLIST\n")
+        }
+        val target = File(directory, "${nameOf(extensionId, key)}.m3u8")
+        return runCatching {
+            val tmp = File(directory, "${target.name}.tmp")
+            tmp.writeText(body)
+            if (target.exists()) target.delete()
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+            TrackLog.d(TAG, "wrote ${target.name}: ${media.size} parts to stream")
+            target
+        }.getOrNull()
+    }
+
+    /**
      * The assembled file for [key], or null when a part could not be fetched.
      *
      * A file already assembled for this key is reused: the same track asked for
