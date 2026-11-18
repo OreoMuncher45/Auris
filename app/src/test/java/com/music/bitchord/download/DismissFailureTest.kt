@@ -1,6 +1,8 @@
 package com.music.bitchord.download
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -36,6 +38,24 @@ class DismissFailureTest {
         val newer = DownloadState.Failed("Network error")
         val active = mapOf<String, DownloadState>(id to newer)
         assertSame(active, withoutShownFailure(active, id, shown))
+    }
+
+    @Test
+    fun aStaleDismissalCannotClearANewerFailureThroughTheStateFlow() {
+        // The interleaving MutableStateFlow.update can hit: the transform runs
+        // against failure A, then a retry queues and fails the same way (B)
+        // before the compare-and-set lands.
+        val shown = DownloadState.Failed("Network error")
+        val active = MutableStateFlow<Map<String, DownloadState>>(mapOf(id to shown))
+        val read = active.value
+        val next = withoutShownFailure(read, id, shown)
+
+        active.value = mapOf(id to DownloadState.Queued)
+        val newer = DownloadState.Failed("Network error")
+        active.value = mapOf(id to newer)
+
+        assertFalse("the stale compare-and-set fails", active.compareAndSet(read, next))
+        assertSame(newer, active.value[id])
     }
 
     @Test
