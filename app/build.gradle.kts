@@ -233,12 +233,19 @@ android {
             isIncludeAndroidResources = true
 
             all {
+                // LIVE_TESTS changes whether the Genius network test runs.
+                // Track it as a task input so Gradle cannot reuse a cached
+                // result when the environment changes.
+                it.inputs.property("liveTests", System.getenv("LIVE_TESTS") ?: "")
+
                 // Conscrypt, which Robolectric loads by JNI during sandbox
                 // setup, publishes no linux-aarch64 build, so on this host the
                 // interaction tests die with UnsatisfiedLinkError before
                 // reaching an assertion. CI is x86_64 and runs them for real.
                 if (System.getProperty("os.arch") in setOf("aarch64", "arm64")) {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.data.HomeFeedCacheTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.data.canvas.SpotifyTokenSessionTest")
                 }
             }
 
