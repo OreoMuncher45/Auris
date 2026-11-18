@@ -5,9 +5,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +65,9 @@ object SupportDonations {
     /** The upstream author's tip page — credit where credit is due. */
     const val KOFI_URL = "https://ko-fi.com/kushagrasinghx"
 
+    /** Direct support for the Auris project. */
+    const val PATREON_URL = "https://www.patreon.com/cw/crimsanity"
+
     fun copyAddress(context: Context, address: String) {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText("donation address", address))
@@ -70,6 +77,12 @@ object SupportDonations {
     fun openKoFi(context: Context) {
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, KOFI_URL.toUri()))
+        }
+    }
+
+    fun openPatreon(context: Context) {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, PATREON_URL.toUri()))
         }
     }
 
@@ -87,6 +100,20 @@ object SupportDonations {
                 .edit().putBoolean(KEY_SEEN, true).apply()
         }
     }
+}
+
+/** Patreon support artwork used in the support popup and Settings. */
+@Composable
+fun PatreonSupportButton(modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Image(
+        painter = painterResource(R.drawable.patreon_support),
+        contentDescription = stringResource(R.string.support),
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(800f / 217f)
+            .clickable { SupportDonations.openPatreon(context) },
+    )
 }
 
 /**
@@ -112,6 +139,8 @@ fun SupportPopup(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(12.dp))
+                PatreonSupportButton()
                 Spacer(Modifier.height(12.dp))
                 SupportDonations.rails.forEach { rail ->
                     Row(

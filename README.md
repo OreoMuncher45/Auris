@@ -103,7 +103,7 @@ A signed, installable release APK is produced by the **Flow Debug APK** workflow
 
 Auris is free and open source, and it is staying that way. A star, a bug report or a pull request is appreciated as much as a donation.
 
-- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/BitChordNext/issues)
+- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/BitChordNext/issues) · [Patreon](https://www.patreon.com/cw/crimsanity)
 
 | Asset | Address |
 |---|---|

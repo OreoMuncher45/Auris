@@ -132,6 +132,7 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.DonationRow
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.PatreonSupportButton
 import com.music.bitchord.ui.components.SupportDonations
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -1507,6 +1508,11 @@ fun SettingsScreen(
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.support)) {
+            row("patreon", "support", "donate", "donation", "tip", "money") {
+                PatreonSupportButton(
+                    modifier = Modifier.padding(horizontal = ROW_INSET, vertical = 10.dp),
+                )
+            }
             row("donate", "donation", "crypto", "support", "tip", "money") {
                 SettingsRow(
                     icon = Icons.Rounded.Favorite,
