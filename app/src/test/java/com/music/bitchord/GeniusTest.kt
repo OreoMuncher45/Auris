@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class GeniusTest {
@@ -109,6 +110,9 @@ class GeniusTest {
 
     @Test
     fun `live genius search and scraping test with noisy titles`() = kotlinx.coroutines.runBlocking {
+        // Genius blocks or rate-limits CI addresses. Keep this network test
+        // opt-in so routine builds only exercise the deterministic parser.
+        assumeTrue("needs the network; set LIVE_TESTS=1", System.getenv("LIVE_TESTS") == "1")
         println("--- TEST 1: Queen - Bohemian Rhapsody (Official Video) ---")
         val lyrics1 = Genius.lyrics("Bohemian Rhapsody (Official Video)", "Queen")
         assertNotNull(lyrics1)
