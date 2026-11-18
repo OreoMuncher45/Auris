@@ -411,17 +411,21 @@ class SflxHost(
                 val playable = if (url != null) {
                     url
                 } else {
-                    // A segmented start: parts, init first. Assembled here into
-                    // one file, because the player is handed a URL and a list of
-                    // forty CDN links is not one.
-                    val assembled = SflxSegments.assemble(
+                    // A segmented start is streamed, not assembled first: the
+                    // parts become an HLS playlist and Media3 fetches them as
+                    // it plays. Assembling meant the whole track had to arrive
+                    // inside the substitution's 20s, so a hi-res Tidal track on
+                    // a slow connection never played a note. The same playlist
+                    // is what [ManifestFile] turns back into one file for a
+                    // download, so both paths read the same answer.
+                    val playlist = SflxSegments.playlist(
                         directory = cacheDirectory(installed),
                         extensionId = extensionId,
                         key = trackId,
                         segments = segments,
-                        headers = headers,
-                    ) ?: throw SflxException("the segments could not be fetched")
-                    "file://${assembled.absolutePath}"
+                        durationMs = durationMsOf(prepared),
+                    ) ?: throw SflxException("the segments could not be written as a playlist")
+                    "file://${playlist.absolutePath}"
                 }
                 ModuleStreamResponse(
                     streamUrl = playable,
@@ -743,6 +747,21 @@ class SflxHost(
 
     private fun rowFor(extensionId: String, trackId: String): String? =
         synchronized(rows) { rows["$extensionId|$trackId"] }
+
+    /**
+     * The track's length as the extension's own search row stated it, for the
+     * per-segment durations in a streaming playlist. `duration_ms` is the
+     * extension's unit; `duration` in seconds is the other spelling rows use.
+     */
+    private fun durationMsOf(rawRow: String?): Long? = rawRow?.let { raw ->
+        runCatching {
+            val row = JSONObject(raw)
+            val millis = row.optLong("duration_ms", 0L)
+            if (millis > 0) return@runCatching millis
+            val seconds = row.optDouble("duration", 0.0)
+            if (seconds > 0) (seconds * 1000).toLong() else null
+        }.getOrNull()
+    }
 
     companion object {
         private const val TAG = "BitChord"
