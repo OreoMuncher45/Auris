@@ -19,7 +19,11 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.music.bitchord.data.DebugLog as Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Opening, and finishing, an extension's verification.
@@ -344,10 +348,25 @@ class SflxVerifyActivity : AppCompatActivity() {
             state = null
         }
         if (grant.isBlank()) return
-        val ok = runCatching { SflxCatalog.host?.completeGrantForState(grant, state) == true }
-            .getOrDefault(false)
-        Log.d(TAG, "sflx verification: grant ${if (ok) "redeemed" else "refused"}")
-        if (ok) finishWith(true)
+        redeem({ SflxCatalog.host?.completeGrantForState(grant, state) == true }) { ok ->
+            Log.d(TAG, "sflx verification: grant ${if (ok) "redeemed" else "refused"}")
+            if (ok) finishWith(true)
+        }
+    }
+
+    /**
+     * Redeems a grant off the main thread, then answers on it.
+     *
+     * The exchange is a network call (and a wait on a 429), and three of the four
+     * delivery paths (the paste box, the deep link and the WebView's navigation
+     * callbacks) arrive on the main thread, where Android refuses network I/O.
+     * The JS bridge arrives on its own thread, and goes the same way for one rule.
+     */
+    private fun redeem(exchange: () -> Boolean, done: (Boolean) -> Unit) {
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching(exchange).getOrDefault(false) }
+            done(ok)
+        }
     }
 
     /**
@@ -371,10 +390,10 @@ class SflxVerifyActivity : AppCompatActivity() {
             return true
         }
 
-        val ok = runCatching { SflxCatalog.host?.completeGrant(id, grant, state) == true }
-            .getOrDefault(false)
-        Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
-        finishWith(ok)
+        redeem({ SflxCatalog.host?.completeGrant(id, grant, state) == true }) { ok ->
+            Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
+            finishWith(ok)
+        }
         return true
     }
 
