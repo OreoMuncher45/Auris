@@ -1,13 +1,20 @@
 package com.music.bitchord.ui.player
 
-import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -19,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -49,7 +55,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,7 +65,6 @@ import com.music.bitchord.ui.utils.containSheetGestures
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
-import kotlin.math.roundToInt
 
 internal val DRAWER_SHAPE = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
 
@@ -98,7 +102,6 @@ private const val DISMISS_DRAG_FRACTION = 0.25f
  * lyrics card goes up in this same shell rather than in a second one that would
  * have to re-learn the drag gesture, the scrim fade and the frosted material.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun PlayerDrawer(
     hazeState: HazeState,
@@ -119,25 +122,129 @@ fun PlayerDrawer(
     maxHeight: Dp = 560.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Where the app keeps a drawer host, the drawer is drawn by it: so it is
+    // over everything, and so it can play its way back down after the caller
+    // has stopped asking for it — a drawer removed with its caller had no
+    // exit at all (UI 12, stage 0). Where there is none (desktop), it is
+    // drawn here, as it always was.
+    val host = LocalDrawerHost.current
+    if (host != null && !LocalInDrawerHost.current) {
+        val drawer: @Composable (visible: Boolean, onGone: () -> Unit) -> Unit = { visible, onGone ->
+            DrawerBody(visible, onGone, hazeState, title, onDismiss, modifier, titleGap, maxHeight, content)
+        }
+        val current by rememberUpdatedState(drawer)
+        DisposableEffect(host) {
+            val request = host.open { visible, onGone -> current(visible, onGone) }
+            onDispose { host.withdraw(request) }
+        }
+        return
+    }
+    DrawerBody(true, {}, hazeState, title, onDismiss, modifier, titleGap, maxHeight, content)
+}
+
+/**
+ * The app's one slot for a player drawer, drawn by [DrawerHostOverlay]. A
+ * drawer asks while its caller composes it, and is let go when it stops; the
+ * overlay keeps the last one up through its exit.
+ */
+@Stable
+class DrawerHostState {
+    internal class Request(val drawer: @Composable (visible: Boolean, onGone: () -> Unit) -> Unit)
+
+    /** The drawer asked for now, or null once its caller has let go. */
+    internal var request by mutableStateOf<Request?>(null)
+        private set
+
+    /** The drawer on screen: the one asked for, or the last one, until its exit has played. */
+    internal var shown by mutableStateOf<Request?>(null)
+        private set
+
+    internal fun open(drawer: @Composable (visible: Boolean, onGone: () -> Unit) -> Unit): Request =
+        Request(drawer).also {
+            request = it
+            shown = it
+        }
+
+    internal fun withdraw(request: Request) {
+        if (this.request === request) this.request = null
+    }
+
+    internal fun gone(request: Request) {
+        if (shown === request && this.request !== request) shown = null
+    }
+}
+
+val LocalDrawerHost = staticCompositionLocalOf<DrawerHostState?> { null }
+
+internal val LocalInDrawerHost = staticCompositionLocalOf { false }
+
+/**
+ * Draws [state]'s drawer, and keeps the last one through its exit. Compose it
+ * over the player — among the root's overlays, under its sheets and menus.
+ */
+@Composable
+fun DrawerHostOverlay(state: DrawerHostState) {
+    val shown = state.shown ?: return
+    CompositionLocalProvider(LocalInDrawerHost provides true) {
+        key(shown) {
+            // Down once its caller lets go; forgotten once it is all the way
+            // down, so nothing of it is left over the page.
+            shown.drawer(state.request === shown) { state.gone(shown) }
+        }
+    }
+}
+
+/**
+ * The drawer itself: dark over a scrim, a grab handle, a title, drag down to
+ * put it away. [visible] false plays it back down.
+ *
+ * Every moving value — the slide, the drag, the scrim — is read only while
+ * drawing, so neither the entrance, the exit nor a drag recomposes anything.
+ * The scrim used to be computed from the drag while composing, which
+ * recomposed the drawer on every frame of a drag (UI 12, stage 0).
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun DrawerBody(
+    visible: Boolean,
+    onGone: () -> Unit,
+    hazeState: HazeState,
+    title: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier,
+    titleGap: Dp,
+    maxHeight: Dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
 
-    // How far the drawer has been dragged down, in pixels. Released, it either
-    // springs back or goes — see [DISMISS_DRAG_FRACTION].
-    var drag by remember { mutableFloatStateOf(0f) }
-    var height by remember { mutableIntStateOf(0) }
-    val offset by animateFloatAsState(
-        targetValue = drag,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "playerDrawerOffset",
-    )
-    // Fades with the drawer rather than staying at full strength under a sheet
-    // halfway off the screen, which is what makes the drag feel connected.
-    val scrimAlpha = if (height > 0) (1f - offset / height).coerceIn(0f, 1f) else 1f
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(visible) {
+        progress.animateTo(
+            if (visible) 1f else 0f,
+            if (visible) tween(260, easing = FastOutSlowInEasing) else tween(180),
+        )
+        if (!visible) onGone()
+    }
+    // How far the drawer has been dragged down, in pixels, and its own height
+    // — both read only while drawing.
+    val drag = remember { mutableFloatStateOf(0f) }
+    val height = remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
 
-    // Flipped on the first composition so the drawer travels up from the edge
-    // instead of appearing over the player fully formed.
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { shown = true }
+    val dismissOnRelease: () -> Unit = {
+        val h = height.intValue
+        if (h > 0 && drag.floatValue > h * DISMISS_DRAG_FRACTION) {
+            currentOnDismiss()
+        } else {
+            scope.launch {
+                animate(drag.floatValue, 0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { v, _ ->
+                    drag.floatValue = v
+                }
+            }
+        }
+    }
 
     // The drawer's rows scroll, and that scroll takes the finger before the
     // drag detector below ever sees it. So a pull down past the top of the
@@ -147,40 +254,27 @@ fun PlayerDrawer(
     // sheet, which would otherwise be dragged down along with the drawer.
     //
     // Only where scrolling is dragging, though: see [drawerFollowsListScroll].
-    // Where it is not, the connection is left off entirely and the drawer
-    // answers to its own drag alone, because a scroll leftover means something
-    // else there and must not be read as a pull.
-    val dismissOnRelease: () -> Unit = {
-        if (height > 0 && drag > height * DISMISS_DRAG_FRACTION) onDismiss() else drag = 0f
-    }
     val drawerScroll = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (drag <= 0f || available.y >= 0f) return Offset.Zero
-                val used = available.y.coerceAtLeast(-drag)
-                drag += used
+                if (drag.floatValue <= 0f || available.y >= 0f) return Offset.Zero
+                val used = available.y.coerceAtLeast(-drag.floatValue)
+                drag.floatValue += used
                 return Offset(0f, used)
             }
 
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput && available.y > 0f) drag += available.y
-                // Upward leftover is taken only as far as the drawer has already
-                // been dragged. Returning all of it would hand the player sheet
-                // — the very thing this connection is here to keep clear — the
-                // gesture meant to undo the drag, and the drawer would have no
-                // way back to where it started, because a list resting on its
-                // top consumes nothing and so never produces a pre-scroll to
-                // give back.
-                if (drag > 0f && available.y < 0f) {
-                    val used = available.y.coerceAtLeast(-drag)
-                    drag += used
+                if (source == NestedScrollSource.UserInput && available.y > 0f) drag.floatValue += available.y
+                if (drag.floatValue > 0f && available.y < 0f) {
+                    val used = available.y.coerceAtLeast(-drag.floatValue)
+                    drag.floatValue += used
                     return Offset(0f, used)
                 }
                 return available
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                if (drag <= 0f) return Velocity.Zero
+                if (drag.floatValue <= 0f) return Velocity.Zero
                 dismissOnRelease()
                 return available
             }
@@ -192,20 +286,32 @@ fun PlayerDrawer(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .containSheetGestures()
-            .background(SCRIM_COLOR.copy(alpha = SCRIM_COLOR.alpha * scrimAlpha))
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
+            .containSheetGestures(),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        AnimatedVisibility(
-            visible = shown,
-            enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it },
-            exit = slideOutVertically(tween(180)) { it },
-        ) {
+        // The player behind, dimmed with the drawer and lighter as it is
+        // dragged away — its own layer, so the drawer above doesn't fade too.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val h = height.intValue
+                    val p = progress.value.coerceIn(0f, 1f)
+                    alpha = if (h > 0) p * (1f - drag.floatValue / h).coerceIn(0f, 1f) else p
+                }
+                .background(SCRIM_COLOR)
+                .then(
+                    if (visible) {
+                        Modifier.clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                            onClick = { currentOnDismiss() },
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
         Column(
             modifier = Modifier
                 // Capped so a phone full of rows scrolls inside the drawer
@@ -216,8 +322,15 @@ fun PlayerDrawer(
                 // own BottomCenter alignment once it is narrower.
                 .widthIn(max = DRAWER_MAX_WIDTH)
                 .fillMaxWidth()
-                .onSizeChanged { height = it.height }
-                .offset { IntOffset(0, offset.roundToInt()) }
+                .onSizeChanged { height.intValue = it.height }
+                .graphicsLayer {
+                    // Unseen until measured, then up from the edge — and
+                    // back down to it on the way out.
+                    val h = height.intValue
+                    val p = progress.value.coerceIn(0f, 1f)
+                    alpha = if (h > 0) 1f else 0f
+                    translationY = drag.floatValue + (1f - p) * h
+                }
                 .clip(DRAWER_SHAPE)
                 .then(
                     if (reduceDynamicBlur) {
@@ -234,18 +347,19 @@ fun PlayerDrawer(
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
+                    enabled = visible,
                     onClick = {},
                 )
                 // Dragged down to dismiss, like every other sheet in the app.
                 // Upward drag is clamped to zero rather than followed: there is
                 // nothing above the drawer to reveal.
                 .then(if (drawerFollowsListScroll) Modifier.nestedScroll(drawerScroll) else Modifier)
-                .pointerInput(height) {
+                .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragEnd = dismissOnRelease,
-                        onDragCancel = { drag = 0f },
+                        onDragCancel = { drag.floatValue = 0f },
                     ) { _, delta ->
-                        drag = (drag + delta).coerceAtLeast(0f)
+                        drag.floatValue = (drag.floatValue + delta).coerceAtLeast(0f)
                     }
                 }
                 .navigationBarsPadding()
@@ -275,7 +389,6 @@ fun PlayerDrawer(
                     .padding(start = 4.dp, bottom = titleGap),
             )
             content()
-        }
         }
     }
 }

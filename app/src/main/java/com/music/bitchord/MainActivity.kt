@@ -1,5 +1,8 @@
 package com.music.bitchord
 
+import com.music.bitchord.ui.player.LocalDrawerHost
+import com.music.bitchord.ui.player.DrawerHostState
+import com.music.bitchord.ui.player.DrawerHostOverlay
 import com.music.bitchord.ui.components.AppConfirmation
 import com.music.bitchord.ui.components.menu.LocalConfirmation
 import androidx.compose.ui.semantics.stateDescription
@@ -554,7 +557,11 @@ class MainActivity : AppCompatActivity() {
                 val sheetHost = remember { SheetHostState() }
                 // And the one dialog: drawn by the root over everything.
                 val dialogHost = remember { DialogHostState() }
+                // And the player's drawers (audio output, Automix, lyrics…):
+                // drawn by the root too, so they keep their exit.
+                val drawerHost = remember { DrawerHostState() }
                 CompositionLocalProvider(
+                    LocalDrawerHost provides drawerHost,
                     LocalMenuHost provides menuHost,
                     LocalSheetHost provides sheetHost,
                     LocalDialogHost provides dialogHost,
@@ -7438,6 +7445,8 @@ private fun RootOverlays(
     // The sheet any screen asked LocalSheetHost for, then over it the menu
     // any screen asked LocalMenuHost for — last, over everything above, the
     // player included, and a menu opened from the sheet over the sheet.
+    // The player's drawers first: over the player, under everything below.
+    LocalDrawerHost.current?.let { DrawerHostOverlay(it) }
     LocalSheetHost.current?.let { SheetHostOverlay(it) }
     (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
     // Last of all: a dialog asked for from anywhere — a sheet, a menu's
