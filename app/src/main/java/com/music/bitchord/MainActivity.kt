@@ -1054,6 +1054,12 @@ internal fun BitChordApp(
     val detailStackIds by remember(detailStackState) {
         derivedStateOf(structuralEqualityPolicy()) { detailStackState.value.map { it.browseId } }
     }
+    // Read when a page is opened, never in composition: see [RootNav.replayDepth].
+    remember(detailStackState, nav, sheets) {
+        val depth = { detailStackState.value.size }
+        nav.stackDepth = depth
+        sheets.stackDepth = depth
+    }
     val likeStatusesState = viewModel.likeStatuses.collectAsStateWithLifecycle()
     val likeStatuses by likeStatusesState
 
@@ -3315,7 +3321,7 @@ internal fun BitChordApp(
         // shows this, and the back handlers below that belong to a page ask
         // it rather than their own flag: a page's flag stays set while
         // another page is open over it, and back must close the one on top.
-        val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
+        val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size)
 
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
@@ -3391,7 +3397,7 @@ internal fun BitChordApp(
                 // Opened over Replay, a release page, History or any other
                 // page, closing it reveals that again rather than throwing
                 // both away.
-                if (rootPageKey(nav, sheets, podcastUi.showContinueListening, detail).startsWith(TAB_KEY)) {
+                if (rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size).startsWith(TAB_KEY)) {
                     nav.selectedTab = TAB_HOME
                 }
             }
@@ -7567,6 +7573,8 @@ internal fun rootPageKey(
     sheets: RootSheets,
     showContinueListening: Boolean,
     detail: DetailPage?,
+    /** How many release pages are on the stack; [detail] is the top one. */
+    stackSize: Int = if (detail == null) 0 else 1,
 ): String {
     return when {
         // The pages Settings opens, over Settings. Spotify is opened from
@@ -7607,10 +7615,12 @@ internal fun rootPageKey(
         // playlist opened from a genre stacks a detail page over Genres,
         // and with both set the detail page is the one on screen.
         nav.showGenres && detail == null -> "genres"
-        sheets.openAudiobook != null -> "audiobook"
-        nav.showAudiobooks -> "audiobooks"
-        nav.itunesPodcastId != null -> "itunespodcast"
-        nav.showReplay -> "replay"
+        // Over the release pages they were opened over, and under any pushed
+        // after them: see [RootNav.replayDepth].
+        sheets.openAudiobook != null && stackSize <= sheets.audiobookDepth -> "audiobook"
+        nav.showAudiobooks && stackSize <= nav.audiobooksDepth -> "audiobooks"
+        nav.itunesPodcastId != null && stackSize <= nav.itunesPodcastDepth -> "itunespodcast"
+        nav.showReplay && stackSize <= nav.replayDepth -> "replay"
         detail != null -> detail.browseId
         else -> "$TAB_KEY${nav.selectedTab}"
     }
@@ -7636,14 +7646,32 @@ internal class RootNav {
     // that slot, so they live on a page now, opened from the radio tab.
     var showGenres by mutableStateOf(false)
     // LibriVox's books: the list, and whichever one is open.
-    var showAudiobooks by mutableStateOf(false)
+    var showAudiobooks: Boolean
+        get() = audiobooksShown
+        set(value) {
+            if (value && !audiobooksShown) audiobooksDepth = stackDepth()
+            audiobooksShown = value
+        }
+    private var audiobooksShown by mutableStateOf(false)
     // An Apple-catalogue podcast opened from the podcasts page (collectionId).
-    var itunesPodcastId by mutableStateOf<String?>(null)
+    var itunesPodcastId: String?
+        get() = itunesPodcast
+        set(value) {
+            if (value != null && value != itunesPodcast) itunesPodcastDepth = stackDepth()
+            itunesPodcast = value
+        }
+    private var itunesPodcast by mutableStateOf<String?>(null)
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
     // has to reveal what it was opened from.
-    var showReplay by mutableStateOf(false)
+    var showReplay: Boolean
+        get() = replayShown
+        set(value) {
+            if (value && !replayShown) replayDepth = stackDepth()
+            replayShown = value
+        }
+    private var replayShown by mutableStateOf(false)
     // Library cards use the same Replay page as every other entry point, but
     // category cards ask it to start at their matching ranked section.
     var replayLandingPage by mutableStateOf(ReplayStoryPage.INTRO)
@@ -7667,6 +7695,26 @@ internal class RootNav {
     // The player's member drawer, reachable from the track menu as well once
     // there is a party.
     var showListenTogetherMembers by mutableStateOf(false)
+
+    /**
+     * How many release pages were on the stack when Replay, the audiobook
+     * list or an Apple podcast was opened. Each of those ranks above release
+     * pages only down to that depth: one pushed after it (from the player,
+     * say) is on top of it, while one it was opened over stays under it. A
+     * flag alone cannot tell the two apart, because Replay can be opened
+     * over an open album. [Int.MAX_VALUE] means "over every page", the rule
+     * these pages had before the depth was kept.
+     */
+    var replayDepth by mutableIntStateOf(Int.MAX_VALUE)
+    var audiobooksDepth by mutableIntStateOf(Int.MAX_VALUE)
+    var itunesPodcastDepth by mutableIntStateOf(Int.MAX_VALUE)
+
+    /**
+     * How deep the release-page stack is now, for the setters above to
+     * record. [BitChordApp] points it at its stack; until then (a restore,
+     * a test) it answers "over every page".
+     */
+    var stackDepth: () -> Int = { Int.MAX_VALUE }
 
     /**
      * Closes Settings and every page that was opened from it: the open
@@ -7721,6 +7769,9 @@ internal class RootNav {
                     it.settingsCategory,
                     it.replaySharePage,
                     it.showListenTogetherMembers,
+                    it.replayDepth,
+                    it.audiobooksDepth,
+                    it.itunesPodcastDepth,
                 )
             },
             restore = { values ->
@@ -7743,6 +7794,11 @@ internal class RootNav {
                     settingsCategory = values[15] as String?
                     replaySharePage = values[16] as ReplayStoryPage?
                     showListenTogetherMembers = values[17] as Boolean
+                    // After the flags: their setters record a depth of
+                    // their own, which the saved one replaces.
+                    replayDepth = values[18] as Int
+                    audiobooksDepth = values[19] as Int
+                    itunesPodcastDepth = values[20] as Int
                 }
             },
         )
@@ -7775,7 +7831,17 @@ internal class RootSheets {
      * signing in, or picking a channel in YouTube Music's own Accounts list.
      */
     var webSession by mutableStateOf<WebSessionMode?>(null)
-    var openAudiobook by mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null)
+    /** The audiobook whose page is open; see [RootNav.replayDepth] for [audiobookDepth]. */
+    var openAudiobook: com.music.bitchord.data.audiobook.Audiobook?
+        get() = audiobook
+        set(value) {
+            if (value != null && value != audiobook) audiobookDepth = stackDepth()
+            audiobook = value
+        }
+    private var audiobook by mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null)
+    var audiobookDepth by mutableIntStateOf(Int.MAX_VALUE)
+    /** As [RootNav.stackDepth]. */
+    var stackDepth: () -> Int = { Int.MAX_VALUE }
     var showSpotifyCanvasAuth by mutableStateOf(false)
     var showSpotifyLogin by mutableStateOf(false)
     // Hosted here rather than inside SourcesScreen so its frosted card has

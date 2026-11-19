@@ -99,12 +99,24 @@ class RootNavSaverTest {
             itunesPodcastId = "x"
         }
         val saved = with(RootNav.Saver) { scope.save(nav) } as List<*>
-        assertEquals(18, saved.size)
+        assertEquals(21, saved.size)
         saved.forEach { value ->
             assertTrue(
                 "unexpected ${value?.javaClass}",
                 value == null || value is Int || value is Boolean || value is String || value is Enum<*>,
             )
         }
+    }
+
+    @Test fun `each page depth survives a round trip on its own`() {
+        val restored = roundTrip(RootNav().apply {
+            replayDepth = 1
+            audiobooksDepth = 2
+            itunesPodcastDepth = 3
+        })
+        assertEquals(1, restored.replayDepth)
+        assertEquals(2, restored.audiobooksDepth)
+        assertEquals(3, restored.itunesPodcastDepth)
+        assertEquals(Int.MAX_VALUE, roundTrip(RootNav()).replayDepth)
     }
 }
