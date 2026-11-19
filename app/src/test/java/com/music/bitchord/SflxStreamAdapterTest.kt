@@ -153,9 +153,15 @@ class SflxStreamAdapterTest {
               }
               const searched = JSON.parse(await module.exports.searchTracks('telekinesis', 5, { settings: {} }));
               out.push({ case: 'search', answer: { ids: searched.tracks.map(t => t.id) }, calls: [], restored: true });
-              const now = new Date();
-              out.push({ case: 'local time', answer: { time: gobackend.getLocalTime(), hour: now.getHours(),
-                         offset: now.getTimezoneOffset() }, calls: [], restored: true });
+              // One fixed instant for both sides, so an hour that turns
+              // between the two reads cannot fail the comparison.
+              const RealDate = Date;
+              const fixed = new RealDate(2026, 10, 19, 14, 37, 0);
+              globalThis.Date = class extends RealDate { constructor() { super(fixed.getTime()); } };
+              const time = gobackend.getLocalTime();
+              globalThis.Date = RealDate;
+              out.push({ case: 'local time', answer: { time, hour: fixed.getHours(), minute: fixed.getMinutes(),
+                         offset: fixed.getTimezoneOffset() }, calls: [], restored: true });
               console.log(JSON.stringify(out));
             })();
         """
@@ -198,7 +204,7 @@ class SflxStreamAdapterTest {
         val time = answer.getValue("time").jsonObject
         assertFalse(time.containsKey("error"))
         assertEquals(answer.number("hour"), time.number("hour"))
-        assertTrue(time.number("minute") in 0..59)
+        assertEquals(answer.number("minute"), time.number("minute"))
         assertEquals("Local", time.text("timezone"))
         assertEquals(answer.number("offset"), time.number("offsetMinutes"))
     }
