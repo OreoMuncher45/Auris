@@ -560,6 +560,7 @@ internal object SpotifySearch {
         if (uri.startsWith(kind.uriPrefix)) return true
         if (str("__typename").equals(kind.typename, ignoreCase = true)) return true
         if (kind != EntityKind.TRACK) return false
+        if (isEntityOfAnotherKind(kind)) return false
         // The catalogue's older shape: no uri and no typename, a bare id and a
         // name, and the album or the runtime beside them. The album or the
         // runtime is what tells a track from an album in a list that states

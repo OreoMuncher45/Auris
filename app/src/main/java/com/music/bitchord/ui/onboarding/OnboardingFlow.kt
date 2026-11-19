@@ -68,6 +68,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.components.SflxInstallDialog
 import com.music.bitchord.ui.player.MeshGradientBackground
@@ -419,8 +420,14 @@ fun SetupWizard(
 
         if (installing) {
             SflxInstallDialog(
-                onDismiss = { installing = false },
-                onInstalled = { installing = false },
+                onDismiss = {
+                    installing = false
+                    SflxCatalog.clearInstallState()
+                },
+                onInstalled = {
+                    installing = false
+                    SflxCatalog.clearInstallState()
+                },
             )
         }
     }

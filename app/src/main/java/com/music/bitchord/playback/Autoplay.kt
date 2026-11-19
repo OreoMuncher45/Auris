@@ -111,8 +111,13 @@ suspend fun loadAutoplayTracks(
     // shared, so the batch lands in the queue looking exactly like any other.
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
-    val extra = QueueBuilder.extend(existing, related, limit)
-        .filterNot(com.music.bitchord.data.settings.AppSettings::isSongBlocked)
+    // Blocked songs go before the limit is applied, so a blocked pick can't
+    // empty a batch that had other candidates.
+    val extra = QueueBuilder.extend(
+        existing,
+        related.filterNot(com.music.bitchord.data.settings.AppSettings::isSongBlocked),
+        limit,
+    )
     if (extra.isEmpty()) return Result.success(emptyList())
 
     return Result.success(extra.map {

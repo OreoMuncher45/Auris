@@ -1,9 +1,9 @@
 package com.music.bitchord.data.sources.mornye
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -151,7 +151,7 @@ object SflxRegistry {
     fun parse(text: String): List<SflxRegistryEntry> {
         val root = runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonObject
             ?: throw SflxException("registry.json is not a JSON object")
-        val extensions = root["extensions"]?.jsonArray
+        val extensions = root["extensions"] as? JsonArray
             ?: throw SflxException("registry.json has no extensions list")
         return extensions.mapNotNull { element ->
             val entry = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
@@ -170,7 +170,7 @@ object SflxRegistry {
                 downloadUrl = entry.string("download_url").ifBlank { entry.string("downloadUrl") },
                 sha256 = entry.string("sha256").lowercase().trim(),
                 category = entry.string("category"),
-                tags = (entry["tags"]?.jsonArray ?: emptyList()).mapNotNull {
+                tags = (entry["tags"] as? JsonArray).orEmpty().mapNotNull {
                     (it as? JsonPrimitive)?.content
                 },
                 minAppVersion = entry.string("min_app_version").ifBlank { entry.string("minAppVersion") },

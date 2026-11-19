@@ -158,6 +158,11 @@ internal object SpotifyToken {
                 return@withLock null
             }
 
+            // The cookie was read before the lock: a harvest queued behind
+            // another may run after the listener disconnected or switched
+            // accounts, and must not put the old cookie back or cache the old
+            // account's token.
+            if (mode == Mode.SIGNED_IN && AppSettings.spotifySpdcToken.value != cookie) return@withLock null
             val harvested = withContext(Dispatchers.Main) {
                 harvestViaWebView(context, cookie, acceptAnonymous = mode == Mode.ANONYMOUS)
             }
@@ -165,6 +170,7 @@ internal object SpotifyToken {
                 Log.w(TAG, "token harvest failed or timed out")
                 return@withLock null
             }
+            if (mode == Mode.SIGNED_IN && AppSettings.spotifySpdcToken.value != cookie) return@withLock null
 
             if (mode == Mode.SIGNED_IN) {
                 cachedAccessToken = harvested.token

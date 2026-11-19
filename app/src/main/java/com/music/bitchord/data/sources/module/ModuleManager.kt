@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources.module
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.sources.mornye.SflxHost
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -199,6 +200,13 @@ class ModuleManager {
         module: SpineModule,
         resolveBaseUrl: suspend (String) -> String,
     ): Result<LoadedModule> = withContext(Dispatchers.IO) {
+        // That prefix names an installed extension's engines, which SflxHost
+        // loads itself; an index declaring it would take over that slot.
+        if (module.id.startsWith(SflxHost.MODULE_PREFIX)) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Module id ${module.id} uses a reserved prefix"),
+            )
+        }
         val cached = loadedModules[module.id]
         if (cached != null) {
             if (QuickJsExecutor.isLoaded(module.id)) {

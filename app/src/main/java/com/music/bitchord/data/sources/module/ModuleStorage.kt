@@ -50,16 +50,20 @@ interface ModuleStorage {
 class MemoryModuleStorage : ModuleStorage {
     private val values = mutableMapOf<String, MutableMap<String, String>>()
 
+    @Synchronized
     override fun get(moduleId: String, key: String): String? = values[moduleId]?.get(key)
 
+    @Synchronized
     override fun set(moduleId: String, key: String, value: String) {
         values.getOrPut(moduleId) { mutableMapOf() }[key] = value
     }
 
+    @Synchronized
     override fun remove(moduleId: String, key: String) {
         values[moduleId]?.remove(key)
     }
 
+    @Synchronized
     override fun keys(moduleId: String): List<String> = values[moduleId]?.keys?.toList().orEmpty()
 }
 

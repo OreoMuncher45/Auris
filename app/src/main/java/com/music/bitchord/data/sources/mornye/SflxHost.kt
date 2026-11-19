@@ -463,8 +463,8 @@ class SflxHost(
         )
     }
 
-    /** One tier's answer as something the player can open, or why it cannot be. */
-    private fun playable(
+    /** One tier's answer as something the player can open, or why it cannot be. Internal for tests. */
+    internal fun playable(
         installed: InstalledSflx,
         trackId: String,
         prepared: String?,
@@ -479,6 +479,15 @@ class SflxHost(
             return localAnswer(installed, trackId, path, raw)
         }
         val url = SflxAnswer.streamUrl(raw)
+        // A file of the extension's own comes back as `localFile`, above, and
+        // is checked against its folder there. A URL is only ever a network
+        // one: a file:// here could name any of this app's private files, and
+        // the downloader would copy it out.
+        if (url != null && !url.startsWith("https://", ignoreCase = true) &&
+            !url.startsWith("http://", ignoreCase = true)
+        ) {
+            throw SflxException("the extension answered with a non-network URL")
+        }
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
         if (url == null && segments.isEmpty()) {
@@ -1391,11 +1400,17 @@ object SflxDownloads {
                 if (declared > MAX_PACKAGE_BYTES) {
                     throw SflxException("that file is ${declared / 1024 / 1024} MB, which is too large to be an extension")
                 }
-                val bytes = response.body?.bytes() ?: throw SflxException("the server sent nothing")
-                if (bytes.size > MAX_PACKAGE_BYTES) {
-                    throw SflxException("that file is too large to be an extension")
+                val body = response.body ?: throw SflxException("the server sent nothing")
+                // Read in bounded steps: with no Content-Length, the size is
+                // only known once it has been read, so stop at the ceiling.
+                val buffer = okio.Buffer()
+                val source = body.source()
+                while (source.read(buffer, 64 * 1024L) != -1L) {
+                    if (buffer.size > MAX_PACKAGE_BYTES) {
+                        throw SflxException("that file is too large to be an extension")
+                    }
                 }
-                bytes
+                buffer.readByteArray()
             }
         }.onFailure { Log.w(TAG, "sflx fetch failed for $url: ${it.message}") }
     }
