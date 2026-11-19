@@ -555,20 +555,23 @@ object AudioCache {
             // still held.
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
-                // A request that was lent a sibling keeps reading that one on
-                // every reopen. Media3 rebuilds the key per open but keeps the
-                // extractor, so a seek that picked another complete sibling
-                // (Opus under #alt2, then AAC under #alt2-noatmos) would feed
-                // one container's bytes to the other's parser. A lent key that
-                // has lost bytes is refused upstream, and recovery picks anew.
-                val lent = if (rendition == null) openingRequest.get()?.lentFor(videoId) else null
+                // A playback request keeps the key its first open chose on
+                // every reopen, lent or its own. Media3 rebuilds the key per
+                // open but keeps the extractor, so a seek that picked another
+                // entry (Opus under the plain key, then a complete AAC sibling
+                // once the plain one was evicted) would feed one container's
+                // bytes to the other's parser. A lent key that has lost bytes
+                // is refused upstream and recovery picks anew; an own key is
+                // simply refilled from its own upstream, as before.
+                val request = if (rendition == null) openingRequest.get() else null
+                val pinned = request?.pinnedFor(videoId)
                 when {
                     rendition != null -> "$videoId#$rendition"
-                    lent != null -> lent
+                    pinned != null -> pinned
                     SourceResolver.canSubstituteForYouTube() ->
                         "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
                     else -> completeSibling(videoId, videoId) ?: videoId
-                }
+                }.also { key -> if (request != null && pinned == null) request.pin(videoId, key) }
             }
             // A source-backed track keys on the source and its track id alone.
             // The full URI would work but carries the title and artist used
