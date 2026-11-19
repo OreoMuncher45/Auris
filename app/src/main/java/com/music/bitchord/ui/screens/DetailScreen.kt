@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import android.os.Build
 import com.music.bitchord.R
 
@@ -1015,12 +1017,17 @@ private fun ReleaseHeader(
                         size = circleSize,
                     )
                     onMore?.let { more ->
+                        val origin = rememberMenuButtonOrigin()
                         CircleIconButton(
                             icon = Icons.Rounded.MoreHoriz,
                             contentDescription = stringResource(R.string.more),
                             palette = palette,
-                            onClick = { more(songs) },
+                            onClick = {
+                                origin.record()
+                                more(songs)
+                            },
                             size = circleSize,
+                            modifier = Modifier.menuOriginOf(origin),
                         )
                     }
                 }
@@ -1627,10 +1634,11 @@ private fun CircleIconButton(
     size: Dp = 50.dp,
     /** Whiter veil in place of the dark glass — the artist page's Apple look. */
     lightFill: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(size)
             .then(
                 if (lightFill) {
@@ -1761,66 +1769,72 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        IconButton(
-            onClick = { expanded = true },
+        // A DropdownMenu anchors to its parent, so the button and its menu
+        // share a box of their own: in the header's box the menu hung off the
+        // whole header and opened at its start edge, across the page from the ⋮.
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = ARTIST_CONTENT_GUTTER),
         ) {
-            Icon(
-                imageVector = Icons.Rounded.MoreVert,
-                contentDescription = stringResource(R.string.more),
-                tint = palette.onBackgroundVariant,
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            albumsShelf?.let { shelf ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.albums)) },
-                    onClick = {
-                        expanded = false
-                        onOpenShelf(shelf)
-                    },
+            IconButton(
+                onClick = { expanded = true },
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = palette.onBackgroundVariant,
                 )
             }
-            singlesShelf?.let { shelf ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.singles_eps)) },
-                    onClick = {
-                        expanded = false
-                        onOpenShelf(shelf)
-                    },
-                )
-            }
-            if (onToggleAiArtist != null) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            stringResource(
-                                if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
-                            ),
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
-                    },
-                    onClick = {
-                        expanded = false
-                        onToggleAiArtist()
-                    },
-                )
-            }
-            if (onHideArtist != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.hide_artist)) },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
-                    },
-                    onClick = {
-                        expanded = false
-                        onHideArtist()
-                    },
-                )
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                albumsShelf?.let { shelf ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.albums)) },
+                        onClick = {
+                            expanded = false
+                            onOpenShelf(shelf)
+                        },
+                    )
+                }
+                singlesShelf?.let { shelf ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.singles_eps)) },
+                        onClick = {
+                            expanded = false
+                            onOpenShelf(shelf)
+                        },
+                    )
+                }
+                if (onToggleAiArtist != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
+                                ),
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
+                        },
+                        onClick = {
+                            expanded = false
+                            onToggleAiArtist()
+                        },
+                    )
+                }
+                if (onHideArtist != null) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.hide_artist)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
+                        },
+                        onClick = {
+                            expanded = false
+                            onHideArtist()
+                        },
+                    )
+                }
             }
         }
     }

@@ -1229,7 +1229,7 @@ class ExclusiveUsbOutput(
                     while (i + 2 < bytes.size) {
                         val b0 = bytes[i].toInt() and 0xFF
                         val b1 = bytes[i + 1].toInt() and 0xFF
-                        val b2 = bytes[i + 2].toInt()
+                        val b2 = bytes[i + 2].toInt() and 0xFF
                         var sample = (b2 shl 16) or (b1 shl 8) or b0
                         if (sample and 0x800000 != 0) sample -= 0x1000000
                         val scaled = (sample * gain.toDouble() + if (sample >= 0) 0.5 else -0.5).toInt()

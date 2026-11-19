@@ -160,7 +160,23 @@ class SflxHostTest {
     }
 
     @Test
-    fun `an extension with only lossless tiers answers every tier with one of them`() {
+    fun `an Opus or Vorbis option without a kind is still a lossy tier`() {
+        val opus = SflxManifestParser.parse(
+            """
+            {"name":"opus","type":["download_provider"],
+             "qualityOptions":[{"id":"best","label":"FLAC"},{"id":"opus","label":"Opus 320kbps"}]}
+            """.trimIndent(),
+        )
+        assertEquals("opus", SflxQuality.forTier(opus, "HIGH"))
+        assertTrue(SflxQuality.fallbacks(opus, "HIGH").isNotEmpty())
+        val vorbis = SflxManifestParser.parse(
+            """{"name":"ogg","type":["download_provider"],"qualityOptions":[{"id":"ogg","label":"Ogg Vorbis 160"}]}""",
+        )
+        assertEquals("ogg", SflxQuality.forTier(vorbis, "LOW"))
+    }
+
+    @Test
+    fun `an extension with only lossless tiers declines a lossy request`() {
         val losslessOnly = SflxManifestParser.parse(
             """
             {"name":"only","type":["download_provider"],
@@ -168,9 +184,11 @@ class SflxHostTest {
             """.trimIndent(),
         )
         assertEquals("HI_RES", SflxQuality.forTier(losslessOnly, "LOSSLESS"))
-        // No lossy tier to fall to, so the answer is the closest honest one
-        // rather than a tier the extension has never heard of.
-        assertEquals("LOSSLESS", SflxQuality.forTier(losslessOnly, "HIGH"))
+        // There is no honest lossy answer. In particular, do not call the
+        // extension with its smallest FLAC and spend more data on Medium.
+        assertEquals("HIGH", SflxQuality.forTier(losslessOnly, "HIGH"))
+        assertTrue(SflxQuality.fallbacks(losslessOnly, "HIGH").isEmpty())
+        assertTrue(SflxQuality.fallbacks(losslessOnly, "LOW").isEmpty())
     }
 
     @Test
@@ -187,6 +205,7 @@ class SflxHostTest {
         // Lossless may reach Hi-Res and never the immersive mix.
         assertEquals("HI_RES", SflxQuality.forTier(manifest, "LOSSLESS"))
         assertEquals("MP3_320", SflxQuality.forTier(manifest, "HIGH"))
+        assertEquals(listOf("MP3_320"), SflxQuality.fallbacks(manifest, "MP3_320"))
         // The immersive request prefers the spatial tier, and is the only
         // request that is allowed to.
         assertEquals("ATMOS", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))

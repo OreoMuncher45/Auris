@@ -237,11 +237,13 @@ internal object QuickJsExecutor {
                 while (pools.size >= MAX_MODULES) {
                     val lruId = pools.keys.firstOrNull() ?: break
                     TrackLog.d(TAG, "  Evicting LRU module engine: $lruId")
-                    pools.remove(lruId)?.let { addAll(it.made) }
+                    pools.remove(lruId)?.let { add(it) }
                 }
             }
         }
-        evicted.forEach { runCatching { it.close() } }
+        // Retired, not closed outright: an evicted module may have an engine
+        // checked out, and closing that one from here would hang this thread.
+        evicted.forEach { retire(it) }
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
@@ -393,10 +395,10 @@ internal object QuickJsExecutor {
                 // hand out again, and three of those would deadlock the module.
                 // A retired pool's engine is closed instead — here, on the
                 // thread that was using it, which is the only thread that may.
-                if (pool.retired) {
+                // A pool retired while this call ran has a closed channel, so
+                // a failed send means the same thing: close, don't leak.
+                if (pool.retired || pool.free.trySend(qjs).isFailure) {
                     runCatching { qjs.close() }
-                } else {
-                    pool.free.trySend(qjs)
                 }
             }
         }
@@ -451,7 +453,21 @@ internal object QuickJsExecutor {
 
     fun unload(moduleId: String) {
         val pool = synchronized(engineLock) { pools.remove(moduleId) } ?: return
+        val closed = retire(pool)
+        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId) (closed $closed idle engines)")
+    }
+
+    /**
+     * Takes [pool] out of service: closes its idle engines now and leaves the
+     * checked-out ones to close themselves when handed back. Returns how many
+     * were closed here.
+     */
+    private fun retire(pool: Pool): Int {
         pool.retired = true
+        // Closing the channel wakes anyone waiting in [acquire] for an engine
+        // with a failure instead of leaving them parked forever; what is still
+        // buffered can be drained below all the same.
+        pool.free.close()
         // Only the engines nobody is inside. The rest close themselves as they
         // are handed back — see the `finally` in [callExport].
         var closed = 0
@@ -460,16 +476,16 @@ internal object QuickJsExecutor {
             runCatching { engine.close() }
             closed++
         }
-        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId) (closed $closed idle engines)")
+        return closed
     }
 
     fun unloadAll() {
         val all = synchronized(engineLock) {
-            val values = pools.values.flatMap { it.made }
+            val values = pools.values.toList()
             pools.clear()
             values
         }
-        all.forEach { runCatching { it.close() } }
+        all.forEach { retire(it) }
         TrackLog.d(TAG, "QuickJsExecutor.unloadAll()")
     }
 
@@ -697,9 +713,9 @@ internal object QuickJsExecutor {
                         // The synchronous bridge the Mornye shim rides on used
                         // to be silent, which hid the one fact that matters when
                         // a catalogue answers 200 with nothing in it: how big
-                        // the answer was. Log sizes, never the body, except for
-                        // an Amazon answer with no search template in it — that
-                        // is the refusal itself, and it holds no credentials.
+                        // the answer was. Log sizes, never the body — not even
+                        // an Amazon answer with no search template in it, since
+                        // these logs are shared by users.
                         TrackLog.d(
                             TAG,
                             "  httpSync $method ${redactModuleUrl(url)} req=${body?.length ?: 0}" +
@@ -708,7 +724,8 @@ internal object QuickJsExecutor {
                         if (url.contains("a2z.com") && !result.body.contains("SearchTemplate")) {
                             TrackLog.w(
                                 TAG,
-                                "  amazon answer without a search template: ${result.body.take(400)}",
+                                "  amazon answer without a search template: " +
+                                    "host=${url.toHttpUrlOrNull()?.host ?: "?"} (${result.body.length} chars)",
                             )
                         }
                         JSONObject()
@@ -949,7 +966,8 @@ internal object QuickJsExecutor {
     private fun requestBodyOf(body: String?, contentType: String?): okhttp3.RequestBody {
         val type = contentType?.trim()?.takeIf { it.isNotEmpty() }?.toMediaTypeOrNull()
             ?: "application/json; charset=utf-8".toMediaType()
-        return (body ?: "").toByteArray(Charsets.UTF_8).toRequestBody(type)
+        // In the charset the type names, so the bytes match the declared type.
+        return (body ?: "").toByteArray(type.charset(Charsets.UTF_8) ?: Charsets.UTF_8).toRequestBody(type)
     }
 
     // ── Polyfills ────────────────────────────────────────────────────────

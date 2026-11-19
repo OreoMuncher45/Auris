@@ -122,6 +122,9 @@ open class DiscordWebSocket(
 
     private val loopLock = Any()
 
+    /** Held while [disconnect] parks the loop and while the loop adopts a new socket. */
+    private val socketLock = Any()
+
     /** Set by [close]. Stops the loop retrying an intentionally closed socket. */
     @Volatile
     private var closed = false
@@ -214,13 +217,14 @@ open class DiscordWebSocket(
      */
     fun disconnect() {
         if (closed) return
-        pausedLoop = true
+        val socket = synchronized(socketLock) {
+            pausedLoop = true
+            websocket.also { websocket = null }
+        }
         sessionReady.value = false
         awaitingAck = false
         heartbeatJob?.cancel()
         heartbeatJob = null
-        val socket = websocket
-        websocket = null
         socket?.cancel()
         forgetSession()
         retrySignal.trySend(Unit)
@@ -265,7 +269,23 @@ open class DiscordWebSocket(
                     header("Cache-Control", "no-cache")
                     header("Pragma", "no-cache")
                 }
-                websocket = session
+                // disconnect() or close() may have run while the handshake was
+                // in flight, with no socket yet to cancel. Drop this one and go
+                // back to the top, which parks or exits. The check and the
+                // adoption are one step against disconnect(), so it either
+                // sees this socket to cancel or this sees it paused.
+                val adopted = synchronized(socketLock) {
+                    if (pausedLoop || closed) {
+                        false
+                    } else {
+                        websocket = session
+                        true
+                    }
+                }
+                if (!adopted) {
+                    session.cancel()
+                    continue
+                }
                 connected = true
                 backoff = INITIAL_RECONNECT_DELAY.inWholeMilliseconds
                 logger.info("Successfully connected to Discord Gateway.")

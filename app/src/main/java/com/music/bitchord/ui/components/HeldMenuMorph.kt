@@ -64,19 +64,3 @@ internal fun heldMenuMorph(fraction: Float, origin: Rect, laidOut: Rect): HeldMe
         translationY = lerp(origin.top - laidOut.top, 0f, p),
     )
 }
-
-/**
- * The corner radius for the same frame: the pressed item's plate radius where
- * the morph starts, the menu's own where it rests.
- *
- * Kept out of [heldMenuMorph] because the two are read at different times. The
- * rectangle is only known once the layout has measured the menu, which is
- * later and in the layout pass; the radius has to be built while the surface
- * is being composed, because a shape has to exist before anything can ask one
- * for its outline.
- */
-internal fun heldMenuCornerRadiusPx(
-    fraction: Float,
-    originRadiusPx: Float,
-    restingRadiusPx: Float,
-): Float = lerp(originRadiusPx, restingRadiusPx, fraction.coerceIn(0f, 1f))

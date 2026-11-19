@@ -260,6 +260,7 @@ private fun GlassFoldingNavBarChrome(
             .padding(bottom = 2.dp),
         accessory = playerAccessory,
         searchMode = search.visualActive,
+        searchPageShown = search.onSearchPage,
         searchBarContent = { contentModifier ->
             SearchBarPlaceholder(
                 state = search,

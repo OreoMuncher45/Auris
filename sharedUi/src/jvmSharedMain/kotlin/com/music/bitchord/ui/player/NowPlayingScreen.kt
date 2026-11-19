@@ -3377,24 +3377,30 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
     if (drag == null || pulled <= 0f) return
 
     onHold(true)
-    val velocity = VelocityTracker()
-    velocity.addPointerInputChange(drag)
-    slide.floatValue = (pulled / travel).coerceIn(0f, 1f)
-    verticalDrag(drag.id) { change ->
-        velocity.addPointerInputChange(change)
-        pulled -= change.positionChange().y
+    // A handler cancelled mid-drag (its pointerInput keys changed) never reaches
+    // the release, so the hold is handed back here too; the settle effect then
+    // runs toward whatever the queue's state already is.
+    val open = try {
+        val velocity = VelocityTracker()
+        velocity.addPointerInputChange(drag)
         slide.floatValue = (pulled / travel).coerceIn(0f, 1f)
-        change.consume()
-    }
+        verticalDrag(drag.id) { change ->
+            velocity.addPointerInputChange(change)
+            pulled -= change.positionChange().y
+            slide.floatValue = (pulled / travel).coerceIn(0f, 1f)
+            change.consume()
+        }
 
-    // A flick decides on its own — it says "open" without asking the finger to
-    // travel at all. Anything slower goes to whichever end it got nearer to.
-    val flick = -velocity.calculateVelocity().y
-    val open = when {
-        flick >= QUEUE_FLICK_VELOCITY -> true
-        flick <= -QUEUE_FLICK_VELOCITY -> false
-        else -> slide.floatValue >= QUEUE_CARRY_FRACTION
+        // A flick decides on its own — it says "open" without asking the finger to
+        // travel at all. Anything slower goes to whichever end it got nearer to.
+        val flick = -velocity.calculateVelocity().y
+        when {
+            flick >= QUEUE_FLICK_VELOCITY -> true
+            flick <= -QUEUE_FLICK_VELOCITY -> false
+            else -> slide.floatValue >= QUEUE_CARRY_FRACTION
+        }
+    } finally {
+        onHold(false)
     }
-    onHold(false)
     onSettle(open)
 }

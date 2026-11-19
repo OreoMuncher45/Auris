@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
@@ -61,6 +63,10 @@ import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.theme.AppFonts
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The Customisation settings, as sheets.
@@ -89,9 +95,12 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.background,
     ) {
+        // Scrolls, so the reset button stays reachable in a short window or
+        // with large text.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
@@ -341,6 +350,24 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
     }
 }
 
+/**
+ * Counts font choices made in the sheet. An import compares it with the count
+ * at pick time, so any choice made while it copies (even one back to the font
+ * that was already set) wins over the import.
+ */
+private var fontChoiceSerial = 0
+
+/** Serialises custom-font imports, which all write the same file. */
+private val fontImportLock = kotlinx.coroutines.sync.Mutex()
+
+/**
+ * Where an import runs: not the sheet's own scope, so closing the sheet mid-copy
+ * doesn't leave a new file on disk behind settings that were never updated.
+ */
+private val fontImportScope = kotlinx.coroutines.CoroutineScope(
+    kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate,
+)
+
 /** The face the whole app is set in, the listener's own file included. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -352,17 +379,32 @@ internal fun FontSheet(onDismiss: () -> Unit) {
     // A copy in the app's own storage: the document the listener picked can be
     // moved, deleted, or live on storage that is not mounted tomorrow, and a
     // face that vanishes takes every label with it.
+    // The copy runs off the main thread; the settings are applied back on it,
+    // and only once the copy has succeeded.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
-            target.parentFile?.mkdirs()
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            } ?: return@runCatching
-            AppFonts.forgetCustom()
-            AppSettings.setCustomFontPath(target.absolutePath)
-            AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+        val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
+        // Whatever was chosen when the file was picked: a choice made while the
+        // copy runs is newer, and wins.
+        val serialAtPick = fontChoiceSerial
+        fontImportScope.launch {
+            // One import at a time: two picks in quick succession write the same file.
+            fontImportLock.withLock {
+            val copied = withContext(Dispatchers.IO) {
+                runCatching {
+                    target.parentFile?.mkdirs()
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } != null
+                }.getOrDefault(false)
+            }
+            if (!copied) return@withLock
+            runCatching {
+                AppFonts.forgetCustom()
+                AppSettings.setCustomFontPath(target.absolutePath)
+                if (fontChoiceSerial == serialAtPick) AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+            }
+            }
         }
     }
 
@@ -404,6 +446,7 @@ internal fun FontSheet(onDismiss: () -> Unit) {
                             if (value == AppFonts.CHOICE_CUSTOM) {
                                 picker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf"))
                             } else {
+                                fontChoiceSerial++
                                 AppSettings.setAppFont(value)
                             }
                         }

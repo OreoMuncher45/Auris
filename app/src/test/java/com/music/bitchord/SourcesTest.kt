@@ -974,8 +974,10 @@ class SourcesTest {
         val wifi = AppSettings.audioQualityWifi.value
         val cellular = AppSettings.audioQualityCellular.value
         val metered = AppSettings.meteredConnection.value
+        val unsupported = AppSettings.unsupportedDolbyAtmos.value
         AppSettings.meteredConnection.value = null
         AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        AppSettings.unsupportedDolbyAtmos.value = false
         try {
             val request = SourceResolver.requestForNow()
             assertEquals(StreamRequest.Lossless, request)
@@ -986,6 +988,37 @@ class SourcesTest {
             AppSettings.audioQualityWifi.value = wifi
             AppSettings.audioQualityCellular.value = cellular
             AppSettings.meteredConnection.value = metered
+            AppSettings.unsupportedDolbyAtmos.value = unsupported
+        }
+    }
+
+    @Test
+    fun `software Atmos requires the unsupported-device opt-in and a real decoder`() {
+        DeviceCodecs.forcedHardware = false
+        DeviceCodecs.forced = true
+        val wifi = AppSettings.audioQualityWifi.value
+        val cellular = AppSettings.audioQualityCellular.value
+        val metered = AppSettings.meteredConnection.value
+        val unsupported = AppSettings.unsupportedDolbyAtmos.value
+        AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        AppSettings.unsupportedDolbyAtmos.value = true
+        try {
+            assertEquals(StreamRequest.Atmos, SourceResolver.requestForNow())
+            assertEquals(StreamRequest.Atmos, SourceResolver.requestForDownload(DownloadQuality.DOLBY))
+
+            // The preference cannot invent a decoder on a phone where even
+            // the bundled software decoder is unavailable.
+            DeviceCodecs.forced = false
+            assertEquals(StreamRequest.Lossless, SourceResolver.requestForNow())
+            assertEquals(StreamRequest.Lossless, SourceResolver.requestForDownload(DownloadQuality.DOLBY))
+        } finally {
+            DeviceCodecs.forcedHardware = null
+            DeviceCodecs.forced = null
+            AppSettings.audioQualityWifi.value = wifi
+            AppSettings.audioQualityCellular.value = cellular
+            AppSettings.meteredConnection.value = metered
+            AppSettings.unsupportedDolbyAtmos.value = unsupported
         }
     }
 
@@ -1450,6 +1483,17 @@ class SourcesTest {
         val target = TrackMatcher.Target("Brown Rang", "Yo Yo Honey Singh", durationSec = 175)
 
         assertNull(SourceResolver.bestAcross(listOf(source), target, StreamRequest.Best))
+    }
+
+    @Test
+    fun `a lossy request refuses a source that answers with lossless or Atmos`() = runBlocking {
+        // Qobuz publishes only FLAC tiers. Medium must make that source
+        // decline, not fetch its largest file because it outranks the others.
+        val qobuz = FakeSource("Qobuz", 0, StreamFormat("flac", bitDepth = 24), kind = SourceKind.MODULE)
+        assertNull(SourceResolver.bestAcross(listOf(qobuz), raceTarget(), StreamRequest.Best))
+
+        val atmos = FakeSource("Tidal", 0, StreamFormat("eac3-joc"), kind = SourceKind.MODULE)
+        assertNull(SourceResolver.bestAcross(listOf(atmos), raceTarget(), StreamRequest.Best))
     }
 
     /**

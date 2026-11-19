@@ -611,7 +611,7 @@ private fun SongRowContent(
                 )
             }
         }
-        // Same sheet the long-press opens, for anyone who doesn't think to hold.
+        // Same menu the long-press opens, for anyone who doesn't think to hold.
         if (onMore != null && !matching && !unavailable) {
             RowMoreButton(onClick = onMore)
         }
@@ -631,12 +631,18 @@ fun RowMoreButton(
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     iconSize: Dp = 20.dp,
 ) {
+    // Where the menu it opens hangs from: kept by reference, read on the tap.
+    val origin = rememberMenuButtonOrigin()
     Box(
         modifier = modifier
             .hangIntoGutter(ROW_MORE_OUTSET)
             .size(36.dp)
+            .menuOriginOf(origin)
             .clip(CircleShape)
-            .clickable(onClick = onClick),
+            .clickable {
+                origin.record()
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(

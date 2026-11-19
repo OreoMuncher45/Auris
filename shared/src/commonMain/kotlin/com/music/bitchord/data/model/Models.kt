@@ -366,6 +366,13 @@ sealed interface SearchResult {
     data class Browse(val item: BrowseItem) : SearchResult
 }
 
+/** The song carried by a search row, whether it is promoted or ordinary. */
+fun SearchResult.songOrNull(): Song? = when (this) {
+    is SearchResult.TopTrack -> song
+    is SearchResult.Track -> song
+    is SearchResult.Browse -> null
+}
+
 enum class SearchFilter(val label: String, val params: String?) {
     /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
     ALL("All", null),

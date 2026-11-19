@@ -298,6 +298,12 @@ jobs:
           grep -q "versionCode = $vc" app/build.gradle.kts
           grep -q "versionName = \"$v\"" app/build.gradle.kts
 
+      # Run the same gates as a local check on x86_64 too. Robolectric's
+      # Conscrypt dependency has no Linux ARM build, so framework integration
+      # tests (including resolved local-HLS playback) cannot run on an ARM host.
+      - name: Test Android and player UI
+        run: ./gradlew :app:testDevDebugUnitTest :sharedUi:jvmTest
+
       # The dev flavour, release build type: R8, no debuggable runtime, signed.
       # The ABI splits give one APK per architecture plus a universal one.
       - name: Build the APKs
@@ -372,6 +378,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Only a draft is touched. A published release keeps its assets
+            # and notes: --clobber would replace them before the check below.
+            if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "$TAG is a published release; refusing to change it" >&2
+              exit 1
+            fi
             gh release upload "$TAG" dist/*.apk --repo "$GITHUB_REPOSITORY" --clobber
             if [ -n "$NOTES" ]; then
               gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES"

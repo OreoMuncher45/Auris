@@ -138,11 +138,24 @@ object TrackMatcher {
      * The second chance is for a row [score] refused over its runtime, its
      * album or its version marker: still the right artist and the right
      * song, so it plays. It is not for a different song by that artist, so
-     * the title has to match outright: see [sameTitle].
+     * the title has to match outright: see [sameTitle]. Two things are not
+     * relaxed: a no-vocal take (instrumental, karaoke) is a different
+     * recording, and a stated clean or explicit edition must still agree.
      */
-    fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? =
-        best(candidates, target)
-            ?: candidates.firstOrNull { sharesArtist(target.artist, it.artist) && sameTitle(it, target) }
+    fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? {
+        best(candidates, target)?.let { return it }
+        val wantedNoVocal = (parseTitle(target.title, target.artist).versions + albumVersionMarkers(target.album)) intersect
+            NOVOCAL_TAKES
+        return candidates.firstOrNull {
+            sharesArtist(target.artist, it.artist) && sameTitle(it, target) &&
+                noVocalTakes(it) == wantedNoVocal &&
+                explicitScore(target.isExplicit, it.isExplicit) != null
+        }
+    }
+
+    /** The no-vocal markers on [song], from its title or its album, as [score] reads them. */
+    private fun noVocalTakes(song: Song): Set<String> =
+        (parseTitle(song.title, song.artist).versions + albumVersionMarkers(song.albumName)) intersect NOVOCAL_TAKES
 
     /**
      * Whether [candidate]'s title is [target]'s: the same core, or the same in

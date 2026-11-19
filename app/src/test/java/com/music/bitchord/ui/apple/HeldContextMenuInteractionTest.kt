@@ -29,6 +29,7 @@
 
 package com.music.bitchord.ui.apple
 
+import androidx.compose.runtime.snapshots.Snapshot
 import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
@@ -331,6 +332,53 @@ class HeldContextMenuInteractionTest {
         assertEquals(1, dismissals)
         compose.onNodeWithText(ROW_ONE).assertDoesNotExist()
         assertEquals("a dismissed menu must not run a row behind the dismisser's back", 0, actions)
+    }
+
+    /**
+     * A row tapped while the menu is on its way out does nothing. The menu now
+     * closes on the anchored menu's own spring, so for those frames its rows
+     * are still drawn — and must not be live, or one tap would run an action
+     * the listener had already dismissed the menu instead of choosing.
+     */
+    @Test
+    fun aRowTappedWhileTheMenuClosesDoesNothing() {
+        val item = mutableStateOf<String?>(ITEM)
+        val held = mutableStateOf<HeldItem?>(heldItem())
+        var actions = 0
+
+        compose.setContent {
+            CompositionLocalProvider(LocalAppBackdrop provides emptyBackdrop()) {
+                Column(Modifier.fillMaxSize()) {
+                    HeldContextMenu(
+                        item = item.value,
+                        held = held.value,
+                        hazeState = hazeState,
+                        onDismiss = {},
+                        onPreviewClick = null,
+                    ) {
+                        CompositionLocalProvider(LocalActionRowStyle provides ActionRowStyle.Menu) {
+                            ActionRow(icon = Icons.Rounded.Add, label = ROW_ONE) { actions++ }
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        val row = compose.onNodeWithText(ROW_ONE).fetchSemanticsNode().boundsInRoot.center
+
+        compose.mainClock.autoAdvance = false
+        item.value = null
+        held.value = null
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
+
+        // The row has left the accessibility tree, so the tap goes where it is drawn.
+        compose.onRoot().performTouchInput { click(row) }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+
+        assertEquals("a row in a closing menu must not run its action", 0, actions)
     }
 
     /**

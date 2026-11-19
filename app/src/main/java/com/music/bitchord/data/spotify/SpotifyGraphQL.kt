@@ -208,8 +208,12 @@ internal object SpotifyGraphQL {
             }
             code == 401 ->
                 throw SpotifyGraphQLException("Spotify refused $operation (HTTP 401)", unauthorised = true)
-            code !in 200..299 ->
+            code !in 200..299 -> {
+                // Possibly the build named in spotify-app-version, which is kept
+                // across starts; read it afresh for the next request.
+                SpotifyToken.forgetClientVersion()
                 throw SpotifyGraphQLException("Spotify refused $operation (HTTP $code)")
+            }
         }
 
         val root = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()

@@ -530,6 +530,16 @@ object AppSettings {
     val simulatedAtmos = MutableStateFlow(true)
 
     /**
+     * True software Dolby decoding on phones with no hardware Dolby decoder.
+     *
+     * Off by default: E-AC-3/JOC decoded on the CPU costs whole cores for as
+     * long as it plays and will drain the battery. The quality rung still
+     * chooses Atmos; this separate, warned opt-in says whether an unsupported
+     * phone may spend that power on it. Hardware decoding never reads this.
+     */
+    val unsupportedDolbyAtmos = MutableStateFlow(false)
+
+    /**
      * Apple Music Sing equivalent: how much of the center-mixed lead vocal to
      * remove, 0..1. 0 is off (bit-exact passthrough); 1 is a full
      * band-limited vocal cut. Applied inside ExoPlayer's pipeline by
@@ -1621,6 +1631,8 @@ object AppSettings {
         // On by default: see [simulatedAtmos]. A listener who has turned it
         // off keeps it off — the stored preference wins over the default.
         simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, true)
+        // Always opt-in, never migrated from the old always-on Atmos behaviour.
+        unsupportedDolbyAtmos.value = prefs.getBoolean(KEY_UNSUPPORTED_DOLBY_ATMOS, false)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -2191,6 +2203,11 @@ object AppSettings {
     fun setSimulatedAtmos(value: Boolean) {
         simulatedAtmos.value = value
         prefs.edit().putBoolean(KEY_SIMULATED_ATMOS, value).apply()
+    }
+
+    fun setUnsupportedDolbyAtmos(value: Boolean) {
+        unsupportedDolbyAtmos.value = value
+        prefs.edit().putBoolean(KEY_UNSUPPORTED_DOLBY_ATMOS, value).apply()
     }
 
     fun setSingLevel(value: Float) {
@@ -3261,6 +3278,7 @@ object AppSettings {
     private const val KEY_LIQUID_GLASS_HAPTICS = "liquid_glass_haptics"
     private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
     private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
+    private const val KEY_UNSUPPORTED_DOLBY_ATMOS = "dolby_atmos_unsupported"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"
     /** Stored by name so an unknown value falls back rather than crashing. */
