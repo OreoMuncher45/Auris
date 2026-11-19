@@ -618,7 +618,10 @@ object AudioCache {
             offline = ::isOffline,
             isComplete = ::isComplete,
             isKeptOrigin = ::isKeptOrigin,
-        )?.also(borrowedKeys::lend)
+        )?.also { key ->
+            borrowedKeys.lend(key)
+            openingRequest.get()?.lend(key)
+        }
     }
 
     /**
@@ -627,6 +630,14 @@ object AudioCache {
      * See [BorrowedEntries] for why they are read-only and for how long.
      */
     private val borrowedKeys = BorrowedEntries()
+
+    /**
+     * The playback request whose CacheDataSource is opening on this thread, so
+     * [keyFactory] can tell it which key it was lent. Media3 builds the key at
+     * the top of `CacheDataSource.open`, on the opening thread, before any
+     * upstream is opened; [playbackFactory] sets this around that call only.
+     */
+    private val openingRequest = ThreadLocal<BorrowedEntries?>()
 
     /**
      * The decision behind [completeSibling], with the cache and the network
@@ -1171,7 +1182,13 @@ object AudioCache {
      * copied, the other is not contiguous audio.
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
-        val cacheDs = cacheFactory(upstream).createDataSource()
+        // What this one request was lent, kept for its whole life — every
+        // reopen of it included. [borrowedKeys] protects the file; this
+        // protects the stream: a reader part-way through a borrowed copy must
+        // not continue from another rendition even if the copy is discarded
+        // or evicted under it, when the file-wide mark has gone.
+        val lent = BorrowedEntries()
+        val cacheDs = cacheFactory(refusingLent(counted(upstream), lent)).createDataSource()
         val upstreamDs = upstream.createDataSource()
         object : DataSource {
             private var activeDs: DataSource = cacheDs
@@ -1182,8 +1199,17 @@ object AudioCache {
             }
 
             override fun open(dataSpec: DataSpec): Long {
-                activeDs = if (bypassesPlaybackCache(dataSpec)) upstreamDs else cacheDs
-                return activeDs.open(dataSpec)
+                if (bypassesPlaybackCache(dataSpec)) {
+                    activeDs = upstreamDs
+                    return upstreamDs.open(dataSpec)
+                }
+                activeDs = cacheDs
+                openingRequest.set(lent)
+                try {
+                    return cacheDs.open(dataSpec)
+                } finally {
+                    openingRequest.set(null)
+                }
             }
 
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
@@ -1197,9 +1223,30 @@ object AudioCache {
         }
     }
 
+    /**
+     * [upstream], refusing any fetch into a key this request was [lent] — see
+     * [playbackFactory]. Already counted: wrapped outside [counted] so a
+     * refusal never registers as a writer.
+     */
+    private fun refusingLent(upstream: DataSource.Factory, lent: BorrowedEntries): DataSource.Factory =
+        DataSource.Factory {
+            val inner = upstream.createDataSource()
+            object : DataSource by inner {
+                override fun open(dataSpec: DataSpec): Long {
+                    dataSpec.key?.let { key ->
+                        if (!lent.mayFill(key)) {
+                            throw IOException("cache entry $key was lent to this request whole; it is not refilled")
+                        }
+                    }
+                    return inner.open(dataSpec)
+                }
+            }
+        }
+
+    /** [upstream] arrives already [counted] (or is [NoUpstream], which needs no counting). */
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
-        .setUpstreamDataSourceFactory(counted(upstream))
+        .setUpstreamDataSourceFactory(upstream)
         .setCacheKeyFactory(keyFactory)
         // A cache write that fails (full disk, evicted mid-write) should drop
         // to streaming, not surface as a playback error.
@@ -1258,8 +1305,8 @@ object AudioCache {
                 // CacheDataSource sets the cache key on the spec it hands
                 // upstream. A borrowed sibling is read-only: see [borrowedKeys].
                 dataSpec.key?.let { key ->
-                    if (!borrowedKeys.mayFill(key) { cache.getCachedSpans(it).isNotEmpty() }) {
-                        throw IOException("cache entry $key was lent to this request whole and is no longer complete")
+                    if (!borrowedKeys.mayFill(key)) {
+                        throw IOException("cache entry $key was lent whole to another request; it is not refilled")
                     }
                 }
                 // Counted before the open, so before the resolver reads the
