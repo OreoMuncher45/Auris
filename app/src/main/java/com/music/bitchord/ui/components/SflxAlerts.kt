@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menu.HostedSheetDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -78,7 +79,7 @@ fun SflxInstallDialog(
         if (state is SflxCatalog.InstallState.Done) onInstalled()
     }
 
-    AlertDialog(
+    HostedSheetDialog(
         onDismissRequest = onDismiss,
         title = { Text("Install an extension") },
         text = {
@@ -266,7 +267,7 @@ fun SflxSettingsDialog(
     val scope = rememberCoroutineScope()
     var verifying by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    HostedSheetDialog(
         onDismissRequest = onDismiss,
         title = { Text(installed.manifest.displayName) },
         text = {

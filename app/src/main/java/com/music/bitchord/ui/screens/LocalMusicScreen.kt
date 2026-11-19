@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.MenuChoiceRow
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import com.music.bitchord.ui.components.menuOriginOf
 import androidx.activity.compose.BackHandler
@@ -1540,7 +1542,6 @@ private fun LocalSearchField(
     onViewTypeToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var sortMenuOpen by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
     Row(
         modifier = modifier
@@ -1613,46 +1614,38 @@ private fun LocalSearchField(
             )
         }
         Spacer(Modifier.width(2.dp))
-        Box {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable { sortMenuOpen = true },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.Sort,
-                    contentDescription = stringResource(R.string.sort_music),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(19.dp),
-                )
-            }
-            DropdownMenu(
-                expanded = sortMenuOpen,
-                onDismissRequest = { sortMenuOpen = false },
-            ) {
-                LocalMusicSort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.localizedLabel()) },
-                        trailingIcon = if (option == sortOrder) {
-                            {
-                                Icon(
-                                    Icons.Rounded.Check,
-                                    contentDescription = stringResource(R.string.selected),
-                                    modifier = Modifier.size(18.dp),
-                                )
+        val menuHost = LocalMenuHost.current
+        val sortOrigin = rememberMenuButtonOrigin()
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .menuOriginOf(sortOrigin)
+                .clip(CircleShape)
+                .clickable {
+                    menuHost?.open(sortOrigin.boundsInWindow()) { close ->
+                        val selectedLabel = stringResource(R.string.selected)
+                        LocalMusicSort.entries.forEach { option ->
+                            MenuChoiceRow(
+                                label = option.localizedLabel(),
+                                selected = option == sortOrder,
+                                ink = MaterialTheme.colorScheme.onSurface,
+                                accent = MaterialTheme.colorScheme.primary,
+                                selectedDescription = selectedLabel,
+                            ) {
+                                onSortOrderChange(option)
+                                close()
                             }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            onSortOrderChange(option)
-                            sortMenuOpen = false
-                        },
-                    )
-                }
-            }
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Sort,
+                contentDescription = stringResource(R.string.sort_music),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
         }
     }
 }
