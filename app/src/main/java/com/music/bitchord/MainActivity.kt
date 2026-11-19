@@ -1411,6 +1411,8 @@ private fun BitChordApp(
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
         versions.switchingAudioVersion = true
+        val token = Any()
+        versions.switchToken = token
         versions.keepVideoId = null
         val holdUntilAligned = AppSettings.smartVersionAlignment.value
         if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = true
@@ -1477,7 +1479,7 @@ private fun BitChordApp(
             return true
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            versions.switchingAudioVersion = false
+            if (versions.switchToken === token) versions.switchingAudioVersion = false
         }
     }
 
@@ -1495,6 +1497,8 @@ private fun BitChordApp(
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
         versions.switchingAudioVersion = true
+        val token = Any()
+        versions.switchToken = token
         // Mirrors the music-only path: the bar lights up for the resolve and
         // the service keeps it lit through the measure-and-cut, and the row
         // stays on the audio version until that swap actually commits — see
@@ -1553,7 +1557,7 @@ private fun BitChordApp(
             if (resumeAfterResolution) c.play()
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            versions.switchingAudioVersion = false
+            if (versions.switchToken === token) versions.switchingAudioVersion = false
         }
     }
 
@@ -1691,11 +1695,13 @@ private fun BitChordApp(
             versions.convertedFromVideo = null
             versions.convertedAudioId = null
             versions.switchingAudioVersion = false
+            versions.switchToken = null
         }
         if (player.song?.videoId != versions.convertedVideoId) {
             versions.convertedFromAudio = null
             versions.convertedVideoId = null
             versions.switchingAudioVersion = false
+            versions.switchToken = null
         }
     }
 
@@ -7778,6 +7784,9 @@ private class VersionSwitchState {
     var convertedFromVideo by mutableStateOf<Song?>(null)
     var convertedAudioId by mutableStateOf<String?>(null)
     var switchingAudioVersion by mutableStateOf(false)
+    // Which switch owns [switchingAudioVersion], so a slow one for an earlier
+    // track doesn't clear the flag of the switch that replaced it.
+    var switchToken: Any? = null
     // Revert is an explicit choice for this occurrence of the track. Without
     // remembering it, the automatic preference would see the restored video
     // as a fresh item and immediately convert it again.
