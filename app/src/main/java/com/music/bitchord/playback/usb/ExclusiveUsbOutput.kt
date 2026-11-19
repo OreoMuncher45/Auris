@@ -627,13 +627,13 @@ class ExclusiveUsbOutput(
         }
 
         stopStreamLocked()
-        // Reopened straight away, so the DAC stays off Android's driver in
-        // between. Any failure below closes through failLocked, which hands
-        // it back.
-        usbAudio.closeDevice(returnToAndroid = false)
         connection = null
         currentDeviceKey = deviceKey
-        val info = usbAudio.openDevice(usbDevice)
+        // A fresh open replaces the held connection only once it succeeds, so
+        // the DAC stays off Android's driver between tracks and a failed
+        // reopen can still hand it back. Any failure below closes through
+        // failLocked, which hands it back.
+        val info = usbAudio.openDevice(usbDevice, forceReopen = true)
             ?: return failLocked("openDevice failed" + (usbAudio.lastOpenError?.let { ": $it" } ?: ""))
         // Fills clockSourceRateMap, which lets setSampleRate() prefer the
         // crystal whose GET_RANGE actually covers the track rate.
