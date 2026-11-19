@@ -627,7 +627,10 @@ class ExclusiveUsbOutput(
         }
 
         stopStreamLocked()
-        usbAudio.closeDevice()
+        // Reopened straight away, so the DAC stays off Android's driver in
+        // between. Any failure below closes through failLocked, which hands
+        // it back.
+        usbAudio.closeDevice(returnToAndroid = false)
         connection = null
         currentDeviceKey = deviceKey
         val info = usbAudio.openDevice(usbDevice)

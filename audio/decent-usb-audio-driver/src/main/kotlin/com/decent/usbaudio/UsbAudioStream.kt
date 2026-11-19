@@ -233,6 +233,17 @@ class UsbAudioStream(
         @JvmStatic
         external fun nativeUsbSpeed(fd: Int): Int
 
+        /** USBDEVFS_RELEASEINTERFACE. 0 on success, -errno on error. */
+        @JvmStatic
+        external fun nativeReleaseInterface(fd: Int, interfaceNumber: Int): Int
+
+        /**
+         * USBDEVFS_CONNECT: rebinds the kernel's own driver to an interface a
+         * force-claim detached it from. 0 on success, -errno on error.
+         */
+        @JvmStatic
+        external fun nativeConnectKernelDriver(fd: Int, interfaceNumber: Int): Int
+
         /** "full" (USB 1.1, 1 ms frames), "high" (USB 2.0, 125 µs microframes)… */
         fun usbSpeedName(fd: Int): String = when (runCatching { nativeUsbSpeed(fd) }.getOrDefault(-1)) {
             1 -> "low"

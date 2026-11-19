@@ -734,6 +734,35 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbReset(
     return 0;
 }
 
+// Auris: drops this fd's claim on one interface. 0 on success, -errno on error.
+JNIEXPORT jint JNICALL
+Java_com_decent_usbaudio_UsbAudioStream_nativeReleaseInterface(
+        JNIEnv *, jclass, jint fd, jint ifno) {
+    unsigned int i = (unsigned int) ifno;
+    int ret = ioctl(fd, USBDEVFS_RELEASEINTERFACE, &i);
+    return ret < 0 ? -errno : 0;
+}
+
+// Auris: asks the kernel to bind its own driver (snd-usb-audio) to an
+// interface a force-claim detached it from. Releasing a claim does not do
+// this on its own. 0 on success, -errno on error (-EBUSY: a driver is bound).
+JNIEXPORT jint JNICALL
+Java_com_decent_usbaudio_UsbAudioStream_nativeConnectKernelDriver(
+        JNIEnv *, jclass, jint fd, jint ifno) {
+    struct usbdevfs_ioctl cmd = {};
+    cmd.ifno = ifno;
+    cmd.ioctl_code = USBDEVFS_CONNECT;
+    cmd.data = nullptr;
+    int ret = ioctl(fd, USBDEVFS_IOCTL, &cmd);
+    if (ret < 0) {
+        int err = errno;
+        LOGI("USBDEVFS_CONNECT ifno=%d errno=%d", ifno, err);
+        return -err;
+    }
+    LOGI("USBDEVFS_CONNECT ifno=%d ok", ifno);
+    return 0;
+}
+
 } // extern "C" — pause for non-JNI functions used by native-audio-engine
 
 // ── Integer padding (lossless, zero float) ──────────────────────────
