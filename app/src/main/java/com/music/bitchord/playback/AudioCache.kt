@@ -608,11 +608,36 @@ object AudioCache {
      */
     private fun completeSibling(videoId: String, preferred: String): String? {
         if (!::cache.isInitialized) return null
-        if (cache.getCachedSpans(preferred).isNotEmpty()) return null
-        val siblings = siblingKeysOf(videoId).filter { it != preferred }
-        if (isOffline()) return siblings.firstOrNull(::isComplete)
+        return chooseCompleteSibling(
+            videoId = videoId,
+            preferred = preferred,
+            holdsBytes = { cache.getCachedSpans(it).isNotEmpty() },
+            offline = ::isOffline,
+            isComplete = ::isComplete,
+            isKeptOrigin = ::isKeptOrigin,
+        )
+    }
+
+    /**
+     * The decision behind [completeSibling], with the cache and the network
+     * passed in so it can be pinned without either — see
+     * `AudioCacheSiblingTest`. Inline so the lambdas cost nothing on the open
+     * path, and ordered so the cheap answers go first: an entry that already
+     * holds bytes ends it before the offline flag or any metadata is read.
+     */
+    internal inline fun chooseCompleteSibling(
+        videoId: String,
+        preferred: String,
+        holdsBytes: (String) -> Boolean,
+        offline: () -> Boolean,
+        isComplete: (String) -> Boolean,
+        isKeptOrigin: (String) -> Boolean,
+    ): String? {
+        if (holdsBytes(preferred)) return null
+        val siblings = siblingKeysOf(videoId)
+        if (offline()) return siblings.firstOrNull { it != preferred && isComplete(it) }
         if (preferred != videoId) return null
-        return siblings.firstOrNull { key -> isComplete(key) && isKeptOrigin(key) }
+        return siblings.firstOrNull { it != preferred && isComplete(it) && isKeptOrigin(it) }
     }
 
     /**
@@ -631,7 +656,7 @@ object AudioCache {
      * under, in the order a fallback should try them: the plain entry first,
      * then the current `#alt2` buckets.
      */
-    private fun siblingKeysOf(videoId: String): List<String> =
+    internal fun siblingKeysOf(videoId: String): List<String> =
         listOf(videoId, "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
 
     /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
