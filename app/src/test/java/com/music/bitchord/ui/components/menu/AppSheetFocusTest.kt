@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.clickable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Offset
@@ -176,6 +177,10 @@ class AppSheetFocusTest {
                             Modifier
                                 .focusRequester(behind)
                                 .onFocusChanged { behindFocused = it.isFocused }
+                                // Focusable in touch mode too, which a plain
+                                // clickable isn't: the test needs it to really
+                                // hold the focus before the switch.
+                                .focusProperties { canFocus = true }
                                 .clickable { behindClicks++ },
                         )
                         AppSheet(item = item, onDismiss = { item = null }) {
@@ -191,6 +196,8 @@ class AppSheetFocusTest {
             }
         }
         compose.runOnIdle { behind.requestFocus() }
+        compose.waitForIdle()
+        assertTrue("the control behind holds the focus to begin with", behindFocused)
         // Opened by touch: nothing moves the focus.
         item = "downloads"
         compose.waitForIdle()
