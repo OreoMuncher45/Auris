@@ -137,6 +137,8 @@ fun MenuDivider(color: Color, density: MenuDensity = MenuDensity.Menu) {
 fun MenuHeader(
     title: String,
     subtitle: String?,
+    /** More than one for a subtitle that is a warning, not a credit, and must stay whole. */
+    subtitleMaxLines: Int = 1,
     ink: Color = MaterialTheme.colorScheme.onSurface,
     mutedInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     dividerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
@@ -159,7 +161,7 @@ fun MenuHeader(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = mutedInk,
-                maxLines = 1,
+                maxLines = subtitleMaxLines,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -184,6 +186,9 @@ fun MenuChoiceRow(
     accent: Color,
     selectedDescription: String?,
     modifier: Modifier = Modifier,
+    /** What the choice costs or means, under its label — a bitrate, a data use. */
+    detail: String? = null,
+    detailInk: Color = ink.copy(alpha = 0.6f),
     onClick: () -> Unit,
 ) {
     Row(
@@ -194,16 +199,26 @@ fun MenuChoiceRow(
             .padding(horizontal = MenuTokens.MenuRowPaddingH, vertical = MenuTokens.MenuRowPaddingV),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            ),
-            color = ink,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+                color = ink,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (detail != null) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = detailInk,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (selected) {
             Spacer(Modifier.width(12.dp))
             Icon(

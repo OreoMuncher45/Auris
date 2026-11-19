@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -92,72 +95,29 @@ internal fun SettingsDialogs(
         JamesDspSheet(onDismiss = { sheets.showJamesDsp = false })
     }
 
-    sheets.pickingQuality?.let { target ->
-        val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
-        val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingQuality = null },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            QualitySheet(
-                target = target,
-                selected = when (target) {
-                    QualityTarget.WIFI -> wifiQuality
-                    QualityTarget.CELLULAR -> cellularQuality
-                },
-                // Writes the one ceiling that was being edited and nothing
-                // else. There used to be a `SourceRegistry.applyQualityPreset`
-                // call here that flipped the module and JioSaavn switches to
-                // match — which meant budgeting *mobile data* switched those
-                // sources off while sitting on Wi-Fi, and coming back to Wi-Fi
-                // never switched them on again. Which sources a rung consults
-                // is now read per stream off the connection in force; see
-                // [AudioQuality.permits].
-                onSelect = { quality ->
-                    when (target) {
-                        QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
-                        QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
-                    }
-                    sheets.pickingQuality = null
-                },
-            )
-        }
+    // The option pickers open on the row that asked for them, in the app's
+    // anchored menu, drawn over everything by the root's menu host. Each
+    // flag is only the request: handed to the host here and cleared at once,
+    // the host owns the menu from then on. The row recorded where it is as
+    // it was tapped (see SettingsRow).
+    val menuHost = LocalMenuHost.current
+    LaunchedEffect(sheets.pickingQuality) {
+        val target = sheets.pickingQuality ?: return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> QualityMenu(target, close) }
+        sheets.pickingQuality = null
     }
-
-    if (sheets.pickingDownloadQuality) {
-        val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingDownloadQuality = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            DownloadQualitySheet(
-                selected = downloadQuality,
-                onSelect = { quality ->
-                    AppSettings.setDownloadQuality(quality)
-                    sheets.pickingDownloadQuality = false
-                },
-            )
-        }
+    LaunchedEffect(sheets.pickingDownloadQuality) {
+        if (!sheets.pickingDownloadQuality) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> DownloadQualityMenu(close) }
+        sheets.pickingDownloadQuality = false
     }
-
     if (sheets.pickingHomeProvider) {
         HomeProviderPicker(onDismiss = { sheets.pickingHomeProvider = false })
     }
-
-    if (sheets.pickingAutomixPerformance) {
-        val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingAutomixPerformance = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            AutomixPerformanceSheet(
-                selected = automixPerformance,
-                onSelect = { mode ->
-                    AppSettings.setAutomixPerformanceMode(mode)
-                    sheets.pickingAutomixPerformance = false
-                },
-            )
-        }
+    LaunchedEffect(sheets.pickingAutomixPerformance) {
+        if (!sheets.pickingAutomixPerformance) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> AutomixPerformanceMenu(close) }
+        sheets.pickingAutomixPerformance = false
     }
 
     // Everything in the Cached songs folder goes with it, so say so first.

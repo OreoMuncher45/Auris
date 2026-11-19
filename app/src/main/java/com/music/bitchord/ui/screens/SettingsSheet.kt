@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -1066,10 +1068,22 @@ internal fun SettingsRow(
      */
     titleMaxLines: Int = 1,
 ) {
+    // Where a picker it opens hangs from: kept by reference, read on the tap.
+    val origin = rememberMenuButtonOrigin()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .menuOriginOf(origin)
+            .then(
+                if (onClick != null && enabled) {
+                    Modifier.clickable {
+                        origin.record()
+                        onClick()
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .alpha(if (enabled) 1f else 0.45f)
             .heightIn(min = 52.dp)
             .padding(horizontal = ROW_INSET, vertical = 12.dp),

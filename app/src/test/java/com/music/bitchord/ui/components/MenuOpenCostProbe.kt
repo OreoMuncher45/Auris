@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.layout.padding
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,7 +39,6 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.SongSort
-import com.music.bitchord.ui.screens.QualitySheet
 import com.music.bitchord.ui.screens.QualityTarget
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -251,19 +251,19 @@ class MenuOpenCostProbe {
 
     /** The same content as [qualitySheet], in the app's in-place sheet. */
     @Test
-    fun qualityAppSheet() = measure("QualitySheet(AppSheet)") { open, close ->
+    fun qualityAppSheet() = measure("Sheet rows (AppSheet)") { open, close ->
         Box(Modifier.fillMaxSize()) {
             com.music.bitchord.ui.components.menu.AppSheet(item = Unit.takeIf { open }, onDismiss = close) {
-                QualitySheet(target = QualityTarget.WIFI, selected = AudioQuality.HIGH, onSelect = {})
+                sheetRows()
             }
         }
     }
 
     @Test
-    fun qualitySheet() = measure("QualitySheet(ModalBottomSheet)") { open, close ->
+    fun qualitySheet() = measure("Sheet rows (ModalBottomSheet)") { open, close ->
         if (open) {
             ModalBottomSheet(onDismissRequest = close, containerColor = MaterialTheme.colorScheme.background) {
-                QualitySheet(target = QualityTarget.WIFI, selected = AudioQuality.HIGH, onSelect = {})
+                sheetRows()
             }
         }
     }
@@ -301,6 +301,24 @@ class MenuOpenCostProbe {
                     selectedDescription = null,
                     onClick = close,
                 )
+            }
+        }
+    }
+
+    /**
+     * What both sheet cases carry: a heading and eight two-line choice rows,
+     * the shape the Settings quality picker had when it was a sheet. The same
+     * content in both, so the two differ only in the sheet around it.
+     */
+    @Composable
+    private fun sheetRows() {
+        androidx.compose.foundation.layout.Column {
+            Text("Audio quality", style = MaterialTheme.typography.titleLarge)
+            repeat(8) { i ->
+                androidx.compose.foundation.layout.Column(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
+                    Text("Rung $i", style = MaterialTheme.typography.bodyLarge)
+                    Text("${i * 64} kbps · ${i * 30} MB/h", style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
     }

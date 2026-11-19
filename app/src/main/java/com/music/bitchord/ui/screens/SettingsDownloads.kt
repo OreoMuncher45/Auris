@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -108,92 +109,24 @@ private fun DownloadQuality.localizedLabel(): String = stringResource(
 )
 
 /**
- * What to keep when a track is saved, with what each rung costs on disk.
- *
- * Priced per track rather than per hour, the way [QualitySheet] is. That sheet
- * is answering "what will listening cost me this hour", because a stream is
- * spent again on every replay; this one is answering "what will keeping this
- * cost me", and the answer is charged once. Same widget, different question, so
- * the numbers beside the options are in different units on purpose.
+ * The download-quality picker, opened on its row: priced per track rather
+ * than per hour, the way [QualityMenu] is, because a download is a file of a
+ * size, not a stream. Best first.
  */
 @Composable
-internal fun DownloadQualitySheet(
-    selected: DownloadQuality,
-    onSelect: (DownloadQuality) -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Download,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.download_quality),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(R.string.download_quality_dialog_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        // Scrolls, so the last option stays reachable in a short window or
-        // with large text; the heading above stays put. `fill = false` keeps
-        // a short list from stretching the sheet.
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            // Best first, matching [QualitySheet] — and here the best rung is also
-            // the default, so the checkmark starts where the eye does.
-            DownloadQuality.entries.reversed().forEach { quality ->
-                val chosen = quality == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelect(quality)
-                        }
-                        .padding(horizontal = 22.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = quality.localizedLabel(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = stringResource(R.string.quality_per_track, quality.detail, quality.perTrack),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (chosen) {
-                        Spacer(Modifier.width(12.dp))
-                        Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
+internal fun ColumnScope.DownloadQualityMenu(close: () -> Unit) {
+    val selected by AppSettings.downloadQuality.collectAsStateWithLifecycle()
+    SettingsChoiceMenu(
+        title = stringResource(R.string.download_quality),
+        subtitle = stringResource(R.string.download_quality_dialog_subtitle),
+        choices = DownloadQuality.entries.reversed().map { quality ->
+            SettingsChoice(
+                label = quality.localizedLabel(),
+                detail = stringResource(R.string.quality_per_track, quality.detail, quality.perTrack),
+                selected = quality == selected,
+            ) { AppSettings.setDownloadQuality(quality) }
+        },
+        close = close,
+    )
 }
+
