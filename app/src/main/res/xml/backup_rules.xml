@@ -15,5 +15,6 @@
     <exclude domain="sharedpref" path="bitchord_sources.xml" />
     <exclude domain="sharedpref" path="bitchord_sources_plain.xml" />
     <exclude domain="sharedpref" path="bitchord_spotify_tokens.xml" />
+    <exclude domain="sharedpref" path="bitchord_spotify_tokens.xml.bak" />
     <exclude domain="file" path="signed_sessions/" />
 </full-backup-content>
