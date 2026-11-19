@@ -31,6 +31,8 @@ internal fun <T : Any> AnchoredItemMenu(
     item: T?,
     anchorInWindow: () -> Rect?,
     onDismiss: () -> Unit,
+    /** Forces dark (true) or light (false) colours; null follows the theme. */
+    dark: Boolean? = null,
     content: @Composable ColumnScope.(T) -> Unit,
 ) {
     val presence = rememberMenuPresence(item != null)
@@ -60,6 +62,7 @@ internal fun <T : Any> AnchoredItemMenu(
         // Over a page of rows rather than the artwork: frosted, so the rows
         // behind don't read through the menu's own.
         frost = MenuTokens.PageFrost,
+        dark = dark,
     ) {
         key(shown.opening) { content(current) }
     }
