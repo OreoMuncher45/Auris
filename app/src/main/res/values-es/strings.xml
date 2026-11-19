@@ -850,7 +850,8 @@
 
     <string name="output_precision">Precisión de salida</string>
     <string name="bit_perfect">Salida bit-perfect</string>
-    <string name="bit_perfect_subtitle">Envía las muestras decodificadas sin cambios: sin DSP, sin nivelación ni fundido cruzado. La ruta debe poder transportar el formato de origen.</string>
+    <string name="bit_perfect_subtitle">Envía las muestras decodificadas sin cambios: sin DSP, sin nivelación, fundido cruzado ni mezcla automática. La ruta debe poder transportar el formato de origen.</string>
+    <string name="transitions_off_bit_perfect">Desactivado mientras la salida bit-perfect esté activada.</string>
 
     <string name="prefer_usb_dac">Preferir DAC USB</string>
     <string name="loudness_normalization">Normalización de volumen</string>

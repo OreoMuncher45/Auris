@@ -904,7 +904,8 @@
 
     <string name="output_precision">Точность вывода</string>
     <string name="bit_perfect">Бит-идеальный вывод</string>
-    <string name="bit_perfect_subtitle">Передаёт декодированные сэмплы без изменений: без DSP, выравнивания громкости и кроссфейда. Маршрут вывода должен поддерживать формат источника.</string>
+    <string name="bit_perfect_subtitle">Передаёт декодированные сэмплы без изменений: без DSP, выравнивания громкости, кроссфейда и Автомикса. Маршрут вывода должен поддерживать формат источника.</string>
+    <string name="transitions_off_bit_perfect">Отключено, пока включён бит-идеальный вывод.</string>
 
     <string name="personal">Личный</string>
 

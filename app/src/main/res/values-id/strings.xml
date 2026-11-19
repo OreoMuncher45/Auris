@@ -855,7 +855,8 @@
 
     <string name="output_precision">Presisi output</string>
     <string name="bit_perfect">Output bit-perfect</string>
-    <string name="bit_perfect_subtitle">Mengirim sampel hasil dekode tanpa perubahan: tanpa DSP, penyeimbangan level, atau crossfade. Rute harus mampu membawa format sumber.</string>
+    <string name="bit_perfect_subtitle">Mengirim sampel hasil dekode tanpa perubahan: tanpa DSP, penyeimbangan level, crossfade, atau Automix. Rute harus mampu membawa format sumber.</string>
+    <string name="transitions_off_bit_perfect">Nonaktif selama output bit-perfect aktif.</string>
 
     <string name="personal">Pribadi</string>
 
