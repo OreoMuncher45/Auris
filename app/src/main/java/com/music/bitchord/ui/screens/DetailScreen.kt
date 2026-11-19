@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import android.os.Build
 import com.music.bitchord.R
 
@@ -1015,12 +1017,17 @@ private fun ReleaseHeader(
                         size = circleSize,
                     )
                     onMore?.let { more ->
+                        val origin = rememberMenuButtonOrigin()
                         CircleIconButton(
                             icon = Icons.Rounded.MoreHoriz,
                             contentDescription = stringResource(R.string.more),
                             palette = palette,
-                            onClick = { more(songs) },
+                            onClick = {
+                                origin.record()
+                                more(songs)
+                            },
                             size = circleSize,
+                            modifier = Modifier.menuOriginOf(origin),
                         )
                     }
                 }
@@ -1627,10 +1634,11 @@ private fun CircleIconButton(
     size: Dp = 50.dp,
     /** Whiter veil in place of the dark glass — the artist page's Apple look. */
     lightFill: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(size)
             .then(
                 if (lightFill) {
