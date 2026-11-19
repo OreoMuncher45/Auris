@@ -25,7 +25,8 @@ class RootPageKeyTest {
         sheets: RootSheets = RootSheets(),
         showContinueListening: Boolean = false,
         detail: DetailPage? = null,
-    ) = rootPageKey(nav, sheets, showContinueListening, detail)
+        stackSize: Int = if (detail == null) 0 else 1,
+    ) = rootPageKey(nav, sheets, showContinueListening, detail, stackSize)
 
     @Test fun `the selected tab when nothing is open over it`() {
         assertEquals("tab:0", key())
@@ -148,5 +149,57 @@ class RootPageKeyTest {
             assertEquals("VLplaylist", key(sheets = RootSheets().apply(open), detail = playlist))
         }
         assertEquals("VLplaylist", key(showContinueListening = true, detail = playlist))
+    }
+
+    @Test fun `a page pushed after Replay comes up over it, one Replay was opened over stays under`() {
+        var depth = 1
+        val nav = RootNav().apply { stackDepth = { depth } }
+        // Replay from the player menu, over an open album.
+        nav.showReplay = true
+        assertEquals("replay", key(nav = nav, detail = playlist, stackSize = 1))
+        // "Go to album" from the player while Replay is up.
+        depth = 2
+        assertEquals("VLplaylist", key(nav = nav, detail = playlist, stackSize = 2))
+        // Back pops it: Replay again.
+        assertEquals("replay", key(nav = nav, detail = playlist, stackSize = 1))
+    }
+
+    @Test fun `the audiobook pages and an Apple podcast give way to a page pushed after them`() {
+        val nav = RootNav().apply { stackDepth = { 0 } }
+        val sheets = RootSheets().apply { stackDepth = { 0 } }
+        nav.showAudiobooks = true
+        assertEquals("audiobooks", key(nav = nav))
+        assertEquals("VLplaylist", key(nav = nav, detail = playlist))
+        nav.showAudiobooks = false
+        nav.itunesPodcastId = "123"
+        assertEquals("itunespodcast", key(nav = nav))
+        assertEquals("VLplaylist", key(nav = nav, detail = playlist))
+        nav.itunesPodcastId = null
+        sheets.openAudiobook = com.music.bitchord.data.audiobook.Audiobook(id = "b", title = "A book", author = "", coverUrl = null, language = null, totalSeconds = null, sectionCount = 1, genres = emptyList())
+        assertEquals("audiobook", key(sheets = sheets))
+        assertEquals("VLplaylist", key(sheets = sheets, detail = playlist))
+    }
+
+    @Test fun `the depth survives a restore`() {
+        val nav = RootNav().apply {
+            stackDepth = { 1 }
+            showReplay = true
+        }
+        @Suppress("UNCHECKED_CAST")
+        val saved = with(RootNav.Saver) { androidx.compose.runtime.saveable.SaverScope { true }.save(nav) }!!
+        val restored = RootNav.Saver.restore(saved)!!
+        assertEquals(1, restored.replayDepth)
+        assertEquals("VLplaylist", key(nav = restored, detail = playlist, stackSize = 2))
+    }
+
+    @Test fun `Replay opened again over a pushed album comes back on top`() {
+        var depth = 1
+        val nav = RootNav().apply { stackDepth = { depth } }
+        nav.showReplay = true
+        depth = 2
+        assertEquals("VLplaylist", key(nav = nav, detail = playlist, stackSize = 2))
+        // The player menu's Replay, with the album still over it.
+        nav.showReplay = true
+        assertEquals("replay", key(nav = nav, detail = playlist, stackSize = 2))
     }
 }
