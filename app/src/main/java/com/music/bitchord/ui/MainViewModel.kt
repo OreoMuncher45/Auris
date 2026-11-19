@@ -2916,13 +2916,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Judged after the blocked-artist filter: a page whose every shelf
             // is blocked must not leave the cached page up under the new header.
             val visible = outcome.shelves.withoutBlockedArtists()
-            if (visible.isEmpty()) {
-                // Replaces the page whole: nothing added while it loaded stays.
-                _homeRaw.value = emptyList()
-                publishHeaderOnlyHome()
-            } else {
-                publishHomeShelves(visible)
-            }
+            // Replaces the page whole, as a refresh does: nothing added while it
+            // loaded (Recents after a play, say) stays under Spotify's shelves.
+            homeSeenTitles.clear()
+            _homeRaw.value = emptyList()
+            if (visible.isEmpty()) publishHeaderOnlyHome() else publishHomeShelves(visible)
             keepHomeCache(identity, generation, cacheOwner)
         }
     }
