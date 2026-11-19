@@ -380,8 +380,9 @@ object Downloads {
             val saved = decode(KEY_SAVED, serializer) { prefs.getString(it, null) }
             val metadata = decode(KEY_SAVED_METADATA, metadataSerializer) { prefs.getString(it, null) }
             val collections = decode(KEY_SAVED_COLLECTIONS, collectionSerializer) { prefs.getString(it, null) }
-            _saved.updateAndGet { saved + it }
+            // Metadata first, for the reason given in [record].
             _savedMetadata.updateAndGet { metadata + it }
+            _saved.updateAndGet { saved + it }
             _collections.updateAndGet { collections + it }
             // Opened last, and opened whatever happened above: a decode failure
             // is logged and treated as an empty library, and the waiter still
@@ -1187,6 +1188,13 @@ object Downloads {
      * since this is the only record that a file was written. Both flows are
      * updated compare-and-set, and the persist is serialised so the copy that
      * reaches disk is never older than one already written.
+     *
+     * The metadata is updated before [saved], every time. [saved] is the flow
+     * the app watches, and what reacts to it (the Downloads page retaking
+     * itself, Quick Picks offline) reads the rows off [savedMetadata]: set the
+     * other way round, a collector that runs between the two writes sees the
+     * new file without its row, and nothing tells it to look again, so the
+     * last file of a batch could be missing from the page.
      */
     private fun record(
         saved: (Map<String, String>) -> Map<String, String>,
@@ -1195,8 +1203,8 @@ object Downloads {
         if (!::prefs.isInitialized) {
             // Nothing to write to yet: keep the in-memory update, which the
             // next init will not know about, but do not pretend it was saved.
-            _saved.updateAndGet(saved)
             _savedMetadata.updateAndGet(meta)
+            _saved.updateAndGet(saved)
             return
         }
         // The lock covers the read as well as the write. It used to start after
@@ -1213,8 +1221,8 @@ object Downloads {
             // One entry per collection opened, never removed. Cheap to keep
             // until the generation moves, which is every mutation.
             collectionSongsCache.clear()
-            val savedMap = _saved.updateAndGet(saved)
             val metaMap = _savedMetadata.updateAndGet(meta)
+            val savedMap = _saved.updateAndGet(saved)
             persistLocked(
                 buildMap {
                     put(KEY_SAVED, json.encodeToString(serializer, savedMap))
