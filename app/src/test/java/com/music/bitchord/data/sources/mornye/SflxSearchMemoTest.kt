@@ -63,6 +63,39 @@ class SflxSearchMemoTest {
     }
 
     @Test
+    fun `an invalidation fences the questions still running`() = runBlocking {
+        // A reinstall or a settings change while the old script is still
+        // answering: a caller after it must ask the new one, and the old
+        // answer must not be kept for the cache's lifetime.
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+
+        val before = async {
+            memo.once("amazon|stream|x") {
+                asked.incrementAndGet()
+                started.complete(Unit)
+                gate.await()
+                Result.success("old script")
+            }
+        }
+        started.await()
+        memo.forgetMatching("amazon|")
+        val after = memo.once("amazon|stream|x") {
+            asked.incrementAndGet()
+            Result.success("new script")
+        }
+        gate.complete(Unit)
+
+        assertEquals("the caller after the change asked afresh", "new script", after.getOrNull())
+        assertEquals("the caller before it still hears its answer", "old script", before.await().getOrNull())
+        assertEquals(2, asked.get())
+        delay(50)
+        assertEquals("the old answer was not kept over the new one", "new script", memo.cached("amazon|stream|x"))
+    }
+
+    @Test
     fun `an answer is kept for the next caller`() = runBlocking {
         val memo = SflxSearchMemo<String>(ttlMs = 120_000)
         val asked = AtomicInteger(0)
