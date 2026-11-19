@@ -98,7 +98,6 @@ fun LyricsSourcesDialog(
     onOpenExtensionSettings: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val selected by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val savedOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
     val prioritizeSyllableSync by AppSettings.prioritizeSyllableSync.collectAsStateWithLifecycle()
@@ -110,164 +109,115 @@ fun LyricsSourcesDialog(
     val needsSetup = LyricsRepository.extensionSetup
     var showPaxSenixKeyDialog by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ALERT_CORNER)
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SCRIM_COLOR)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
             modifier = Modifier
-                .width(ALERT_WIDTH)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
-                        )
-                    },
-                )
-                // Swallows the tap before it reaches the scrim behind, so
-                // touching the card itself never dismisses it.
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = {},
-                ),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 19.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = stringResource(R.string.lyrics_sources),
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.W600,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    text = stringResource(R.string.lyrics_sources_order),
-                    modifier = Modifier.padding(top = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
-                        lineHeight = 17.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-            }
-
-            // Capped and scrolled rather than laid out at full height: there
-            // are enough providers now that the card ran off both ends of a
-            // phone, taking Reset and Done with it. Still a plain Column
-            // inside — the drag measures itself against a fixed row pitch and
-            // a lazy list would recycle the row being dragged out from under
-            // the finger. The cap and its scroll state live inside
-            // [ReorderableSourceList] itself, since the edge auto-scroll needs
-            // both.
-            ReorderableSourceList(
-                order = savedOrder,
-                selected = selected,
-                onReorder = AppSettings::setLyricsSourceOrder,
-                onToggle = { source ->
-                    val checked = source in selected
-                    // The last one standing can't be unchecked — an empty
-                    // list is indistinguishable from switching lyrics off,
-                    // and there is already a switch for that a row above
-                    // this dialog.
-                    if (checked && selected.size <= 1) return@ReorderableSourceList
-                    AppSettings.setLyricsSources(
-                        if (checked) selected - source else selected + source,
-                    )
-                },
-            )
-
-            AlertRule()
-            AlertAction(
-                label = stringResource(
-                    if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_missing
-                    else R.string.paxsenix_api_key_configured,
+            Text(
+                text = stringResource(R.string.lyrics_sources),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.W600,
                 ),
-                emphasised = false,
-                onClick = { showPaxSenixKeyDialog = true },
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
             )
-            if (lyricsExtension != null) {
-                // The door to the one field that makes this source answer.
-                // Said plainly, because the failure it prevents is invisible:
-                // a package waiting for a token misses every song, and a miss
-                // says nothing about why.
-                AlertRule()
-                AlertAction(
-                    label = buildString {
-                        append(lyricsExtension.manifest.displayName)
-                        append(" · ")
-                        append(stringResource(R.string.settings))
-                        needsSetup?.let { append(" — ").append(it.settingLabel) }
-                    },
-                    emphasised = needsSetup != null,
-                    onClick = { onOpenExtensionSettings(lyricsExtension.id) },
-                )
-            }
-            AlertRule()
-            SyllableSyncToggle(
-                checked = prioritizeSyllableSync,
-                onToggle = { AppSettings.setPrioritizeSyllableSync(!prioritizeSyllableSync) },
+            Text(
+                text = stringResource(R.string.lyrics_sources_order),
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
             )
+        }
 
+        // Capped and scrolled rather than laid out at full height: there
+        // are enough providers now that the card ran off both ends of a
+        // phone, taking Reset and Done with it. Still a plain Column
+        // inside — the drag measures itself against a fixed row pitch and
+        // a lazy list would recycle the row being dragged out from under
+        // the finger. The cap and its scroll state live inside
+        // [ReorderableSourceList] itself, since the edge auto-scroll needs
+        // both.
+        ReorderableSourceList(
+            order = savedOrder,
+            selected = selected,
+            onReorder = AppSettings::setLyricsSourceOrder,
+            onToggle = { source ->
+                val checked = source in selected
+                // The last one standing can't be unchecked — an empty
+                // list is indistinguishable from switching lyrics off,
+                // and there is already a switch for that a row above
+                // this dialog.
+                if (checked && selected.size <= 1) return@ReorderableSourceList
+                AppSettings.setLyricsSources(
+                    if (checked) selected - source else selected + source,
+                )
+            },
+        )
+
+        AlertRule()
+        AlertAction(
+            label = stringResource(
+                if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_missing
+                else R.string.paxsenix_api_key_configured,
+            ),
+            emphasised = false,
+            onClick = { showPaxSenixKeyDialog = true },
+        )
+        if (lyricsExtension != null) {
+            // The door to the one field that makes this source answer.
+            // Said plainly, because the failure it prevents is invisible:
+            // a package waiting for a token misses every song, and a miss
+            // says nothing about why.
             AlertRule()
             AlertAction(
-                label = stringResource(R.string.reset_to_default),
-                emphasised = false,
-                onClick = AppSettings::resetLyricsSourceSettings,
+                label = buildString {
+                    append(lyricsExtension.manifest.displayName)
+                    append(" · ")
+                    append(stringResource(R.string.settings))
+                    needsSetup?.let { append(" — ").append(it.settingLabel) }
+                },
+                emphasised = needsSetup != null,
+                onClick = { onOpenExtensionSettings(lyricsExtension.id) },
             )
-            AlertRule()
-            AlertAction(label = stringResource(R.string.done), emphasised = true, onClick = onDismiss)
         }
+        AlertRule()
+        SyllableSyncToggle(
+            checked = prioritizeSyllableSync,
+            onToggle = { AppSettings.setPrioritizeSyllableSync(!prioritizeSyllableSync) },
+        )
+
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.reset_to_default),
+            emphasised = false,
+            onClick = AppSettings::resetLyricsSourceSettings,
+        )
+        AlertRule()
+        AlertAction(label = stringResource(R.string.done), emphasised = true, onClick = onDismiss)
     }
 
     if (showPaxSenixKeyDialog) {
         var input by remember(paxSenixApiKey) { mutableStateOf(paxSenixApiKey) }
-        AlertDialog(
-            onDismissRequest = { showPaxSenixKeyDialog = false },
-            title = { Text(stringResource(R.string.paxsenix_api_key)) },
-            text = {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        TextValueAlert(
+            title = stringResource(R.string.paxsenix_api_key),
+            message = "",
+            placeholder = stringResource(R.string.paxsenix_api_key),
+            value = input,
+            onValueChange = { input = it },
+            onSave = {
+                AppSettings.setPaxSenixApiKey(input)
+                showPaxSenixKeyDialog = false
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    AppSettings.setPaxSenixApiKey(input)
-                    showPaxSenixKeyDialog = false
-                }) { Text(stringResource(R.string.save)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPaxSenixKeyDialog = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { showPaxSenixKeyDialog = false },
+            isPassword = true,
         )
     }
 }

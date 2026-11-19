@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -477,11 +479,17 @@ fun TopBarAccountButton(
 ) {
     val translation = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    // The account menu hangs off the photo: where it is, recorded on the tap.
+    val origin = rememberMenuButtonOrigin()
     // Wrapped in an IconButton so it keeps the 48dp target, the ripple and the
     // spacing every other action in this bar has.
     IconButton(
-        onClick = onClick,
+        onClick = {
+            origin.record()
+            onClick()
+        },
         modifier = modifier
+            .menuOriginOf(origin)
             .graphicsLayer { translationY = translation.value }
             .pointerInput(onSwipeProfile) {
                 if (onSwipeProfile == null) return@pointerInput

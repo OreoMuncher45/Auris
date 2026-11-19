@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
@@ -278,19 +282,13 @@ fun EqualizerScreen(
         Spacer(Modifier.height(32.dp))
     }
 
-    if (pickingPreset) {
-        ModalBottomSheet(
-            onDismissRequest = { pickingPreset = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            PresetSheet(
-                selected = preset,
-                onSelect = {
-                    AppSettings.setEqualizerPreset(it)
-                    pickingPreset = false
-                },
-            )
-        }
+    // The preset picker opens on its row, in the app's anchored menu over
+    // everything (see SettingsDialogs' pickers); the flag is only the request.
+    val menuHost = LocalMenuHost.current
+    LaunchedEffect(pickingPreset) {
+        if (!pickingPreset) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> PresetMenu(close) }
+        pickingPreset = false
     }
 }
 
@@ -814,65 +812,29 @@ private fun BalanceControl(
 
 // ---- Presets ---------------------------------------------------------------
 
+/**
+ * The equalizer's preset picker, as the anchored menu's choices. Custom is a
+ * state the bands can be in, not a curve anyone can choose, so it is offered
+ * only when it is the one in force. Reads the preset itself, so the check
+ * follows a choice live.
+ */
 @Composable
-private fun PresetSheet(selected: EqualizerPreset, onSelect: (EqualizerPreset) -> Unit) {
-    val haptics = rememberHaptics()
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-        Text(
-            text = stringResource(R.string.equalizer_preset),
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-        )
-        HorizontalDivider(
-            thickness = 0.5.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
-        // Sixteen curves is taller than the sheet on most phones, and laid
-        // out straight the ones past the fold were simply unreachable. The
-        // title and its rule stay put while the list underneath scrolls;
-        // `fill = false` keeps a short list from stretching the sheet to the
-        // full height it is allowed.
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            EqualizerPreset.entries.forEach { preset ->
-                // Custom is a state the bands can be in, not a curve anyone can
-                // choose, so it is only ever shown when it is the one in force.
-                if (preset == EqualizerPreset.CUSTOM && selected != EqualizerPreset.CUSTOM) {
-                    return@forEach
-                }
-                val chosen = preset == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = preset != EqualizerPreset.CUSTOM) {
-                            haptics.play(Haptic.Select)
-                            onSelect(preset)
-                        }
-                        .padding(horizontal = 22.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = preset.localizedLabel(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (chosen) {
-                        Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-        }
-        }
-    }
+private fun ColumnScope.PresetMenu(close: () -> Unit) {
+    val selected by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
+    SettingsChoiceMenu(
+        title = stringResource(R.string.equalizer_preset),
+        subtitle = null,
+        choices = EqualizerPreset.entries
+            .filter { it != EqualizerPreset.CUSTOM || selected == EqualizerPreset.CUSTOM }
+            .map { preset ->
+                SettingsChoice(
+                    label = preset.localizedLabel(),
+                    detail = null,
+                    selected = preset == selected,
+                ) { AppSettings.setEqualizerPreset(preset) }
+            },
+        close = close,
+    )
 }
 
 @Composable

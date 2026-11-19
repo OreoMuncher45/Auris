@@ -47,8 +47,11 @@ class MenuButtonOrigin internal constructor() {
 
     /** Tells [MenuOrigin] where this button is. Call it from the click, before opening the menu. */
     fun record() {
-        coordinates?.takeIf { it.isAttached }?.let { MenuOrigin.record(it.boundsInWindow()) }
+        boundsInWindow()?.let(MenuOrigin::record)
     }
+
+    /** Where this button is now, in window coordinates, or null before it has been placed. */
+    fun boundsInWindow(): Rect? = coordinates?.takeIf { it.isAttached }?.boundsInWindow()
 }
 
 @Composable

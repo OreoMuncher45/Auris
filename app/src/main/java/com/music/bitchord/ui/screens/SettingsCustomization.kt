@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.HostedSheetDialog
+import com.music.bitchord.ui.components.menu.HostedSheet
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -85,10 +87,7 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
     val recents by AppSettings.recentPlayerColors.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<AppSettings.PlayerColorTarget?>(null) }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    HostedSheet(onDismiss = onDismiss) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -234,10 +233,7 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
         homeShelfTitles.distinct().sortedBy { rank[it] ?: Int.MAX_VALUE }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    HostedSheet(onDismiss = onDismiss, dragFromContent = false) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -366,10 +362,7 @@ internal fun FontSheet(onDismiss: () -> Unit) {
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    HostedSheet(onDismiss = onDismiss) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -603,7 +596,7 @@ private fun ColorPickerDialog(
         )
     }
     val recents by AppSettings.recentPlayerColors.collectAsStateWithLifecycle()
-    AlertDialog(
+    HostedSheetDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

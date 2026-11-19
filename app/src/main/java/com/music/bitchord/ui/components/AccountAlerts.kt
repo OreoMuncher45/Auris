@@ -1,5 +1,13 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.music.bitchord.ui.components.menu.ConfirmationPresenter
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menu.LocalInDialogHost
+import com.music.bitchord.ui.components.menu.LocalDialogHost
+import com.music.bitchord.ui.components.menu.HostedDialog
+import androidx.activity.compose.BackHandler
 import com.music.bitchord.R
 
 import androidx.compose.foundation.background
@@ -245,7 +253,7 @@ fun DiscordTokenAlert(
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun TextValueAlert(
-    hazeState: HazeState,
+    hazeState: HazeState? = null,
     title: String,
     message: String,
     placeholder: String,
@@ -257,6 +265,8 @@ fun TextValueAlert(
     saveEnabled: Boolean = true,
     /** A third action between Save and Cancel, for a value that can be cleared. */
     onRemove: (() -> Unit)? = null,
+    /** Hides what is typed — a key, a token. */
+    isPassword: Boolean = false,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -282,6 +292,7 @@ fun TextValueAlert(
                 value = value,
                 onValueChange = onValueChange,
                 placeholder = placeholder,
+                isPassword = isPassword,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { onSave() }),
             )
@@ -676,12 +687,14 @@ fun WebDavConflictAlert(
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun ConfirmationAlert(
-    hazeState: HazeState,
+    hazeState: HazeState? = null,
     title: String,
     description: String,
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** The way out's label — "Not yet" where the choice is about timing, not refusal. */
+    dismissLabel: String? = null,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -707,7 +720,7 @@ fun ConfirmationAlert(
         AlertRule()
         AlertAction(label = confirmLabel, emphasised = true, onClick = onConfirm)
         AlertRule()
-        AlertAction(label = stringResource(R.string.cancel), emphasised = false, onClick = onDismiss)
+        AlertAction(label = dismissLabel ?: stringResource(R.string.cancel), emphasised = false, onClick = onDismiss)
     }
 }
 
@@ -820,22 +833,48 @@ private fun ChoiceRow(
     }
 }
 
-/** The scrim + frosted card frame shared by every UIAlertController-style dialog. */
+/**
+ * The scrim + frosted card frame shared by every dialog in the app — every
+ * confirmation and every name to type.
+ *
+ * Drawn by the root (see [com.music.bitchord.ui.components.menu.DialogHostState])
+ * wherever it is called from, so a dialog asked for from inside Settings or
+ * a sheet still sits over everything and frosts the page with the root's
+ * haze; [hazeState] is only the fallback where there is no host. Back and a
+ * tap on the page dismiss it; mid-exit, nothing on it answers.
+ */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun AlertScaffold(
-    hazeState: HazeState,
+    hazeState: HazeState?,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (LocalDialogHost.current != null && !LocalInDialogHost.current) {
+        HostedDialog { rootHaze -> AlertCard(rootHaze ?: hazeState, onDismiss, content) }
+        return
+    }
+    AlertCard(hazeState, onDismiss, content)
+}
+
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun AlertCard(
+    hazeState: HazeState?,
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(ALERT_CORNER)
+    val interactive = LocalMenuInteractive.current
+    BackHandler(enabled = interactive, onBack = onDismiss)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(SCRIM_COLOR)
             .clickable(
+                enabled = interactive,
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onDismiss,
@@ -847,7 +886,7 @@ fun AlertScaffold(
                 .width(ALERT_WIDTH)
                 .clip(shape)
                 .then(
-                    if (reduceDynamicBlur) {
+                    if (reduceDynamicBlur || hazeState == null) {
                         Modifier.background(MaterialTheme.colorScheme.surface)
                     } else {
                         Modifier.optimizedHazeEffect(
@@ -860,8 +899,39 @@ fun AlertScaffold(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = {},
-                ),
+                )
+                // Mid-exit, nothing in it answers, whatever its controls are:
+                // out of the accessibility tree, and every touch taken by the
+                // cover below before it reaches a row.
+                .then(if (interactive) Modifier else Modifier.clearAndSetSemantics { }),
             content = content,
         )
+        if (!interactive) Box(Modifier.matchParentSize().pointerInput(Unit) { swallowAllTouches() })
     }
+}
+
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.swallowAllTouches() {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() }
+        }
+    }
+}
+
+/** The app's confirmation card, for the shared screens that ask through [com.music.bitchord.ui.components.menu.LocalConfirmation]. */
+object AppConfirmation : ConfirmationPresenter {
+    @Composable
+    override fun Confirm(
+        title: String,
+        message: String,
+        confirmLabel: String,
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit,
+    ) = ConfirmationAlert(
+        title = title,
+        description = message,
+        confirmLabel = confirmLabel,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
 }

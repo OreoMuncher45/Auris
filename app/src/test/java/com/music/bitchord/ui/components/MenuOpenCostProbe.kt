@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.layout.padding
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,12 +35,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.music.bitchord.FrostedSortMenu
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.SongSort
-import com.music.bitchord.ui.screens.QualitySheet
 import com.music.bitchord.ui.screens.QualityTarget
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -244,26 +243,27 @@ class MenuOpenCostProbe {
         }
     }
 
+    /** The track sort, which was FrostedSortMenu before UI 12's stage 3. */
     @Test
-    fun frostedSortMenu() = measure("FrostedSortMenu") { open, close ->
-        val haze = androidx.compose.runtime.remember { HazeState() }
-        Box(Modifier.fillMaxSize().hazeSource(haze))
-        if (open) {
-            FrostedSortMenu(
-                hazeState = haze,
-                selected = SongSort.DEFAULT,
-                onSelect = {},
-                onFlipDateDirection = {},
-                onDismiss = close,
-            )
+    fun songSortMenu() = measure("Song sort (MenuHost, SongSortMenu)") { open, _ ->
+        hostedMenu(open) { close -> com.music.bitchord.SongSortMenu(browseId = "probe", onChosen = close) }
+    }
+
+    /** The same content as [qualitySheet], in the app's in-place sheet. */
+    @Test
+    fun qualityAppSheet() = measure("Sheet rows (AppSheet)") { open, close ->
+        Box(Modifier.fillMaxSize()) {
+            com.music.bitchord.ui.components.menu.AppSheet(item = Unit.takeIf { open }, onDismiss = close) {
+                sheetRows()
+            }
         }
     }
 
     @Test
-    fun qualitySheet() = measure("QualitySheet(ModalBottomSheet)") { open, close ->
+    fun qualitySheet() = measure("Sheet rows (ModalBottomSheet)") { open, close ->
         if (open) {
             ModalBottomSheet(onDismissRequest = close, containerColor = MaterialTheme.colorScheme.background) {
-                QualitySheet(target = QualityTarget.WIFI, selected = AudioQuality.HIGH, onSelect = {})
+                sheetRows()
             }
         }
     }
@@ -287,4 +287,54 @@ class MenuOpenCostProbe {
         }
     }
 
+
+    /** The same four choices as [dropdownMenu], on the shared menu through the host. */
+    @Test
+    fun choiceMenu() = measure("Choices (MenuHost, 4 MenuChoiceRow)") { open, _ ->
+        hostedMenu(open) { close ->
+            listOf("Title A-Z", "Title Z-A", "Date added", "Date modified").forEachIndexed { i, label ->
+                com.music.bitchord.ui.components.menu.MenuChoiceRow(
+                    label = label,
+                    selected = i == 0,
+                    ink = Color.White,
+                    accent = Color.Red,
+                    selectedDescription = null,
+                    onClick = close,
+                )
+            }
+        }
+    }
+
+    /**
+     * What both sheet cases carry: a heading and eight two-line choice rows,
+     * the shape the Settings quality picker had when it was a sheet. The same
+     * content in both, so the two differ only in the sheet around it.
+     */
+    @Composable
+    private fun sheetRows() {
+        androidx.compose.foundation.layout.Column {
+            Text("Audio quality", style = MaterialTheme.typography.titleLarge)
+            repeat(8) { i ->
+                androidx.compose.foundation.layout.Column(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
+                    Text("Rung $i", style = MaterialTheme.typography.bodyLarge)
+                    Text("${i * 64} kbps · ${i * 30} MB/h", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+
+    /** A page with the root's menu host over it, opening [content] while [open]. */
+    @Composable
+    private fun hostedMenu(
+        open: Boolean,
+        content: @Composable androidx.compose.foundation.layout.ColumnScope.(close: () -> Unit) -> Unit,
+    ) {
+        val host = androidx.compose.runtime.remember { com.music.bitchord.ui.components.menu.MenuHostState() }
+        androidx.compose.runtime.LaunchedEffect(open) {
+            if (open) host.open(Rect(950f, 150f, 1060f, 260f), content = content) else host.close()
+        }
+        Box(Modifier.fillMaxSize()) {
+            com.music.bitchord.ui.components.menu.MenuHostOverlay(host)
+        }
+    }
 }

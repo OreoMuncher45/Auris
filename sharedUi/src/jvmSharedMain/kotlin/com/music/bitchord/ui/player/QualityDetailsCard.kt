@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -21,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,22 +43,19 @@ import com.music.bitchord.data.NerdStats
 internal fun QualityDetailsCard(
     stats: NerdStats.Snapshot,
     modifier: Modifier = Modifier,
+    /**
+     * False inside the app's anchored menu, which brings the surface, the
+     * edge and the entrance itself: the card is then only its rows.
+     */
+    framed: Boolean = true,
 ) {
-    // Pop in from the badge: start small, spring to full.
-    val scale = remember { Animatable(0.6f) }
-    LaunchedEffect(Unit) {
-        scale.animateTo(1f, spring(stiffness = Spring.StiffnessMediumLow))
-    }
     val labelColor = Color.White.copy(alpha = 0.55f)
     val valueColor = Color.White
     Column(
         modifier = modifier
-            .scale(scale.value)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xF01C1C20))
-            .border(0.5.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+            .then(if (framed) Modifier.qualityCardFrame() else Modifier.fillMaxWidth())
             .padding(horizontal = 16.dp, vertical = 13.dp)
-            .width(252.dp),
+            .then(if (framed) Modifier.width(252.dp) else Modifier),
     ) {
         QualityRow("Source", stats.sourceName?.takeIf { it.isNotBlank() } ?: "—", labelColor, valueColor)
         Spacer(Modifier.height(7.dp))
@@ -128,4 +125,22 @@ private fun NerdStats.Snapshot.fileFormatLabel(): String {
         codec != null -> codec
         else -> mimeType?.substringAfterLast('/')?.uppercase() ?: "—"
     }
+}
+
+/** The card's own dark surface, and its pop in from the badge, for where it stands alone. */
+@Composable
+private fun Modifier.qualityCardFrame(): Modifier {
+    // Pop in from the badge: start small, spring to full.
+    val scale = remember { Animatable(0.6f) }
+    LaunchedEffect(Unit) {
+        scale.animateTo(1f, spring(stiffness = Spring.StiffnessMediumLow))
+    }
+    return this
+        .graphicsLayer {
+            scaleX = scale.value
+            scaleY = scale.value
+        }
+        .clip(RoundedCornerShape(16.dp))
+        .background(Color(0xF01C1C20))
+        .border(0.5.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
 }
