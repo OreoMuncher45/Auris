@@ -129,6 +129,8 @@ object SflxRegistry {
                 }
             } else {
                 val branch = ref.ifBlank { "main" }
+                // A link to the registry file itself (a GitHub "blob" page).
+                if (path.endsWith(".json", ignoreCase = true)) out += "$base/$branch/$path"
                 out += "$base/$branch/${path.trimEnd('/')}/registry.json"
             }
             return out.toList()
