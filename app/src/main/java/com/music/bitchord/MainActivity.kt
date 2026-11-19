@@ -1,5 +1,8 @@
 package com.music.bitchord
 
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.Manifest
 import android.app.Activity
@@ -8184,6 +8187,8 @@ internal fun SongSortMenu(browseId: String, onChosen: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     val selectedLabel = stringResource(R.string.selected)
     val dateActive = current == SongSort.DATE_ADDED_ASC || current == SongSort.DATE_ADDED_DESC
+    // Says which way it runs to a screen reader too, not only with the arrow.
+    val dateState = if (dateActive) current.localizedLabel() else null
     val arrowRotation by animateFloatAsState(
         targetValue = if (current == SongSort.DATE_ADDED_ASC) 180f else 0f,
         animationSpec = tween(durationMillis = 200),
@@ -8197,6 +8202,10 @@ internal fun SongSortMenu(browseId: String, onChosen: () -> Unit) {
                     browseId,
                     if (current == SongSort.DATE_ADDED_DESC) SongSort.DATE_ADDED_ASC else SongSort.DATE_ADDED_DESC,
                 )
+            }
+            .semantics {
+                selected = dateActive
+                dateState?.let { stateDescription = it }
             }
             .heightIn(min = MenuTokens.MenuRowMinHeight)
             .padding(horizontal = MenuTokens.MenuRowPaddingH, vertical = MenuTokens.MenuRowPaddingV),

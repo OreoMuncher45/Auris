@@ -138,7 +138,12 @@ private fun ProfileRow(
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    val description = stringResource(if (selected) R.string.selected_account else R.string.switch_account)
+    // In manage mode the row signs the profile out, and says so.
+    val description = if (managing) {
+        "${stringResource(R.string.sign_out)}, ${profile.name}"
+    } else {
+        stringResource(if (selected) R.string.selected_account else R.string.switch_account)
+    }
     Row(
         Modifier
             .fillMaxWidth()
