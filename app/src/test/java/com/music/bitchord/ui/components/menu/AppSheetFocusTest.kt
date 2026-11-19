@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
@@ -147,12 +148,15 @@ class AppSheetFocusTest {
         assertTrue("the focus stays in the sheet", insideFocused)
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test
     fun aKeyboardComingIntoUseWhileTheSheetIsUpBringsTheFocusIn() {
         AppUi.install(AndroidAppUiHost)
         var item by mutableStateOf<String?>(null)
         var behindFocused = false
         var insideFocused = false
+        var behindClicks = 0
+        var insideClicks = 0
         val behind = FocusRequester()
         // The test host has no touch mode to enter, so the mode is the test's.
         val modes = object : InputModeManager {
@@ -172,10 +176,15 @@ class AppSheetFocusTest {
                             Modifier
                                 .focusRequester(behind)
                                 .onFocusChanged { behindFocused = it.isFocused }
-                                .focusable(),
+                                .clickable { behindClicks++ },
                         )
                         AppSheet(item = item, onDismiss = { item = null }) {
-                            Box(Modifier.onFocusChanged { insideFocused = it.isFocused }.focusable())
+                            Box(
+                                Modifier
+                                    .testTag(INSIDE)
+                                    .onFocusChanged { insideFocused = it.isFocused }
+                                    .clickable { insideClicks++ },
+                            )
                         }
                     }
                 }
@@ -192,6 +201,16 @@ class AppSheetFocusTest {
         compose.waitForIdle()
         assertFalse("the focus left what is behind the sheet", behindFocused)
         assertTrue("…for the sheet", insideFocused)
+
+        // Tab, then Enter: the keys a keyboard would reach the page with.
+        compose.onNodeWithTag(INSIDE).performKeyInput {
+            pressKey(Key.Tab)
+            pressKey(Key.Enter)
+        }
+        compose.waitForIdle()
+        assertFalse("Tab doesn't reach what is behind the sheet", behindFocused)
+        assertEquals("nothing behind the sheet was activated", 0, behindClicks)
+        assertEquals("Enter acted on the sheet's own control", 1, insideClicks)
     }
 
     @Test
