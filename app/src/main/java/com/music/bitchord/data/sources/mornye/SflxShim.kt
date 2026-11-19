@@ -49,7 +49,11 @@ package com.music.bitchord.data.sources.mornye
  *    raise a named error. The one exception is by design: during a stream probe
  *    [SflxHost] replaces `file.download` with a capturer, which is how an
  *    extension's own resolution logic — the part that knows the API — is made
- *    to hand over the URL it would have downloaded.
+ *    to hand over the URL it would have downloaded. An extension whose
+ *    manifest asks for files gets three real calls in a private folder —
+ *    `file.download`, `file.transformPatternedBlocks` and `file.delete`, what
+ *    Deezer's decrypting downloader needs (see [SflxFiles]) — and a transform
+ *    of the captured file is the one thing that makes the probe really fetch it.
  *  - `session` is real when the host supplies a session client: bootstrap,
  *    grant exchange and signed requests live in [SflxSignedSession]. Without
  *    one, it answers with a specific "this host cannot do signed sessions"
@@ -955,6 +959,43 @@ internal object SflxShim {
                 write: function () { return globalThis.__sflx_no_files('file.write'); },
                 exists: function () { return false; }
             };
+            // An extension whose manifest asks for files gets a private folder
+            // and the three calls Deezer's downloader makes in it: download,
+            // transformPatternedBlocks and delete. The host checks every path
+            // (see SflxFiles); these only shape the arguments the way the
+            // reference does. The rest of the file API stays refused above.
+            if (typeof __spine !== 'undefined' && typeof __spine.fileCall === 'function') {
+                var __sflx_file = function (method, args) {
+                    try { return JSON.parse(__spine.fileCall(method, JSON.stringify(args))); }
+                    catch (e) { return { success: false, error: String(e && e.message ? e.message : e) }; }
+                };
+                globalThis.__sflx_files = true;
+                globalThis.file.download = function (url, path, options) {
+                    if (arguments.length < 2) return { success: false, error: 'URL and output path are required' };
+                    var headers = {};
+                    if (options && options.headers && typeof options.headers === 'object') {
+                        for (var name in options.headers) headers[__sflx_goString(name)] = __sflx_goString(options.headers[name]);
+                    }
+                    return __sflx_file('download', [__sflx_goString(url), __sflx_goString(path), headers]);
+                };
+                globalThis.file.transformPatternedBlocks = function (input, output, options, onProgress) {
+                    if (arguments.length < 3) return { success: false, error: 'input path, output path, and options are required' };
+                    var result = __sflx_file('transformPatternedBlocks',
+                        [__sflx_goString(input), __sflx_goString(output), options && typeof options === 'object' ? options : {}]);
+                    // The reference reports progress per megabyte; this host
+                    // reports once, at the end. A transform takes well under a
+                    // second here, so there is nothing to show in between.
+                    if (result && result.success && typeof onProgress === 'function') {
+                        try { onProgress(result.bytes_processed, result.bytes_processed); }
+                        catch (e) { return { success: false, error: 'progress callback failed: ' + (e && e.message ? e.message : e) }; }
+                    }
+                    return result;
+                };
+                globalThis.file.delete = function (path) {
+                    if (!arguments.length) return { success: false, error: 'path is required' };
+                    return __sflx_file('delete', [__sflx_goString(path)]);
+                };
+            }
             globalThis.ffmpeg = {
                 getInfo: function () { return { success: false, error: 'this host does not transcode' }; },
                 convert: function () { return { success: false, error: 'this host does not transcode' }; },
@@ -1639,6 +1680,7 @@ internal object SflxShim {
                             if (extra.segments) payload.segments = extra.segments;
                             if (extra.decryption) payload.decryption = extra.decryption;
                             if (extra.unfinished) payload.unfinished = true;
+                            if (extra.localFile) payload.localFile = extra.localFile;
                         }
                         return JSON.stringify(payload);
                     };
@@ -1829,8 +1871,44 @@ internal object SflxShim {
                             return real.apply(this, arguments);
                         };
                     };
-                    ['getSize', 'readBytes', 'writeBytes', 'transformPatternedBlocks', 'delete',
-                        'read', 'write', 'exists'].forEach(function (name) { guard(globalThis.file, name); });
+                    // An extension that decrypts the file it downloaded —
+                    // Deezer's does, with `transformPatternedBlocks` — needs
+                    // the bytes, so the URL alone will not play. When it has
+                    // a folder (its manifest asks for files), that call is
+                    // where the download really happens: the captured URL is
+                    // fetched into the path it named, then transformed, and
+                    // what the extension finishes with is a local file. An
+                    // extension that never asks for its file is untouched: it
+                    // is captured and streamed exactly as before.
+                    var materialised = false;
+                    var wantedFile = false;
+                    var realTransform = globalThis.file.transformPatternedBlocks;
+                    var realDelete = globalThis.file.delete;
+                    var guardedNames = ['getSize', 'readBytes', 'writeBytes', 'read', 'write', 'exists'];
+                    if (globalThis.__sflx_files) {
+                        globalThis.file.transformPatternedBlocks = function (input) {
+                            if (captured !== null && !materialised) {
+                                // Only the file it downloaded can be fetched for it.
+                                if (text(input) !== capturedPath) throw marker;
+                                wantedFile = true;
+                                var fetched = realDownload(captured, capturedPath, capturedOptions || {});
+                                if (!fetched || !fetched.success) {
+                                    return fetched || { success: false, error: 'download failed' };
+                                }
+                                materialised = true;
+                            } else if (capturedSegments !== null) {
+                                throw marker;
+                            }
+                            return realTransform.apply(this, arguments);
+                        };
+                        globalThis.file.delete = function () {
+                            if ((captured !== null || capturedSegments !== null) && !materialised) throw marker;
+                            return realDelete.apply(this, arguments);
+                        };
+                    } else {
+                        guardedNames.push('transformPatternedBlocks', 'delete');
+                    }
+                    guardedNames.forEach(function (name) { guard(globalThis.file, name); });
                     ['getInfo', 'convert', 'execute'].forEach(function (name) { guard(globalThis.ffmpeg, name); });
                     var finished = null;
                     var failure = '';
@@ -1860,6 +1938,8 @@ internal object SflxShim {
                     } finally {
                         globalThis.file.download = realDownload;
                         globalThis.file.downloadSegments = realSegments;
+                        globalThis.file.transformPatternedBlocks = realTransform;
+                        globalThis.file.delete = realDelete;
                         guardedFns.forEach(function (restore) { restore(); });
                     }
 
@@ -1902,6 +1982,27 @@ internal object SflxShim {
                             ? capturedOptions.headers : null;
                     };
 
+                    if (wantedFile && !materialised) {
+                        // It needed the bytes and they did not arrive. The URL
+                        // it captured is no answer: what it serves is still
+                        // encrypted.
+                        return answered(null, failure || 'the extension could not download its file');
+                    }
+                    if (materialised) {
+                        // The extension has its file. What it says it wrote is
+                        // the answer; the host checks the path is its own.
+                        var localFile = finished ? text(firstOf(finished.file_path, finished.path)) : '';
+                        if (!localFile) {
+                            try { realDelete(capturedPath); } catch (ignored) {}
+                            return answered(null, failure || 'the extension did not finish writing its file');
+                        }
+                        if (guessed.mimeType) meta.mimeType = guessed.mimeType;
+                        if (guessed.bitDepth) meta.bitDepth = guessed.bitDepth;
+                        if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
+                        if (guessed.bitrate) meta.bitrate = guessed.bitrate;
+                        if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
+                        return answered(null, '', { localFile: localFile });
+                    }
                     if (!captured && capturedSegments && capturedSegments.length) {
                         // A segmented stream — a DASH or HLS track the extension
                         // parsed itself. It hands over an ordered list, init

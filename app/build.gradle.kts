@@ -533,6 +533,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    // A self-signed certificate for the loopback server in
+    // SflxDecryptedPlaybackTest: the app's network policy refuses cleartext,
+    // and the test should not loosen it. Pinned to the runtime's OkHttp.
+    androidTestImplementation("com.squareup.okhttp3:okhttp-tls:5.3.2")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 }
 

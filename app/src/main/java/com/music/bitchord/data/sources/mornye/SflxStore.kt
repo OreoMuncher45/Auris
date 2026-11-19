@@ -188,13 +188,16 @@ class SflxStore(private val root: File) {
      * digits, dot, dash and underscore, no leading dot, and nothing that could
      * climb out of the store's own directory.
      */
-    private fun isSafeId(id: String): Boolean =
-        id.length in 1..64 &&
-            id.first().isLetterOrDigit() &&
-            id.all { it.isLetterOrDigit() && it.code < 128 || it == '.' || it == '-' || it == '_' } &&
-            !id.contains("..")
+    private fun isSafeId(id: String): Boolean = Companion.isSafeId(id)
 
     companion object {
+        /** See the member of the same name: an id safe to use as a directory name. */
+        internal fun isSafeId(id: String): Boolean =
+            id.length in 1..64 &&
+                id.first().isLetterOrDigit() &&
+                id.all { it.isLetterOrDigit() && it.code < 128 || it == '.' || it == '-' || it == '_' } &&
+                !id.contains("..")
+
         const val MANIFEST_FILE = SflxPackages.MANIFEST_ENTRY
         const val SCRIPT_FILE = SflxPackages.SCRIPT_ENTRY
         const val ICON_FILE = SflxPackages.ICON_ENTRY
