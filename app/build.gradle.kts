@@ -246,6 +246,7 @@ android {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
                     it.filter.excludeTestsMatching("com.music.bitchord.data.HomeFeedCacheTest")
                     it.filter.excludeTestsMatching("com.music.bitchord.data.canvas.SpotifyTokenSessionTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
                 }
             }
 

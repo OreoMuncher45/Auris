@@ -1583,11 +1583,17 @@ class PlaybackService : MediaLibraryService() {
         // well would not override that — OkHttpDataSource *appends* the
         // factory's agent after the request's, and the fetch would go out
         // carrying two contradictory User-Agent headers.
-        val resolvingFactory = ResolvingDataSource.Factory(
-            // Innermost, so it chunks the real googlevideo URL the resolver
-            // above has already substituted in — see [ChunkedDataSource] for
-            // why an open-ended read of one is worth avoiding.
-            ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
+        val resolvingFactory = postResolutionDataSourceFactory(
+            context = this,
+            // Innermost for HTTP, so it chunks the real googlevideo URL the
+            // resolver above has already substituted in. DefaultDataSource
+            // sits between the two: scheme dispatch has to happen *after* a
+            // source's file:// answer exists, not while the item still says
+            // bitchord://, or OkHttp rejects a local HLS playlist as malformed.
+            network = ChunkedDataSource.Factory(
+                OkHttpDataSource.Factory(Http.client),
+                STREAM_CHUNK_BYTES,
+            ),
         ) { dataSpec ->
             // Wrapped rather than folded into the resolver above so the record
             // is made in one place for every branch of it, and made from what

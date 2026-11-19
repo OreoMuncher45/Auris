@@ -53,7 +53,9 @@ class PlayerInkContrastTest {
         // climb to OKLCH L=1, where gamut mapping has no chroma left to give:
         // the transport came out white even with "Use artwork" on.
         val accent = InkAccent(hue = 265f, chroma = 0.16f, lightL = 0.80f, darkL = 0.25f)
-        val surface = InkSurface(light = intArrayOf(rgb(0x101018)), dark = intArrayOf(rgb(0x101018)))
+        // Mid-grey forces the light candidate to move instead of letting the
+        // test pass at index zero, where even an uncapped ladder looks fixed.
+        val surface = InkSurface(light = intArrayOf(rgb(0x484848)), dark = intArrayOf(rgb(0x484848)))
         val choice = resolveInk(accent, surface, alphas)
         val ink = choice.fg.toArgb()
         val r = (ink shr 16) and 0xFF

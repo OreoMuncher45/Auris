@@ -1,7 +1,10 @@
 package com.music.bitchord.playback
 
+import android.content.Context
 import android.net.Uri
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.RatingTarget
@@ -16,6 +19,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
@@ -66,6 +70,23 @@ private const val PREPARED_PIN_WAIT_MS = 1_500L
 private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSource.SPOTIFY_KEY_PREFIX
 
 /**
+ * Dispatches by scheme *after* [resolver] has replaced the app's virtual URI.
+ *
+ * An outer DefaultDataSource sees only `bitchord://`; putting the resolver
+ * directly above OkHttp meant a source's valid `file://…m3u8` answer was fed to
+ * OkHttp and rejected as "Malformed URL". The inner dispatch sends resolved
+ * HTTP(S) to [network] and resolved local playlists to FileDataSource instead.
+ */
+internal fun postResolutionDataSourceFactory(
+    context: Context,
+    network: DataSource.Factory,
+    resolver: ResolvingDataSource.Resolver,
+): DataSource.Factory = ResolvingDataSource.Factory(
+    DefaultDataSource.Factory(context, network),
+    resolver,
+)
+
+/**
  * Turns the `bitchord://` URI a queued item carries into the stream that is
  * actually fetched for it: the resolver at the bottom of the player's
  * data-source chain, run on ExoPlayer's loader thread for every open of a
@@ -81,6 +102,16 @@ internal class PlaybackStreamResolver(
 ) : ResolvingDataSource.Resolver {
 
     override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
+        // HLS builds a fresh DataSpec for the init segment and every media
+        // part; it does not inherit the playlist request's headers. Those
+        // URLs carry no `bitchord://` track id, so restore the exact headers
+        // registered when the extension produced them before the ordinary
+        // pass-through below. Per-part values already won in the registry.
+        SflxSegments.headersFor(dataSpec.uri.toString())?.let { headers ->
+            return dataSpec.buildUpon()
+                .setHttpRequestHeaders(dataSpec.httpRequestHeaders + headers)
+                .build()
+        }
         // Which track everything below is for, said once, because none of
         // it would otherwise know: this runs on ExoPlayer's loader thread
         // with a DataSpec and nothing else, and the work it starts — the
