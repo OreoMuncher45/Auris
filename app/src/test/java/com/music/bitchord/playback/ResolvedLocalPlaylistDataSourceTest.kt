@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import android.app.Application
 import android.content.Context
 import android.net.Uri
 import androidx.media3.datasource.DataSpec
@@ -18,7 +19,9 @@ import java.nio.file.Files
 
 /** The resolved URL, not the virtual queue URI, decides which data source opens it. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+// Do not inflate the app's production Application here: it contains Java 21
+// bytecode that the JDK 17 CI test worker cannot define.
+@Config(sdk = [34], application = Application::class)
 class ResolvedLocalPlaylistDataSourceTest {
 
     @Test
