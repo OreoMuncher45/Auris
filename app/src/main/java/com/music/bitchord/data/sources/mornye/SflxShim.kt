@@ -49,7 +49,11 @@ package com.music.bitchord.data.sources.mornye
  *    raise a named error. The one exception is by design: during a stream probe
  *    [SflxHost] replaces `file.download` with a capturer, which is how an
  *    extension's own resolution logic — the part that knows the API — is made
- *    to hand over the URL it would have downloaded.
+ *    to hand over the URL it would have downloaded. An extension whose
+ *    manifest asks for files gets three real calls in a private folder —
+ *    `file.download`, `file.transformPatternedBlocks` and `file.delete`, what
+ *    Deezer's decrypting downloader needs (see [SflxFiles]) — and a transform
+ *    of the captured file is the one thing that makes the probe really fetch it.
  *  - `session` is real when the host supplies a session client: bootstrap,
  *    grant exchange and signed requests live in [SflxSignedSession]. Without
  *    one, it answers with a specific "this host cannot do signed sessions"
