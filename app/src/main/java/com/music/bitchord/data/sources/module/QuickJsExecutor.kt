@@ -966,7 +966,8 @@ internal object QuickJsExecutor {
     private fun requestBodyOf(body: String?, contentType: String?): okhttp3.RequestBody {
         val type = contentType?.trim()?.takeIf { it.isNotEmpty() }?.toMediaTypeOrNull()
             ?: "application/json; charset=utf-8".toMediaType()
-        return (body ?: "").toByteArray(Charsets.UTF_8).toRequestBody(type)
+        // In the charset the type names, so the bytes match the declared type.
+        return (body ?: "").toByteArray(type.charset(Charsets.UTF_8) ?: Charsets.UTF_8).toRequestBody(type)
     }
 
     // ── Polyfills ────────────────────────────────────────────────────────
