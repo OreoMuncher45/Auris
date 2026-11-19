@@ -60,6 +60,9 @@ class SheetHostState {
         onClosed: () -> Unit,
         content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     ): Request = Request(parent, dragFromContent, onClosed, content).also {
+        // A sheet asked for from one already going is never put up: its
+        // asker is only composed for that sheet's exit.
+        if (parent != null && parent !in requests) return@also
         requests += it
         shown += it
     }

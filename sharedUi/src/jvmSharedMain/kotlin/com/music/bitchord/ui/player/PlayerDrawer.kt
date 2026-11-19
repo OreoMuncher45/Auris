@@ -389,7 +389,10 @@ private fun DrawerBody(
                 // Upward drag is clamped to zero rather than followed: there is
                 // nothing above the drawer to reveal.
                 .then(if (drawerFollowsListScroll) Modifier.nestedScroll(drawerScroll) else Modifier)
-                .pointerInput(Unit) {
+                // Keyed on visible: a drag under way as the drawer starts to
+                // go is ended there, and can't move it or dismiss it again.
+                .pointerInput(visible) {
+                    if (!visible) return@pointerInput
                     detectVerticalDragGestures(
                         onDragStart = { springBack[0]?.cancel() },
                         onDragEnd = dismissOnRelease,

@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.components.menu
 
+import org.junit.Assert.assertTrue
+import androidx.compose.ui.test.requestFocus
+import androidx.compose.ui.focus.onFocusChanged
 import com.music.bitchord.ui.components.AlertScaffold
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.onNodeWithTag
@@ -57,6 +60,7 @@ class DialogHostTest {
     private var custom by mutableStateOf(false)
     private var confirmed = 0
     private var languageSet = 0
+    private var rowFocused = false
     private var reduceDynamicBlur = false
 
     @Before
@@ -95,6 +99,7 @@ class DialogHostTest {
                                 Box(
                                     Modifier
                                         .testTag(ROW)
+                                        .onFocusChanged { rowFocused = it.isFocused }
                                         .fillMaxWidth()
                                         .height(56.dp)
                                         .clickable { languageSet++ },
@@ -191,6 +196,39 @@ class DialogHostTest {
         compose.mainClock.autoAdvance = true
         compose.waitForIdle()
         assertEquals("a row tapped as the dialog goes changes nothing", 0, languageSet)
+    }
+
+    @Test
+    fun theTopOfTwoClosingPlaysItsExitOverTheOneBeneath() {
+        first = true
+        second = true
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        second = false
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+        compose.runOnIdle {
+            assertEquals("one still asked for", 1, host.requests.size)
+            assertEquals("the closing one still drawn for its exit", 2, host.shown.size)
+        }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals("gone once its exit ends", 1, host.shown.size)
+        compose.onNodeWithText(FIRST).assertExists()
+    }
+
+    @Test
+    fun aNewerDialogTakesTheFocusOffTheOneItCovers() {
+        custom = true
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).requestFocus()
+        compose.waitForIdle()
+        assertTrue(rowFocused)
+
+        second = true
+        compose.waitForIdle()
+        assertFalse("the covered dialog's row lets go of the focus", rowFocused)
     }
 
     private companion object {

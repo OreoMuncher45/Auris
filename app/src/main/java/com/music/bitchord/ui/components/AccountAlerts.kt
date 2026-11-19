@@ -1,5 +1,11 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -295,7 +301,12 @@ fun TextValueAlert(
                 onValueChange = onValueChange,
                 placeholder = placeholder,
                 isPassword = isPassword,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                // A secret asks for the password keyboard too: no suggestions,
+                // nothing learned from what is typed.
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (isPassword) KeyboardType.Password else KeyboardType.Unspecified,
+                    imeAction = ImeAction.Done,
+                ),
                 // Done on a dialog already going saves nothing — see AlertCard.
                 keyboardActions = KeyboardActions(onDone = { if (interactiveNow) onSave() }),
             )
@@ -876,6 +887,13 @@ private fun AlertCard(
     val shape = RoundedCornerShape(ALERT_CORNER)
     val interactive = LocalMenuInteractive.current
     BackHandler(enabled = interactive, onBack = onDismiss)
+    // The focus comes onto the card as it becomes the dialog that answers —
+    // opened, or uncovered by a newer one going — rather than staying on a
+    // card it covers, which swallows every key. Not when it is already
+    // inside (a field the card focuses itself does so after this).
+    val cardFocus = remember { FocusRequester() }
+    val holdsFocus = remember { BooleanArray(1) }
+    LaunchedEffect(interactive) { if (interactive && !holdsFocus[0]) cardFocus.requestFocus() }
 
     Box(
         modifier = modifier
@@ -903,6 +921,11 @@ private fun AlertCard(
                         )
                     },
                 )
+                .onFocusChanged { holdsFocus[0] = it.hasFocus }
+                .focusRequester(cardFocus)
+                .focusable()
+                // The tap-catcher below isn't a second stop for the keyboard.
+                .focusProperties { canFocus = false }
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },

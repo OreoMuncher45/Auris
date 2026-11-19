@@ -168,21 +168,16 @@ fun <T : Any> AppSheet(
     // does so after this and keeps it.
     val sheetFocus = remember { FocusRequester() }
     val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    LaunchedEffect(expanded) {
-        // Into the sheet — onto its handle, the first thing in it — unless
-        // something inside already has the focus. In touch mode too: a field
-        // behind the sheet would otherwise keep the software keyboard's
-        // typing while covered, and only clearing the focus lets the window
-        // hand it straight back to that field.
-        if (expanded && !sheet.holdsFocus && trapFocus()) sheetFocus.requestFocus()
-    }
-    // A keyboard coming into use — or a sheet, dialog or menu over this one
-    // going away under one — brings the focus back in, but only to a sheet
-    // nothing covers: under a sheet stacked on it, a dialog or a menu, the
-    // focus stays with the one on top.
+    // Into the sheet — onto its handle, the first thing in it — as it opens,
+    // as a keyboard comes into use, and as a sheet, dialog or menu over it
+    // goes away; never while one covers it (the focus stays with the one on
+    // top), nor when the focus is already inside (a form's field the listener
+    // is typing in: content that focuses its own field does so after this
+    // and keeps it). In touch mode too: a field behind the sheet would
+    // otherwise keep the software keyboard's typing while covered.
     val covered = !trapFocus() || dialogs?.requests?.isNotEmpty() == true || menus?.request != null
-    LaunchedEffect(keyboard, covered) {
-        if (keyboard && expanded && !sheet.holdsFocus && !covered) sheetFocus.requestFocus()
+    LaunchedEffect(expanded, keyboard, covered) {
+        if (expanded && !sheet.holdsFocus && !covered) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)
@@ -203,6 +198,15 @@ fun <T : Any> AppSheet(
         }
     }
     val currentSettle by rememberUpdatedState(settle)
+    val springBack: () -> Unit = {
+        sheet.springBack?.cancel()
+        if (sheet.drag > 0f) {
+            sheet.springBack = scope.launch {
+                animate(sheet.drag, 0f, animationSpec = tween(200)) { v, _ -> sheet.drag = v }
+            }
+        }
+    }
+    val currentSpringBack by rememberUpdatedState(springBack)
     val pull = remember(dragFromContent) {
         object : NestedScrollConnection {
             // Pushing back up returns the sheet before the list scrolls again.
@@ -290,7 +294,19 @@ fun <T : Any> AppSheet(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         tracker.resetTracking()
                         track(down)
+                        // The finger the gesture is following: another takes
+                        // over if this one lifts, before the slop or after.
+                        var last = down.id
+                        fun follow(change: PointerInputChange) {
+                            if (change.id != last) {
+                                // A new finger: its own samples only, not a
+                                // jump from where the last one was.
+                                tracker.resetTracking()
+                                last = change.id
+                            }
+                        }
                         val start = awaitVerticalTouchSlopOrCancellation(down.id) { change, over ->
+                            follow(change)
                             change.consume()
                             // A new drag takes the sheet from a spring-back
                             // still on its way, rather than fighting it.
@@ -298,16 +314,9 @@ fun <T : Any> AppSheet(
                             sheet.drag = (sheet.drag + over).coerceAtLeast(0f)
                             track(change)
                         } ?: return@awaitEachGesture
-                        // The drag follows another finger if the first lifts;
-                        // the last one it followed is the one whose lift ends it.
-                        var last = start.id
+                        follow(start)
                         val ended = verticalDrag(start.id) { change ->
-                            if (change.id != last) {
-                                // A new finger: its own samples only, not a
-                                // jump from where the last one was.
-                                tracker.resetTracking()
-                                last = change.id
-                            }
+                            follow(change)
                             sheet.drag = (sheet.drag + change.positionChange().y).coerceAtLeast(0f)
                             change.consume()
                             track(change)
@@ -315,8 +324,14 @@ fun <T : Any> AppSheet(
                         // The lift itself, which the drag never hands over: a
                         // flick that stopped before letting go reads as the
                         // stop it ended in, not the flick before it.
-                        if (ended) currentEvent.changes.firstOrNull { it.id == last }?.let(::track)
-                        currentSettle(if (ended) tracker.calculateVelocity().y else 0f)
+                        if (ended) {
+                            currentEvent.changes.firstOrNull { it.id == last }?.let(::track)
+                            currentSettle(tracker.calculateVelocity().y)
+                        } else {
+                            // Taken by another gesture, not let go: back to rest,
+                            // however far it had come.
+                            currentSpringBack()
+                        }
                     }
                 }
                 .graphicsLayer {

@@ -3,6 +3,7 @@ package com.music.bitchord.ui.components.menu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -34,11 +35,22 @@ class DialogHostState {
      */
     internal val requests = mutableStateListOf<Request>()
 
+    /** Every dialog on screen: the ones asked for, and any still on its way out. */
+    internal val shown = mutableStateListOf<Request>()
+
     internal fun open(content: @Composable (HazeState?) -> Unit): Request =
-        Request(content).also { requests += it }
+        Request(content).also {
+            requests += it
+            shown += it
+        }
 
     internal fun withdraw(request: Request) {
         requests.remove(request)
+    }
+
+    /** [request] has finished its exit. */
+    internal fun gone(request: Request) {
+        if (request !in requests) shown.remove(request)
     }
 }
 
@@ -57,42 +69,58 @@ internal val LocalInDialogHost = staticCompositionLocalOf { false }
  */
 @Composable
 fun DialogHostOverlay(state: DialogHostState, hazeState: HazeState?) {
-    val requests = state.requests
-    val presence = rememberMenuPresence(requests.isNotEmpty())
-    // The last dialogs up outlive their askers for the frames of the exit.
-    val last = remember { arrayOfNulls<List<DialogHostState.Request>>(1) }
-    if (requests.isNotEmpty()) last[0] = requests.toList()
-    if (!presence.isShowing) {
-        last[0] = null
-        return
-    }
-    val shown = if (requests.isNotEmpty()) requests.toList() else last[0] ?: return
-    val progress = presence.animation.progress
+    val shown = state.shown.toList()
+    if (shown.isEmpty()) return
+    // Each over the one before, and only the newest answers: a dialog under
+    // another is out of reach by touch (the newest's scrim), by keyboard and
+    // by accessibility (its card's own guards, which read LocalMenuInteractive).
+    val newest = state.requests.lastOrNull()
     CompositionLocalProvider(LocalInDialogHost provides true) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val p = progress.value.coerceIn(0f, 1f)
-                    alpha = p
-                    val scale = 0.96f + 0.04f * p
-                    scaleX = scale
-                    scaleY = scale
-                },
-        ) {
-            // Each over the one before, and only the newest answers: a dialog
-            // under another is out of reach by touch (the newest's scrim),
-            // by keyboard and by accessibility (its card's own guards, which
-            // read LocalMenuInteractive).
-            val newest = shown.lastOrNull()
+        Box(Modifier.fillMaxSize()) {
             shown.forEach { dialog ->
                 key(dialog) {
-                    CompositionLocalProvider(
-                        LocalMenuInteractive provides (presence.expanded && dialog === newest),
+                    ShownDialog(
+                        wanted = dialog in state.requests,
+                        newest = dialog === newest,
+                        onGone = { state.gone(dialog) },
                     ) { dialog.content(hazeState) }
                 }
             }
         }
+    }
+}
+
+/**
+ * One dialog of the stack, with an exit of its own: closing the top one of
+ * two plays it out over the one beneath rather than dropping it.
+ */
+@Composable
+private fun ShownDialog(
+    wanted: Boolean,
+    newest: Boolean,
+    onGone: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val presence = rememberMenuPresence(wanted)
+    val currentOnGone by rememberUpdatedState(onGone)
+    val showing = presence.isShowing
+    LaunchedEffect(showing) { if (!showing) currentOnGone() }
+    if (!showing) return
+    val progress = presence.animation.progress
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val p = progress.value.coerceIn(0f, 1f)
+                alpha = p
+                val scale = 0.96f + 0.04f * p
+                scaleX = scale
+                scaleY = scale
+            },
+    ) {
+        CompositionLocalProvider(
+            LocalMenuInteractive provides (presence.expanded && newest),
+        ) { content() }
     }
 }
 

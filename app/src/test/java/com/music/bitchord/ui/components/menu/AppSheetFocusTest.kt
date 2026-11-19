@@ -421,6 +421,42 @@ class AppSheetFocusTest {
     }
 
     @Test
+    fun aSheetOpeningUnderADialogLeavesTheDialogItsField() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var fieldFocused = false
+        val field = FocusRequester()
+        val dialogs = DialogHostState()
+        compose.setContent {
+            CompositionLocalProvider(LocalDialogHost provides dialogs) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        AppSheet(item = item, onDismiss = { item = null }) {
+                            Box(Modifier.fillMaxWidth().height(200.dp))
+                        }
+                        // The dialog's field, typed in.
+                        BasicTextField(
+                            value = "",
+                            onValueChange = {},
+                            modifier = Modifier
+                                .focusRequester(field)
+                                .onFocusChanged { fieldFocused = it.isFocused },
+                        )
+                    }
+                }
+            }
+        }
+        dialogs.open { _ -> }
+        compose.runOnIdle { field.requestFocus() }
+        compose.waitForIdle()
+        assertTrue(fieldFocused)
+
+        item = "downloads"
+        compose.waitForIdle()
+        assertTrue("the dialog over the sheet keeps its field", fieldFocused)
+    }
+
+    @Test
     fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
         AppUi.install(AndroidAppUiHost)
         var item by mutableStateOf<String?>(null)

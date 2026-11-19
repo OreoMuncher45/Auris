@@ -147,6 +147,16 @@ class SheetHostTest {
         assertEquals(0, dismissed)
     }
 
+    @Test
+    fun aSheetAskedForFromOneAlreadyGoingIsNeverPutUp() {
+        val state = SheetHostState()
+        val parent = state.open(parent = null, dragFromContent = true, onClosed = {}) { _ -> }
+        state.withdraw(parent)
+        state.open(parent = parent, dragFromContent = true, onClosed = {}) { _ -> }
+        assertTrue("nothing asked for", state.requests.isEmpty())
+        assertEquals("only the going parent drawn", listOf(parent), state.shown.toList())
+    }
+
     private companion object {
         const val PICKER = "picker"
         const val BODY = "body"
