@@ -2342,6 +2342,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun refreshHomeRecents() {
         if (!_signedIn.value) return
+        // YouTube's Recents belong on YouTube's home; Spotify's page never
+        // fetches them, so a refresh mustn't add them to it either.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return
         val identity = listenerKey()
         val generation = homeLoadGeneration.get()
         viewModelScope.launch {
