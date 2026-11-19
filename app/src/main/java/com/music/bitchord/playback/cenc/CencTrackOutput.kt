@@ -79,8 +79,15 @@ internal class CencTrackOutput(
         if (offset != 0 || size != buffered) {
             throw ParserException.createForMalformedContainer("an encrypted sample of $size bytes arrived as $buffered", null)
         }
+        // Looked up per sample, by the key id the sample itself is under: a
+        // fragment that names a different id than the file's default (a
+        // `seig` sample group) is not decrypted with the wrong key, and fails
+        // here, saying which id it needed.
         val key = keyFor(cryptoData.encryptionKey)
-            ?: throw ParserException.createForMalformedContainer("no key for ${CencKeys.hex(cryptoData.encryptionKey)}", null)
+            ?: throw ParserException.createForMalformedContainer(
+                "no key for ${CencKeys.hex(cryptoData.encryptionKey)}: the source's key is for a different key id",
+                null,
+            )
 
         // The prefix, as the extractor wrote it.
         var at = 0
@@ -105,7 +112,9 @@ internal class CencTrackOutput(
             encryptedSizes = intArrayOf(buffered - at)
         }
         val sampleLength = buffered - at
-        CencDecryptor.decrypt(
+        if (sampleLength < 0) throw ParserException.createForMalformedContainer("an encryption prefix longer than its sample", null)
+        try {
+            CencDecryptor.decrypt(
             data = buffer,
             offset = at,
             length = sampleLength,
@@ -116,7 +125,10 @@ internal class CencTrackOutput(
             encryptedSizes = encryptedSizes,
             cryptBlocks = cryptoData.encryptedBlocks,
             skipBlocks = cryptoData.clearBlocks,
-        )
+            )
+        } catch (malformed: IllegalArgumentException) {
+            throw ParserException.createForMalformedContainer(malformed.message, malformed)
+        }
         delegate.sampleData(ParsableByteArray(buffer.copyOfRange(at, buffered)), sampleLength, TrackOutput.SAMPLE_DATA_PART_MAIN)
         buffered = 0
         delegate.sampleMetadata(timeUs, flags and C.BUFFER_FLAG_ENCRYPTED.inv(), sampleLength, 0, null)

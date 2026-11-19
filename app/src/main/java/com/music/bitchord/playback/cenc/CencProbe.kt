@@ -14,6 +14,10 @@ object CencProbe {
 
     private const val MAX_BYTES = 1 shl 20
     private const val CHUNK = 16 * 1024
+    private val PARTIAL_FROM_ZERO = Regex("""^\s*bytes\s+0-\d+/""", RegexOption.IGNORE_CASE)
+
+    /** Whether a `Content-Range` describes bytes from the start of the file. */
+    internal fun startsAtZero(contentRange: String): Boolean = PARTIAL_FROM_ZERO.containsMatchIn(contentRange)
 
     fun head(url: String, headers: Map<String, String>): CencHead.Result {
         val request = Request.Builder().url(url)
@@ -22,6 +26,12 @@ object CencProbe {
             .build()
         Http.client.newCall(request).execute().use { response ->
             if (response.code !in 200..299) error("HTTP ${response.code} reading the stream's header")
+            // A partial answer has to be the opening asked for. 200 is a server
+            // that ignored the range and is sending the file from the start.
+            if (response.code == 206) {
+                val range = response.header("Content-Range").orEmpty()
+                if (!startsAtZero(range)) error("the stream's header came back as '$range', not from byte 0")
+            }
             val source = response.body?.byteStream() ?: error("an empty response reading the stream's header")
             val bytes = ByteArray(MAX_BYTES)
             var filled = 0
