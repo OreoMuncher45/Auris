@@ -60,6 +60,17 @@ internal class SflxSearchMemo<V>(
 
     /** Held across "is this flight fenced" and the store, and across an invalidation. */
     private val storing = Any()
+
+    /**
+     * Bumped by every invalidation. A caller notes it before looking in the
+     * cache and registers its question only if it has not moved, so a caller
+     * that missed the cache, paused, and arrived at the board after an
+     * invalidation cannot put a question there for later callers to join.
+     */
+    @Volatile private var generation = 0L
+
+    /** For tests: runs between a cache miss and the question being registered. */
+    internal var beforeRegister: (() -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** The answer to a question already asked, or null when there is none. */
@@ -89,6 +100,7 @@ internal class SflxSearchMemo<V>(
      */
     fun forgetMatching(prefix: String) {
         synchronized(storing) {
+            generation++
             answers.keys.removeIf { it.startsWith(prefix) }
             flights.entries.removeIf { (key, flight) ->
                 if (key.startsWith(prefix)) {
@@ -109,9 +121,29 @@ internal class SflxSearchMemo<V>(
      * the answer is kept for the next caller.
      */
     suspend fun once(key: String, ask: suspend () -> Result<V>): Result<V> {
+        val seen = generation
         cached(key)?.let { return Result.success(it) }
+        beforeRegister?.invoke()
         val flight = CompletableDeferred<Result<V>>()
-        val running = flights.putIfAbsent(key, flight)
+        var straddled = false
+        val running = synchronized(storing) {
+            if (generation != seen) {
+                straddled = true
+                null
+            } else {
+                flights.putIfAbsent(key, flight)
+            }
+        }
+        // Asked before an invalidation, registered after it: the question is
+        // answered for this caller alone, and its answer is not kept.
+        if (straddled) {
+            return try {
+                ask()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Result.failure(SflxException(error.message ?: "the question failed"))
+            }
+        }
         if (running != null) return running.await()
         scope.launch {
             val answer = try {
