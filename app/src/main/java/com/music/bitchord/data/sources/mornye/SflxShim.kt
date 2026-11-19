@@ -1386,6 +1386,16 @@ internal object SflxShim {
                 if (dot < 0) return '';
                 return name.slice(dot + 1).toLowerCase();
             }
+            // The kind the manifest declares for one of its tiers, or ''.
+            function kindOfTier(tier) {
+                var wanted = text(tier).toLowerCase();
+                var list = (globalThis.__spine_sflx && globalThis.__spine_sflx.qualities) || [];
+                for (var index = 0; index < list.length; index++) {
+                    if (text(list[index].id).toLowerCase() === wanted) return text(list[index].kind).toLowerCase();
+                }
+                return '';
+            }
+
             function audioHints(path, options, context) {
                 var opts = options && typeof options === 'object' ? options : {};
                 var hinted = text(firstOf(
@@ -1577,9 +1587,16 @@ internal object SflxShim {
                     // downloader that validates its output path, or reads the
                     // container off its extension, is doing the ordinary thing
                     // and was being handed an empty string before.
+                    //
+                    // `.flac`, the reference host's default ("flac: decrypt to
+                    // .flac (Dart default)", in Amazon's downloader). An
+                    // extension renames the path when its container differs —
+                    // Amazon does for AC-4, E-AC-3, Opus and any encrypted
+                    // file — and with an `.m4a` placeholder that rename was
+                    // invisible, because `.m4a` is what it renames to.
                     var cacheDir = (globalThis.__spine_sflx && globalThis.__spine_sflx.cacheDir) || '';
                     var safeId = text(trackId).replace(/[^A-Za-z0-9._-]+/g, '_') || 'track';
-                    var outputPath = (cacheDir ? cacheDir + '/' : '') + safeId + '.m4a';
+                    var outputPath = (cacheDir ? cacheDir + '/' : '') + safeId + '.flac';
 
                     // The context the reference host hands a downloader: the
                     // row's own fields at the top level (an extension reads
@@ -1608,7 +1625,24 @@ internal object SflxShim {
                     // the catalogue will actually serve. An extension that
                     // cannot answer is not required to.
                     var playableId = text(trackId);
-                    if (typeof extension.checkAvailability === 'function') {
+
+                    // A track from this extension's own search is downloaded
+                    // as it is, the way the reference host does it: Amazon's
+                    // own notes call this "Flow A — Go calls download(ASIN)
+                    // directly WITHOUT checkAvailability". The availability
+                    // check is for a track from somewhere else, and it is not
+                    // free: Amazon answers it with a SongLink lookup and a full
+                    // catalogue search, seconds and megabytes inside every
+                    // stream resolution, and then handed its own row back as
+                    // prepared context, so the ASIN it found by searching was
+                    // swapped for the row's in `download` — logged as one ASIN
+                    // being "found" and another downloaded. The row also goes
+                    // in as `host_track`, the name Amazon's downloader reads,
+                    // so it does not fetch the same track's metadata again.
+                    var ownRow = row && text(firstOf(row.id, row.track_id, row.trackId, row.song_id)) === playableId;
+                    if (ownRow) {
+                        options.preparedContext = { track: row, host_track: row };
+                    } else if (typeof extension.checkAvailability === 'function') {
                         try {
                             var availability = await extension.checkAvailability(
                                 text(options.isrc || ''),
@@ -1724,7 +1758,22 @@ internal object SflxShim {
                         globalThis.file.downloadSegments = realSegments;
                     }
 
-                    var guessed = audioHints(capturedPath, capturedOptions, context);
+                    // The path is evidence only when the extension chose it.
+                    // The one this host offered is a placeholder, and reading
+                    // its `.m4a` back as the container is how every Amazon
+                    // FLAC answer was reported as MP4 and ranked below the
+                    // lossless request it met. Amazon renames the path itself
+                    // when the container really is MP4 (AC-4, E-AC-3, Opus,
+                    // or an encrypted file), so that case is still read.
+                    var namedByExtension = capturedPath && capturedPath !== outputPath;
+                    var guessed = audioHints(namedByExtension ? capturedPath : '', capturedOptions, context);
+                    // Where the answer names no container at all, the tier it
+                    // answered is the claim: the manifest declares what kind
+                    // each of its tiers is, and a lossless tier's answer is
+                    // reported as lossless, as a module's lossless label is.
+                    if (!guessed.mimeType && kindOfTier(quality) === 'lossless') {
+                        meta.audioQuality = 'LOSSLESS';
+                    }
                     var headersOf = function () {
                         return capturedOptions && capturedOptions.headers
                             && typeof capturedOptions.headers === 'object'
