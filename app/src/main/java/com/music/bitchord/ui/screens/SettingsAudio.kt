@@ -150,6 +150,7 @@ internal fun AudioSettings(
             "bypass",
             "dsp",
             "crossfade",
+            "automix",
             "lossless",
             divided = false,
         ) {
