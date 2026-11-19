@@ -14,7 +14,9 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
@@ -628,7 +630,7 @@ object AudioCache {
             isKeptOrigin = ::isKeptOrigin,
         )?.also { key ->
             borrowedKeys.lend(key)
-            openingRequest.get()?.lend(key)
+            openingRequest.get()?.lend(key, lendToken(key))
         }
     }
 
@@ -646,6 +648,50 @@ object AudioCache {
      * upstream is opened; [playbackFactory] sets this around that call only.
      */
     private val openingRequest = ThreadLocal<BorrowedEntries?>()
+
+    /**
+     * Stamps the copy of [key] being lent, so its borrowers can tell it from a
+     * later one: [discard] removes the metadata with the entry, and a refill
+     * by another request starts without the stamp. Written once per entry and
+     * only on a borrow, so ordinary opens never touch the index.
+     */
+    private fun lendToken(key: String): Long = synchronized(borrowedKeys) {
+        val existing = cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN)
+        if (existing != BorrowedEntries.NO_TOKEN) return existing
+        var token: Long
+        do token = java.util.concurrent.ThreadLocalRandom.current().nextLong() while (token == BorrowedEntries.NO_TOKEN)
+        runCatching {
+            cache.applyContentMetadataMutations(key, ContentMetadataMutations().set(META_LEND_TOKEN, token))
+        }.getOrElse { return BorrowedEntries.NO_TOKEN }
+        token
+    }
+
+    /**
+     * [cache], as one playback request sees it: a span of a key it was lent
+     * is only handed over while that key still holds the stamped copy — see
+     * [lendToken]. Otherwise the open fails as a cache error, the request
+     * falls through to its upstream, and [refusingLent] ends the read there.
+     * Keys the request was not lent pass straight through.
+     */
+    private fun lentView(lent: BorrowedEntries): Cache = object : Cache by cache {
+        private fun check(key: String) {
+            val token = lent.tokenOf(key) ?: return
+            if (token == BorrowedEntries.NO_TOKEN) return
+            if (cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN) != token) {
+                throw Cache.CacheException("cache entry $key no longer holds the copy this request was lent")
+            }
+        }
+
+        override fun startReadWrite(key: String, position: Long, length: Long): CacheSpan {
+            check(key)
+            return cache.startReadWrite(key, position, length)
+        }
+
+        override fun startReadWriteNonBlocking(key: String, position: Long, length: Long): CacheSpan? {
+            check(key)
+            return cache.startReadWriteNonBlocking(key, position, length)
+        }
+    }
 
     /**
      * The decision behind [completeSibling], with the cache and the network
@@ -1103,6 +1149,7 @@ object AudioCache {
     }
 
     private const val META_ORIGIN = "bc_origin"
+    private const val META_LEND_TOKEN = "bc_lend"
     private const val META_MEDIA_ID = "bc_media_id"
 
     /**
@@ -1196,7 +1243,9 @@ object AudioCache {
         // not continue from another rendition even if the copy is discarded
         // or evicted under it, when the file-wide mark has gone.
         val lent = BorrowedEntries()
-        val cacheDs = cacheFactory(refusingLent(counted(upstream), lent)).createDataSource()
+        val cacheDs = cacheFactory(refusingLent(counted(upstream), lent))
+            .setCache(lentView(lent))
+            .createDataSource()
         val upstreamDs = upstream.createDataSource()
         object : DataSource {
             private var activeDs: DataSource = cacheDs
