@@ -124,6 +124,17 @@ class AppSheetTest {
     }
 
     @Test
+    fun aShortFastFlickPutsItAway() {
+        open()
+        // Well under a quarter of the sheet, but fast: the velocity branch.
+        compose.onNodeWithTag(ROW).performTouchInput {
+            swipeDown(startY = 10f, endY = 10f + height * 0.12f, durationMillis = 40)
+        }
+        compose.waitForIdle()
+        assertNull("a flick puts it away however short", item)
+    }
+
+    @Test
     fun aRowTappedWhileTheSheetGoesDoesNothing() {
         open()
         val row = compose.onNodeWithTag(ROW).getUnclippedBoundsInRoot()

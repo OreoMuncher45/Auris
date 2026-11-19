@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import kotlinx.coroutines.Job
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -8,7 +9,12 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -103,6 +109,8 @@ fun <T : Any> AppSheet(
         sheet.opening = opening
     }
     LaunchedEffect(expanded) {
+        // Opening or going, nothing else moves the sheet any more.
+        sheet.springBack?.cancel()
         if (expanded) sheet.drag = 0f
         sheet.progress.animateTo(
             targetValue = if (expanded) 1f else 0f,
@@ -124,10 +132,13 @@ fun <T : Any> AppSheet(
     val closeLabel = stringResource(R.string.close)
     val settle: (velocity: Float) -> Unit = { velocity ->
         val height = sheet.height
+        sheet.springBack?.cancel()
         if (height > 0 && (sheet.drag > height * DISMISS_FRACTION || velocity > DISMISS_VELOCITY)) {
             onDismiss()
         } else if (sheet.drag > 0f) {
-            scope.launch { animate(sheet.drag, 0f, animationSpec = tween(200)) { v, _ -> sheet.drag = v } }
+            sheet.springBack = scope.launch {
+                animate(sheet.drag, 0f, animationSpec = tween(200)) { v, _ -> sheet.drag = v }
+            }
         }
     }
     val pull = remember(dragFromContent) {
@@ -143,6 +154,7 @@ fun <T : Any> AppSheet(
             // A list resting at its top, pulled further, pulls the sheet.
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput && available.y > 0f) {
+                    sheet.springBack?.cancel()
                     sheet.drag += available.y
                     return Offset(0f, available.y)
                 }
@@ -213,16 +225,31 @@ fun <T : Any> AppSheet(
                 .then(if (dragFromContent) Modifier.nestedScroll(pull) else Modifier)
                 .pointerInput(Unit) {
                     val tracker = VelocityTracker()
-                    detectVerticalDragGestures(
-                        onDragStart = { tracker.resetTracking() },
-                        onDragEnd = { settle(tracker.calculateVelocity().y) },
-                        onDragCancel = { settle(0f) },
-                    ) { change, delta ->
-                        sheet.drag = (sheet.drag + delta).coerceAtLeast(0f)
-                        // The panel moves with the finger, so its own
-                        // coordinates hardly move at all: track the finger
-                        // where it is on the screen instead.
+                    // Tracked from the finger's first touch, not from where
+                    // the drag cleared the touch slop: a short flick is only
+                    // a few events long, and the ones before the slop are
+                    // what say how fast it was. Positions are the finger's on
+                    // screen — the panel moves with it.
+                    fun track(change: PointerInputChange) =
                         tracker.addPosition(change.uptimeMillis, change.position + Offset(0f, sheet.drag))
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        tracker.resetTracking()
+                        track(down)
+                        val start = awaitVerticalTouchSlopOrCancellation(down.id) { change, over ->
+                            change.consume()
+                            // A new drag takes the sheet from a spring-back
+                            // still on its way, rather than fighting it.
+                            sheet.springBack?.cancel()
+                            sheet.drag = (sheet.drag + over).coerceAtLeast(0f)
+                            track(change)
+                        } ?: return@awaitEachGesture
+                        val ended = verticalDrag(start.id) { change ->
+                            sheet.drag = (sheet.drag + change.positionChange().y).coerceAtLeast(0f)
+                            change.consume()
+                            track(change)
+                        }
+                        settle(if (ended) tracker.calculateVelocity().y else 0f)
                     }
                 },
         ) {
@@ -257,6 +284,9 @@ private class SheetState<T : Any> {
     var opening: Any? = null
     val progress = Animatable(0f)
     val stillVisible by derivedStateOf { progress.value > 0f }
+
+    /** A short drag's way back to rest, while it runs. */
+    var springBack: Job? = null
 
     /** How far the sheet has been dragged down, in px. Read while drawing only. */
     var drag by mutableFloatStateOf(0f)
