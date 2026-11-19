@@ -135,4 +135,18 @@ class RootPageKeyTest {
         RootNav().apply { showSettings = true }.closeSettings(sheets)
         assertEquals("spotify", key(sheets = sheets))
     }
+
+    @Test fun `a page pushed over Settings on History comes up over History`() {
+        // Settings over History, then a release page pushed: Settings closes
+        // and the release page, not History, is on top; back returns to it.
+        val nav = RootNav().apply { showSettings = true }
+        val sheets = RootSheets().apply { showHistory = true }
+        nav.closeSettings(sheets)
+        assertEquals("VLplaylist", key(nav = nav, sheets = sheets, detail = playlist))
+        assertEquals("history", key(nav = nav, sheets = sheets))
+        listOf<RootSheets.() -> Unit>({ showFlow = true }, { showQuickPicks = true }).forEach { open ->
+            assertEquals("VLplaylist", key(sheets = RootSheets().apply(open), detail = playlist))
+        }
+        assertEquals("VLplaylist", key(showContinueListening = true, detail = playlist))
+    }
 }

@@ -2555,6 +2555,8 @@ internal fun BitChordApp(
             nav.settingsSubScreen = null
             sheets.showHistory = false
             sheets.showFlow = false
+            sheets.showSpotify = false
+            sheets.spotifyFromSettings = false
             sheets.libraryShowAll = null
             nav.selectedTab = TAB_SEARCH
             searchVisualActive = true
@@ -3342,18 +3344,18 @@ internal fun BitChordApp(
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = sheets.openAudiobook != null) {
+        BackHandler(enabled = pageKey == "audiobook") {
             sheets.openAudiobook = null
         }
-        BackHandler(enabled = nav.showAudiobooks) {
+        BackHandler(enabled = pageKey == "audiobooks") {
             nav.showAudiobooks = false
         }
-        BackHandler(enabled = nav.itunesPodcastId != null) {
+        BackHandler(enabled = pageKey == "itunespodcast") {
             nav.itunesPodcastId = null
         }
         // Not while a detail page is open over Genres: that page's own back
         // closes first, as with the Library grid below.
-        BackHandler(enabled = nav.showGenres && detail == null) {
+        BackHandler(enabled = pageKey == "genres") {
             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
         BackHandler(enabled = pageKey == "settings") {
@@ -4172,8 +4174,7 @@ internal fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !nav.showSettings &&
-                    !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay
+                    !isLocalDetail && pageKey == detail.browseId
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
                 } else {
@@ -7516,10 +7517,14 @@ internal fun rootPageKey(
         // Spotify's page from the Home card: a playlist opened from it
         // stacks over it, as the Library grid's do below.
         sheets.showSpotify && detail == null -> "spotify"
-        sheets.showHistory -> "history"
-        sheets.showFlow -> "flow"
-        sheets.showQuickPicks -> "quick_picks"
-        showContinueListening -> "continue_listening"
+        // `&& detail == null`, as for the grid below: these open only with
+        // no release page on the stack (the player's "playing from" clears
+        // it first), so with both set the release page was pushed later —
+        // over Settings opened on one of them, say — and is the one on top.
+        sheets.showHistory && detail == null -> "history"
+        sheets.showFlow && detail == null -> "flow"
+        sheets.showQuickPicks && detail == null -> "quick_picks"
+        showContinueListening && detail == null -> "continue_listening"
         // `&& detail == null`: a card opened from the grid
         // stacks a detail page over it exactly as one opened
         // from the Library tab does — see
