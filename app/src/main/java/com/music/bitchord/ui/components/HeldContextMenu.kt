@@ -1,15 +1,8 @@
 package com.music.bitchord.ui.components
 
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -22,8 +15,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,13 +35,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menu.MenuTokens
+import com.music.bitchord.ui.components.menu.menuColors
+import com.music.bitchord.ui.components.menu.rememberMenuPresence
+import com.music.bitchord.ui.components.menu.rememberReduceMenuMotion
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -67,16 +63,18 @@ import kotlin.math.roundToInt
  * the one backdrop the rest of the app's glass samples instead of taking one
  * of their own.
  *
- * Only a hold opens this. The ⋮ keeps opening the bottom sheet — a tap on a
- * small button is a request for the full menu, while a hold on the item itself
- * is a gesture about *that item*, answered where the finger is.
+ * Only a hold opens this. The ⋮ hangs the same rows off itself instead — see
+ * [com.music.bitchord.ui.components.menu.AnchoredMenu] — while a hold on the
+ * item itself is a gesture about *that item*, answered where the finger is.
+ * The surface, the rows, the colours and the spring are that menu's own, so
+ * the two read as one menu with two ways in.
  *
  * The menu opens *out of* what was pressed rather than appearing beside it:
  * [HeldItem] is already the record of where the finger was, and the menu starts
  * as the plate the card is standing on and unfolds into its own rectangle and
- * its own corner radius. See [heldMenuMorph] and [heldMenuMorphingShape]. The
- * card keeps scaling about its centre, because it is a picture of the item and
- * has to stay over the thing it is a picture of.
+ * its own size. See [heldMenuMorph]. The card keeps scaling about its centre,
+ * because it is a picture of the item and has to stay over the thing it is a
+ * picture of.
  *
  * [item] and [held] come and go together: non-null while the menu is wanted,
  * null once anything has closed it. The last pair is kept here so the menu can
@@ -99,80 +97,49 @@ fun <T : Any> HeldContextMenu(
     onPreviewClick: ((T) -> Unit)?,
     actions: @Composable (T) -> Unit,
 ) {
-    val requested = if (item != null && held != null) item to held else null
-    var last by remember { mutableStateOf<Pair<T, HeldItem>?>(null) }
-    if (requested != null && requested != last) {
-        SideEffect { last = requested }
+    val requested = item != null && held != null
+    // The shared menu's spring and lifetime: up from the frame it is asked
+    // for until its exit has run, after the caller has already let go.
+    val presence = rememberMenuPresence(requested)
+    // Plain fields, written while composing: they only have to outlive the
+    // caller's pair for the frames of the exit.
+    val shown = remember { HeldShown<T>() }
+    if (requested) {
+        shown.item = item
+        shown.held = held
     }
-    val shown = requested ?: last ?: return
-    val (menuItem, heldItem) = shown
-    val open = requested != null
+    if (!presence.isShowing) {
+        shown.item = null
+        shown.held = null
+        return
+    }
+    val menuItem = shown.item ?: return
+    val heldItem = shown.held ?: return
+    val open = presence.expanded
+    val progress = presence.animation.progress
 
-    val context = LocalContext.current
-    val appReduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val systemAnimationsOff = remember(context) {
-        runCatching {
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        }.getOrDefault(false)
-    }
-    val reduceMotion = appReduceAnimation || systemAnimationsOff
+    val reduceMotion = rememberReduceMenuMotion()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(open) {
-        if (open) {
-            progress.animateTo(
-                1f,
-                if (reduceMotion) {
-                    tween(durationMillis = 140, easing = LinearEasing)
-                } else {
-                    // Still a spring, but no longer the bouncy one the lift
-                    // once ran: the menu now grows out of the press and
-                    // settles without the overshoot. Stiffness 330 (from 420)
-                    // makes the opening read slightly slower and gentler off
-                    // the mark, and damping 0.83 (from 0.72) takes the bounce
-                    // from a visible pop to under a percent — smooth, but a
-                    // hair short of critical so the arrival is not dead.
-                    spring(dampingRatio = 0.83f, stiffness = 330f)
-                },
-            )
-        } else {
-            progress.animateTo(
-                0f,
-                tween(durationMillis = if (reduceMotion) 110 else 230, easing = FastOutSlowInEasing),
-            )
-            last = null
-        }
-    }
 
     BackHandler(enabled = open, onBack = onDismiss)
 
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    // What the menu stands on where the app is not drawing glass. Plain white
-    // or black at half strength, so the blur shows through as frost rather
-    // than the surface greys reading as a flat slab over it. With no blur
-    // behind there is nothing for that to frost, so the plate firms up to stay
-    // legible over the bare scrim.
-    val plate = (if (dark) Color.Black else Color.White).copy(
-        alpha = if (reduceDynamicBlur) 0.85f else if (dark) 0.78f else 0.85f,
-    )
-    val hairline = if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.06f)
-    // The scrim does less work when the blur is there to push the page back,
-    // and more when it is the only thing doing it.
+    val colors = menuColors(dark, reduceDynamicBlur)
+    val plate = colors.plate
+    val hairline = colors.hairline
+    // The page behind is blurred as well as dimmed here, so the menu's own
+    // scrim is enough while the blur is on. Without it the scrim is the only
+    // thing pushing the page back, and has to do more.
     val scrimColor = when {
         reduceDynamicBlur && dark -> Color.Black.copy(alpha = 0.62f)
         reduceDynamicBlur -> Color.Black.copy(alpha = 0.36f)
-        dark -> Color.Black.copy(alpha = 0.30f)
-        else -> Color.Black.copy(alpha = 0.10f)
+        else -> colors.scrim
     }
-    val cardShape = RoundedCornerShape(CARD_RADIUS)
-    val menuShape = RoundedCornerShape(MENU_RADIUS)
+    // One curve for the card and the menu, the anchored menu's own. The
+    // corner does not travel as the menu grows: animating it would rebuild
+    // the glass's outline on every frame of the open, to move it by a few dp.
+    val shape = RoundedCornerShape(MenuTokens.Radius)
     val platePadding = 8.dp
-    // The card keeps its own radius for the whole of the lift; the menu's runs
-    // from the card's to its own as it opens, so both are needed in pixels.
-    val density = LocalDensity.current
-    val cardRadiusPx = with(density) { CARD_RADIUS.toPx() }
-    val menuRadiusPx = with(density) { MENU_RADIUS.toPx() }
     // Glass draws its own elevation shadow, so the lift shadow below is only
     // paid for on the surfaces that are not getting one — the double render
     // the nav bar's own comment is about paying for.
@@ -226,11 +193,11 @@ fun <T : Any> HeldContextMenu(
                         if (reduceMotion || glass) {
                             Modifier
                         } else {
-                            Modifier.shadow(20.dp, cardShape, clip = false)
+                            Modifier.shadow(20.dp, shape, clip = false)
                         },
                     )
                     .pointerInput(Unit) {}
-                    .heldMenuSurface(cardShape, plate, hairline, reduceDynamicBlur)
+                    .heldMenuSurface(shape, plate, hairline, reduceDynamicBlur)
                     .then(
                         if (onPreviewClick != null) {
                             Modifier.clickable(enabled = open) { onPreviewClick(menuItem) }
@@ -249,24 +216,21 @@ fun <T : Any> HeldContextMenu(
                     )
                 }
             }
-            // The menu's own shape for this frame, and with it the surface.
-            // Built here rather than above so that reading the radius is its
-            // own restart scope: what recomposes each frame of the morph is
-            // this one modifier, not the menu's rows underneath it.
-            val menuShapeFrame = heldMenuMorphingShape(
-                animates = !reduceMotion,
-                resting = menuShape,
-                radiusPx = {
-                    heldMenuCornerRadiusPx(progress.value, cardRadiusPx, menuRadiusPx)
-                },
-            )
             Column(
                 Modifier
                     // Taps between rows land on the menu, not the scrim under it.
                     .pointerInput(Unit) {}
-                    .heldMenuSurface(menuShapeFrame, plate, hairline, reduceDynamicBlur),
+                    .heldMenuSurface(shape, plate, hairline, reduceDynamicBlur)
+                    // Once it is on its way out its rows leave the
+                    // accessibility tree; see AnchoredMenu for the same guard.
+                    .then(if (open) Modifier else Modifier.clearAndSetSemantics { })
+                    .padding(vertical = MenuTokens.PanelPadding),
             ) {
-                actions(menuItem)
+                // Rows stop answering the moment the menu is dismissed, which
+                // also ends a press that began before it was.
+                CompositionLocalProvider(LocalMenuInteractive provides open) {
+                    actions(menuItem)
+                }
             }
         },
     ) { measurables, constraints ->
@@ -292,7 +256,7 @@ fun <T : Any> HeldContextMenu(
         val visualW = plateW * liftScale
         val visualH = plateH * liftScale
 
-        val menuWidth = (width - margin * 2).coerceAtMost(280.dp.roundToPx()).coerceAtLeast(0)
+        val menuWidth = (width - margin * 2).coerceAtMost(MenuTokens.Width.roundToPx()).coerceAtLeast(0)
         val menuMaxHeight = (bottom - top - visualH.roundToInt() - gap).coerceAtLeast(0)
         val menu = measurables[2].measure(
             Constraints(minWidth = menuWidth, maxWidth = menuWidth, maxHeight = menuMaxHeight),
@@ -407,12 +371,7 @@ private suspend fun PointerInputScope.swallowAll() {
     }
 }
 
-/**
- * The plate's corner radius, and the menu's — named because the two are the
- * ends of one animation rather than two unrelated numbers: the menu opens as
- * the card's plate and closes the corner slightly tighter as it becomes its
- * own surface. Both the shape and the morph are built from these, so the
- * drawn corner and the animated one cannot drift apart.
- */
-private val CARD_RADIUS = 20.dp
-private val MENU_RADIUS = 16.dp
+private class HeldShown<T : Any> {
+    var item: T? = null
+    var held: HeldItem? = null
+}

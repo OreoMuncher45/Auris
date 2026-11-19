@@ -133,6 +133,13 @@ fun AnchoredMenu(
      * bars can be measured from it.
      */
     hostOffsetInWindow: () -> IntOffset = { IntOffset.Zero },
+    /**
+     * Set for a menu over a page of rows: how much its glass frosts what is
+     * behind it ([MenuTokens.PageFrost]), and, with glass off, a plate that
+     * all but covers it ([MenuTokens.PagePlateAlpha]). Null for the player's
+     * menu, whose glass and plate are meant to show the artwork.
+     */
+    frost: Dp? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceMotion = rememberReduceMenuMotion()
@@ -143,6 +150,8 @@ fun AnchoredMenu(
 
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val colors = menuColors(dark, reduceDynamicBlur)
+    // A menu over a page covers the rows behind it — see MenuTokens.PagePlateAlpha.
+    val plate = if (frost != null) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
     val shape = RoundedCornerShape(MenuTokens.Radius)
     val progress = presence.animation.progress
 
@@ -250,7 +259,7 @@ fun AnchoredMenu(
                         translationY = (1f - p) * if (below) -MenuMotion.TRAVEL_PX else MenuMotion.TRAVEL_PX
                     }
                 }
-                .heldMenuSurface(shape, colors.plate, colors.hairline, reduceDynamicBlur),
+                .heldMenuSurface(shape, plate, colors.hairline, reduceDynamicBlur, frost?.value),
         ) {
             // A row activated while the menu is already on its way out would
             // run its action twice. Three ways in, three guards: the rows read
