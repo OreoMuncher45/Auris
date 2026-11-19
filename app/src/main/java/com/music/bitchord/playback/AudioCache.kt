@@ -444,9 +444,21 @@ object AudioCache {
                 if (keepComplete && isComplete(key)) {
                     null
                 } else {
+                    // The lend token is struck first and explicitly: with a
+                    // hole still locked by another request, removeResource
+                    // drops the spans but keeps the metadata, and a refill
+                    // would then inherit the old token and pass a borrower's
+                    // check. If striking it fails, refills stay refused.
+                    val unstamped = runCatching {
+                        if (cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN) !=
+                            BorrowedEntries.NO_TOKEN
+                        ) {
+                            cache.applyContentMetadataMutations(key, ContentMetadataMutations().remove(META_LEND_TOKEN))
+                        }
+                    }.isSuccess
                     // Forgotten under the same hold, so a copy lent again
                     // straight after this removal keeps its fresh mark.
-                    runCatching { cache.removeResource(key) }.onSuccess { borrowedKeys.forget(key) }
+                    runCatching { cache.removeResource(key) }.onSuccess { if (unstamped) borrowedKeys.forget(key) }
                 }
             }
             if (removal == null) {
