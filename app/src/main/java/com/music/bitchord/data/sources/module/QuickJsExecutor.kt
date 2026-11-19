@@ -393,10 +393,10 @@ internal object QuickJsExecutor {
                 // hand out again, and three of those would deadlock the module.
                 // A retired pool's engine is closed instead — here, on the
                 // thread that was using it, which is the only thread that may.
-                if (pool.retired) {
+                // A pool retired while this call ran has a closed channel, so
+                // a failed send means the same thing: close, don't leak.
+                if (pool.retired || pool.free.trySend(qjs).isFailure) {
                     runCatching { qjs.close() }
-                } else {
-                    pool.free.trySend(qjs)
                 }
             }
         }
@@ -452,6 +452,10 @@ internal object QuickJsExecutor {
     fun unload(moduleId: String) {
         val pool = synchronized(engineLock) { pools.remove(moduleId) } ?: return
         pool.retired = true
+        // Closing the channel wakes anyone waiting in [acquire] for an engine
+        // with a failure instead of leaving them parked forever; what is still
+        // buffered can be drained below all the same.
+        pool.free.close()
         // Only the engines nobody is inside. The rest close themselves as they
         // are handed back — see the `finally` in [callExport].
         var closed = 0
