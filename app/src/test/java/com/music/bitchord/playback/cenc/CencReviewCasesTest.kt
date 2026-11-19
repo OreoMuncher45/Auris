@@ -240,6 +240,26 @@ class CencReviewCasesTest {
     }
 
     @Test
+    fun `block sizes are read from where each frame header puts them`() {
+        fun frame(code: Int, vararg tail: Int) =
+            byteArrayOf(0xFF.toByte(), 0xF8.toByte(), (code shl 4 or 0x9).toByte(), 0x08) + tail.map { it.toByte() }.toByteArray()
+        // Fixed codes.
+        assertEquals(192, CencFlacFile.blockSize(frame(1, 0x00), 5))
+        assertEquals(4608, CencFlacFile.blockSize(frame(5, 0x00), 5))
+        assertEquals(4096, CencFlacFile.blockSize(frame(12, 0x00), 5))
+        // Code 6: an 8-bit size after the coded frame number.
+        assertEquals(100, CencFlacFile.blockSize(frame(6, 0x05, 99), 6))
+        assertEquals(256, CencFlacFile.blockSize(frame(6, 0xC2, 0x80, 255), 7)) // two-byte frame number
+        // Code 7: a 16-bit size after it.
+        assertEquals(1153, CencFlacFile.blockSize(frame(7, 0x05, 0x04, 0x80), 7))
+        assertEquals(65536, CencFlacFile.blockSize(frame(7, 0xE1, 0x80, 0x80, 0xFF, 0xFF), 9)) // three-byte frame number
+        // Truncated before the size field, or not a frame at all.
+        assertEquals(0, CencFlacFile.blockSize(frame(6, 0x05), 5))
+        assertEquals(0, CencFlacFile.blockSize(frame(7, 0xC2, 0x80, 0x01), 7))
+        assertEquals(0, CencFlacFile.blockSize(byteArrayOf(0x12, 0x34, 0x56, 0x78, 0x00), 5))
+    }
+
+    @Test
     fun `a file with a header and no audio is not a download`() {
         val whole = resource("sine-cenc.mp4").readBytes()
         val firstFragment = indexOf(whole, "moof") - 4

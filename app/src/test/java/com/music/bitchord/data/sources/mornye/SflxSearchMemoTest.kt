@@ -104,16 +104,50 @@ class SflxSearchMemoTest {
     }
 
     @Test
-    fun `an invalidation after an answer lands leaves no fence behind`() = runBlocking {
+    fun `an invalidation as a flight retires leaves no fence behind`() = runBlocking {
+        // The invalidation lands exactly between the answer arriving and the
+        // flight being retired, through the retirement hook.
         val memo = SflxSearchMemo<String>(ttlMs = 120_000)
-        repeat(200) { round ->
-            val key = "amazon|stream|$round"
-            val answer = async { memo.once(key) { Result.success("answer") } }
+        var overlapped = false
+        memo.beforeRetire = {
+            memo.beforeRetire = null
             memo.forgetMatching("amazon|")
-            answer.await()
+            overlapped = true
         }
-        delay(50)
-        assertEquals(0, memo.fencesHeld())
+        val answer = memo.once("amazon|stream|x") { Result.success("old script") }
+        assertTrue("the invalidation overlapped the retirement", overlapped)
+        assertEquals("its caller still hears it", "old script", answer.getOrNull())
+        assertNull("a fenced answer is not kept", memo.cached("amazon|stream|x"))
+        assertEquals("the fence went with the flight", 0, memo.fencesHeld())
+    }
+
+    @Test
+    fun `a caller that waited on a retiring flight takes its answer`() = runBlocking {
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val retiring = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        // Hold the retiring worker just before it takes the lock, while a
+        // second caller misses the cache; then let both go.
+        memo.beforeRetire = {
+            memo.beforeRetire = null
+            retiring.complete(Unit)
+            runBlocking { release.await() }
+        }
+        val first = async(Dispatchers.Default) { memo.once("amazon|stream|y") { asked.incrementAndGet(); Result.success("one") } }
+        retiring.await()
+        // The second caller has missed the cache; now let the first retire,
+        // and register only once its answer is stored.
+        memo.beforeRegister = {
+            memo.beforeRegister = null
+            release.complete(Unit)
+            val until = System.currentTimeMillis() + 5_000
+            while (memo.cached("amazon|stream|y") == null && System.currentTimeMillis() < until) Thread.sleep(5)
+        }
+        val second = memo.once("amazon|stream|y") { asked.incrementAndGet(); Result.success("two") }
+        assertEquals("one", first.await().getOrNull())
+        assertEquals("the second caller took the stored answer", "one", second.getOrNull())
+        assertEquals(1, asked.get())
     }
 
     @Test

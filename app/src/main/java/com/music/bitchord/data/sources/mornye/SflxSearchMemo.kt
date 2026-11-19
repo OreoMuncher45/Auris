@@ -71,6 +71,9 @@ internal class SflxSearchMemo<V>(
 
     /** For tests: runs between a cache miss and the question being registered. */
     internal var beforeRegister: (() -> Unit)? = null
+
+    /** For tests: runs as a finished question is about to be retired. */
+    internal var beforeRetire: (() -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** The answer to a question already asked, or null when there is none. */
@@ -120,6 +123,7 @@ internal class SflxSearchMemo<V>(
      * that nothing would ever clear.
      */
     private fun retire(key: String, flight: CompletableDeferred<Result<V>>, answer: Result<V>?) {
+        beforeRetire?.invoke()
         synchronized(storing) {
             val wasFenced = fenced.remove(flight)
             flights.remove(key, flight)
@@ -148,6 +152,10 @@ internal class SflxSearchMemo<V>(
                 straddled = true
                 null
             } else {
+                // Again under the lock: a flight retiring while this caller
+                // waited for it has just stored its answer, and asking a
+                // second time would resolve the same thing twice.
+                cached(key)?.let { return Result.success(it) }
                 flights.putIfAbsent(key, flight)
             }
         }
