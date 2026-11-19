@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberSongKeys
 import com.music.bitchord.R
 
 import androidx.compose.foundation.layout.PaddingValues
@@ -46,6 +48,12 @@ fun HistoryScreen(
     isPlaying: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // The videoId alone is not a key here: the feed is deduplicated on it, but
+    // a list keyed on something that could repeat is one bad response away
+    // from a crash, so repeats are counted off. Not the index, which a new
+    // play at the top shifted for every row below it — the list then rebuilt
+    // the whole history rather than slotting one row in.
+    val keys = rememberSongKeys((state as? UiState.Success)?.data.orEmpty())
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
@@ -64,10 +72,7 @@ fun HistoryScreen(
 
             is UiState.Success -> {
                 val songs = state.data
-                // The videoId alone is not a key here: the feed is deduplicated
-                // on it, but a list keyed on something that could repeat is one
-                // bad response away from a crash. The index makes it total.
-                itemsIndexed(songs) { index, song ->
+                itemsIndexed(songs, keys) { index, song ->
                     SongRow(
                         song = song,
                         onClick = { onSongClick(songs, index) },
@@ -91,11 +96,13 @@ fun HistoryScreen(
     }
 }
 
-/** Keyed on both, for the reason given at the call site. */
+/** Keyed by [keys], for the reason given where they are made. */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexed(
     songs: List<Song>,
+    keys: List<String>,
     row: @Composable (Int, Song) -> Unit,
 ) = items(
     count = songs.size,
-    key = { "${songs[it].videoId}:$it" },
+    key = { keys[it] },
+    contentType = { LazyContent.SONG_ROW },
 ) { index -> row(index, songs[index]) }

@@ -2,8 +2,6 @@ package com.music.bitchord.data.sources.addon
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.module.SharedCalls
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -89,7 +87,7 @@ class AddonClient(rawBaseUrl: String) {
             }
             if (!manifest.isPlayable) {
                 val declared = manifest.resources.joinToString(", ")
-                throw AddonException("This addon declares $declared — BitChord needs search")
+                throw AddonException("This addon declares $declared — Auris needs search")
             }
             manifest
         }.recoverCatching { failure ->
@@ -129,11 +127,21 @@ class AddonClient(rawBaseUrl: String) {
      * so trimming the list is the caller's job. Nothing else here is negotiable
      * either: the spec fixes the path, the parameter name and the shape coming
      * back.
+     *
+     * @param wantsAtmos whether the spatial mix is wanted for this question.
+     *   It is asked for on the search as well as on the stream, because a
+     *   catalogue that publishes the immersive mix as its own row — Tidal does
+     *   — offers it as a row or not at all, and a search that did not ask
+     *   would never bring it back to be preferred.
      */
-    suspend fun search(query: String, tier: String): Result<List<AddonTrack>> {
+    suspend fun search(
+        query: String,
+        tier: String,
+        wantsAtmos: Boolean = false,
+    ): Result<List<AddonTrack>> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return Result.success(emptyList())
-        val params = settingsFor(tier)
+        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos))
         return searches.get(
             // The parameters are in the key because they are in the request:
             // the same query at a different quality is a different question,
@@ -157,7 +165,13 @@ class AddonClient(rawBaseUrl: String) {
      * endpoint entirely.
      */
     suspend fun stream(trackId: String, tier: String): Result<AddonStream> {
-        val params = settingsFor(tier)
+        // The immersive rung is the only request that is allowed to come back
+        // spatial. Every other rung says `none` even when the listener wants
+        // Atmos, because those are the stereo fallback after the immersive
+        // rung missed — the shape the reference host uses, and what stops a
+        // failed Atmos attempt from being answered with the same mix again.
+        val atmos = atmosHint(tier == TIER_ATMOS)
+        val params = settingsFor(tier, atmos = atmos)
         return streams.get(
             key = keyOf(trackId, params.toString()),
             describe = { "▶ addon stream(${redact(baseUrl)}) id=$trackId tier=$tier" },
@@ -194,9 +208,15 @@ class AddonClient(rawBaseUrl: String) {
      * rather than failing outright on a document nothing here strictly needs.
      *
      * Last comes `atmos`, which is the one parameter here that is not about
-     * quality. See [atmosHint].
+     * quality. See [atmosHint]; unlike `quality`, it is set rather than filled
+     * in, so it also replaces a default the manifest declared. [search] and
+     * [stream] each pass their own value: `auto` when the question is about
+     * the immersive mix and `none` when it is not — see there.
      */
-    private suspend fun settingsFor(tier: String): Map<String, String> {
+    private suspend fun settingsFor(
+        tier: String,
+        atmos: String,
+    ): Map<String, String> {
         val declared = manifest().getOrNull()?.settings.orEmpty()
         val params = LinkedHashMap<String, String>()
         declared.forEach { setting ->
@@ -209,13 +229,15 @@ class AddonClient(rawBaseUrl: String) {
                 .mapNotNull { it.stringValue }
             params[QUALITY_KEY] = matchTier(tier, options) ?: tier
         }
-        atmosHint()?.let { params.putIfAbsent(ATMOS_KEY, it) }
+        params[ATMOS_KEY] = atmos
+        TrackLog.d(TAG, "asking ${redact(baseUrl)} with atmos=$atmos (tier=$tier)")
         return params
     }
 
     /**
-     * `auto` when this device and this user both want immersive audio, null
-     * otherwise — the standard `?atmos=` hint the spec defines for hosts.
+     * `auto` when this question is about the immersive mix, `none` otherwise —
+     * the standard `?atmos=` hint the spec defines for hosts, sent on every
+     * request.
      *
      * Without it an addon holding an Atmos mix has no way to know it may serve
      * one, so it takes its default branch and sends stereo. That is the whole
@@ -229,26 +251,32 @@ class AddonClient(rawBaseUrl: String) {
      *    mode, where a track with no immersive mix is an error rather than a
      *    stereo answer — which would turn every ordinary track on an
      *    Atmos-capable addon into a miss. `auto` is try-Atmos-then-stereo.
-     *  - **It is asked for, not asserted.** Both gates are the same two the
+     *  - **It is asked for, not asserted.** The gate is the same one the
      *    playback side enforces in
      *    [ModuleSource.unplayable][com.music.bitchord.data.sources.ModuleSource.unplayable],
      *    so an addon is only ever offered Atmos when an Atmos answer would
-     *    actually be accepted. With either gate shut the parameter is absent
-     *    entirely and the addon's own default — stereo — stands.
-     *  - **[putIfAbsent], never an override.** An addon that declared its own
-     *    `atmos` setting has said what it wants; the manifest's default wins
-     *    and this adds nothing. Addons that have never heard of the parameter
-     *    ignore it, which is the same basis on which `quality` is already sent
+     *    actually be accepted.
+     *  - **It is set, never merely filled in.** This used to be
+     *    `putIfAbsent`, on the reasoning that an addon declaring its own
+     *    `atmos` setting had said what it wants. That reasoning is wrong under
+     *    the manifest's own contract: a declared value is a *default for a host
+     *    that has no preference*, and this host does — the rung in force. An
+     *    addon whose schema defaults `atmos` to `off` therefore never served
+     *    an immersive mix no matter what the listener turned on, which is
+     *    exactly a report of "Atmos is enabled but not working, with the same
+     *    addon". `none` when the gate is shut is the other half: it tells an
+     *    addon that defaults to `auto` not to send a mix this device would only
+     *    refuse. Addons that have never heard of the parameter ignore it, which
+     *    is the same basis on which `quality` is already sent
      *    unconditionally.
      *
-     * Nothing here names a particular addon. The decoder probe is cached per
-     * process and the settings read is a flow's current value, so this costs
-     * nothing on the IO thread it already runs on.
+     * The gate is the request rather than a setting, so the two questions
+     * stay apart: the file being saved and the stream being played each ask
+     * for the spatial mix or do not, and a lossless request is answered with
+     * a lossless file even while a Dolby stream is playing.
      */
-    private fun atmosHint(): String? {
-        val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
-        return if (wanted) ATMOS_AUTO else null
-    }
+    private fun atmosHint(wantsAtmos: Boolean): String =
+        if (wantsAtmos) ATMOS_AUTO else ATMOS_NONE
 
     /**
      * The option in [options] that best answers a request for [tier], or null
@@ -260,11 +288,21 @@ class AddonClient(rawBaseUrl: String) {
      * which an addon that bothered to order them makes its recommended tier.
      */
     private fun matchTier(tier: String, options: List<String>): String? {
+        // The immersive rung is its own value in the reference host's
+        // vocabulary, not a synonym for lossless: a backend that files the
+        // spatial mix under `quality=atmos` answers only when that value is
+        // asked for. A manifest that enumerates options but omits one gets the
+        // literal value rather than its first option — the reference host does
+        // not negotiate this one at all.
+        if (tier.equals(TIER_ATMOS, ignoreCase = true)) {
+            return options.firstOrNull { option -> ATMOS_WORDS.any { it in option.lowercase() } } ?: tier
+        }
         if (options.isEmpty()) return null
         options.firstOrNull { it.equals(tier, ignoreCase = true) }?.let { return it }
-        val wanted = when (tier.uppercase()) {
-            TIER_LOSSLESS -> LOSSLESS_WORDS
-            TIER_LOW -> LOW_WORDS
+        val wanted = when {
+            tier.equals(TIER_HI_RES, ignoreCase = true) -> HI_RES_WORDS
+            tier.equals(TIER_LOSSLESS, ignoreCase = true) -> LOSSLESS_WORDS
+            tier.equals(TIER_LOW, ignoreCase = true) -> LOW_WORDS
             else -> HIGH_WORDS
         }
         return options.firstOrNull { option -> wanted.any { it in option.lowercase() } }
@@ -334,7 +372,7 @@ class AddonClient(rawBaseUrl: String) {
                     // sends people to re-paste a URL that was always correct.
                     response.code >= 500 -> throw AddonUnavailable("HTTP ${response.code}")
                     response.code != 429 -> throw AddonException("HTTP ${response.code}")
-                    attempt >= MAX_RETRIES -> throw AddonUnavailable("This addon is rate limiting BitChord")
+                    attempt >= MAX_RETRIES -> throw AddonUnavailable("This addon is rate limiting Auris")
                     else -> retryAfterMs(response.header("Retry-After"), attempt)
                 }
             }
@@ -393,12 +431,32 @@ class AddonClient(rawBaseUrl: String) {
         const val TIER_HIGH = "HIGH"
         const val TIER_LOW = "LOW"
 
+        /**
+         * The hi-res rung, in the reference host's vocabulary.
+         *
+         * The step between the immersive answer and CD lossless: a backend that
+         * files 24-bit or 96kHz copies under their own tier answers this and
+         * nothing below it, so a waterfall that jumps from Atmos straight to
+         * LOSSLESS never reaches them. See [AddonSource.stream].
+         */
+        const val TIER_HI_RES = "hi_res"
+
+        /**
+         * The immersive rung. Not one of this app's quality tiers: this is the
+         * addon's own vocabulary, and the one value that says "the spatial
+         * mix, not merely a stream this device could decode as one".
+         */
+        const val TIER_ATMOS = "atmos"
+
         private const val QUALITY_KEY = "quality"
 
-        /** The spec's immersive-audio hint, and the only value BitChord ever sends for it. */
+        /** The spec's immersive-audio parameter, and the two values BitChord sends for it. */
         private const val ATMOS_KEY = "atmos"
         private const val ATMOS_AUTO = "auto"
+        private const val ATMOS_NONE = "none"
 
+        private val ATMOS_WORDS = listOf("atmos", "dolby", "immersive", "spatial", "joc")
+        private val HI_RES_WORDS = listOf("hi_res", "hi-res", "hires", "hi res", "24", "96", "192")
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
         private val HIGH_WORDS = listOf("high", "320", "normal", "standard")
         private val LOW_WORDS = listOf("low", "96", "128", "min")

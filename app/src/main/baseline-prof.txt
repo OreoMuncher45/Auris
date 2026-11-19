@@ -1,12 +1,69 @@
-# Baseline profile for the app's own code: ahead-of-time compilation for
-# everything under our packages, the way the Compose and Media3 libraries
-# already ship theirs. Without it our code starts every install interpreted
-# and JIT-compiled piece by piece, which is the first-launch and first-scroll
-# jank a release build still had.
+# Baseline profile: ahead-of-time compilation for the code a cold start, a
+# first scroll and a first play run through. Without it that code starts every
+# install interpreted and is JIT-compiled piece by piece, which is the
+# first-launch, first-scroll and first-player-open jank a release build had.
 #
-# Wildcards rather than a recorded profile: recording one needs a macrobenchmark
-# run on an API 33+ or rooted device. This is a superset of any recorded journey
-# for our own code; the libraries' own profiles cover theirs.
+# Wildcards rather than a recorded profile: recording one needs a
+# macrobenchmark run on an API 33+ or rooted device. Every rule below is a
+# superset of what a recorded journey would list for its package.
+#
+# AGP merges the profiles libraries ship inside their AARs with this file, so
+# the libraries that already ship one are left to it rather than restated here:
+# Compose runtime, foundation, ui and material3; Coil's core and compose-core;
+# Haze; Navigation; Lifecycle; Activity. (Checked against the AARs this build
+# resolves — each carries a baseline-prof.txt.)
+#
+# The app's rules match classes from every module in the APK, so the shared
+# modules (:shared, :sharedUi) are covered by the same package rules as :app.
+#
+# H = hot, S = run during startup, P = run after startup. L…; = a class to
+# load and initialise into the boot image ahead of first use.
+
+# ---- Auris itself: app, shared data/playback layer, shared UI -----------------
+# Includes the vendored backdrop engine (ui/components/backdrop) and the player.
 HSPLcom/music/bitchord/**->**(**)**
-HSPLcom/my/kizzy/**->**(**)**
 Lcom/music/bitchord/**;
+
+# The Discord rich-presence client (vendored Kizzy), in :shared.
+HSPLcom/my/kizzy/**->**(**)**
+Lcom/my/kizzy/**;
+
+# The USB audio driver module.
+HSPLcom/decent/usbaudio/**->**(**)**
+
+# ---- Media3 -----------------------------------------------------------------
+# Media3 ships no baseline profile of its own (none of its 1.11.0 AARs has
+# one), yet PlaybackService builds an ExoPlayer and a MediaSession at process
+# start and the first play runs the whole extractor/renderer path. All of it,
+# including the vendored FFmpeg decoder under androidx/media3/decoder/ffmpeg.
+HSPLandroidx/media3/common/**->**(**)**
+HSPLandroidx/media3/exoplayer/**->**(**)**
+HSPLandroidx/media3/session/**->**(**)**
+HSPLandroidx/media3/datasource/**->**(**)**
+HSPLandroidx/media3/extractor/**->**(**)**
+HSPLandroidx/media3/container/**->**(**)**
+HSPLandroidx/media3/decoder/**->**(**)**
+HSPLandroidx/media3/database/**->**(**)**
+Landroidx/media3/common/**;
+Landroidx/media3/exoplayer/**;
+Landroidx/media3/session/**;
+
+# ---- Images: the Coil pieces without a profile of their own -------------------
+HSPLcoil3/compose/**->**(**)**
+HSPLcoil3/network/**->**(**)**
+
+# ---- Haze materials (haze itself ships a profile) -----------------------------
+HSPLdev/chrisbanes/haze/materials/**->**(**)**
+
+# ---- Kotlin libraries: plain jars, so no profile reaches the build from them ---
+# Every flow collected at startup, every StateFlow the first composition reads.
+HSPLkotlinx/coroutines/**->**(**)**
+Lkotlinx/coroutines/**;
+# The first home load decodes every InnerTube response through these.
+HSPLkotlinx/serialization/**->**(**)**
+
+# ---- Networking: every request in the app goes through OkHttp (Ktor's engine
+# and Media3's data source both sit on it), and the first ones are made at start.
+HSPLokhttp3/**->**(**)**
+HSPLokio/**->**(**)**
+HSPLio/ktor/client/**->**(**)**

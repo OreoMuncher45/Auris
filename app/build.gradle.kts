@@ -80,10 +80,16 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 75
-        versionName = "2.2.13"
+        versionCode = 134
+        versionName = "3.0.29"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Strip symbol tables from our own CMake-built .so (ffmpeg/jamesdsp/
+        // analysis/dsd/usb). The big prebuilt libs arrive already stripped.
+        ndk {
+            debugSymbolLevel = "none"
+        }
 
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
@@ -119,7 +125,7 @@ android {
         create("dev") {
             dimension = "env"
             applicationId = "com.dev.bitchord"
-            resValue("string", "app_name", "BitChord Next")
+            resValue("string", "app_name", "Auris")
         }
         create("prod") {
             dimension = "env"
@@ -168,6 +174,9 @@ android {
              * `benchmark` build type below before it ships.
              */
             isMinifyEnabled = true
+            // Drop resources no code references (dead drawables, unused locale
+            // variants of drawables, etc.) — pairs with R8 above.
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -200,6 +209,18 @@ android {
             // SMBJ's BouncyCastle and jspecify both ship this descriptor.
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
+        jniLibs {
+            // Compress .so inside the APK (extractNativeLibs=true) so the
+            // download is far smaller; they are extracted once at install.
+            // The big win is libonnxruntime.so (~27 MB stored -> ~10 MB).
+            useLegacyPackaging = true
+        }
+    }
+    androidResources {
+        // Compress everything aapt would otherwise store raw (fonts, flow
+        // videos, ONNX models). resources.arsc stays aligned/uncompressed
+        // automatically; jniLibs are governed by packaging.jniLibs above.
+        noCompress.clear()
     }
     buildFeatures {
         compose = true
@@ -218,6 +239,7 @@ android {
                 // reaching an assertion. CI is x86_64 and runs them for real.
                 if (System.getProperty("os.arch") in setOf("aarch64", "arm64")) {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
                 }
             }
 
@@ -235,7 +257,67 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        // Lambdas as classes, not invokedynamic.
+        //
+        // Kotlin 2.3 compiles a lambda literal into an invokedynamic whose
+        // call site carries every captured value as a stack argument. The
+        // AppRootBox content lambda inside MainActivity.kt captures 252
+        // values, so the call site has 255 arguments and dex has to encode
+        // them as one invoke-direct/range — a register window of 256 words.
+        // The window's size lives in one byte, 256 wraps to 0, and ART reads
+        // that as "no arguments at all" and rejects the whole class:
+        //
+        //   VerifyError: Verifier rejected class com.music.bitchord.MainActivityKt
+        //   [0xFFFFFFFF] invalid arg count (0) in invoke-direct/range
+        //
+        // A class-based lambda keeps the captured values in a constructor
+        // (252 arguments) and passes the lambda's own parameters to invoke()
+        // instead, so the widest call is 253 words and fits. The flag costs a
+        // little indirection and buys back the crash.
+        freeCompilerArgs.add("-Xlambdas=class")
     }
+}
+
+/*
+ * Two guards on the compiled classes, run after every Kotlin compile of every
+ * variant (dev and prod; debug, release and benchmark), so the shipping
+ * prodRelease and the devDebug that pull-request CI builds are both checked.
+ * The wiring is gradle/class-checks.gradle.kts, shared with :sharedUi and
+ * :desktopApp.
+ *
+ * dex keeps the size of a call's register window in one byte, so a call
+ * cannot pass more than 255 words. A constructor with 254 arguments needs
+ * 255 of them — the object itself and the arguments — and is the most a
+ * dex can carry. One argument more and the count wraps to zero, the class
+ * is refused at launch, and nothing in the build says so. Kotlin does not
+ * object: the limit is dex's, and dex is not the compiler. The lambdas that
+ * capture the most are the ones to watch, and a capture set grows by one
+ * every time a local is added to a big composable.
+ *
+ * The JVM's own limit is the other one a big composable runs into: 65,535
+ * bytes of bytecode per method. A composable is one method however long its
+ * source is, so it creeps up on an ordinary change and then the compiler
+ * stops with a MethodTooLargeException (OVERHAUL_PLAN.md has one, in
+ * BitChordApp). A method over 32,000 bytes — about half the limit, the target
+ * issue #5 set — fails the build while there is still room to split it calmly.
+ */
+extra["classChecks"] = listOf("dev", "prod").flatMap { flavor ->
+    listOf("debug", "release", "benchmark").map { type ->
+        val variant = flavor + type.replaceFirstChar { it.uppercase() }
+        "compile${variant.replaceFirstChar { it.uppercase() }}Kotlin" to "tmp/kotlin-classes/$variant"
+    }
+}.toMap()
+apply(from = rootProject.file("gradle/class-checks.gradle.kts"))
+// The names these checks have always had: the dev release classes.
+tasks.register("checkConstructorWidths") {
+    group = "verification"
+    description = "Fails if a constructor in the dev release classes is wider than dex can call."
+    dependsOn("checkConstructorWidthsDevReleaseKotlin")
+}
+tasks.register("checkMethodSizes") {
+    group = "verification"
+    description = "Fails if a method in the dev release classes is over 32,000 bytes."
+    dependsOn("checkMethodSizesDevReleaseKotlin")
 }
 
 /*
@@ -275,6 +357,7 @@ val newPipeExtractorStripped = tasks.register<org.gradle.api.tasks.bundling.Jar>
 dependencies {
     implementation(project(":shared"))
     implementation(project(":sharedUi"))
+    implementation(project(":audio:decent-usb-audio-driver"))
 
     // ---- Compose (Material 3) ----
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")

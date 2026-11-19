@@ -24,16 +24,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.ui.player.PlayerSettings
 
 /**
  * Grey stand-ins for content still on the wire, laid out to the same metrics as
@@ -59,16 +65,23 @@ private val SubtitleWidths = listOf(0.34f, 0.44f, 0.27f, 0.38f, 0.31f)
  */
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = BlockShape) {
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val base = MaterialTheme.colorScheme.surfaceVariant
     val highlight = MaterialTheme.colorScheme.onSurfaceVariant
         .copy(alpha = 0.16f)
         .compositeOver(base)
-    val sweep = rememberInfiniteTransition(label = "skeleton").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(SHIMMER_PERIOD_MS, easing = LinearEasing)),
-        label = "sweep",
-    )
+    val sweep: State<Float> = if (reduceAnimation) {
+        // Still a block on a loading page, but without a full-width gradient
+        // travelling it on every frame until the network answers.
+        remember { mutableFloatStateOf(0.5f) }
+    } else {
+        rememberInfiniteTransition(label = "skeleton").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(SHIMMER_PERIOD_MS, easing = LinearEasing)),
+            label = "sweep",
+        )
+    }
     Box(
         modifier
             .clip(shape)
@@ -137,7 +150,7 @@ fun LazyListScope.songListSkeleton(
     circular: Boolean = false,
     alpha: Float = 1f,
 ) {
-    items(count, key = { "$keyPrefix:$it" }) { index ->
+    items(count, key = { "$keyPrefix:$it" }, contentType = { LazyContent.SKELETON }) { index ->
         Box(Modifier.graphicsLayer { this.alpha = alpha }) {
             SongRowSkeleton(index = index, circular = circular)
         }
@@ -175,7 +188,7 @@ private fun HeroShelfSkeleton() {
 
 /** Reserved at the top of Play while Recents loads, matching its saved layout. */
 fun LazyListScope.recentlyPlayedSkeleton(listLayout: Boolean) {
-    item(key = "skeleton:recently-played") {
+    item(key = "skeleton:recently-played", contentType = LazyContent.SKELETON) {
         Column(Modifier.padding(bottom = 26.dp)) {
             RecentsHeaderSkeleton()
             if (listLayout) {
@@ -260,12 +273,12 @@ fun ShelfSkeleton(index: Int = 0, cardWidth: Dp = SHELF_CARD_WIDTH, cardCorner: 
 /** Home and Explore while the first page of shelves is still loading. */
 fun LazyListScope.feedSkeleton(shelves: Int = 3, firstIsHero: Boolean = true) {
     if (firstIsHero) {
-        item(key = "skeleton:hero") { HeroShelfSkeleton() }
-        items(shelves - 1, key = { "skeleton:shelf:$it" }) { index ->
+        item(key = "skeleton:hero", contentType = LazyContent.SKELETON) { HeroShelfSkeleton() }
+        items(shelves - 1, key = { "skeleton:shelf:$it" }, contentType = { LazyContent.SKELETON }) { index ->
             ShelfSkeleton(index = index + 1)
         }
     } else {
-        items(shelves, key = { "skeleton:shelf:$it" }) { index ->
+        items(shelves, key = { "skeleton:shelf:$it" }, contentType = { LazyContent.SKELETON }) { index ->
             ShelfSkeleton(index = index)
         }
     }
@@ -273,7 +286,7 @@ fun LazyListScope.feedSkeleton(shelves: Int = 3, firstIsHero: Boolean = true) {
 
 /** Appended to the feed while a further page of shelves is on its way. */
 fun LazyListScope.feedMoreSkeleton() {
-    item(key = "skeleton:more") { ShelfSkeleton() }
+    item(key = "skeleton:more", contentType = LazyContent.SKELETON) { ShelfSkeleton() }
 }
 
 /**
@@ -300,8 +313,8 @@ fun ReplayCardRowSkeleton(modifier: Modifier = Modifier) {
 
 /** The signed-in library: saved collections, then the run of liked tracks. */
 fun LazyListScope.librarySkeleton() {
-    item(key = "skeleton:library:shelf") { ShelfSkeleton() }
-    item(key = "skeleton:library:header") { SectionHeaderSkeleton(index = 1) }
+    item(key = "skeleton:library:shelf", contentType = LazyContent.SKELETON) { ShelfSkeleton() }
+    item(key = "skeleton:library:header", contentType = LazyContent.SKELETON) { SectionHeaderSkeleton(index = 1) }
     songListSkeleton(count = 7, keyPrefix = "skeleton:library:song")
 }
 
@@ -330,13 +343,13 @@ private fun DetailActionsSkeleton(isArtist: Boolean) {
  */
 fun LazyListScope.detailSkeleton(isArtist: Boolean) {
     if (isArtist) {
-        item(key = "skeleton:detail:actions") {
+        item(key = "skeleton:detail:actions", contentType = LazyContent.SKELETON) {
             Column(Modifier.graphicsLayer { alpha = 0.4f }) {
                 DetailActionsSkeleton(isArtist = true)
                 Spacer(Modifier.height(22.dp))
             }
         }
-        item(key = "skeleton:detail:top") {
+        item(key = "skeleton:detail:top", contentType = LazyContent.SKELETON) {
             Column(Modifier.graphicsLayer { alpha = 0.4f }) {
                 SectionHeaderSkeleton()
                 // Top songs page four at a time — see [trackColumnWidth] for how
@@ -357,14 +370,14 @@ fun LazyListScope.detailSkeleton(isArtist: Boolean) {
                 }
             }
         }
-        item(key = "skeleton:detail:sections") {
+        item(key = "skeleton:detail:sections", contentType = LazyContent.SKELETON) {
             Box(Modifier.graphicsLayer { alpha = 0.4f }) {
                 ShelfSkeleton(index = 2, cardCorner = 10.dp)
             }
         }
         return
     }
-    item(key = "skeleton:detail:actions") {
+    item(key = "skeleton:detail:actions", contentType = LazyContent.SKELETON) {
         Column(Modifier.graphicsLayer { alpha = 0.4f }) {
             DetailActionsSkeleton(isArtist = false)
             Spacer(Modifier.height(20.dp))

@@ -158,6 +158,36 @@ class DownloadStoreTest {
     }
 
     /**
+     * The immersive rung is a rung of its own, not a modifier on Lossless: the
+     * two answer with different files — E-AC-3 JOC is a lossy spatial mix and
+     * a FLAC is the same recording without the room — and a request that could
+     * not say which it wanted would be answered with whichever the source
+     * happened to hold.
+     */
+    @Test
+    fun `the Dolby rung asks for the spatial mix and the bit-exact ladder below it`() {
+        val request = SourceResolver.requestForDownload(DownloadQuality.DOLBY)
+        assertEquals(StreamRequest.Atmos, request)
+        assertTrue(request.wantsLossless)
+        assertTrue(request.wantsAtmos)
+    }
+
+    /**
+     * The other way round, and the case that used to be wrong: Lossless means
+     * up to hi-res and never the spatial mix, whatever the stream being played
+     * is doing.
+     */
+    @Test
+    fun `a lossless download never asks for the spatial mix`() {
+        val request = SourceResolver.requestForDownload(DownloadQuality.LOSSLESS)
+        assertEquals(StreamRequest.Lossless, request)
+        assertTrue(request.wantsLossless)
+        assertFalse(request.wantsAtmos)
+        assertFalse(SourceResolver.requestForDownload(DownloadQuality.HIGH).wantsAtmos)
+        assertFalse(SourceResolver.requestForDownload(DownloadQuality.STANDARD).wantsAtmos)
+    }
+
+    /**
      * High means "the best rung there is", and the sentinel that says so must
      * not survive into a request as a literal 2-billion-kbps cap — the
      * difference between a ceiling nothing exceeds and no ceiling at all is

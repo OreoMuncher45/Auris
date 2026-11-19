@@ -1,5 +1,6 @@
 <resources>
-    <string name="app_name">BitChord</string>
+    <string name="app_name">Auris</string>
+    <string name="automix_analysis_menu">Automix 分析</string>
     <string name="playback_channel_name">正在播放</string>
     <string name="download_channel_name">下载</string>
     <string name="download_channel_description">正在保存到你的音乐文件夹的歌曲</string>
@@ -22,6 +23,7 @@
     <string name="clear_search">清除搜索</string>
     <string name="library">资料库</string>
     <string name="home">首页</string>
+    <string name="radio">广播</string>
     <string name="play">播放</string>
     <string name="explore">探索</string>
     <string name="listen_now">立即收听</string>
@@ -99,10 +101,10 @@
     <string name="dolby_atmos_open_failed">无法打开杜比全景声设置</string>
     <string name="update_available">有可用更新：v%1$s</string>
     <string name="software_update">软件更新</string>
-    <string name="update_available_body">bitchord %1$s 现已可供下载。</string>
-    <string name="update_downloading_body">正在下载 bitchord %1$s…</string>
-    <string name="update_ready_body">bitchord %1$s 已准备好安装。</string>
-    <string name="update_failed_body">无法下载 bitchord %1$s。</string>
+    <string name="update_available_body">Auris %1$s 现已可供下载。</string>
+    <string name="update_downloading_body">正在下载 Auris %1$s…</string>
+    <string name="update_ready_body">Auris %1$s 已准备好安装。</string>
+    <string name="update_failed_body">无法下载 Auris %1$s。</string>
     <string name="download_now">立即下载</string>
     <string name="install_now">立即安装</string>
     <string name="later">以后再说</string>
@@ -117,6 +119,8 @@
     <string name="play_next">下一首播放</string>
     <string name="queue">播放队列</string>
     <string name="source_setup_required">点按以完成设置</string>
+    <string name="source_addon_turned_off">插件已关闭。</string>
+    <string name="source_turned_off">已关闭。</string>
     <string name="source_unreachable">目前无法访问 · %1$s</string>
     <string name="checking">正在检查…</string>
     <string name="failed">失败</string>
@@ -130,7 +134,7 @@
     <string name="widget_previous">上一首</string>
     <string name="widget_artwork">专辑封面</string>
     <string name="widget_nothing_played">尚未播放任何内容</string>
-    <string name="widget_open_bitchord">打开 BitChord</string>
+    <string name="widget_open_bitchord">打开 Auris</string>
     <string name="widget_preview_title">歌曲标题</string>
     <string name="widget_preview_artist">艺人</string>
     <string name="widget_pill_label">正在播放 4×1</string>
@@ -138,6 +142,8 @@
     <string name="widget_preview_pill">歌曲标题 - 艺人</string>
     <string name="download_quality">下载质量</string>
     <string name="download_wifi_only">仅通过 Wi-Fi 下载</string>
+    <string name="auto_download_songs">自动下载新增歌曲</string>
+    <string name="auto_download_songs_subtitle">添加到此歌单的新歌曲会自动下载。你手动删除的下载不会再次下载。</string>
     <string name="spatial_audio">空间音频</string>
     <string name="spatial_audio_subtitle">拓宽立体声音轨，带来更沉浸的体验</string>
     <string name="spatial_audio_atmos_subtitle">此曲目已暂停 — Dolby Atmos 本身就是空间音频</string>
@@ -157,7 +163,7 @@
     <string name="cancel_all">取消全部</string>
     <string name="language">语言</string>
     <string name="app_language">应用语言</string>
-    <string name="app_language_description">选择 BitChord 使用的语言。</string>
+    <string name="app_language_description">选择 Auris 使用的语言。</string>
     <string name="english">英语</string>
     <string name="spanish">西班牙语</string>
     <string name="french">法语</string>
@@ -232,6 +238,8 @@
     <string name="light">浅色</string>
     <string name="dark">深色</string>
     <string name="full_screen_cover_art_subtitle">让封面延伸至播放器边缘，而不是显示为方形</string>
+    <string name="zoom_out_album_art">缩小专辑封面</string>
+    <string name="zoom_out_album_art_subtitle">在卡片里把图片画得小一点，让它多露出一点</string>
     <string name="animated_cover_art_subtitle">播放部分发行版自带的循环视频，而不是静态封面</string>
     <string name="dont_repeat_songs_subtitle">自动播放不会在本次会话中重复推荐已播放或已推荐过的歌曲</string>
     <string name="download_quality_subtitle">无论何种网络连接，每首曲目均为%1$s</string>
@@ -244,10 +252,10 @@
     <string name="beta">测试版</string>
     <string name="refresh_rate">刷新率</string>
     <string name="high_performance_before_enabling">启用前</string>
-    <string name="high_performance_battery_warning">请先将 BitChord 的电量使用设置为“不受限制”。更高的刷新率会消耗更多电量、CPU 和 GPU 资源，并可能使设备发热。</string>
+    <string name="high_performance_battery_warning">请先将 Auris 的电量使用设置为“不受限制”。更高的刷新率会消耗更多电量、CPU 和 GPU 资源，并可能使设备发热。</string>
     <string name="open_battery_settings">打开电量设置</string>
     <string name="enable_high_performance_title">要启用高性能模式吗？</string>
-    <string name="enable_high_performance_confirmation">仅当 BitChord 的电量使用设置为“不受限制”时才启用。设备发热或电量不足时，Android 仍可能限制刷新率。</string>
+    <string name="enable_high_performance_confirmation">仅当 Auris 的电量使用设置为“不受限制”时才启用。设备发热或电量不足时，Android 仍可能限制刷新率。</string>
     <string name="enable">启用</string>
     <string name="not_yet">暂不</string>
     <string name="activity">活动</string>
@@ -259,7 +267,6 @@
     <string name="activity_watching">观看</string>
     <string name="add_to_queue">添加到播放队列</string>
     <string name="after_this_song">在这首歌之后</string>
-    <string name="always_on">始终开启</string>
     <string name="api_token">API 令牌</string>
     <string name="audio_quality_connection">使用 %1$s 时</string>
     <string name="back_in_future_version">将在未来版本中回归</string>
@@ -282,7 +289,7 @@
     <string name="discord_presence_footer">当曲目、播放进度或播放状态发生变化时，卡片会随之更新；播放停止时会清除。</string>
     <string name="discord_show_audio_quality">显示音质</string>
     <string name="discord_show_audio_quality_subtitle">在状态卡片上显示 Hi-Res、无损和 Dolby 规格</string>
-    <string name="discord_sign_in_footer">登录会打开 Discord 的登录页面，你不会在 BitChord 中输入任何内容。</string>
+    <string name="discord_sign_in_footer">登录会打开 Discord 的登录页面，你不会在 Auris 中输入任何内容。</string>
     <string name="discord_token">Discord 令牌</string>
     <string name="discord_token_description">粘贴你的 Discord 账号令牌。它会在此设备上加密保存，且只会发送给 Discord。</string>
     <string name="discord_token_rejected">Discord 拒绝了该令牌。</string>
@@ -317,7 +324,7 @@
     <string name="downloads_finished">下载 · 已完成</string>
     <string name="downloading_progress">正在下载 · %1$d%%</string>
     <string name="starting">正在开始</string>
-    <string name="saved_to_bitchord_folder">已保存到 Music/BitChord</string>
+    <string name="saved_to_bitchord_folder">已保存到 Music/Auris</string>
     <string name="nothing_downloading">当前没有下载任务</string>
     <string name="nothing_to_explore">目前没有可探索的内容</string>
     <string name="no_youtube_music_results">YouTube Music 没有搜索结果</string>
@@ -434,7 +441,8 @@
     <string name="signing_in">正在登录…</string>
     <string name="sleep_timer">睡眠定时器</string>
     <string name="sources_no_lossless">已启用的来源均无法提供无损音频。添加自定义模块即可播放可用的无损文件，而无需转码。</string>
-    <string name="sources_order_footer">如果某个来源没有该曲目或无法访问，BitChord 会尝试下一个来源。排在 YouTube 之前的来源如果返回更好的版本，可以替换其录音。</string>
+    <string name="sources_order_footer">如果某个来源没有该曲目或无法访问，Auris 会尝试下一个来源。排在 YouTube 之前的来源如果返回更好的版本，可以替换其录音。</string>
+    <string name="sources_youtube_off">YouTube Music 已关闭。只会使用你自己的来源，任何来源都没有的曲目将无法播放。</string>
     <string name="sources_order_header">来源，按此顺序尝试</string>
     <string name="sources_quality_capped">此连接的设置低于高品质，因此串流会被转码以符合该限制，下载不受影响。</string>
     <string name="jiosaavn_mismatch_warning">可能匹配到歌曲的错误版本。启用风险自负。</string>
@@ -454,6 +462,8 @@
     <string name="spotify_canvas_auto_hide_subtitle">播放 Spotify Canvas 时，5 秒后收起半屏播放器</string>
     <string name="prioritize_spotify_canvas">优先使用 Spotify Canvas</string>
     <string name="prioritize_spotify_canvas_subtitle">先尝试 Spotify，再尝试 Apple Music 和其他动态封面来源</string>
+    <string name="spotify_canvas_enabled">Spotify Canvas</string>
+    <string name="spotify_canvas_enabled_subtitle">关闭后 Spotify 仍保持连接，但不再查找其 Canvas。Apple Music、Tidal 和社区的动态封面仍会播放。</string>
     <string name="status">状态</string>
     <string name="status_dialog_message">状态显示开启时，你的账号所展示的内容。</string>
     <string name="status_dnd">请勿打扰</string>
@@ -479,7 +489,7 @@
     <string name="biggest_day_note">你收听最多的一天是 %1$s，共收听了 %2$s。</string>
     <string name="close_replay">关闭 Replay</string>
     <string name="couldnt_draw_picture">无法生成图片</string>
-    <string name="default_replay_holder">BitChord 听众</string>
+    <string name="default_replay_holder">Auris 听众</string>
     <string name="different_albums">不同专辑</string>
     <string name="genres_pending">随着收听记录增多，流派信息会逐渐显示</string>
     <string name="hour_am">上午%1$d点</string>
@@ -509,7 +519,7 @@
     <string name="replay_artist_end">让你一听再听。</string>
     <string name="replay_artist_focus">同一位艺人</string>
     <string name="replay_artist_start">整月里，</string>
-    <string name="replay_empty_description">再多听一会儿，BitChord 就会把你的收听记录变成一份 Replay。</string>
+    <string name="replay_empty_description">再多听一会儿，Auris 就会把你的收听记录变成一份 Replay。</string>
     <string name="replay_genre_end">塑造了你的听感。</string>
     <string name="replay_genre_focus">你的流派</string>
     <string name="replay_genre_start">总的来说，</string>
@@ -570,7 +580,7 @@
     <string name="webdav_subtitle">你服务器上的音乐</string>
     <string name="webdav_not_configured">请在“来源”中连接服务器</string>
     <string name="webdav_empty">WebDAV 服务器上没有找到音频文件。请在设置中检查 URL。</string>
-    <string name="webdav_description">将 BitChord 指向一个 WebDAV 音乐文件夹 — 你的 Nextcloud 音乐目录或任何支持 WebDAV 的服务器。</string>
+    <string name="webdav_description">将 Auris 指向一个 WebDAV 音乐文件夹 — 你的 Nextcloud 音乐目录或任何支持 WebDAV 的服务器。</string>
     <string name="webdav_server_url">服务器 URL</string>
     <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
     <string name="webdav_disconnect">断开连接</string>
@@ -587,7 +597,7 @@
     <string name="smb_subtitle">共享文件夹中的音乐</string>
     <string name="smb_not_configured">请在“来源”中连接共享</string>
     <string name="smb_empty">SMB 共享中没有找到音频文件。请在“来源”中检查服务器。</string>
-    <string name="smb_description">将 BitChord 指向一个共享音乐文件夹 — 支持 SMB 的 NAS 或 Windows 共享。</string>
+    <string name="smb_description">将 Auris 指向一个共享音乐文件夹 — 支持 SMB 的 NAS 或 Windows 共享。</string>
     <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
     <string name="smb_share_hint">共享名称，例如 Music</string>
     <string name="smb_folder_hint">文件夹（可选）</string>
@@ -635,7 +645,7 @@
     </plurals>
     <string name="no_local_albums">这里还没有任何属于专辑或播放列表的内容。下载完整的专辑或播放列表后，它们会显示在这里。</string>
     <string name="play_your_replay">播放你的 Replay</string>
-    <string name="counted_on_device_with_bitchord">由 BitChord 在此设备上统计</string>
+    <string name="counted_on_device_with_bitchord">由 Auris 在此设备上统计</string>
     <string name="this_month">本月</string>
     <string name="this_year">今年</string>
     <string name="all_time">全部时间</string>
@@ -686,7 +696,7 @@
     <string name="listen_together_code">派对代码</string>
     <string name="listen_together_code_footer">读出来或发出去。字母 O 和 I 不会用到，所以“欧”永远是零。</string>
     <string name="copy_code">复制代码</string>
-    <string name="listen_together_share_text">在 BitChord 上和我一起听 — 派对代码 %1$s</string>
+    <string name="listen_together_share_text">在 Auris 上和我一起听 — 派对代码 %1$s</string>
     <string name="listen_together_now_playing">正在播放</string>
     <string name="listen_together_nothing_playing">还没有播放任何内容</string>
     <string name="listen_together_listening">正在收听 · %1$d / %2$d</string>
@@ -723,7 +733,7 @@
     <string name="listen_together_custom_server_dialog_message">此派对托管在外部服务器上：\n\n%1$s\n\n要切换派对服务器并加入派对 %2$s 吗？</string>
     <string name="listen_together_custom_server_switch_and_join">切换并加入</string>
     <string name="listen_together_official_server_dialog_title">切换到官方服务器？</string>
-    <string name="listen_together_official_server_dialog_message">此派对托管在 BitChord 官方服务器上。\n\n要切换回官方服务器并加入派对 %1$s 吗？</string>
+    <string name="listen_together_official_server_dialog_message">此派对托管在 Auris 官方服务器上。\n\n要切换回官方服务器并加入派对 %1$s 吗？</string>
     <string name="listen_together_switch_failed_stayed_in_party">无法加入派对：%1$s。仍留在派对 %2$s 中。</string>
     <string name="listen_together_switch_failed">无法加入派对：%1$s。</string>
     <string name="listen_together_ping">%1$d ms</string>
@@ -759,9 +769,9 @@
 
     <string name="add_addon">添加插件</string>
 
-    <string name="add_addon_detail">将 BitChord 指向你自建或获取链接的插件服务器</string>
+    <string name="add_addon_detail">将 Auris 指向你自建或获取链接的插件服务器</string>
 
-    <string name="addon_url_description">粘贴插件网址 — 根目录或 manifest.json 均可。BitChord 会读取其搜索和流式播放内容，并通过标准 HTTP 请求曲目。</string>
+    <string name="addon_url_description">粘贴插件网址 — 根目录或 manifest.json 均可。Auris 会读取其搜索和流式播放内容，并通过标准 HTTP 请求曲目。</string>
 
     <string name="advanced_options">高级选项</string>
 
@@ -844,6 +854,8 @@
     <string name="manage_accounts">管理账号</string>
 
     <string name="output_precision">输出精度</string>
+    <string name="bit_perfect">位完美输出</string>
+    <string name="bit_perfect_subtitle">原样输出解码后的采样：不经过 DSP、响度均衡或交叉淡化。输出路径必须能承载源格式。</string>
 
     <string name="personal">个人</string>
 
@@ -969,7 +981,7 @@
 
     <string name="source_skipped_by_quality">未在 %1$s 上使用 · 音质已设为 %2$s</string>
 
-    <string name="source_unrecognised">BitChord 无法识别该链接</string>
+    <string name="source_unrecognised">Auris 无法识别该链接</string>
 
     <string name="start_radio">开启电台</string>
 
@@ -1004,7 +1016,7 @@
 
     <string name="auto_login_title">Sign in to YouTube on your phone</string>
 
-    <string name="auto_login_subtitle">Open BitChord on your phone to sign in</string>
+    <string name="auto_login_subtitle">Open Auris on your phone to sign in</string>
 
     <string name="auto_empty_recents_title">No recent songs</string>
 
@@ -1040,7 +1052,7 @@
     <string name="smart_version_alignment">智能音频对齐</string>
     <string name="smart_version_alignment_subtitle">分析音频波形，精确匹配对应的播放时刻</string>
 
-    <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
+    <string name="equalizer_footer">Shapes the sound inside Auris, before it reaches the system.</string>
 
     <string name="equalizer_dynamic">Dynamic</string>
 
@@ -1083,7 +1095,7 @@
 
     <string name="system_equalizer_subtitle">Your device\'s own panel</string>
 
-    <string name="system_equalizer_footer">Runs after BitChord\'s, on the whole audio session. Using both applies both.</string>
+    <string name="system_equalizer_footer">Runs after Auris\'s, on the whole audio session. Using both applies both.</string>
 
     <string name="eq_preset_flat">Flat</string>
 
@@ -1276,4 +1288,125 @@
     <string name="sing_duet_note">Halfway down keeps the backing vocals while the lead steps back — that middle is the duet mix.</string>
     <string name="sing_turn_off">Turn off</string>
     <string name="on">On</string>
+
+    <string name="ai_generated">AI 生成</string>
+    <string name="mark_as_ai">将艺术家标记为 AI 生成</string>
+    <string name="remove_ai_mark">移除 AI 标记</string>
+    <string name="custom_live_blur">实时模糊</string>
+    <string name="perf_monitor">性能监视器</string>
+    <string name="perf_monitor_help">采样 CPU 占用与每帧工作。关闭时不会运行任何东西。</string>
+    <string name="perf_save_log">保存性能日志</string>
+    <string name="perf_save_log_help">将 .txt 写入应用文件夹。当前 CPU %1$d%%。</string>
+    <string name="custom_live_blur_help">流畅跟随动态封面。耗电更多。</string>
+    <string name="custom_transport_smoothness">播放按钮边角圆润度</string>
+    <string name="custom_transport_smoothness_help">让播放、暂停和跳过按钮的边角更圆。0 保留原来的尖角，100 更柔和但仍保留三角形。</string>
+    <string name="custom_smoothness_reset">重置圆润度</string>
+    <string name="custom_indicators">状态指示</string>
+    <string name="custom_next_track_status">下一首状态</string>
+    <string name="custom_next_track_status_help">封面下方的 Automix 行，显示当前歌曲和下一首歌曲的分析状态。</string>
+    <string name="custom_upgrade_badge">音质升级标记</string>
+    <string name="custom_upgrade_badge_help">在寻找更好音源期间显示标记。</string>
+    <string name="custom_lossless_badge">无损标记</string>
+    <string name="custom_lossless_badge_help">当解码的音频流无损时显示标记。</string>
+    <string name="custom_hires_badge">高解析标记</string>
+    <string name="custom_hires_badge_help">高解析音频流优先显示 Hi-Res 而非无损。</string>
+    <string name="jamesdsp">DSP</string>
+    <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
+    <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
+    <string name="jamesdsp_unavailable">DSP is not available in this build.</string>
+    <string name="jamesdsp_bass">Bass boost</string>
+    <string name="jamesdsp_stereo">Stereo width</string>
+    <string name="jamesdsp_tube">Tube warmth</string>
+    <string name="jamesdsp_reverb">Reverb</string>
+    <string name="jamesdsp_pregain">Pre-level trim</string>
+    <string name="jamesdsp_limiter">Safety limiter</string>
+    <string name="jamesdsp_limiter_subtitle">Catches peaks at -1 dBFS after boosts</string>
+    <string name="jamesdsp_reset">Reset</string>
+    <string name="jamesdsp_off">Off</string>
+    <string name="jamesdsp_room">Room</string>
+    <string name="jamesdsp_hall">Hall</string>
+    <string name="jamesdsp_large_hall">Large hall</string>
+    <string name="jamesdsp_plate">Plate</string>
+    <string name="jamesdsp_long">Long</string>
+    <string name="jamesdsp_license">DSP is GPL-licensed. Source and notices ship with Auris.</string>
+    <!-- Community links -->
+    <string name="community_title">Auris community</string>
+    <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
+    <string name="community_join_discord">Join our Discord</string>
+    <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">添加到文件夹</string>
+    <string name="remove_from_folder">从文件夹移除</string>
+    <string name="new_folder">新建文件夹</string>
+    <string name="folders">文件夹</string>
+    <string name="folder_name">文件夹名称</string>
+    <string name="create_folder">创建文件夹</string>
+    <string name="no_folders_yet">还没有文件夹。使用上方一行来新建。</string>
+    <string name="folder_created">文件夹已创建</string>
+    <string name="track_added_to_folder">已添加到 %1$s</string>
+    <string name="folder_empty">此文件夹为空。从歌曲菜单中添加歌曲。</string>
+    <string name="track_added_to_folders">已添加到 %1$d 个文件夹</string>
+    <string name="track_already_in_folder">已在该文件夹中</string>
+    <string name="rename_folder">重命名文件夹</string>
+    <string name="delete_folder">删除文件夹</string>
+    <string name="delete_folder_confirmation">删除“%1$s”？再次点按确认。</string>
+    <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
+    <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
+    <string name="podcast_episodes_loading">Loading episodes…</string>
+    <string name="podcast_episodes_empty">No episodes in this feed.</string>
+    <string name="media_listened">Listened</string>
+    <string name="media_resume">Resume %1$s</string>
+    <string name="podcasts">Podcasts</string>
+    <string name="liquid_glass_haptics">Liquid glass haptics</string>
+    <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
+    <string name="settings_categories">Categories</string>
+    <string name="settings_home_order">Home shelves</string>
+    <string name="settings_category_account">Account &amp; social</string>
+    <string name="settings_category_audio">Audio quality</string>
+    <string name="settings_category_playback">Playback</string>
+    <string name="settings_category_downloads">Downloads</string>
+    <string name="settings_category_now_playing">Now Playing</string>
+    <string name="settings_category_home_library">Home &amp; library</string>
+    <string name="settings_category_appearance">Appearance</string>
+    <string name="settings_category_performance">Performance</string>
+    <string name="settings_category_storage">Storage</string>
+    <string name="settings_category_data">Your data</string>
+    <string name="settings_category_language">Language</string>
+    <string name="settings_category_advanced">Advanced</string>
+    <string name="settings_category_support">Support</string>
+    <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <string name="quick_picks">快速精选</string>
+    <string name="quick_picks_subtitle">为你挑选，每天更新</string>
+    <string name="quick_picks_offline_subtitle">播放本机已有的歌曲</string>
+    <string name="quick_picks_empty">暂无快速精选</string>
+    <string name="quick_picks_offline_empty">还没有下载任何内容</string>
+    <string name="quick_picks_play_all">播放全部</string>
+    <string name="quick_picks_shuffle">随机播放</string>
+    <string name="home_provider">曲库</string>
+    <string name="home_provider_subtitle">主页和搜索的内容来自哪里。Flow、Autoplay 和「更多这样的」始终来自 YouTube Music。</string>
+    <string name="home_provider_youtube">YouTube Music</string>
+    <string name="home_provider_spotify_subtitle">Spotify 自己的主页和曲库。登录后，Flow 也会取用你在那里听过的内容。</string>
+    <string name="home_provider_youtube_subtitle">YouTube Music 自己的主页和曲库，以及它给 Flow 的推荐流。</string>
+    <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="upgrade_quality_started">正在寻找更好的副本…</string>
+    <string name="upgrade_quality_offline">离线模式已开启 — 升级需要网络</string>
+    <string name="upgrade_quality_cooldown">刚刚尝试过 — 请稍等</string>
+    <string name="upgrade_quality_found">已升级到 %1$s</string>
+    <string name="upgrade_quality_none_found">未找到更好的副本</string>
+    <string name="auto_upgrade_local_storage">自动升级本地存储中的歌曲</string>
+    <string name="auto_upgrade_local_storage_subtitle">为保存在此设备上的歌曲寻找更好的副本</string>
+    <string name="auto_upgrade_local_storage_offline_subtitle">离线模式已开启 — 升级已暂停</string>
+    <string name="sort_release_date">发行日期（最新优先）</string>
+    <string name="sort_chronological">按时间顺序（最早优先）</string>
+    <string name="sort_popularity">热度</string>
+    <string name="auris_pass">Auris 通行证</string>
+    <string name="auris_pass_subtitle">只印在这台设备上的聆听身份。</string>
+    <string name="auris_pass_stub">听众通行证</string>
+    <string name="auris_pass_pass_no">通行证编号</string>
+    <string name="auris_pass_tier">等级</string>
+    <string name="auris_pass_tier_listener">听众</string>
+    <string name="auris_pass_since">加入年份</string>
+    <string name="auris_pass_device">本设备</string>
+    <string name="auris_pass_unnamed">Auris 听众</string>
+    <string name="custom_lyrics_buttons">歌词面板按钮</string>
+    <string name="custom_lyrics_source">歌词来源行</string>
 </resources>

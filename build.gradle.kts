@@ -42,3 +42,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20" apply false
     id("org.jetbrains.compose") version "1.10.3" apply false
 }
+
+/*
+ * Compose compiler reports, for finding unstable parameters and composables
+ * that cannot skip. Off by default — they slow the compile and are only read by
+ * hand — and switched on for one build with
+ *
+ *   ./gradlew :app:compileDevReleaseKotlin -Pauris.composeReports=true
+ *
+ * which writes `<module>/build/compose_compiler/` (the `*-composables.txt`,
+ * `*-classes.txt` and `*-module.json` metrics).
+ */
+subprojects {
+    plugins.withId("org.jetbrains.kotlin.plugin.compose") {
+        extensions.configure<org.jetbrains.kotlin.compose.compiler.gradle.ComposeCompilerGradlePluginExtension> {
+            // See the file for which types it declares stable and why.
+            stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability.conf"))
+            if (providers.gradleProperty("auris.composeReports").orNull == "true") {
+                reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+                metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+            }
+        }
+    }
+}

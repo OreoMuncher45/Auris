@@ -150,6 +150,29 @@ class AudioPipelineTest {
         assertNull(NerdStats.codecLabel(null))
     }
 
+    // ── Dolby Atmos Badge ──────────────────────────────────────────────────
+
+    /**
+     * The badge follows the decoder, and the decoder's input is not always the
+     * JOC mime. A DASH manifest that says `ec-3` yields `audio/eac3`, and the
+     * FFmpeg bed fallback reports the same — both are the Atmos mix arriving at
+     * the renderer and both have to light the badge. This used to match only
+     * the exact `audio/eac3-joc` suffix, so the badge went missing on exactly
+     * the devices that were playing the stream through a fallback.
+     */
+    @Test
+    fun `the Atmos badge follows every spelling of the Dolby decoder mime`() {
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/eac3-joc"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/eac3"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/ec-3"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/ac3"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/eac3;codecs=ec-3"))
+        assertTrue(NerdStats.isDolbyAtmosMime("AUDIO/EAC3-JOC"))
+        assertFalse(NerdStats.isDolbyAtmosMime("audio/mp4a-latm"))
+        assertFalse(NerdStats.isDolbyAtmosMime("audio/opus"))
+        assertFalse(NerdStats.isDolbyAtmosMime(null))
+    }
+
     // ── Authoritative Source Tracking ──────────────────────────────────────
 
     @Test

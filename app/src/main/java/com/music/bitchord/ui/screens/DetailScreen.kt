@@ -37,6 +37,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -50,25 +54,36 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
+import com.music.bitchord.data.spotify.SpotifyArtistStats
+import com.music.bitchord.data.spotify.SpotifyArtistStatsProvider
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -132,6 +147,9 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.ARRIVAL_OVERSHOOT
+import com.music.bitchord.ui.components.artworkArrival
+import com.music.bitchord.ui.components.artworkArrivalDrawn
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
@@ -145,6 +163,7 @@ import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
+import com.music.bitchord.ui.components.rememberArrivalProgress
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
@@ -157,6 +176,7 @@ import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
 import java.util.Locale
+import kotlin.math.roundToLong
 
 private const val MAX_ARTIST_SONGS = 20
 private const val SONGS_PER_COLUMN = 4
@@ -220,6 +240,9 @@ private const val LOGO_RETRY_DELAY_MS = 800L
 
 private val CREDIT_SEPARATOR = Regex(""",\s|\s&\s|\s(?:x|and|feat\.?|ft\.?|with)\s""", RegexOption.IGNORE_CASE)
 
+/** An EP shelf's title, matched as a whole word so "EPs" and "EP" both land. */
+private val ARTIST_EP_TITLE = Regex("""\bEPs?\b""", RegexOption.IGNORE_CASE)
+
 /** Whether this reads as several artists credited together rather than one name. */
 private fun String.looksLikeCredit() = CREDIT_SEPARATOR.containsMatchIn(this)
 
@@ -267,6 +290,12 @@ fun DetailScreen(
      */
     onMore: ((List<Song>) -> Unit)? = null,
     /**
+     * Hides this act everywhere. Null on non-artist pages, where the menu item
+     * has no meaning. The caller owns persistence and popping the page so the
+     * same op works from the player's artist menu later.
+     */
+    onHideArtist: (() -> Unit)? = null,
+    /**
      * Saves this release to the account's library, or takes it out —
      * [DetailPage.library] says which way round. Null hides the control
      * entirely, which is the answer for a guest and for the pages YouTube never
@@ -293,6 +322,25 @@ fun DetailScreen(
      * photo, not in this header.
      */
     songSort: SongSort = SongSort.DEFAULT,
+    /**
+     * Whether this playlist keeps itself downloaded: songs added to it are
+     * fetched by themselves, and a song deleted by hand stays deleted.
+     *
+     * Null on everything that is not a downloaded playlist, which is what
+     * hides the switch. Non-null on both the playlist's catalogue page and the
+     * downloaded copy's page, so the answer is where the tracks are either way.
+     */
+    autoDownloadSongs: Boolean? = null,
+    /** Flips [autoDownloadSongs]. Null in the same places it is. */
+    onToggleAutoDownloadSongs: (() -> Unit)? = null,
+    /**
+     * Asks for the next page of an endless mix — a Super Mix, an artist radio.
+     *
+     * Those pages have no last one, so the list grows as the listener reaches
+     * its end rather than being fetched to the end in the background. Null on
+     * the pages whose tracks are all there already.
+     */
+    onLoadMore: (() -> Unit)? = null,
 ) {
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     val songs = remember(rawSongs, songSort) { rawSongs.sortedForDetail(songSort) }
@@ -303,6 +351,22 @@ fun DetailScreen(
         rawSongs.withIndex().associate { (i, s) -> s.videoId to i + 1 }
     }
     val isArtist = page.type == BrowseType.ARTIST
+    // The overflow menu's two shortcuts. Titles are localised, so the match is
+    // on the stable words YouTube uses across locales plus a positional
+    // fallback — an artist page's first shelf is albums and its second singles.
+    // The fallback only ever considers shelves that open *releases*: Spotify's
+    // artist page carries a "Fans also like" shelf of artists, and choosing it
+    // for "Singles & EPs" is exactly how that menu came to open a page of
+    // unrelated artists.
+    val releaseShelves = page.sections.filter { shelf ->
+        shelf.items.any { item -> item.browseId?.startsWith("spotify:artist:") == false }
+    }
+    val albumsShelf = page.sections.firstOrNull { it.title.contains("album", true) }
+        ?: releaseShelves.getOrNull(0)
+        ?: page.sections.getOrNull(0)
+    val singlesShelf = page.sections.firstOrNull {
+        it.title.contains("single", true) || ARTIST_EP_TITLE.containsMatchIn(it.title)
+    } ?: releaseShelves.firstOrNull { it !== albumsShelf }
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -319,6 +383,14 @@ fun DetailScreen(
     val nameSettled = !page.title.looksLikeCredit() || page.songs !is UiState.Loading
     LaunchedEffect(page.browseId, page.title, nameSettled) {
         if (isArtist && nameSettled) appleArt = AppleArtistArtRepository.artFor(page.title) ?: appleArt
+    }
+    // Spotify publishes listeners only on the artist page, not in its API.
+    // Fetched in the background so a miss costs the page nothing.
+    var spotifyStats by remember(page.browseId) { mutableStateOf<SpotifyArtistStats?>(null) }
+    LaunchedEffect(page.browseId, page.title, nameSettled, isArtist) {
+        if (isArtist && nameSettled) {
+            spotifyStats = SpotifyArtistStatsProvider.load(page.title)
+        }
     }
     val palette = rememberArtworkPalette(
         imageUrl = appleArt?.heroUrl ?: page.thumbnailUrl,
@@ -368,12 +440,19 @@ fun DetailScreen(
     // photograph, and neither is something a label publishes a canvas for.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val spotifyCanvasEnabled by AppSettings.spotifyCanvasEnabled.collectAsStateWithLifecycle()
+    // Which acts the listener has marked as AI. Collected here so toggling the
+    // menu item updates the chip on the same screen without a reload.
+    val aiArtists by AppSettings.aiArtists.collectAsStateWithLifecycle()
+    val artistIsAi = remember(page.browseId, page.title, aiArtists) {
+        AppSettings.isArtistAi(page.browseId, page.title)
+    }
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
     // which case the tracks themselves know who it is.
     val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas) {
+    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas, spotifyCanvasEnabled) {
         // An artist's clip is set below, by the lookup that finds it.
         if (isArtist) return@LaunchedEffect
         if (!canvasEnabled || page.type != BrowseType.ALBUM) {
@@ -472,6 +551,33 @@ fun DetailScreen(
                 }
             }
 
+            if (isArtist) {
+                item(key = "artist-meta") {
+                    ArtistMetaRow(
+                        page = page,
+                        palette = palette,
+                        albumsShelf = albumsShelf,
+                        singlesShelf = singlesShelf,
+                        spotifyStats = spotifyStats,
+                        isAiArtist = artistIsAi,
+                        onOpenShelf = onActiveShelfChange,
+                        onHideArtist = onHideArtist,
+                        onToggleAiArtist = {
+                            AppSettings.toggleArtistAi(page.browseId, page.title)
+                        },
+                    )
+                }
+            }
+
+            if (autoDownloadSongs != null && onToggleAutoDownloadSongs != null) {
+                item(key = "auto-download") {
+                    KeepPlaylistWholeRow(
+                        checked = autoDownloadSongs,
+                        onCheckedChange = { onToggleAutoDownloadSongs() },
+                    )
+                }
+            }
+
             if (searching) {
                 item(key = "search") {
                     DetailSearchField(
@@ -523,14 +629,11 @@ fun DetailScreen(
             // [DetailPage.description]. A playlist never carries one, and the
             // section is skipped for it even on the rare response that does.
             //
-            // On an artist page it closes the page, after the shelves, rather
-            // than sitting between the action row and the songs.
-            // The artist's counts close it, under the text, so a page whose blurb is
-            // empty still gets the section for them.
-            val hasStats = isArtist &&
-                (page.subscriberCountText != null || page.monthlyListenerCount != null)
-            val showAbout = (!description.isNullOrBlank() &&
-                (page.type == BrowseType.ALBUM || isArtist)) || hasStats
+            // The artist's counts no longer live here: they sit under the
+            // header with the overflow menu, so they are readable without
+            // scrolling to the foot of a long discography.
+            val showAbout = !description.isNullOrBlank() &&
+                (page.type == BrowseType.ALBUM || isArtist)
             fun LazyListScope.aboutItem() {
                 if (!showAbout) return
                 item(key = "about") {
@@ -543,17 +646,7 @@ fun DetailScreen(
                         text = description?.takeIf { it.isNotBlank() },
                         palette = palette,
                         horizontalPadding = if (isArtist) ARTIST_CONTENT_GUTTER else ABOUT_GUTTER,
-                        stats = if (hasStats) {
-                            {
-                                ArtistStatsRow(
-                                    subscriberCountText = page.subscriberCountText,
-                                    monthlyListenerCount = page.monthlyListenerCount,
-                                    palette = palette,
-                                )
-                            }
-                        } else {
-                            null
-                        },
+                        stats = null,
                     )
                     }
                 }
@@ -562,12 +655,17 @@ fun DetailScreen(
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
-                is UiState.Error -> item { MessageState(state.message) }
+                is UiState.Error -> item(key = "error", contentType = LazyContent.MESSAGE) {
+                    MessageState(state.message)
+                }
                 is UiState.Success -> if (isArtist) {
                     // An artist's full song list would bury the album shelves, so
                     // it pages sideways four at a time and stops at twenty.
-                    item {
-                        val top = state.data.take(MAX_ARTIST_SONGS)
+                    item(key = "top-songs", contentType = LazyContent.SHELF) {
+                        // Paged once per list, not on every recomposition of the row.
+                        val top = remember(state.data) { state.data.take(MAX_ARTIST_SONGS) }
+                        val topColumns = remember(top) { top.chunked(SONGS_PER_COLUMN) }
+                        val topKeys = remember(topColumns) { uniqueKeys(topColumns) { it.first().videoId } }
                         SectionHeading(
                             title = stringResource(R.string.top_songs),
                             palette = palette,
@@ -579,7 +677,11 @@ fun DetailScreen(
                                 contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                items(top.chunked(SONGS_PER_COLUMN)) { column ->
+                                itemsIndexed(
+                                    topColumns,
+                                    key = { index, _ -> topKeys[index] },
+                                    contentType = { _, _ -> LazyContent.TRACK_COLUMN },
+                                ) { _, column ->
                                     Column(Modifier.width(columnWidth)) {
                                         column.forEach { song ->
                                             CompactSongRow(
@@ -610,15 +712,22 @@ fun DetailScreen(
                     itemsIndexed(
                         items = matches,
                         key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                        contentType = { _, _ -> LazyContent.SONG_ROW },
                     ) { position, entry ->
                         val song = entry.value
                         val isCurrent = song.isSameTrackAs(currentSong)
-                        SongRow(
-                            song = if (numbered) {
+                        // Made once per row rather than on every recomposition of
+                        // it: a fresh copy each time is a new Song for the row to
+                        // compare, and an allocation per row per frame of scroll.
+                        val rowSong = remember(song, numbered, page.thumbnailUrl) {
+                            if (numbered || song.thumbnailUrl != null) {
                                 song
                             } else {
-                                song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
-                            },
+                                song.copy(thumbnailUrl = page.thumbnailUrl)
+                            }
+                        }
+                        SongRow(
+                            song = rowSong,
                             onClick = {
                                 onSongClick(queue, position)
                             },
@@ -657,6 +766,7 @@ fun DetailScreen(
                 itemsIndexed(
                     suggested,
                     key = { _, song -> "suggested-${song.videoId}" },
+                    contentType = { _, _ -> LazyContent.SONG_ROW },
                 ) { index, song ->
                     SuggestedSongRow(
                         song = song,
@@ -679,11 +789,16 @@ fun DetailScreen(
             }
 
             // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf ->
+            itemsIndexed(
+                page.sections,
+                key = { index, shelf -> "section:$index:${shelf.title}" },
+                contentType = { _, _ -> LazyContent.SHELF },
+            ) { _, shelf ->
                 val canShowAll = shelf.items.size > ARTIST_ROW_MAX_ITEMS
                 val displayItems = remember(shelf.items) {
                     if (canShowAll) shelf.items.take(ARTIST_ROW_MAX_ITEMS) else shelf.items
                 }
+                val displayKeys = rememberShelfKeys(displayItems)
                 Column(Modifier.padding(top = 22.dp)) {
                     SectionHeading(
                         title = shelf.title,
@@ -695,7 +810,11 @@ fun DetailScreen(
                         contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(displayItems) { item ->
+                        itemsIndexed(
+                            displayItems,
+                            key = { index, _ -> displayKeys[index] },
+                            contentType = { _, _ -> LazyContent.CARD },
+                        ) { _, item ->
                             SectionCard(
                                 item = item,
                                 palette = palette,
@@ -709,6 +828,23 @@ fun DetailScreen(
             if (isArtist) aboutItem()
         }
 
+        // The end of an endless mix: the next page is asked for when the last
+        // row is the one in view, which is where the listener has to be to
+        // have got there. The page's own continuation is the only thing that
+        // makes it endless — an ordinary playlist's pages were all fetched
+        // long before this, and has no token left to spend.
+        if (onLoadMore != null && page.continuation != null) {
+            val loadMore by rememberUpdatedState(onLoadMore)
+            val loading by rememberUpdatedState(page.loadingMore)
+            LaunchedEffect(listState, page.continuation) {
+                snapshotFlow {
+                    val layout = listState.layoutInfo
+                    (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
+                }.collect { (lastVisible, total) ->
+                    if (!loading && total > 0 && lastVisible >= total - 1) loadMore()
+                }
+            }
+        }
     }
 } else {
     ArtistShelfGridPage(
@@ -890,6 +1026,46 @@ private fun ReleaseHeader(
                 }
             }
         }
+    }
+}
+
+/**
+ * The switch that keeps a downloaded playlist whole.
+ *
+ * On the playlist's own page, under its header, because that is where the
+ * promise lives: the tracks below it are the playlist's, and this is what
+ * says the next ones will be here too.
+ *
+ * Turning it off stops the next song from arriving and leaves the files that
+ * are here where they are. A song the listener deleted by hand is never
+ * fetched again either way — see
+ * [com.music.bitchord.download.Downloads.deletedByHand].
+ */
+@Composable
+private fun KeepPlaylistWholeRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 22.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.auto_download_songs),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = stringResource(R.string.auto_download_songs_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -1138,11 +1314,25 @@ private fun PageBackground(
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    // The picture's arrival: a quarter of a second of settle when the page
+    // opens, skipped outright where the listener has asked for no motion or the
+    // device has been judged too slow to spend frames on it.
+    val reduceMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val arrival = rememberArrivalProgress(page.browseId, enabled = !reduceMotion)
     // Not under a canvas: a still blurred over the foot of a moving clip would
     // freeze the bottom of the video into the wrong picture.
     val softenFoot = canvas == null && !reduceDynamicBlur &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val art = heroUrl ?: page.thumbnailUrl.artworkAt(HEADER_ART_PX)
+    // The clip only runs while the header it belongs to is on screen. Once the
+    // track list has carried the artwork away the decoder is looping a picture
+    // nobody can see, which is exactly the kind of always-on work that keeps a
+    // slow phone warm while the user reads a track list.
+    val density = LocalDensity.current
+    val artHeightPx = with(density) { artHeight.toPx() }
+    val headerVisible by remember(artHeightPx) {
+        derivedStateOf { listState.headerTop(artHeightPx) + artHeightPx > 0f }
+    }
 
     Box(modifier.clipToBounds()) {
         Box(
@@ -1155,19 +1345,37 @@ private fun PageBackground(
                 model = art,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                // The sleeve a card's cover flies into — see ArtworkFlight — and
+                // the moment it has drawn is the moment that cover may let go of
+                // it. The arrival below is for a page opened *without* a cover in
+                // the air, where there is nothing to land; the two are never seen
+                // at once.
+                onState = {
+                    if (it is AsyncImagePainter.State.Success) artworkArrivalDrawn(page.browseId)
+                },
                 modifier = Modifier
                     .matchParentSize()
-                    .background(palette.elevated),
+                    .background(palette.elevated)
+                    .artworkArrival(page.browseId, corner = 0.dp, wash = palette.wash)
+                    // The arrival: a hair of overshoot that settles, and the
+                    // opacity with it. Drawn rather than composed, so nothing
+                    // about this is re-measured on any frame of it.
+                    .graphicsLayer {
+                        val scale = 1f + ARRIVAL_OVERSHOOT * (1f - arrival)
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = arrival
+                    },
             )
 
             // Above the still art but below the scrim, so the scrim that
-            // settles the header into the page still sits over it. Always
-            // running: unlike the player's sleeve there is no transport here
-            // to follow, and the page is only up while it's being read.
+            // settles the header into the page still sits over it. It follows
+            // the header's visibility rather than the page's: paused once
+            // scrolled away and resumed when it comes back.
             canvas?.let { clip ->
                 CanvasArtworkPlayer(
                     canvas = clip,
-                    isPlaying = true,
+                    isPlaying = headerVisible,
                     modifier = Modifier.matchParentSize(),
                 )
             }
@@ -1192,7 +1400,13 @@ private fun PageBackground(
                         }
                         // Rectangle keeps the edges clamped to the picture's own
                         // colour rather than fading to transparent at the foot.
-                        .blur(SOFT_FOOT_BLUR, BlurredEdgeTreatment.Rectangle),
+                        .blur(SOFT_FOOT_BLUR, BlurredEdgeTreatment.Rectangle)
+                        // The same arrival as the sharp copy, and the same
+                        // opacity: a softened sleeve that came up to full
+                        // strength while the picture under it was still
+                        // settling would show the join for the length of the
+                        // animation.
+                        .graphicsLayer { alpha = arrival },
                 )
             }
 
@@ -1458,7 +1672,7 @@ private fun ArtistStatsRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = ARTIST_CONTENT_GUTTER, end = ARTIST_CONTENT_GUTTER, bottom = 12.dp),
+            .padding(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalAlignment = Alignment.Start,
     ) {
@@ -1483,9 +1697,156 @@ private fun ArtistStatsRow(
     }
 }
 
+/**
+ * The artist header's counts and overflow: YouTube's subscriber and listener
+ * figures on the left, a menu on the right. The menu is the artist page's whole
+ * answer to "what else can I do here" — jump to a discography shelf, or hide
+ * the act from the rest of the app.
+ */
 @Composable
-private fun StatChip(icon: ImageVector, text: String, palette: ArtworkPalette) {
-    Row(
+private fun ArtistMetaRow(
+    page: DetailPage,
+    palette: ArtworkPalette,
+    albumsShelf: HomeShelf?,
+    singlesShelf: HomeShelf?,
+    spotifyStats: SpotifyArtistStats?,
+    isAiArtist: Boolean,
+    onOpenShelf: (HomeShelf) -> Unit,
+    onHideArtist: (() -> Unit)?,
+    onToggleAiArtist: (() -> Unit)?,
+) {
+    if (page.subscriberCountText == null && page.monthlyListenerCount == null &&
+        albumsShelf == null && singlesShelf == null && onHideArtist == null &&
+        spotifyStats == null && !isAiArtist && onToggleAiArtist == null
+    ) return
+
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ARTIST_CONTENT_GUTTER, end = 56.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (isAiArtist) {
+                StatChip(
+                    icon = Icons.Rounded.AutoAwesome,
+                    text = stringResource(R.string.ai_generated),
+                    palette = palette,
+                )
+            }
+            spotifyStats?.let { stats ->
+                StatChip(
+                    icon = Icons.Rounded.GraphicEq,
+                    text = stringResource(
+                        R.string.spotify_monthly_listeners,
+                        compactCount(stats.monthlyListeners),
+                    ),
+                    palette = palette,
+                )
+                stats.followers?.let { followers ->
+                    StatChip(
+                        icon = Icons.Rounded.Person,
+                        text = stringResource(
+                            R.string.spotify_followers,
+                            compactCount(followers),
+                        ),
+                        palette = palette,
+                    )
+                }
+            }
+            ArtistStatsRow(
+                subscriberCountText = page.subscriberCountText,
+                monthlyListenerCount = page.monthlyListenerCount,
+                palette = palette,
+            )
+        }
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = ARTIST_CONTENT_GUTTER),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.more),
+                tint = palette.onBackgroundVariant,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            albumsShelf?.let { shelf ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.albums)) },
+                    onClick = {
+                        expanded = false
+                        onOpenShelf(shelf)
+                    },
+                )
+            }
+            singlesShelf?.let { shelf ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.singles_eps)) },
+                    onClick = {
+                        expanded = false
+                        onOpenShelf(shelf)
+                    },
+                )
+            }
+            if (onToggleAiArtist != null) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
+                            ),
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
+                    },
+                    onClick = {
+                        expanded = false
+                        onToggleAiArtist()
+                    },
+                )
+            }
+            if (onHideArtist != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.hide_artist)) },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
+                    },
+                    onClick = {
+                        expanded = false
+                        onHideArtist()
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** "1.2M" / "850K" — the same shape Spotify itself uses. */
+private fun compactCount(value: Long): String {
+    fun scaled(divisor: Long, suffix: String): String {
+        val unit = value.toDouble() / divisor
+        val text = if (unit >= 10) {
+            unit.roundToLong().toString()
+        } else {
+            String.format(Locale.US, "%.1f", unit).removeSuffix(".0")
+        }
+        return text + suffix
+    }
+    return when {
+        value >= 1_000_000_000 -> scaled(1_000_000_000, "B")
+        value >= 1_000_000 -> scaled(1_000_000, "M")
+        value >= 1_000 -> scaled(1_000, "K")
+        else -> value.toString()
+    }
+}
+
+@Composable
+private fun StatChip(icon: ImageVector, text: String, palette: ArtworkPalette) {    Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .lightweightLiquidGlass(
@@ -1650,7 +2011,6 @@ private fun CompactSongRow(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) palette.accent else palette.onBackground,
-                qualityBadge = true,
             )
             Text(
                 text = song.artist,
@@ -1710,7 +2070,6 @@ private fun SuggestedSongRow(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) palette.accent else palette.onBackground,
-                qualityBadge = true,
             )
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1929,31 +2288,142 @@ private fun ArtistShelfGridPage(
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
+    // Release date is the order a discography is normally read in: newest
+    // first. Chronological is the same list the other way round, which is the
+    // order a career is usually read in. Popularity keeps Spotify's own
+    // ranking where it gave one, and the catalogue's order everywhere else.
+    var sort by rememberSaveable(shelf.title) { mutableStateOf(ShelfSort.RELEASE_DATE) }
+    val items = remember(shelf.items, sort) { shelf.items.sortedForShelf(sort) }
+    val keys = rememberShelfKeys(items)
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(grid.columns),
-            state = gridState,
-            contentPadding = PaddingValues(
-                top = topBarContentPadding(),
-                bottom = contentPadding.calculateBottomPadding() + 16.dp,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = PAGE_GUTTER),
-        ) {
-            items(shelf.items, key = { it.browseId ?: it.title }) { item ->
-                SectionCard(
-                    item = item,
-                    palette = palette,
-                    onClick = { onItemClick(item) },
-                    onLongPress = onItemLongPress?.let { { it(item) } },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        Column(Modifier.fillMaxSize()) {
+            ShelfSortRow(palette = palette, selected = sort, onSelect = { sort = it })
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(grid.columns),
+                state = gridState,
+                contentPadding = PaddingValues(
+                    top = 4.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 16.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = PAGE_GUTTER),
+            ) {
+                gridItemsIndexed(
+                    items,
+                    key = { index, _ -> keys[index] },
+                    contentType = { _, _ -> LazyContent.CARD },
+                ) { _, item ->
+                    SectionCard(
+                        item = item,
+                        palette = palette,
+                        onClick = { onItemClick(item) },
+                        onLongPress = onItemLongPress?.let { { it(item) } },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
+    }
+}
+
+/** The orders a discography shelf can be read in. */
+private enum class ShelfSort { RELEASE_DATE, CHRONOLOGICAL, TITLE, POPULARITY }
+
+@Composable
+private fun ShelfSortRow(
+    palette: ArtworkPalette,
+    selected: ShelfSort,
+    onSelect: (ShelfSort) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PAGE_GUTTER,
+                end = PAGE_GUTTER,
+                top = topBarContentPadding() + 6.dp,
+                bottom = 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(palette.elevated)
+                    .clickable { expanded = true }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = selected.localizedLabel(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.onBackground,
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = Icons.Rounded.Sort,
+                    contentDescription = stringResource(R.string.sort_music),
+                    tint = palette.onBackgroundVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ShelfSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.localizedLabel()) },
+                        leadingIcon = {
+                            if (option == selected) {
+                                Icon(Icons.Rounded.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelect(option)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfSort.localizedLabel(): String = stringResource(
+    when (this) {
+        ShelfSort.RELEASE_DATE -> R.string.sort_release_date
+        ShelfSort.CHRONOLOGICAL -> R.string.sort_chronological
+        ShelfSort.TITLE -> R.string.sort_title_ascending
+        ShelfSort.POPULARITY -> R.string.sort_popularity
+    },
+)
+
+/**
+ * The shelf in the order the listener asked for.
+ *
+ * A card with no stated year sinks to the end of both date orders rather than
+ * claiming to be the oldest or the newest thing on the page; a card with no
+ * popularity rank keeps the catalogue's order and sits after the ranked ones.
+ */
+private fun List<ShelfItem>.sortedForShelf(sort: ShelfSort): List<ShelfItem> {
+    val byTitle = compareBy<ShelfItem, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+    val year: (ShelfItem) -> Int? = { it.year ?: it.releaseYear() }
+    return when (sort) {
+        ShelfSort.RELEASE_DATE -> sortedWith(
+            compareByDescending<ShelfItem> { year(it) ?: Int.MIN_VALUE }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+        ShelfSort.CHRONOLOGICAL -> sortedWith(
+            compareBy<ShelfItem> { year(it) ?: Int.MAX_VALUE }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+        ShelfSort.TITLE -> sortedWith(byTitle)
+        ShelfSort.POPULARITY -> sortedWith(compareBy { it.popularity ?: Int.MAX_VALUE })
     }
 }
 
@@ -1993,6 +2463,7 @@ private fun BrowseType.localizedLabel(): String? = when (this) {
         BrowseType.ALBUM -> stringResource(R.string.album)
         BrowseType.PLAYLIST -> stringResource(R.string.playlist)
         BrowseType.ARTIST -> stringResource(R.string.artist)
+        BrowseType.PODCAST -> stringResource(R.string.podcasts)
         BrowseType.OTHER -> null
     }
 

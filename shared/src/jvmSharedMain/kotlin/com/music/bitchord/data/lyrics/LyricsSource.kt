@@ -10,8 +10,8 @@ package com.music.bitchord.data.lyrics
  * should be able to say so.
  */
 enum class LyricsSource(
-    val label: String,
-    val detail: String,
+    private val baseLabel: String,
+    private val baseDetail: String,
     /** Whether it can return per-word timings, or only whole lines. */
     val wordSynced: Boolean,
     /**
@@ -41,93 +41,142 @@ enum class LyricsSource(
     // documents now, so asking it directly is the same Apple timing without
     // the middleman, and it is the one a dead mirror can't take down with it.
     LRC_RED(
-        label = "lrc.red",
-        detail = "Apple timings by recording, syllable by syllable",
+        baseLabel = "lrc.red",
+        baseDetail = "Apple timings by recording, syllable by syllable",
+        wordSynced = true,
+    ),
+    // An installed `.sflx` extension that can answer lyrics — Apple's own
+    // timings, through the listener's own subscription. Ahead of the hosts
+    // that ask Apple for the same timings without being asked, because it is
+    // the one that can also answer for a track the others have never heard of.
+    // It costs nothing when no such extension is installed: the host says so
+    // without reaching the network.
+    EXTENSION(
+        baseLabel = "Mornye extension",
+        baseDetail = "Apple timings from an installed .sflx extension",
         wordSynced = true,
     ),
     BINI_LYRICS(
-        label = "BiniLyrics",
-        detail = "The same Apple timings, matched on the recording itself",
+        baseLabel = "BiniLyrics",
+        baseDetail = "The same Apple timings, matched on the recording itself",
         wordSynced = true,
     ),
     BETTER_LYRICS(
-        label = "BetterLyrics",
-        detail = "Apple Music timings, word by word",
+        baseLabel = "BetterLyrics",
+        baseDetail = "Apple Music timings, word by word",
         wordSynced = true,
     ),
     BETTER_LYRICS_PORTATO(
-        label = "BetterLyrics Portato",
-        detail = "QQ Music karaoke timings through BetterLyrics",
+        baseLabel = "BetterLyrics Portato",
+        baseDetail = "QQ Music karaoke timings through BetterLyrics",
         wordSynced = true,
     ),
     PAXSENIX(
-        label = "PaxSenix",
-        detail = "Apple Music timings through the original keyless provider",
+        baseLabel = "PaxSenix",
+        baseDetail = "Apple Music timings through the original keyless provider",
         wordSynced = true,
     ),
     PAXSENIX_SPOTIFY(
-        label = "PaxSenix: Spotify",
-        detail = "Spotify lyrics with PaxSenix fallback; API key required",
+        baseLabel = "PaxSenix: Spotify",
+        baseDetail = "Spotify lyrics with PaxSenix fallback; API key required",
         wordSynced = false,
     ),
     PAXSENIX_MUSIXMATCH(
-        label = "PaxSenix: Musixmatch",
-        detail = "Musixmatch timings with PaxSenix fallback; API key required",
+        baseLabel = "PaxSenix: Musixmatch",
+        baseDetail = "Musixmatch timings with PaxSenix fallback; API key required",
         wordSynced = true,
     ),
     LYRICS_PLUS(
-        label = "LyricsPlus",
-        detail = "Syllable by syllable, on community mirrors",
+        baseLabel = "LyricsPlus",
+        baseDetail = "Syllable by syllable, on community mirrors",
         wordSynced = true,
     ),
     SIMP_MUSIC(
-        label = "SimpMusic",
-        detail = "Matched on the video, so never the wrong edit",
+        baseLabel = "SimpMusic",
+        baseDetail = "Matched on the video, so never the wrong edit",
         wordSynced = true,
         hidden = true,
     ),
     UNISON(
-        label = "Unison",
-        detail = "Contributed by listeners, so it has what nobody licensed",
+        baseLabel = "Unison",
+        baseDetail = "Contributed by listeners, so it has what nobody licensed",
         wordSynced = true,
     ),
     YOUTUBE_TRANSCRIPT(
-        label = "YouTube captions",
-        detail = "Timed captions matched to the exact playing video",
+        baseLabel = "YouTube captions",
+        baseDetail = "Timed captions matched to the exact playing video",
         wordSynced = false,
     ),
     YOUTUBE_MUSIC(
-        label = "YouTube Music",
-        detail = "Plain lyrics from the playing video's Lyrics tab",
+        baseLabel = "YouTube Music",
+        baseDetail = "Plain lyrics from the playing video's Lyrics tab",
         wordSynced = false,
     ),
     MEGALOBIZ(
-        label = "Megalobiz",
-        detail = "Community-made, whole-line LRC",
+        baseLabel = "Megalobiz",
+        baseDetail = "Community-made, whole-line LRC",
         wordSynced = false,
         hidden = true,
     ),
     KUGOU(
-        label = "KuGou",
-        detail = "Whole lines, strong outside the English catalogue",
+        baseLabel = "KuGou",
+        baseDetail = "Whole lines, strong outside the English catalogue",
         wordSynced = false,
     ),
     LRCLIB(
-        label = "LRCLIB",
-        detail = "Whole lines only, and always up",
+        baseLabel = "LRCLIB",
+        baseDetail = "Whole lines only, and always up",
         wordSynced = false,
     ),
     MUSIXMATCH(
-        label = "Musixmatch",
-        detail = "Whole lines, from the biggest lyrics database there is",
+        baseLabel = "Musixmatch",
+        baseDetail = "Whole lines, from the biggest lyrics database there is",
         wordSynced = false,
     ),
     GENIUS(
-        label = "Genius",
-        detail = "Plain text fallback, massive web catalogue",
+        baseLabel = "Genius",
+        baseDetail = "Plain text fallback, massive web catalogue",
         wordSynced = false,
     ),
     ;
+
+    /**
+     * The name this source is known by.
+     *
+     * For every source but one, that is written in the enum. The exception is
+     * [EXTENSION]: it is not a service but a *package* on this device, and the
+     * package has a name — "Apple Music", for the one in the store. Showing
+     * "Mornye extension" instead was naming a kind of thing where the
+     * listener had a particular thing in mind, and it left them unable to
+     * tell which package the row referred to. The host publishes the
+     * installed package's own name; this shows it.
+     */
+    val label: String
+        get() = if (this == EXTENSION) LyricsRepository.extensionLabel ?: baseLabel else baseLabel
+
+    /**
+     * The one line under the name.
+     *
+     * For [EXTENSION] it says what is missing when the package is installed
+     * and cannot answer yet — Apple's asks the listener for their MusicKit
+     * token, and answers nothing at all until it has one. Without that, the
+     * player says "no lyrics found" for every song and nobody is told why.
+     */
+    val detail: String
+        get() {
+            if (this != EXTENSION) return baseDetail
+            val setup = LyricsRepository.extensionSetup ?: return baseDetail
+            return "Needs ${setup.settingLabel} — open ${setup.extensionName} settings"
+        }
+
+    /**
+     * What this source is waiting for, when it is waiting for something.
+     *
+     * Null for every source but [EXTENSION], and null for that one too when
+     * its package is installed and ready.
+     */
+    val setupRequirement: LyricsRepository.ExtensionSetup?
+        get() = if (this == EXTENSION) LyricsRepository.extensionSetup else null
 
     companion object {
         /** Every source a listener can see and choose, in default priority. */

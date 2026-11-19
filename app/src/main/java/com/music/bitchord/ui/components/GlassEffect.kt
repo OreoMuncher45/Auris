@@ -6,6 +6,7 @@
 package com.music.bitchord.ui.components
 
 import android.app.ActivityManager
+import android.content.Context
 import android.os.Build
 import com.music.bitchord.ui.components.backdrop.LocalAmbientBackgroundColor
 import com.music.bitchord.ui.components.backdrop.LocalAmbientDarkChrome
@@ -41,7 +42,6 @@ import com.music.bitchord.ui.components.backdrop.isRenderEffectSupported
 import com.music.bitchord.ui.components.backdrop.effects.blur
 import com.music.bitchord.ui.components.backdrop.effects.colorControls
 import com.music.bitchord.ui.components.backdrop.effects.lens
-import com.music.bitchord.ui.components.backdrop.poolLens
 import com.music.bitchord.ui.components.backdrop.highlight.Highlight
 import com.music.bitchord.ui.components.backdrop.highlight.HighlightStyle
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
@@ -134,6 +134,14 @@ enum class GlassStyle {
     /** Blur and saturation without lens refraction or an edge rim. */
     BLUR,
 
+    /**
+     * Blur and saturation with the rim, but no lens refraction — BitChord's
+     * "Better Performance for Glass". The frost of [LIQUID] at a deeper blur,
+     * for phones the refraction shader is too much for. The one difference
+     * from [LIQUID] is the missing lens pass.
+     */
+    FROSTED,
+
     /** Translucent tint without backdrop capture or blur. */
     TRANSPARENT,
 }
@@ -173,12 +181,15 @@ fun glassResolutionScale(blurRadiusDp: Float): Float {
 fun isGlassSupported(sdkInt: Int = Build.VERSION.SDK_INT): Boolean = sdkInt >= Build.VERSION_CODES.S
 
 /** Whether Android classifies this device as low-RAM. */
+fun isLowRamDevice(context: Context): Boolean =
+    runCatching { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }
+        .getOrDefault(false)
+
+/** Whether Android classifies this device as low-RAM. */
 @Composable
 fun isLowRamDevice(): Boolean {
     val context = LocalContext.current
-    return remember {
-        context.getSystemService(ActivityManager::class.java)?.isLowRamDevice ?: false
-    }
+    return remember { isLowRamDevice(context) }
 }
 
 /** Combines the API-level check with the low-RAM device check; use this to gate glass. */
@@ -251,16 +262,6 @@ fun GlassEffectConfig.resolvedTextColor(
 /** The backdrop content (app UI) that glass surfaces sample from. */
 val LocalAppBackdrop = staticCompositionLocalOf<Backdrop> { error("No AppBackdrop provided") }
 
-/** Processed backdrop shared by surfaces with matching blur and vibrancy settings. */
-@Stable
-class PooledGlass(
-    val backdrop: LayerBackdrop,
-    val blurRadiusDp: Float,
-    val vibrancy: Float,
-)
-
-val LocalPooledGlass = staticCompositionLocalOf<PooledGlass?> { null }
-
 /** True while app-level motion is active. Freeze nested captures too, since recording them each frame redraws their full subtree. */
 val LocalAppBackdropFrozen = staticCompositionLocalOf<() -> Boolean> { { false } }
 
@@ -270,9 +271,6 @@ val LocalAppMotionFrozen = staticCompositionLocalOf<State<Boolean>> {
         override val value: Boolean get() = false
     }
 }
-
-/** Optional cache key for reusing glass output over looping video backdrops. */
-val LocalBackdropLoopBucket = staticCompositionLocalOf<(() -> Int)?> { null }
 
 /** Whether the Apple Music style is active, used to select its matching icons. */
 val LocalAppleMusicUi = staticCompositionLocalOf { false }
@@ -294,8 +292,6 @@ fun Modifier.liquidGlass(
     backdropScale: Float = glassResolutionScale(blurRadiusDp),
     // Hold the last capture while frozen. Add any component-specific freeze at the call site.
     frozen: () -> Boolean = LocalAppBackdropFrozen.current,
-    // Defaults to the current loop bucket for animated backdrops.
-    loopBucket: (() -> Int)? = LocalBackdropLoopBucket.current,
     /** Optional artwork tint for the rim; [Color.Unspecified] uses the configured highlight. */
     rimTintColor: Color = Color.Unspecified,
     /** Disable for surfaces that draw their own elevation shadow. */
@@ -309,19 +305,9 @@ fun Modifier.liquidGlass(
             .background(base.copy(alpha = 0.85f))
             .then(if (tint != null) Modifier.background(tint.copy(alpha = config.surfaceOpacity.coerceIn(0f, 1f))) else Modifier)
     }
-    val pool = LocalPooledGlass.current
-    // Only when the pool holds this exact treatment; a caller that asked for its own
-    // radius (the full player's heavier blur) still runs its own chain.
-    // Dispersion needs the single-shape shader, so a surface asking for it keeps its own chain.
-    val usePool = pool != null &&
-        blurRadiusDp == pool.blurRadiusDp &&
-        config.vibrancy == pool.vibrancy &&
-        !config.chromaticAberration
-    val backdrop = if (usePool) pool.backdrop else LocalAppBackdrop.current
+    val backdrop = LocalAppBackdrop.current
     val density = LocalDensity.current
-    // The pool is already blurred, so its sample is taken at full surface resolution --
-    // there is nothing left for a reduced capture to save, and the lens reads sharper.
-    val resolutionScale = if (usePool) 1f else backdropScale.coerceIn(0.05f, 1f)
+    val resolutionScale = backdropScale.coerceIn(0.05f, 1f)
     // Pixel-sized effect parameters operate on the backdrop layer at its recorded
     // resolution, so they are pre-multiplied by the resolution scale to keep the
     // same visual size.
@@ -378,43 +364,35 @@ fun Modifier.liquidGlass(
     val shapeBlock: () -> Shape = remember(shape) { { shape } }
 
     // BLUR keeps the frosted capture but drops the refraction and the rim, which
-    // are the parts that read as "liquid". Cheaper too: the lens is the most
-    // expensive link in the effect chain.
+    // are the parts that read as "liquid". FROSTED keeps the rim and drops only
+    // the lens, which is the most expensive link in the effect chain — that is
+    // what makes it the performance mode rather than a different material.
     val plainBlur = config.style == GlassStyle.BLUR
+    val skipLens = plainBlur || config.style == GlassStyle.FROSTED
 
     val effectsBlock: BackdropEffectScope.() -> Unit = remember(
         saturation,
         blurPx,
         applyEdgeEffects,
-        plainBlur,
+        skipLens,
         lensHeightPx,
         lensAmountPx,
         config.depthEffect,
         config.chromaticAberration,
-        usePool,
     ) {
         {
-            if (!usePool && saturation != 1f) {
+            if (saturation != 1f) {
                 colorControls(saturation = saturation)
             }
-            if (!usePool && blurPx > 0f) {
+            if (blurPx > 0f) {
                 blur(blurPx)
             }
-            if (!plainBlur &&
+            if (!skipLens &&
                 applyEdgeEffects &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 (lensHeightPx > 0f || lensAmountPx > 0f)
             ) {
-                if (usePool) {
-                    // Refracted by the pool in its single pass for every bar surface: this
-                    // layer then carries no effect, so it needs no offscreen buffer and no
-                    // lens pass of its own. Same shader math, same region.
-                    poolLens(
-                        refractionHeight = lensHeightPx,
-                        refractionAmount = lensAmountPx,
-                        depthEffect = config.depthEffect,
-                    )
-                } else lens(
+                lens(
                     refractionHeight = lensHeightPx,
                     refractionAmount = lensAmountPx,
                     depthEffect = config.depthEffect,
@@ -455,9 +433,8 @@ fun Modifier.liquidGlass(
         }
     }
 
-    // Pooled bar surfaces draw their own elevation shadow.
-    val shadowBlock: (() -> Shadow?)? = remember(applyEdgeEffects, usePool, outerShadow) {
-        if (applyEdgeEffects && !usePool && outerShadow) ({ Shadow.Default }) else null
+    val shadowBlock: (() -> Shadow?)? = remember(applyEdgeEffects, outerShadow) {
+        if (applyEdgeEffects && outerShadow) ({ Shadow.Default }) else null
     }
 
     // The normal-blend dark rim keeps glass edges visible on light or busy surfaces.
@@ -466,19 +443,12 @@ fun Modifier.liquidGlass(
 
     // RenderEffect is guaranteed supported past this point — the unsupported
     // case already returned the translucent-tint fallback above.
-    val surfaceBlock: DrawScope.() -> Unit = remember(usePool, shape) {
+    val surfaceBlock: DrawScope.() -> Unit = remember {
         {
-            // A pooled surface clips to its bounds only (the pool masks its glass), so its
-            // tint is filled to the exact outline instead of relying on a shape clip.
-            val outline = if (usePool) shape.createOutline(size, layoutDirection, this) else null
             val base = animBaseColor.value
-            if (base.alpha > 0f) {
-                if (outline != null) drawOutline(outline, base) else drawRect(color = base, size = size)
-            }
+            if (base.alpha > 0f) drawRect(color = base, size = size)
             val tint = animTintColor.value
-            if (tint.alpha > 0f) {
-                if (outline != null) drawOutline(outline, tint) else drawRect(color = tint, size = size)
-            }
+            if (tint.alpha > 0f) drawRect(color = tint, size = size)
         }
     }
 
@@ -491,7 +461,6 @@ fun Modifier.liquidGlass(
         onDrawSurface = surfaceBlock,
         backdropScale = resolutionScale,
         frozen = frozen,
-        loopBucket = loopBucket,
     ).then(
         if (applyEdgeEffects && !plainBlur && darkRimAlpha > 0f) {
             Modifier.outerDarkRim(
@@ -499,8 +468,6 @@ fun Modifier.liquidGlass(
                 width = DarkRimWidth,
                 alpha = darkRimAlpha,
                 angle = animatedHighlightAngle,
-                // Pooled surfaces have no shape clip, so draw only the inner rim.
-                insideOnly = usePool,
             )
         } else {
             Modifier

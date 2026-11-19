@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.HorizontalDivider
+import com.music.bitchord.auth.clearSpotifyWebSession
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.spotify_logo
 import org.jetbrains.compose.resources.painterResource

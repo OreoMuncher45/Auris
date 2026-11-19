@@ -28,8 +28,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import com.music.bitchord.ui.components.artworkDeparture
+import com.music.bitchord.ui.components.rememberArtworkTap
 import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.ShelfSnap
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.lazyKey
+import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,23 +62,31 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cached
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Storage
 import com.music.bitchord.ui.icons.BitChordIcons
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.flow.FlowRules
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
+import com.music.bitchord.data.model.HomeChip
+import com.music.bitchord.data.model.HomeHeader
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.isQuickPicksShelfTitle
 import java.util.Locale
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.LibraryViewType
@@ -87,14 +105,27 @@ import com.music.bitchord.ui.components.recentlyPlayedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.trackColumnWidth
+import com.music.bitchord.ui.player.CanvasArtworkPlayer
+import com.music.bitchord.ui.player.CanvasContentMode
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
+import com.music.bitchord.ui.player.PlayerSettings
+import com.music.bitchord.ui.player.rememberFlowVideo
 
 /** How far the Listen now heading and feed sit above the shared top inset. */
 private val HOME_TITLE_LIFT = 28.dp
 
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
+
+/**
+ * The shelf name the quick-access tiles are reported under.
+ *
+ * They are not a shelf, but every card on the page carries the name of the
+ * row it came from — it is what the playback source is called — so the tiles
+ * need one too.
+ */
+private const val SHORTCUT_SHELF_TITLE = "Shortcuts"
 
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
@@ -117,8 +148,34 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     /** The page's heading, or null for none — the desktop's pages carry no heading. */
     title: String?,
+    /**
+     * What the page says above its shelves.
+     *
+     * A greeting, a row of chips and a grid of quick-access tiles. Spotify's
+     * own home has all three, and they are not shelves: a greeting is not a
+     * row of things, a chip is not a filter over what is already drawn, and
+     * the tiles are a grid rather than a carousel. So they arrive separately
+     * rather than as a shelf with an empty title, which would draw a heading
+     * over nothing and make the page's structure something every reader has
+     * to decode.
+     *
+     * Null for a provider whose home is nothing but shelves — YouTube's has
+     * never had a header.
+     */
+    header: HomeHeader? = null,
+    /**
+     * A chip was picked.
+     *
+     * The chip is part of the *request*: the provider is asked again with it
+     * in force and the answer replaces the page. It is not a filter over the
+     * shelves already drawn.
+     */
+    onChipSelected: ((String) -> Unit)? = null,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
+    /** When true, the sign-in banner is hidden (the user dismissed it). */
+    signInBannerDismissed: Boolean = false,
+    onDismissSignInBanner: (() -> Unit)? = null,
     /**
      * Holding a card rather than tapping it. Every card on the feed answers,
      * whichever kind it is: the caller reads the item the same way it does for
@@ -138,6 +195,32 @@ fun HomeScreen(
     leadHero: Boolean = true,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    /**
+     * The Flow tile, when the listener has Flow enabled. It rides at the head
+     * of the Quick Picks row rather than as a shelf of its own: Flow and Quick
+     * Picks are the same question — "what next" — and two separate rows made
+     * Flow look like another category that reordering could bury.
+     */
+    flowItem: ShelfItem? = null,
+    onFlowClick: (() -> Unit)? = null,
+    /** Opens Replay; its card leads Top Picks, the way Apple's does. */
+    onOpenReplay: (() -> Unit)? = null,
+    /**
+     * Opens the whole Quick Picks set.
+     *
+     * The arrow at the end of the Quick Picks heading: the shelf shows what
+     * fits on a screen, and this is the set behind it. Quick Picks is a
+     * section of Home rather than a tab of its own — the navbar is crowded
+     * enough, and the feed's own shelf is already the card row it needs.
+     */
+    onOpenQuickPicks: (() -> Unit)? = null,
+    /**
+     * Whether Replay and Flow are tiles in the quick-access grid rather than
+     * square cards. Spotify's home: its page opens with a grid of tiles and
+     * no Quick Picks row, and two cards under the grid never lined up with
+     * it. Every other catalogue keeps the cards at the head of Quick Picks.
+     */
+    leadingCardsAsTiles: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -161,12 +244,35 @@ fun HomeScreen(
                 contentPadding
             },
         ) {
-            if (title != null) {
-                item { HomeTitle(title) }
+            // The provider's own greeting replaces the page's heading when it
+            // has one: Spotify's home opens with "Good evening", and putting
+            // "Listen now" above that would be two headings for one page.
+            val greeting = header?.greeting?.takeIf { it.isNotBlank() }
+            if (greeting != null) {
+                item(key = "home:greeting", contentType = LazyContent.HEADER) { HomeGreeting(greeting) }
+            } else if (title != null) {
+                item(key = "home:title", contentType = LazyContent.HEADER) { HomeTitle(title) }
             }
-            if (!signedIn && onSignIn != null) {
-                item {
-                    SignInBanner(onSignIn = onSignIn, modifier = Modifier.padding(bottom = 8.dp))
+            if (!signedIn && onSignIn != null && !signInBannerDismissed) {
+                item(key = "home:sign-in", contentType = LazyContent.MESSAGE) {
+                    SignInBanner(
+                        onSignIn = onSignIn,
+                        onDismiss = onDismissSignInBanner,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+            }
+            // The chips stay on screen while the page behind them reloads, and
+            // after a failure: they are the way back to the whole feed, and a
+            // page that hides them on an error leaves the listener stuck.
+            val pageHeader = header
+            if (pageHeader != null && (pageHeader.chips.isNotEmpty() || pageHeader.chip.isNotBlank())) {
+                item(key = "home:chips") {
+                    HomeChipRow(
+                        chips = pageHeader.chips,
+                        selected = pageHeader.chip,
+                        onSelect = onChipSelected,
+                    )
                 }
             }
             when (state) {
@@ -181,12 +287,40 @@ fun HomeScreen(
                         feedSkeleton(firstIsHero = leadHero)
                     }
                 }
-                is UiState.Error -> item {
+                is UiState.Error -> item(key = "home:error", contentType = LazyContent.MESSAGE) {
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                    }
+                    // The quick-access grid: the little square tiles above the
+                    // shelves, the way Spotify's own home opens. A grid rather
+                    // than a row, and not a shelf — a shelf would put a heading
+                    // over it and a carousel would stretch two tiles across a
+                    // phone screen.
+                    //
+                    // On Spotify's home Replay and Flow are two more of these
+                    // tiles, after the shortcuts: the grid is the page's top,
+                    // and cards of another size under it never lined up.
+                    val shortcuts = header?.shortcuts.orEmpty()
+                    val replayTile = if (leadingCardsAsTiles) onOpenReplay else null
+                    val flowTile = if (leadingCardsAsTiles) flowItem else null
+                    if (shortcuts.isNotEmpty() || replayTile != null || flowTile != null) {
+                        item(key = "home:shortcuts") {
+                            HomeShortcutGrid(
+                                shortcuts = shortcuts,
+                                onItemClick = { item -> onItemClick(item, SHORTCUT_SHELF_TITLE) },
+                                onItemLongPress = onItemLongPress,
+                                onOpenReplay = replayTile,
+                                flowItem = flowTile,
+                                onFlowClick = {
+                                    if (flowTile != null) {
+                                        onFlowClick?.invoke() ?: onItemClick(flowTile, FlowRules.FLOW_SHELF_TITLE)
+                                    }
+                                },
+                            )
+                        }
                     }
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
@@ -197,6 +331,11 @@ fun HomeScreen(
                         onItemLongPress = onItemLongPress,
                         currentSong = currentSong,
                         isPlaying = isPlaying,
+                        // Already in the grid as tiles, so not drawn again as cards.
+                        flowItem = if (leadingCardsAsTiles) null else flowItem,
+                        onFlowClick = onFlowClick,
+                        onOpenReplay = if (leadingCardsAsTiles) null else onOpenReplay,
+                        onOpenQuickPicks = onOpenQuickPicks,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
@@ -224,12 +363,20 @@ fun HomeScreen(
         // skeleton and no request in flight to explain it. Restarting on
         // [loadingMore] re-checks the moment a page settles, so the next one is
         // asked for while the tail is still on screen to show it loading.
+        //
+        // The trigger is the *end* of the list, not the last three rows of it:
+        // Home's continuation is endless — every page it hands back is another
+        // set of generated Super Mixes — so a trigger that fires while the tail
+        // merely happens to be on screen asks for a page the listener never
+        // scrolled to, and asks again for the next one, and the feed runs away
+        // on its own. The last row has to be the one in view, which means the
+        // listener got there.
         LaunchedEffect(listState, loadingMore) {
             snapshotFlow {
                 val layout = listState.layoutInfo
                 (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
             }.collect { (lastVisible, total) ->
-                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
+                if (!loadingMore && total > 0 && lastVisible >= total - 1) loadMore()
             }
         }
     }
@@ -245,14 +392,117 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     onItemLongPress: ((ShelfItem) -> Unit)?,
     currentSong: Song?,
     isPlaying: Boolean,
+    flowItem: ShelfItem? = null,
+    onFlowClick: (() -> Unit)? = null,
+    onOpenReplay: (() -> Unit)? = null,
+    /** Opens the whole Quick Picks set — the arrow at the end of its heading. */
+    onOpenQuickPicks: (() -> Unit)? = null,
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
 ) {
+    // Built once rather than per row: Quick Picks is pinned to the top, so at
+    // most one shelf ever asks for it.
+    val flowCard: (@Composable () -> Unit)? = if (flowItem != null) {
+        {
+            ShelfCard(
+                item = flowItem,
+                onClick = { onFlowClick?.invoke() ?: onItemClick(flowItem, FlowRules.FLOW_SHELF_TITLE) },
+                isCurrent = false,
+                isPlaying = false,
+            )
+        }
+    } else {
+        null
+    }
+    // Apple's Top Picks lead with Replay, so it shares the pinned row with
+    // Flow and Quick Picks instead of sitting in a shelf of its own.
+    val replayCard: (@Composable () -> Unit)? = onOpenReplay?.let { open ->
+        { ReplayPickCard(onClick = open) }
+    }
+    val topPickLeading: (@Composable () -> Unit)? =
+        if (replayCard != null || flowCard != null) {
+            {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    replayCard?.invoke()
+                    flowCard?.invoke()
+                }
+            }
+        } else {
+            null
+        }
+
+    // The quick-picks row hosts the Flow and Replay cards when it is there.
+    // When the feed has no such row — some accounts get a home without one,
+    // and the row's title is written in the account's own language — the cards
+    // get a row of their own at the top of the page.
+    //
+    // What they must never do is become a shelf of their own. A shelf at the
+    // top of Home is a full-width hero, and that is the old huge Flow: the
+    // card stopped being a card and became a poster.
+    val quickPicksFound = shelves.any { isQuickPicksShelf(it.title) }
+    if (!quickPicksFound && topPickLeading != null) {
+        item(key = "auris:leading-cards", contentType = LazyContent.SHELF) {
+            Column(Modifier.padding(bottom = 26.dp)) {
+                ShelfRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    item(key = "leading", contentType = LazyContent.LEADING_CARD) { topPickLeading() }
+                }
+            }
+        }
+    }
+
+    // The hero is the first ordinary shelf — not the quick-picks row, which
+    // carries the cards, and not Recents, which has a treatment of its own.
+    // It used to be the first row whatever it was, which meant that a
+    // quick-picks row at the top took the hero slot with it and the page
+    // lost the one shelf it was built around.
+    val heroIndex = shelves.indexOfFirst { shelf ->
+        !isQuickPicksShelf(shelf.title) &&
+            !shelf.title.equals(RECENTS_TITLE, ignoreCase = true)
+    }
+
+    // The keys are the shelves' own, not their places: a key carrying the
+    // index changes when the shelves are reordered, and the list then reads
+    // as a different list — it loses the row the listener was looking at, and
+    // the row they moved to the top is somewhere else.
+    //
+    // Two shelves can share a title and a first song — the feed has been
+    // known to send the same row twice — and a key given twice is a crash,
+    // so the second one is counted off.
+    val keyCounts = mutableMapOf<String, Int>()
     shelves.forEachIndexed { index, shelf ->
-        item(key = shelf.title + index) {
+        val base = "shelf:" + shelf.title + ":" + (shelf.items.firstOrNull()?.videoId
+            ?: shelf.items.firstOrNull()?.browseId ?: index)
+        val seen = keyCounts.getOrDefault(base, 0)
+        keyCounts[base] = seen + 1
+        val kind = when {
+            isQuickPicksShelf(shelf.title) -> LazyContent.SHELF
+            shelf.title.equals(RECENTS_TITLE, ignoreCase = true) -> LazyContent.RECENT_SHELF
+            index == heroIndex && firstIsHero -> LazyContent.HERO_SHELF
+            else -> LazyContent.SHELF
+        }
+        item(key = if (seen == 0) base else "$base#$seen", contentType = kind) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
-            if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
+            val quickPicks = isQuickPicksShelf(shelf.title)
+            if (quickPicks) {
+                // The Flow tile leads this row, so the two share one horizontal
+                // scroll instead of fighting for the top of the page.
+                Shelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    leadingCard = topPickLeading,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
+                    // The section's own mark, and the arrow that opens the
+                    // whole set rather than one card of it.
+                    headerIcon = Icons.Rounded.AutoAwesome,
+                    onHeaderNavigate = onOpenQuickPicks,
+                )
+            } else if (shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
                 RecentShelf(
                     shelf = shelf,
                     onItemClick = openItem,
@@ -262,7 +512,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     viewType = recentsViewType,
                     onViewTypeToggle = onRecentsViewTypeToggle,
                 )
-            } else if (index == 0 && firstIsHero) {
+            } else if (index == heroIndex && firstIsHero) {
                 HeroShelf(
                     shelf = shelf,
                     onItemClick = openItem,
@@ -302,13 +552,23 @@ private fun RecentShelf(
             onViewTypeToggle = onViewTypeToggle,
         )
         if (viewType == LibraryViewType.LIST) {
+            // Paged once per list rather than on every recomposition of the shelf.
+            val columns = remember(shelf.items) { shelf.items.chunked(RECENT_TRACKS_PER_COLUMN) }
+            val columnKeys = remember(columns) { uniqueKeys(columns) { it.first().lazyKey() } }
             BoxWithConstraints {
                 val columnWidth = trackColumnWidth(maxWidth)
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    // A column is most of the row wide, so a fling turns one
+                    // page of four tracks rather than skating past several.
+                    snap = ShelfSnap.OneItemPerFling,
                 ) {
-                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                    itemsIndexed(
+                        columns,
+                        key = { index, _ -> columnKeys[index] },
+                        contentType = { _, _ -> LazyContent.TRACK_COLUMN },
+                    ) { _, column ->
                         Column(Modifier.width(columnWidth)) {
                             column.forEach { item ->
                                 RecentTrackRow(
@@ -324,13 +584,18 @@ private fun RecentShelf(
                 }
             }
         } else {
+            val keys = rememberShelfKeys(shelf.items)
             BoxWithConstraints {
                 val cardWidth = heroCardWidth(maxWidth)
                 ShelfRow(
                     contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    items(shelf.items) { item ->
+                    itemsIndexed(
+                        shelf.items,
+                        key = { index, _ -> keys[index] },
+                        contentType = { _, _ -> LazyContent.HERO_CARD },
+                    ) { _, item ->
                         HeroCard(
                             item = item,
                             onClick = { onItemClick(item) },
@@ -484,28 +749,16 @@ fun CompactTrackRow(
 }
 
 /**
- * Listen now's large heading, with the app's single-note mark stacked above it.
+ * Listen now's large heading.
  *
- * Only the home tab carries it — the top bar no longer shows the logo, so this
- * is where the app's mark lives. Its height is taken from the heading's own
- * font size rather than a fixed dp, so the two keep their proportion under the
- * system font scale. The mark is drawn with the theme's on-background colour,
- * which is black on light and white on dark.
+ * The app's mark used to sit above it. It does not any more: the heading is
+ * the first thing on the page, and the mark was a picture of the app rather
+ * than anything the listener came for.
  */
 @Composable
 private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
     val style = MaterialTheme.typography.displayLarge
-    val logoHeight = with(LocalDensity.current) { (style.fontSize * LOGO_TO_FONT).toDp() }
     Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
-        Icon(
-            painter = painterResource(Res.drawable.ic_note),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier
-                .padding(bottom = 14.dp)
-                .height(logoHeight)
-                .aspectRatio(LOGO_ASPECT),
-        )
         Text(
             text = title,
             style = style,
@@ -514,8 +767,335 @@ private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** The note mark's height against the heading's font size. */
-private const val LOGO_TO_FONT = 0.9f
+/**
+ * The provider's own greeting — Spotify's "Good evening".
+ *
+ * It takes the heading's place rather than sitting under it: the page has one
+ * heading, and "Listen now" above "Good evening" would be two of them.
+ */
+@Composable
+private fun HomeGreeting(greeting: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
+        Text(
+            text = greeting,
+            style = MaterialTheme.typography.displayLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
+/**
+ * The row of chips the page can be narrowed by.
+ *
+ * Spotify's own row: *All*, then the feeds it offers — Music, Podcasts,
+ * Audiobooks. Their labels come from Spotify and are therefore already in the
+ * listener's language; only *All* is ours, because only *All* is a chip
+ * Spotify does not have.
+ *
+ * A chip in force is shown with the chips that open beside it, joined to it
+ * as one shape, and a close button in front of it: the way back to the whole
+ * page. The chips stay on screen while the page reloads and after a failure,
+ * because they are the way out of a narrowed page that came back empty.
+ */
+@Composable
+private fun HomeChipRow(
+    chips: List<HomeChip>,
+    selected: String,
+    onSelect: ((String) -> Unit)?,
+) {
+    val parent = chips.firstOrNull { it.id == selected }
+        ?: chips.firstOrNull { chip -> chip.subChips.any { it.id == selected } }
+    val subs = parent?.subChips.orEmpty()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (selected.isNotBlank()) {
+            // The way back to the whole page, as one round button.
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onSelect?.invoke("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.home_chip_all),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            // The picked chip and the ones that open beside it, joined: one
+            // shape, so they read as one control rather than as a row of them.
+            // The chip in force may not be in the list at all — the feed
+            // changed under it — and then there is no parent to draw, only the
+            // way back.
+            if (parent != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HomePill(
+                        label = parent.label,
+                        selected = true,
+                        shape = if (subs.isEmpty()) HomePillShape else HomeJoinedStart,
+                    ) { onSelect?.invoke(parent.id) }
+                    subs.forEachIndexed { index, sub ->
+                        HomePill(
+                            label = sub.label,
+                            selected = sub.id == selected,
+                            shape = if (index == subs.lastIndex) HomeJoinedEnd else RoundedCornerShape(4.dp),
+                        ) { onSelect?.invoke(sub.id) }
+                    }
+                }
+            }
+        } else {
+            HomePill(label = stringResource(Res.string.home_chip_all), selected = true) {
+                onSelect?.invoke("")
+            }
+            chips.forEach { chip ->
+                HomePill(label = chip.label) { onSelect?.invoke(chip.id) }
+            }
+        }
+    }
+}
+
+/** The pill's own shape: a full round. */
+private val HomePillShape = RoundedCornerShape(50)
+
+/** The left half of two pills joined together. */
+private val HomeJoinedStart = RoundedCornerShape(
+    topStartPercent = 50,
+    bottomStartPercent = 50,
+    topEndPercent = 15,
+    bottomEndPercent = 15,
+)
+
+/** The right half of two pills joined together. */
+private val HomeJoinedEnd = RoundedCornerShape(
+    topStartPercent = 15,
+    bottomStartPercent = 15,
+    topEndPercent = 50,
+    bottomEndPercent = 50,
+)
+
+/** One chip: a pill, dark when it is not in force and lit when it is. */
+@Composable
+private fun HomePill(
+    label: String,
+    selected: Boolean = false,
+    shape: androidx.compose.ui.graphics.Shape = HomePillShape,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clip(shape)
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The quick-access grid at the top of the page.
+ *
+ * Two columns on a phone, more on a wide window: each tile is a small square
+ * of artwork and the name beside it, the way Spotify's own home opens. The
+ * names are the listener's — their liked songs, the things they jumped back
+ * into — so the grid is the one part of the page that is unmistakably theirs.
+ *
+ * On Spotify's home, Replay and Flow follow the shortcuts as two more tiles
+ * ([onOpenReplay], [flowItem]), so they share the grid's columns rather than
+ * sitting under it as cards of another size.
+ */
+@Composable
+private fun HomeShortcutGrid(
+    shortcuts: List<ShelfItem>,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)? = null,
+    onOpenReplay: (() -> Unit)? = null,
+    flowItem: ShelfItem? = null,
+    onFlowClick: () -> Unit = {},
+) {
+    val replayIndex = if (onOpenReplay != null) shortcuts.size else -1
+    val total = shortcuts.size + (if (onOpenReplay != null) 1 else 0) + (if (flowItem != null) 1 else 0)
+    BoxWithConstraints {
+        // Two columns on a phone; a wider window gets more, so the tiles do
+        // not stretch into banners.
+        val columns = if (maxWidth >= 720.dp) 4 else 2
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // The bottom is every shelf's own (26dp), so whatever follows
+                // the grid sits as far below it as one shelf does below another.
+                .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 4.dp, bottom = 26.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for (rowStart in 0 until total step columns) {
+                val rowEnd = minOf(rowStart + columns, total)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (index in rowStart until rowEnd) {
+                        val tile = Modifier.weight(1f)
+                        when {
+                            index < shortcuts.size -> {
+                                val item = shortcuts[index]
+                                val longPress = onItemLongPress?.let { { it(item) } }
+                                HomeTile(item.title, { onItemClick(item) }, longPress, tile) {
+                                    AsyncImage(
+                                        model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    )
+                                }
+                            }
+                            index == replayIndex && onOpenReplay != null ->
+                                HomeTile(stringResource(Res.string.replay), onOpenReplay, null, tile) {
+                                    ReplayTileArt()
+                                }
+                            flowItem != null ->
+                                HomeTile(flowItem.title, onFlowClick, null, tile) {
+                                    FlowTileArt()
+                                }
+                        }
+                    }
+                    // A row with one tile short of a full row still has to
+                    // fill the width, or the tile it does have stretches.
+                    repeat(columns - (rowEnd - rowStart)) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The Replay card in miniature, for its quick-access tile: the card's gradient,
+ * its note in the top-end corner and its title at the bottom-start. The
+ * subtitle is left out, since it can't be read at 48dp. A straight scale of the
+ * card would set the title at 7sp, so the note and title are rounded up to
+ * sizes that stay sharp.
+ */
+@Composable
+private fun ReplayTileArt() {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(REPLAY_GRADIENT)
+            .padding(5.dp),
+    ) {
+        Icon(
+            painter = painterResource(Res.drawable.ic_note),
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .height(9.dp)
+                .aspectRatio(LOGO_ASPECT),
+        )
+        Text(
+            text = stringResource(Res.string.replay),
+            color = Color.White,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 10.sp,
+            maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomStart),
+        )
+    }
+}
+
+/**
+ * Flow's cover for its quick-access tile: a still of the first frame of the
+ * card's square clip (`flow_square.mp4`), at tile size. It stays still because
+ * a looping decoder is too much to spend on a 48dp thumbnail. The gradient
+ * behind it shows only until the still decodes.
+ */
+@Composable
+private fun FlowTileArt() {
+    Image(
+        painter = painterResource(Res.drawable.flow_cover),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(FLOW_GRADIENT),
+    )
+}
+
+/** One quick-access tile: artwork, then the name beside it. */
+@Composable
+private fun HomeTile(
+    title: String,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier,
+    art: @Composable () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongClick)
+            .contextClick(onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        art()
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Replay's gradient: the card's and the tile's. */
+private val REPLAY_GRADIENT = Brush.linearGradient(
+    listOf(Color(0xFFFF375F), Color(0xFFFF9F0A), Color(0xFFBF5AF2)),
+)
+
+/** Flow's gradient, behind its tile's still until it decodes. */
+private val FLOW_GRADIENT = Brush.linearGradient(
+    listOf(Color(0xFF1D1B4F), Color(0xFF6D2FD8), Color(0xFFFF4B7A)),
+)
 
 /** ic_note's viewport, 374 x 521. */
 private const val LOGO_ASPECT = 374f / 521f
@@ -526,9 +1106,21 @@ private const val LOGO_ASPECT = 374f / 521f
  * [onShowAll] is only ever set on Library, whose rows stop at five cards
  * rather than running the shelf's whole length — see [LibraryGridShelf].
  * Home and Explore never pass it, so their heading is unchanged.
+ *
+ * [icon] is the mark a section carries — Quick Picks' spark, the same one the
+ * navbar tab wore — and [onNavigate] is the arrow at the end of the heading,
+ * which opens the whole section rather than one card of it.
  */
 @Composable
-internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+internal fun SectionHeader(
+    title: String,
+    subtitle: String = "",
+    onShowAll: (() -> Unit)? = null,
+    icon: ImageVector? = null,
+    onNavigate: (() -> Unit)? = null,
+    /** A control at the end of the heading — the list/grid switch, usually. */
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val displayTitle = localizeShelfTitle(title)
     val displaySubtitle = localizeShelfSubtitle(subtitle)
     Row(
@@ -537,6 +1129,15 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
             .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 text = displayTitle,
@@ -555,7 +1156,9 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                 )
             }
         }
-        if (onShowAll != null) {
+        if (trailing != null) {
+            trailing()
+        } else if (onShowAll != null) {
             Text(
                 text = stringResource(Res.string.show_all),
                 style = MaterialTheme.typography.titleSmall,
@@ -564,9 +1167,27 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                     .clickable(onClick = onShowAll)
                     .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
+        } else if (onNavigate != null) {
+            Icon(
+                imageVector = BitChordIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable(onClick = onNavigate),
+            )
         }
     }
 }
+/**
+ * Whether a feed shelf is Quick Picks.
+ *
+ * The matcher itself lives in the data layer, because the feed has to know
+ * too: the row is not always in the response, and what stands in for it is
+ * built from the same table. See [isQuickPicksShelfTitle].
+ */
+fun isQuickPicksShelf(title: String): Boolean = isQuickPicksShelfTitle(title)
+
 @Composable
 internal fun localizeShelfTitle(title: String): String {
     val trimmed = title.trim()
@@ -751,6 +1372,7 @@ private fun HeroShelf(
         // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
         // width is also the only one of the two the aspect ratio below can turn
         // into a height, so the card keeps its shape however it was arrived at.
+        val keys = rememberShelfKeys(shelf.items)
         BoxWithConstraints {
             val cardWidth = heroCardWidth(maxWidth)
             ShelfRow(
@@ -758,7 +1380,11 @@ private fun HeroShelf(
                 contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(shelf.items) { item ->
+                itemsIndexed(
+                    shelf.items,
+                    key = { index, _ -> keys[index] },
+                    contentType = { _, _ -> LazyContent.HERO_CARD },
+                ) { _, item ->
                     HeroCard(
                         item = item,
                         onClick = { onItemClick(item) },
@@ -848,15 +1474,31 @@ internal fun Shelf(
     leadingCard: (@Composable () -> Unit)? = null,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    /** The mark this section's heading carries. */
+    headerIcon: ImageVector? = null,
+    /** The arrow at the end of the heading, which opens the whole section. */
+    onHeaderNavigate: (() -> Unit)? = null,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
+        SectionHeader(
+            shelf.title,
+            shelf.subtitle,
+            icon = headerIcon,
+            onNavigate = onHeaderNavigate,
+        )
+        val keys = rememberShelfKeys(shelf.items)
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            leadingCard?.let { card -> item(key = "leading") { card() } }
-            items(shelf.items) { item ->
+            leadingCard?.let { card ->
+                item(key = "leading", contentType = LazyContent.LEADING_CARD) { card() }
+            }
+            itemsIndexed(
+                shelf.items,
+                key = { index, _ -> keys[index] },
+                contentType = { _, _ -> LazyContent.CARD },
+            ) { _, item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
@@ -946,17 +1588,84 @@ private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector
             .clip(RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
     ) {
+        // Still, and never a drift.
+        //
+        // A mesh this size used to settle over eight seconds, which meant a
+        // blurred layer redrawn at refresh rate for eight seconds — per tile,
+        // and there are several of these on the page at once. On a potato that
+        // is the most expensive thing on the screen, and it is paid while the
+        // listener is scrolling past the very tiles it is on. The tile is a
+        // coloured box behind an icon: it reads the same settled as it does
+        // drifting.
         MeshGradientBackground(
             palette = palette,
             trackKey = trackKey,
-            continuous = true,
             blurRadius = 24.dp,
+            animated = false,
         )
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = Color.White,
             modifier = Modifier.size(40.dp),
+        )
+    }
+}
+
+/**
+ * The Replay tile at the head of Top Picks. A gradient rather than artwork:
+ * Replay is a recap, not a release, and Apple's tile is the one place on Home
+ * that is deliberately not a cover.
+ */
+@Composable
+private fun ReplayPickCard(onClick: () -> Unit) {
+    Column(modifier = Modifier.width(SHELF_CARD_WIDTH).clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(REPLAY_GRADIENT)
+                .padding(14.dp),
+        ) {
+            Icon(
+                painter = painterResource(Res.drawable.ic_note),
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .height(18.dp)
+                    .aspectRatio(LOGO_ASPECT),
+            )
+            Column(Modifier.align(Alignment.BottomStart)) {
+                Text(
+                    text = stringResource(Res.string.replay),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                )
+                Text(
+                    text = stringResource(Res.string.replay_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = stringResource(Res.string.replay),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = stringResource(Res.string.replay_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -973,12 +1682,63 @@ internal fun ShelfCard(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
+    // Tapping this card lifts its cover and flies it into the page it opens —
+    // see ArtworkFlight. The card is the departure and the page's sleeve is the
+    // arrival; neither knows about the other, and the flight is one picture
+    // moving between two measured rectangles.
+    val openWithFlight = rememberArtworkTap(
+        destination = item.browseId,
+        token = item,
+        onOpen = onClick,
+    )
     Column(
         modifier = modifier
-            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .longPressMenuClickable(onClick = openWithFlight, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
         when (item.browseId) {
+            FlowRules.FLOW_BROWSE_ID -> {
+                // Flow has no cover of its own until its queue has a track, and
+                // a blank tile reads as a broken image. The gradient is the
+                // station's identity, not a placeholder for one.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF1D1B4F), Color(0xFF6D2FD8), Color(0xFFFF4B7A)),
+                            ),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = BitChordIcons.MusicNote,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.92f),
+                        modifier = Modifier.size(40.dp),
+                    )
+                    // The square cut of Flow's clip, over the gradient and note
+                    // while it decodes — so the tile keeps its identity either way.
+                    // Off with the animated-canvas switch: a tile is decoration,
+                    // and a looping decoder per tile is the first thing to go on
+                    // a device that cannot afford it.
+                    //
+                    // Collected here, in the one tile that uses it, rather than
+                    // at the top of every card: a shelf of twenty covers held
+                    // twenty lifecycle-aware collectors on the same flow.
+                    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
+                    if (animatedCanvas) rememberFlowVideo(square = true)?.let { clip ->
+                        CanvasArtworkPlayer(
+                            canvas = clip,
+                            isPlaying = true,
+                            contentMode = CanvasContentMode.CROP,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
             "local:downloads" -> {
                 val palette = remember { MeshPalette(listOf(Color(0xFF1E3C72), Color(0xFF2A5298))) }
                 Box(
@@ -991,8 +1751,11 @@ internal fun ShelfCard(
                     MeshGradientBackground(
                         palette = palette,
                         trackKey = "local:downloads",
-                        continuous = true,
                         blurRadius = 24.dp,
+                        // Still: a blurred layer redrawn at refresh rate for
+                        // the length of a drift is the most expensive thing on
+                        // this page, and the tile reads the same settled.
+                        animated = false,
                     )
                     Icon(
                         imageVector = BitChordIcons.Download,
@@ -1029,7 +1792,10 @@ internal fun ShelfCard(
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp))
                         .thumbnailBorder(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        // The cover this card flies from: measured where it is,
+                        // and drawn away while its own copy is in the air.
+                        .artworkDeparture(token = item, model = item.thumbnailUrl.artworkAt(CARD_ART_PX)),
                 ) {
                     AsyncImage(
                         model = item.thumbnailUrl.artworkAt(CARD_ART_PX),

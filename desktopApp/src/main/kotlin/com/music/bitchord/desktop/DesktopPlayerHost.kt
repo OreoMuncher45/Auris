@@ -11,10 +11,13 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.playback.smart.AutomixOverride
+import com.music.bitchord.playback.smart.AutomixProfileStore
 import com.music.bitchord.ui.player.AudioOutputDevice
 import com.music.bitchord.ui.player.AudioOutputKind
 import com.music.bitchord.ui.player.CanvasVideoSpec
@@ -184,7 +187,10 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
+    override val zoomOutAlbumArt = MutableStateFlow(false)
     override val hideSongStatus = MutableStateFlow(false)
+    // A desktop window has no status bar to hide.
+    override val hideStatusBar = MutableStateFlow(false)
     override val hideVolumeBar = MutableStateFlow(false)
     override val lastPlayerScreen = MutableStateFlow(
         runCatching { LastPlayerScreen.valueOf(persistence.string(KEY_LAST_SCREEN, "MAIN")) }
@@ -192,6 +198,8 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     )
     override val legacyMeshGradient = MutableStateFlow(false)
     override val lyricsBlur = MutableStateFlow(true)
+    override val liveBlur = MutableStateFlow(false)
+    override val textGlow = MutableStateFlow(true)
     override val lyricsOffsetMs = MutableStateFlow(
         persistence.int(KEY_LYRICS_OFFSET, 0).coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS),
     )
@@ -201,16 +209,23 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
     override val preferUsbDac = MutableStateFlow(false)
     override val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    override val spotifyCanvasEnabled = MutableStateFlow(true)
     override val reduceAnimation = MutableStateFlow(false)
     override val reduceDynamicBlur = MutableStateFlow(false)
     override val showNerdStats = MutableStateFlow(false)
+    override val showNextTrackStatus = MutableStateFlow(true)
+    override val showUpgradeBadge = MutableStateFlow(true)
+    override val showLosslessBadge = MutableStateFlow(true)
+    override val showHiResBadge = MutableStateFlow(true)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
+    override val automixPanel = MutableStateFlow(AutomixPanelState())
     override val smartFadeEnabled = MutableStateFlow(false)
     override val smartMixInProgress = MutableStateFlow(false)
     override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
     override val spotifyCanvasAutoHide = MutableStateFlow(true)
     override val syncedLyrics = MutableStateFlow(true)
+    override val showNowPlayingLyrics = MutableStateFlow(true)
     override val translationLanguage = MutableStateFlow("")
     override val versionAlignmentInProgress = MutableStateFlow(false)
 
@@ -224,6 +239,38 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         lyricsOffsetMs.value = clamped
         persistence.saveInt(KEY_LYRICS_OFFSET, clamped)
     }
+
+    // The player's own fullscreen switch. A desktop window keeps its own copy
+    // of the preference and writes it here every frame, so this is a no-op
+    // there — which is why the artwork's tap does nothing on a desktop: the
+    // full-bleed treatment is a phone's idiom and the tap is not offered.
+    override fun setFullBleedArtwork(value: Boolean) {
+        fullBleedArtwork.value = value
+    }
+
+    override fun setZoomOutAlbumArt(value: Boolean) {
+        zoomOutAlbumArt.value = value
+    }
+
+    // The listener's own Automix choices, kept with the songs — the same
+    // disk-backed store the phone uses, so a choice means the same thing
+    // wherever it was made.
+    override fun setAutomixProfile(trackId: String, override: AutomixOverride) {
+        profileStore().save(trackId, override)
+    }
+
+    override fun clearAutomixProfile(trackId: String) {
+        profileStore().clear(trackId)
+    }
+
+    // A desktop has no second deck to blend with, so there is no transition
+    // to play on demand. The button is hidden there rather than left to do
+    // nothing when it is pressed.
+    override val automixPreviewAvailable: Boolean = false
+
+    override fun previewAutomix(start: Boolean) = Unit
+
+    private fun profileStore() = AutomixProfileStore { DesktopAnalysisRuntime.analysisHome() }
 
     private const val KEY_LAST_SCREEN = "last_player_screen"
     private const val KEY_LYRICS_OFFSET = "lyrics_offset_ms"

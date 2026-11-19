@@ -95,6 +95,7 @@ import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.ServerConnectionState
 import com.music.bitchord.data.listentogether.ServerUrlError
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -190,12 +191,13 @@ fun ListenTogetherScreen(
 
     /** The invite URL for a code, pointing at whichever server holds the party. */
     val inviteLinkFor: (String) -> String = { partyCode ->
-        val host = ListenTogether.activePartyServerBase()
-        if (host == null || host == ListenTogether.defaultServer) {
-            JamInviteLink.url(partyCode, null)
-        } else {
-            JamInviteLink.url(partyCode, host)
-        }
+        val host = ListenTogether.activePartyServerBase() ?: ListenTogether.effectiveIdleServerBase()
+        // The server's own invite page, not a marketing page: it is the
+        // party server that answers /invite/<CODE> with a "Join Party in
+        // BitChord" button carrying the code and the server it belongs to.
+        // A page that only shows the code loses the server on the way, and
+        // the party then reads as ended on the wrong server.
+        JamInviteLink.url(partyCode, host)
     }
 
     /** The system chooser, with the link and the spoken-aloud code together. */
@@ -318,7 +320,7 @@ fun ListenTogetherScreen(
                         // Same next step as any other invite: the confirm
                         // sheet, not an immediate join. This dialog is only
                         // consent to talk to a different server at all.
-                        openPartyPreview(toJoin, toSet.ifBlank { null })
+                        openPartyPreview(toJoin, toSet.ifBlank { ListenTogether.defaultServer })
                         onInviteHandled()
                     },
                 ) {
@@ -953,7 +955,11 @@ private fun NowPlayingInTheParty(state: ListenTogether.State) {
     val track = state.playback.track
     var positionMs by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(state.playback.seq, state.playback.isPlaying) {
+    val foreground = rememberIsForeground()
+    LaunchedEffect(state.playback.seq, state.playback.isPlaying, foreground) {
+        // A composition outlives the activity being stopped, so without this
+        // the playhead kept ticking four times a second in a pocket.
+        if (!foreground) return@LaunchedEffect
         while (true) {
             positionMs = ListenTogether.partyPositionMs() ?: 0L
             delay(250)

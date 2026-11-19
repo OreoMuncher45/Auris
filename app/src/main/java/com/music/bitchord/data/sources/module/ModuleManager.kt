@@ -131,7 +131,14 @@ class ModuleManager {
 
                 TrackLog.d(TAG, "▶ fetchIndex(${redactModuleUrl(sourceUrl)})")
                 runCatching {
-                    val request = Request.Builder().url(sourceUrl).build()
+                    val request = Request.Builder()
+                        .url(sourceUrl)
+                        .apply {
+                            if (sourceUrl.startsWith(AurisModuleIdentity.HOST)) {
+                                header("X-Auris-Host", AurisModuleIdentity.KEY)
+                            }
+                        }
+                        .build()
                     Http.client.newCall(request).execute().use { resp ->
                         if (!resp.isSuccessful) {
                             throw Exception("HTTP ${resp.code} from ${redactModuleUrl(sourceUrl)}")
@@ -215,7 +222,14 @@ class ModuleManager {
             }
 
             TrackLog.d(TAG, "  Resolved download URL: ${redactModuleUrl(downloadUrl)}")
-            val request = Request.Builder().url(downloadUrl).build()
+            val request = Request.Builder()
+                .url(downloadUrl)
+                .apply {
+                    if (downloadUrl.startsWith(AurisModuleIdentity.HOST)) {
+                        header("X-Auris-Host", AurisModuleIdentity.KEY)
+                    }
+                }
+                .build()
             val jsCode = Http.client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     throw Exception("HTTP ${resp.code} downloading module ${module.id}")
@@ -356,7 +370,10 @@ class ModuleManager {
     private fun contextArg(settings: Map<String, String>): String =
         settings.entries.joinToString(
             separator = ",",
-            prefix = "{settings:{",
+            // The app identity is what lets an Auris-locked module tell this
+            // host from every other module runtime. It sits beside the module
+            // settings, so a module that ignores it is unaffected.
+            prefix = "{app:${AurisModuleIdentity.json},settings:{",
             postfix = "}}",
         ) { (key, value) -> "\"$key\":{\"value\":\"$value\"}" }
 

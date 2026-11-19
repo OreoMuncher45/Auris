@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources.addon
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.sources.module.AurisModuleIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -79,16 +80,18 @@ object SourceFormats {
         val url = rawUrl.trim().trimEnd('/')
         if (url.toHttpUrlOrNull() == null) {
             return@withContext Result.success(
-                DetectedFormat.Unsupported("That is not a web address BitChord can open"),
+                DetectedFormat.Unsupported("That is not a web address Auris can open"),
             )
         }
 
         val base = AddonClient.normalizeBase(url)
         val isDocument = url.substringBefore('?').endsWith(".json", ignoreCase = true)
-        val attempts = if (isDocument) {
-            listOf(url, AddonClient.manifestUrl(base))
-        } else {
-            listOf(AddonClient.manifestUrl(url), url)
+        val attempts = when {
+            // The gated index answers on its exact path; `/manifest.json`
+            // does not exist under it and would only add a doomed request.
+            url.startsWith(AurisModuleIdentity.HOST) -> listOf(url)
+            isDocument -> listOf(url, AddonClient.manifestUrl(base))
+            else -> listOf(AddonClient.manifestUrl(url), url)
         }
 
         var lastFailure: Throwable? = null
@@ -135,7 +138,7 @@ object SourceFormats {
 
         val obj = root as? JsonObject
             ?: return DetectedFormat.Unsupported(
-                "That JSON is a list, and every format BitChord reads is an object",
+                "That JSON is a list, and every format Auris reads is an object",
             )
 
         // 1. A module index: JS plugins filed under "category:*" keys. First
@@ -171,7 +174,7 @@ object SourceFormats {
             if (manifest.resources.isNotEmpty() && !manifest.declares("search")) {
                 val declared = manifest.resources.joinToString(", ")
                 return DetectedFormat.Unsupported(
-                    "This addon declares $declared — BitChord needs search",
+                    "This addon declares $declared — Auris needs search",
                 )
             }
             return DetectedFormat.Addon(manifest, AddonClient.normalizeBase(url))
@@ -185,7 +188,7 @@ object SourceFormats {
             .firstOrNull { it.value is JsonArray && (it.value as JsonArray).isNotEmpty() }?.key
         if (listKey != null) {
             return DetectedFormat.Unsupported(
-                "That JSON lists \"$listKey\", which is not a format BitChord reads",
+                "That JSON lists \"$listKey\", which is not a format Auris reads",
             )
         }
 
@@ -210,7 +213,15 @@ object SourceFormats {
     private suspend fun fetch(url: String): Result<String> = runCatching {
         val request = Request.Builder().url(url)
             .header("Accept", "application/json")
-            .header("User-Agent", "BitChord/v${com.music.bitchord.BuildConfig.VERSION_NAME}")
+            .header("User-Agent", "Auris/v${com.music.bitchord.BuildConfig.VERSION_NAME}")
+            .apply {
+                // The gated index refuses any host that cannot prove it is
+                // Auris; this runs before the source is saved, so the proof
+                // has to be here as well as in ModuleManager.
+                if (url.startsWith(AurisModuleIdentity.HOST)) {
+                    header("X-Auris-Host", AurisModuleIdentity.KEY)
+                }
+            }
             .build()
         Http.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

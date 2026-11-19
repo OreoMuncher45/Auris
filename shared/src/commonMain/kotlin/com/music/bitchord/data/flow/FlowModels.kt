@@ -35,6 +35,27 @@ enum class FlowMood(val label: String) {
     SAD("Sad"),
     FOCUS("Focus"),
     PARTY("Party"),
+    ;
+
+    /**
+     * The names the Radio tab's stations answer to.
+     *
+     * A mood mix is built from the collections the Radio tab plays, and the
+     * link between the two is the station's own name — with YouTube Music
+     * calling some of these something else: the station behind "Love" is
+     * "Romance", and the one behind "Focus" is "Brain power". Every name a
+     * mood answers to is listed, and the first one that exists is used.
+     */
+    val stationNames: List<String>
+        get() = when (this) {
+            FLOW -> emptyList()
+            LOVE -> listOf("Love", "Romance", "Feel good")
+            WORKOUT -> listOf("Workout", "Energize", "Exercise")
+            CHILL -> listOf("Chill", "Sleep", "Commute")
+            SAD -> listOf("Sad", "Melancholy")
+            FOCUS -> listOf("Focus", "Brain power", "Study")
+            PARTY -> listOf("Party", "Dance", "Club")
+        }
 }
 
 /**
@@ -47,14 +68,20 @@ enum class FlowMood(val label: String) {
  *   likes; 1 leans it on what has actually been playing lately.
  * @param excludedGenres genre names toggled OFF in the tuner — never seeded,
  *   and filtered when [genreOf] can resolve a candidate's genres.
+ * @param similarLiked whether the mix asks the catalogue for songs like the
+ *   ones the listener liked. Off, the liked songs still carry their weight
+ *   in the ranking, but nothing is seeded from them: the mix is built from
+ *   what has been playing lately and from the mood's own collections.
  */
 data class FlowTuner(
     val discovery: Float = 0.35f,
     val memory: Float = 0.5f,
     val excludedGenres: Set<String> = emptySet(),
+    val similarLiked: Boolean = true,
 ) {
     fun withDiscovery(value: Float) = copy(discovery = value.coerceIn(0f, 1f))
     fun withMemory(value: Float) = copy(memory = value.coerceIn(0f, 1f))
+    fun withSimilarLiked(value: Boolean) = copy(similarLiked = value)
     fun toggleGenre(genre: String, enabled: Boolean): FlowTuner =
         if (enabled) copy(excludedGenres = excludedGenres - genre.lowercase())
         else copy(excludedGenres = excludedGenres + genre.lowercase())

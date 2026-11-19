@@ -7,6 +7,8 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.module.ModuleManager
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.SpineModule
+import com.music.bitchord.data.sources.mornye.SflxCatalog
+import com.music.bitchord.data.sources.mornye.SflxHost
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -38,6 +40,27 @@ class ModuleSource(
     override val displayName: String get() = config.displayName
 
     /**
+     * Whether this source can serve audio.
+     *
+     * False for an installed extension that declares itself a metadata
+     * provider: Apple's package in the Mornye store describes the catalogue
+     * and answers lyrics, and there is no downloader behind it. It is still a
+     * source — its rows are the catalogue's own, with its artwork and album —
+     * but it is not one that can hand over a stream.
+     *
+     * A module index is always assumed to serve audio: it is a list of
+     * plugins that stream, and the ones that do not answer the stream call
+     * with nothing.
+     */
+    override val servesAudio: Boolean
+        get() {
+            val id = extensionId ?: return true
+            val installed = SflxCatalog.installed.value.firstOrNull { it.id == id }
+                ?: return true
+            return installed.manifest.isDownloadProvider
+        }
+
+    /**
      * One manager per source instance. The manager's in-memory module cache
      * survives across successive search calls on the same instance, which is
      * what keeps the QuickJS engines alive between a search and the stream
@@ -45,9 +68,21 @@ class ModuleSource(
      */
     private val manager = ModuleManager()
 
+    /**
+     * Set when this source is an installed `.sflx` extension rather than a
+     * module index — its [SourceConfig.baseUrl] is `sflx://<id>`.
+     *
+     * Read once and kept, because it is the branch every method takes: an
+     * extension is asked the same questions as an index and answers them
+     * through [SflxCatalog] instead of over the network. See [SflxCatalog] for
+     * why an extension is a module source at all.
+     */
+    private val extensionId: String? = SflxHost.extensionIdOf(config.baseUrl)
+
     // ── Health ────────────────────────────────────────────────────────────
 
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
+        extensionId?.let { return@withContext extensionHealth(it) }
         if (config.baseUrl.isBlank()) {
             return@withContext SourceHealth.Rejected("A module index URL is required")
         }
@@ -62,6 +97,27 @@ class ModuleSource(
         } catch (e: Exception) {
             TrackLog.w(TAG, "module index fetch failed for ${config.displayName}: ${e.message}")
             SourceHealth.Unreachable(e.message ?: "Could not reach the module index")
+        }
+    }
+
+    /**
+     * Health for an installed extension, which is a question about the package
+     * rather than about a server.
+     *
+     * There is nothing to reach: the script is on this device. So the only two
+     * ways to be unhealthy are that the package is not there — removed on
+     * another screen, or under a row that outlived it — and that it declares no
+     * downloader, in which case it can describe tracks but never serve one and
+     * the listener should be told that rather than watching it fail a lookup.
+     */
+    private suspend fun extensionHealth(extensionId: String): SourceHealth {
+        val installed = SflxCatalog.host?.installed(extensionId)
+            ?: SflxCatalog.installed.value.firstOrNull { it.id == extensionId }
+            ?: return SourceHealth.Rejected("This extension is not installed any more")
+        return if (installed.manifest.isDownloadProvider) {
+            SourceHealth.Ok("Installed, v${installed.manifest.version}")
+        } else {
+            SourceHealth.Rejected("This extension only describes tracks — it cannot serve audio")
         }
     }
 
@@ -105,6 +161,7 @@ class ModuleSource(
     ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
+            extensionId?.let { return@withContext searchExtension(it, query, limit) }
             val indexUrl = config.baseUrl
             val baseUrl = indexUrl.substringBeforeLast("/")
 
@@ -185,6 +242,41 @@ class ModuleSource(
     }
 
     /**
+     * One extension's answers, mapped the same way a module's are.
+     *
+     * Deliberately the same shape as [searchOne] rather than a second kind of
+     * result: the row is a row, the id encodes the source it came from, and the
+     * tier is read off what the extension said about it. The one difference is
+     * where the answer comes from — this device rather than an index — and that
+     * is the whole of what "installed extension" means downstream.
+     */
+    private suspend fun searchExtension(extensionId: String, query: String, limit: Int): List<Song> {
+        val host = SflxCatalog.host ?: run {
+            TrackLog.w(TAG, "${config.displayName}: the extension host is not running")
+            return emptyList()
+        }
+        val response = host.search(extensionId, query, limit).getOrElse { error ->
+            TrackLog.w(TAG, whyFor(config.displayName, error))
+            return emptyList()
+        }
+        return response.tracks.map { track ->
+            Song(
+                // Encoded exactly as a module's rows are, with the extension id
+                // in the module's place, so stream() routes back here without
+                // knowing which kind of source it is answering for.
+                videoId = SourceRegistry.trackKey(config.id, "$extensionId$MOD_SEPARATOR${track.id}"),
+                title = track.title,
+                artist = track.artist,
+                albumName = track.album.ifBlank { null },
+                thumbnailUrl = track.albumCover,
+                durationText = track.duration.takeIf { it > 0 }
+                    ?.let { "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}" },
+                sourceQuality = rowTier(track),
+            )
+        }
+    }
+
+    /**
      * What this row can be had at, from what the module said about *it*.
      *
      * Precedence is the whole point. A row stating `format: flac` or
@@ -227,6 +319,22 @@ class ModuleSource(
             val moduleId = trackId.substring(0, cut)
             val upstreamId = trackId.substring(cut + MOD_SEPARATOR.length)
 
+            // An installed extension: the package is on this device, so there is
+            // no index to fetch and no module to look up — the id in the track
+            // key *is* the extension. Everything after this point is shared,
+            // which is the reason an extension is registered as a module source
+            // in the first place.
+            val streamResponse = if (extensionId != null) {
+                val host = SflxCatalog.host ?: run {
+                    TrackLog.w(TAG, "${config.displayName}: the extension host is not running")
+                    return@withContext null
+                }
+                host.streamUrl(extensionId, upstreamId, request.tier, request.wantsAtmos).getOrElse { e ->
+                    TrackLog.w(TAG, whyFor(config.displayName, e))
+                    return@withContext null
+                }
+            } else {
+
             // Find the module in the index, load it (cache hit after search),
             // then ask for the stream URL.
             val modules = manager.fetchIndex(config.baseUrl).getOrElse { e ->
@@ -242,7 +350,7 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
                 return@withContext null
             }
-            val streamResponse = manager.getStreamUrl(
+            manager.getStreamUrl(
                 loaded = loaded,
                 trackId = upstreamId,
                 quality = request.tier,
@@ -251,11 +359,17 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
                 return@withContext null
             }
+            }
             val url = streamResponse.streamUrl?.ifBlank { null } ?: run {
                 TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
                 return@withContext null
             }
-            if (malformed(url)) {
+            // A segmented start is assembled by this host into a file of its
+            // own, so the file:// URL in that case is the host's, not the
+            // module's — the check below exists to stop a module handing the
+            // player a path into this app's storage.
+            val hostAssembled = extensionId != null && url.startsWith("file://")
+            if (!hostAssembled && malformed(url)) {
                 TrackLog.w(
                     TAG,
                     "${config.displayName}: $moduleId returned a malformed URL for " +
@@ -274,9 +388,9 @@ class ModuleSource(
                 bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
             )
             val playsAtmos = DeviceCodecs.playsDolbyAtmos
-            if (unplayable(format, atmosAllowed = playsAtmos && AppSettings.dolbyAtmos.value)) {
+            if (unplayable(format, atmosAllowed = playsAtmos && request.wantsAtmos)) {
                 val why = if (playsAtmos) {
-                    "which is switched off in Settings"
+                    "which this request did not ask for"
                 } else {
                     "which this device has no decoder for"
                 }
@@ -287,7 +401,12 @@ class ModuleSource(
                 )
                 return@withContext null
             }
-            SourceStream(url = url, format = format)
+            SourceStream(
+                url = url,
+                format = format,
+                headers = streamResponse.headers.orEmpty(),
+                encrypted = streamResponse.cencKid != null,
+            )
         }
 
     /**
@@ -355,7 +474,7 @@ class ModuleSource(
      */
     private fun settingsFor(request: StreamRequest): Map<String, String> = mapOf(
         "quality" to request.tier,
-        "fallbackMode" to if (request is StreamRequest.Lossless) "strict" else "flexible",
+        "fallbackMode" to if (request.wantsLossless) "strict" else "flexible",
         // Whether an immersive rendition is wanted at all, which the tier
         // above cannot express: `LOSSLESS` is a statement about bit-exactness
         // and Atmos is not bit-exact, so a module reading only the tier has to
@@ -364,16 +483,26 @@ class ModuleSource(
         // guess FLAC and a device that can render the spatial mix never gets
         // offered it. This says it outright.
         //
+        // Read off the request rather than off a setting, because the request
+        // is the question: a module asked for a file on a Dolby rung is told
+        // yes, and a module asked for a plain lossless file is told no even
+        // when the stream being played right now is Dolby.
+        //
         // Repeats what [unplayable] enforces on the way back rather than
         // replacing it. A module is somebody else's JavaScript and is free to
         // ignore anything it is handed — the Tidal one ignores the tier and
         // asks its backend for `MAX` regardless — so this is the polite ask
         // and the check on the response is the guarantee.
-        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value).toString(),
+        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && request.wantsAtmos).toString(),
     )
 
     private val StreamRequest.tier: String
         get() = when (this) {
+            // The module protocol has no immersive tier of its own: the
+            // spatial mix is asked for with the bit-exact tier and the
+            // `dolbyAtmos` flag above, which is how the reference module
+            // answers it.
+            is StreamRequest.Atmos -> LOSSLESS
             is StreamRequest.Lossless -> LOSSLESS
             is StreamRequest.Best -> HIGH
             is StreamRequest.Capped -> if (maxKbps <= LOW_CEILING_KBPS) LOW else HIGH
@@ -381,6 +510,23 @@ class ModuleSource(
 
     internal companion object {
         const val TAG = "BitChord"
+
+        /**
+         * The line a failure is reported on.
+         *
+         * Ordinary failures are reported against the source that had them:
+         * "Tidal: the extension returned no stream URL". One kind is not — a
+         * failure that says what to *do* about it, which is what a signed
+         * session that is not in order is: "Tidal needs verification — Sources
+         * → Tidal → Verify". Prefixing that with the source's name would say
+         * "Tidal: Tidal needs verification…", so it is reported on its own.
+         */
+        internal fun whyFor(displayName: String, error: Throwable): String =
+            if (error is com.music.bitchord.data.sources.mornye.SflxVerificationNeeded) {
+                error.message.orEmpty()
+            } else {
+                "$displayName: ${error.message}"
+            }
 
         /**
          * Whether a module's stream URL is one no server could answer, decided
@@ -484,9 +630,9 @@ class ModuleSource(
          * [atmosAllowed] is the two answers folded into one, because from here
          * they mean the same thing and neither is more binding than the other:
          * the device has no decoder
-         * ([DeviceCodecs.playsDolbyAtmos]) or the listener turned it off
-         * ([AppSettings.dolbyAtmos]). The caller keeps them apart only to say
-         * which it was in the log.
+         * ([DeviceCodecs.playsDolbyAtmos]) or the request in hand does not ask
+         * for Atmos. The caller keeps them apart only to say which it was in
+         * the log.
          *
          * Caught *here*, where the module answers, rather than by ranking it
          * lower in [SourceResolver]: an Atmos rendition is routinely the only

@@ -75,6 +75,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.LazyContent
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.PlayingAccent
@@ -96,6 +97,14 @@ fun SearchScreen(
     currentSong: Song?,
     isPlaying: Boolean,
     onFilterChange: (SearchFilter) -> Unit,
+    /**
+     * The filters this build offers.
+     *
+     * All of them by default. An app that can switch podcasts off takes the
+     * podcasts filter out of the list rather than leaving a pill that leads
+     * to an empty answer.
+     */
+    availableFilters: List<SearchFilter> = SearchFilter.entries,
     results: UiState<List<SearchResult>>?,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
@@ -228,7 +237,11 @@ fun SearchScreen(
             // that finds nothing would take away the control needed to leave it.
             // They are YouTube's categories, so the Library source has none.
             if (results != null && !suggesting && !searchingLibrary) {
-                SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
+                SearchFilterTabs(
+                    filter = filter,
+                    onFilterChange = onFilterChange,
+                    availableFilters = availableFilters,
+                )
             }
         }
 
@@ -329,6 +342,7 @@ fun SearchScreen(
                                     is SearchResult.Browse -> "browse_${row.item.browseId}_$index"
                                 }
                             },
+                            contentType = { _, row -> row.lazyContentType() },
                         ) { index, row ->
                             when (row) {
                                 is SearchResult.TopTrack -> Unit
@@ -412,7 +426,11 @@ private fun LazyListScope.librarySearchResults(
             }
         } else {
             val tracks = results.data
-            itemsIndexed(tracks, key = { index, song -> "library_${song.videoId}_$index" }) { index, song ->
+            itemsIndexed(
+                tracks,
+                key = { index, song -> "library_${song.videoId}_$index" },
+                contentType = { _, _ -> LazyContent.SONG_ROW },
+            ) { index, song ->
                 SongRow(
                     song = song,
                     onClick = { onSongClick(tracks, index) },
@@ -530,7 +548,11 @@ private fun LazyListScope.searchSuggestions(
     // Skip the echo of the typed text (element 0) — it's already visible in
     // the search field itself — and cap at N so the list stays compact above
     // the playable-media cards.
-    itemsIndexed(suggestions.drop(1).take(3), key = { _, term -> "suggest:$term" }) { _, term ->
+    itemsIndexed(
+        suggestions.drop(1).take(3),
+        key = { _, term -> "suggest:$term" },
+        contentType = { _, _ -> "suggestion" },
+    ) { _, term ->
         SuggestionRow(
             term = term,
             isQueryAction = false,
@@ -633,7 +655,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
             is SearchResult.Browse -> "ta:browse:${result.item.browseId}"
             is SearchResult.TopTrack -> "ta:top:${result.song.videoId}"
         }
-    }) { result ->
+    }, contentType = { it.lazyContentType() }) { result ->
         when (result) {
             is SearchResult.Track -> TypeaheadSongRow(
                 song = result.song,
@@ -748,7 +770,7 @@ private fun LazyListScope.recentSearches(
             )
         }
     }
-    items(history, key = { "recent:${it.id}" }) { entity ->
+    items(history, key = { "recent:${it.id}" }, contentType = { "recent-search" }) { entity ->
         RecentSearchEntityRow(
             entity = entity,
             isCurrent = entity.entityType == EntityType.TRACK && entity.id == currentSong?.videoId,
@@ -879,7 +901,11 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
  * text, and the gutter padding sits inside the scroll so it scrolls with them.
  */
 @Composable
-private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter) -> Unit) {
+private fun SearchFilterTabs(
+    filter: SearchFilter,
+    onFilterChange: (SearchFilter) -> Unit,
+    availableFilters: List<SearchFilter> = SearchFilter.entries,
+) {
     val haptics = rememberHaptics()
     Row(
         modifier = Modifier
@@ -889,7 +915,7 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SearchFilter.entries.forEach { entry ->
+        availableFilters.forEach { entry ->
             val selected = entry == filter
             Box(
                 modifier = Modifier
@@ -921,3 +947,10 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
 
 /** Rounded, but well short of a capsule — the corner reads as a cut, not a curve. */
 private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
+
+/** Tracks and browse results draw differently, so a slot is only reused within its kind. */
+private fun SearchResult.lazyContentType(): String = when (this) {
+    is SearchResult.TopTrack -> "top-result"
+    is SearchResult.Track -> LazyContent.SONG_ROW
+    is SearchResult.Browse -> LazyContent.BROWSE_ROW
+}

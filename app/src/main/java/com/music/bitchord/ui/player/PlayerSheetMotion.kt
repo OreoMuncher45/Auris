@@ -1,11 +1,8 @@
 package com.music.bitchord.ui.player
 
-import android.view.Window
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.SheetState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -17,7 +14,6 @@ import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.MiniPlayerPull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -35,44 +31,34 @@ private const val SLIDE_STIFFNESS = 195f
 /** Close enough to stop, in pixels — rather than a spring's whole long tail. */
 private const val SLIDE_SETTLED_PX = 0.5f
 
-/** How old the sheet's last movement can be and still count as its speed. */
-private const val SHEET_VELOCITY_FRESH_MS = 80f
-
-/** How long a sheet waits to be laid out before an open starts regardless. */
+/** How long a panel waits to be laid out before an open starts regardless. */
 private const val LAYOUT_WAIT_MS = 300L
 
 /**
- * How long after the sheet appears its window gets its exit animation back —
- * long enough that the enter animation it was taken away from has had its
- * chance to start, and not, then, play.
- */
-private const val WINDOW_ENTER_MS = 600L
-
-/**
- * Where the player sheet stands while the app moves it, rather than M3.
+ * Where the player panel stands, between fully open and docked on the mini
+ * player's pill.
  *
- * M3's sheet can only be told to show or hide, on its own curve, and has no
- * way to be told where to stand. That covers neither the pull up from the
- * mini player, which has to follow the finger, nor an open and close slow
- * enough to watch the artwork travel. So for all three the sheet is left open
- * and [held] says where its content really is: how far below fully open, in
- * pixels. The content makes up the difference itself ([contentOffsetPx]), and
- * the [PlayerDock] reads [position], so the artwork flies the same way however
- * the player is being moved.
+ * The player is one panel in the app's own window (see [PlayerPanel]), grown
+ * out of the mini player's pill; nothing else moves it. [held] says how far
+ * below fully open it is, in pixels, and NaN means simply open. The
+ * [PlayerDock] reads [position], so the artwork flies the same way however the
+ * player is being moved.
  *
- * Opened with [open] from a tap, pulled with [drag] / [release], closed with
- * [close] — which the sheet itself is routed through too, for a drag released
- * low, a back press or a tap on the scrim (see the sheet's `confirmValueChange`).
+ * Opened with [open] from a tap, pulled up from the pill with [drag] /
+ * [release], pulled down from inside with [pullBy] / [releasePull], and closed
+ * with [close] — a back press, a page opened from inside the player.
  *
- * Every point where this class moves the sheet also stamps [GlassMotion]'s
+ * Every point where this class moves the panel also stamps [GlassMotion]'s
  * sheet clock, and every point where the motion ends clears it — so the
  * app's glass holds its last backdrop capture for the whole of a swipe
  * instead of re-recording it on every frame of the spring. The stamping is
  * per frame, not per gesture, so however long a motion runs the freeze
  * follows it; see [GlassMotion] for why the clock's own expiry is the
  * guarantee that a cancelled slide can never leave the glass frozen.
+ *
+ * The panel and the pull down are ported from Zenith
+ * (rezapranata089-bit/Zenith, GPL-3.0), a sibling fork of BitChord.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Stable
 class PlayerSheetMotion(
     private val scope: CoroutineScope,
@@ -80,20 +66,12 @@ class PlayerSheetMotion(
     private val shown: () -> Boolean,
     private val setShown: (Boolean) -> Unit,
 ) : MiniPlayerPull {
-    /** NaN while the sheet stands where M3 put it. */
+    /** NaN while the player simply stands open. */
     var held by mutableFloatStateOf(Float.NaN)
         private set
 
-    /** Whether the app, not the sheet, is placing the player. */
+    /** Whether the player is somewhere other than fully open. */
     val holding: Boolean get() = !held.isNaN()
-
-    /** The sheet, while it is up. Set by the host. */
-    var sheet: SheetState? = null
-
-    /** The sheet's window, while it is up — see [attachWindow]. */
-    private var window: Window? = null
-    private var windowAnimations = 0
-    private var windowRestore: Job? = null
 
     // When the current pull started and how far the finger has taken it — for
     // a flick whose own release speed came through as nothing: a short, fast
@@ -101,14 +79,7 @@ class PlayerSheetMotion(
     private var pullStartNanos = 0L
     private var pullStartAt = 0f
 
-    // How fast the sheet itself was moving under the finger, for a drag on the
-    // player released low: M3 asks to hide without saying how fast, and a close
-    // from rest hung for a moment before it got going.
-    private var sheetSampleAt = Float.NaN
-    private var sheetSampleNanos = 0L
-    private var sheetVelocity = 0f
-
-    /** Set by the host once the sheet has been laid out at all. */
+    /** Set by the host once the panel has been laid out at all. */
     var laidOut by mutableStateOf(false)
 
     /**
@@ -131,61 +102,31 @@ class PlayerSheetMotion(
     private var closing = false
 
     private fun travel(): Float =
-        dock.sheetTravel.takeIf { it > 0f } ?: (windowInfo?.containerSize?.height ?: 0).toFloat()
-
-    private fun sheetOffset(): Float = try {
-        sheet?.requireOffset() ?: Float.NaN
-    } catch (_: IllegalStateException) {
-        Float.NaN
-    }
+        dock.travel().takeIf { it > 0f } ?: (windowInfo?.containerSize?.height ?: 0).toFloat()
 
     /** How far below fully open the player is: what [PlayerDock] is told. */
-    fun position(): Float = if (holding) held else sheetOffset()
-
-    /**
-     * What the sheet's content adds to the sheet's own offset to stand at
-     * [held]. In whole pixels on both sides, so the two land exactly where
-     * [position] says — and nothing at all when the sheet is in charge.
-     */
-    fun contentOffsetPx(): Int {
-        val target = held
-        val sheetAt = sheetOffset().takeUnless { it.isNaN() } ?: 0f
-        if (target.isNaN()) {
-            // Read every frame the sheet moves, which is what this is placed
-            // on — so the sheet's speed comes for the price of a subtraction.
-            sampleSheet(sheetAt)
-            return 0
-        }
-        return target.toInt() - sheetAt.toInt()
+    fun position(): Float = when {
+        holding -> held
+        shown() && laidOut -> 0f
+        else -> Float.NaN
     }
-
-    private fun sampleSheet(at: Float) {
-        val now = System.nanoTime()
-        if (!sheetSampleAt.isNaN()) {
-            // The sheet moving under M3's own hand — a drag of its body, a
-            // settle back to open — is motion too, and [holding] cannot see
-            // it: the docked artwork follows the sheet in the app window
-            // ([position]), so the content under the glass changes every
-            // frame of it all the same. This runs every frame the sheet
-            // lays out, so a changed offset is exactly a moving frame.
-            if (at != sheetSampleAt) GlassMotion.sheet.moved()
-            val seconds = (now - sheetSampleNanos) / 1e9f
-            if (seconds > 0f) {
-                val instant = (at - sheetSampleAt) / seconds
-                sheetVelocity = sheetVelocity * 0.4f + instant * 0.6f
-            }
-        }
-        sheetSampleAt = at
-        sheetSampleNanos = now
-    }
-
-    /** The sheet's speed, if it was still moving a moment ago. */
-    private fun recentSheetVelocity(): Float =
-        if ((System.nanoTime() - sheetSampleNanos) / 1e6f < SHEET_VELOCITY_FRESH_MS) sheetVelocity else 0f
 
     /** A tap on the mini player. */
     fun open() {
-        if (shown()) return
+        if (shown()) {
+            // Tapped while still on its way down: back up from where it is.
+            if (closing && holding) {
+                settle?.cancel()
+                reopening()
+                val from = held
+                settle = scope.launch {
+                    slide(from = from, to = 0f)
+                    held = Float.NaN
+                    GlassMotion.sheet.settled()
+                }
+            }
+            return
+        }
         settle?.cancel()
         closing = false
         val travel = travel()
@@ -199,7 +140,7 @@ class PlayerSheetMotion(
         // Raised already open: [held] is what slides it up.
         setShown(true)
         settle = scope.launch {
-            // The sheet's window takes a frame or two to exist. Started before
+            // The panel takes a frame or two to be laid out. Started before
             // then, the first stretch of the slide would happen to nothing.
             withTimeoutOrNull(LAYOUT_WAIT_MS) { snapshotFlow { laidOut }.first { it } }
             slide(from = travel, to = 0f)
@@ -209,58 +150,29 @@ class PlayerSheetMotion(
         }
     }
 
-    /**
-     * The sheet's window, from the host as it appears.
-     *
-     * That window slides and fades itself in and out, and nothing in the app
-     * can see it doing so: the player's artwork, placed to the pixel over the
-     * mini player's cover, came in from below and left with a copy of itself
-     * slipping down out of the cover. So its animations are off for the way in
-     * and for every close this makes — and back on in between, so a player
-     * closed by anything else (opening an album from it, say) still fades as
-     * it always has.
-     */
-    fun attachWindow(window: Window?) {
-        this.window = window ?: return
-        windowAnimations = window.attributes.windowAnimations
-        window.setWindowAnimations(0)
-        windowRestore?.cancel()
-        windowRestore = scope.launch {
-            delay(WINDOW_ENTER_MS)
-            window.setWindowAnimations(windowAnimations)
-        }
+    /** A close caught before it finished: the player is staying up after all. */
+    private fun reopening() {
+        closing = false
     }
 
-    /**
-     * Off as a close starts, not as it ends: the change reaches the window
-     * manager a little after it is asked for, and asked for on the frame the
-     * sheet goes, the exit animation had already been chosen.
-     */
-    private fun quietWindow() {
-        windowRestore?.cancel()
-        window?.setWindowAnimations(0)
-    }
-
-    /** From the sheet: whatever asked for it to hide, this is how it goes. */
+    /** Whatever asked for the player to go — back, a page opened from it — this is how it goes. */
     fun close() {
         if (!shown() || closing) return
         closing = true
-        quietWindow()
         settle?.cancel()
+        dismissPull = false
         val from = position().takeUnless { it.isNaN() } ?: run {
             dismissQuietly()
             return
         }
-        val velocity = if (holding) 0f else recentSheetVelocity()
         held = from
         // The slide stamps per frame; this covers the handoff into it.
         GlassMotion.sheet.moved()
         settle = scope.launch {
-            slide(from = from, to = travel(), velocity = velocity.coerceAtLeast(0f))
+            slide(from = from, to = travel())
             dismissQuietly()
         }
     }
-
     override fun drag(delta: Float) {
         if (!holding) {
             // Only upwards starts one, and only from a closed player: a
@@ -295,7 +207,9 @@ class PlayerSheetMotion(
         val open = if (flick) speed < 0f else held < travel / 2f
         if (!open) {
             closing = true
-            quietWindow()
+        } else if (closing) {
+            // Caught by the mini player on its way down and pulled back up.
+            reopening()
         }
         val from = held
         // The spring stamps per frame; this covers the handoff into it.
@@ -316,19 +230,48 @@ class PlayerSheetMotion(
         }
     }
 
-    /** From the host, once the sheet has left composition. */
+    private var dismissPull = false
+
+    /** Whether a finger is pulling the open player down. */
+    val pulling: Boolean get() = dismissPull
+
+    /**
+     * A finger pulling the open player down by [delta] pixels (negative: back
+     * up). Returns how much of it the player took, for a nested scroll that
+     * has to hand the rest on. Only a downward pull starts one.
+     */
+    fun pullBy(delta: Float): Float {
+        if (!shown() || closing) return 0f
+        if (!dismissPull) {
+            if (delta <= 0f) return 0f
+            settle?.cancel()
+            dismissPull = true
+            if (!holding) held = 0f
+            pullStartAt = held
+            pullStartNanos = System.nanoTime()
+        }
+        val before = held
+        held = (held + delta).coerceIn(0f, travel())
+        GlassMotion.sheet.moved()
+        return held - before
+    }
+
+    /** The finger lifted off a pull down: it goes home or it goes, as any other pull does. */
+    fun releasePull(velocity: Float) {
+        if (!dismissPull) return
+        dismissPull = false
+        release(velocity)
+    }
+
+    /** From the host, once the panel has left composition. */
     fun onSheetGone() {
         closing = false
-        sheetSampleAt = Float.NaN
-        sheetVelocity = 0f
+        dismissPull = false
         settle?.cancel()
-        windowRestore?.cancel()
         held = Float.NaN
         laidOut = false
-        sheet = null
-        window = null
         // The net under every other clear: whatever ended here — the close
-        // finishing, a slide cancelled by the host tearing the sheet down
+        // finishing, a slide cancelled by the host tearing the panel down
         // mid-gesture, a configuration change — the motion is over and the
         // glass must be allowed to capture again. The clock would lift on
         // its own; this makes the end immediate, and certain even if some
@@ -359,9 +302,10 @@ class PlayerSheetMotion(
         }
     }
 
-    /** Gone — with the window's own exit animation already off (see [quietWindow]). */
+    /** Gone. */
     private fun dismissQuietly() {
-        quietWindow()
+        // The pill comes back while the panel is still there to cover for it.
+        dock.releasePanel()
         setShown(false)
         // However the close went, the motion is over with it.
         GlassMotion.sheet.settled()

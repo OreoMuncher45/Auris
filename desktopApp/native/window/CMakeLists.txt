@@ -23,6 +23,13 @@ else()
     target_include_directories(bitchord_window PRIVATE ${JNI_INCLUDE_DIRS})
 endif()
 
+# Cross-building from a Linux host, the one case where the JDK running the build has no header
+# for the platform being built: `jni.h` is shared, `jni_md.h` is not. The vendored copy beside
+# this project is the Windows one; listed after the JDK's own paths so a real Windows JDK wins.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_HOST_WIN32)
+    target_include_directories(bitchord_window PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../win32)
+endif()
+
 target_link_libraries(bitchord_window PRIVATE user32 dwmapi ole32 uuid)
 
 if(MINGW)

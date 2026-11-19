@@ -197,7 +197,6 @@ object OutputNegotiator {
         delegateSupportsPcm24: Boolean,
         knownSystemMixerRateHz: Int?,
     ): OutputDescriptor {
-        val advertisesFloat = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_FLOAT)
         val advertisesPcm24 = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED)
 
         // 1. Phone Speaker Safety Rule: Always cap at PCM16
@@ -306,9 +305,13 @@ object OutputNegotiator {
             )
         }
 
-        // 4. External Route Advertised Capabilities (Normal AudioTrack with framework mixing)
-        // Check Float32 advertised:
-        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(requestedMode, routeKind, advertisesFloat) &&
+        // 4. External Route (Normal AudioTrack with framework mixing).
+        // The device's advertised encodings are not the gate here: they
+        // describe the HAL sink behind AudioFlinger, so a Bluetooth device
+        // advertising PCM16 does not mean AudioTrack cannot take float. The
+        // sink's own delegate probe ([delegateSupportsFloat]) is the real
+        // answer, and PrecisionAudioSink falls back to PCM16 if it is wrong.
+        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(requestedMode, routeKind) &&
             delegateSupportsFloat
         if (canUseFloat) {
             return OutputDescriptor(
@@ -349,6 +352,8 @@ object OutputNegotiator {
 
         // 5. 16-bit PCM Fallback
         val (reason, detail) = when {
+            // 16-bit is what was asked for, so nothing was given up.
+            requestedMode == OutputPcmMode.PCM_16 -> Pair(FallbackReason.NONE, null)
             routeKind == AudioRouting.Kind.USB -> {
                 val r = if (directUsbProbe?.isViable == false) {
                     FallbackReason.DIRECT_USB_UNAVAILABLE
@@ -356,20 +361,21 @@ object OutputNegotiator {
                     FallbackReason.ROUTE_LIMITATION
                 }
                 val d = directUsbProbe?.diagnosticReason
-                    ?: "USB device advertises 16-bit PCM only"
+                    ?: "USB output could not open a float AudioTrack"
                 Pair(r, d)
             }
             routeKind == AudioRouting.Kind.BLUETOOTH -> {
                 val btSummary = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
                 Pair(
                     FallbackReason.ROUTE_LIMITATION,
-                    "Bluetooth route$btSummary advertises 16-bit PCM only",
+                    "Bluetooth route$btSummary: the audio sink could not open float output, " +
+                        "so samples are capped at 16-bit before the codec encoder",
                 )
             }
             requestedMode == OutputPcmMode.FLOAT_32 -> {
                 Pair(
                     FallbackReason.ROUTE_LIMITATION,
-                    "${routeKind.name} route advertises 16-bit PCM only",
+                    "${routeKind.name} route: the audio sink could not open float output",
                 )
             }
             isSourceHighRes && requestedMode != OutputPcmMode.PCM_16 -> {

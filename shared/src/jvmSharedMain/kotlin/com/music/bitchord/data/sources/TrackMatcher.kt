@@ -132,6 +132,33 @@ object TrackMatcher {
         ranked(candidates, target).firstOrNull()
 
     /**
+     * [best], or failing that the first of [candidates] by the same artist
+     * with the same title.
+     *
+     * The second chance is for a row [score] refused over its runtime, its
+     * album or its version marker: still the right artist and the right
+     * song, so it plays. It is not for a different song by that artist, so
+     * the title has to match outright: see [sameTitle].
+     */
+    fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? =
+        best(candidates, target)
+            ?: candidates.firstOrNull { sharesArtist(target.artist, it.artist) && sameTitle(it, target) }
+
+    /**
+     * Whether [candidate]'s title is [target]'s: the same core, or the same in
+     * another script. Stricter than [score]'s title check, which also accepts
+     * one title containing the other ("Love" in "Lovesick"). [score] can
+     * afford that because its runtime and version checks back it up, and this
+     * check stands alone.
+     */
+    fun sameTitle(candidate: Song, target: Target): Boolean {
+        val wanted = parseTitle(target.title, target.artist).core
+        val got = parseTitle(candidate.title, candidate.artist).core
+        if (wanted.isBlank() || got.isBlank()) return false
+        return wanted == got || romajiOf(wanted) == romajiOf(got)
+    }
+
+    /**
      * The catalogue counterpart for a music-video upload selected explicitly
      * by the listener.
      *
@@ -195,6 +222,14 @@ object TrackMatcher {
             .sortedByDescending { it.second }
             .map { it.first }
 
+    /** Whether two parsed title cores name the same song; see [score]. */
+    private fun titleCoresMatch(wanted: String, got: String): Boolean = when {
+        wanted == got -> true
+        romajiOf(wanted) == romajiOf(got) -> true
+        wanted.length <= 3 || got.length <= 3 -> false
+        else -> wanted.contains(got) || got.contains(wanted)
+    }
+
     /**
      * How confident this is the same recording, or null when it is not one.
      *
@@ -212,13 +247,7 @@ object TrackMatcher {
         // romaji tail instead, and English loans like ドア/door don't
         // transliterate to each other either). Past that, a guarded
         // containment absorbs minor punctuation and symbol differences.
-        val isTitleMatch = when {
-            wanted.core == got.core -> true
-            romajiOf(wanted.core) == romajiOf(got.core) -> true
-            wanted.core.length <= 3 || got.core.length <= 3 -> false
-            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
-        }
-        if (!isTitleMatch) return null
+        if (!titleCoresMatch(wanted.core, got.core)) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
         // the album cut. Markers living on the release rather than the row come
@@ -375,6 +404,18 @@ object TrackMatcher {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
         var text = normalize(raw)
+        // "Morning Light Eclipsa Audio", "봄날 - Eclipsa Audio", "Song (Eclipsa
+        // Audio)": YouTube's immersive upload of the stereo track, filed under
+        // the stereo title with the format added. No other catalogue prints
+        // the format, so a title that kept it searched for "eclipsa", found
+        // nothing, and the song stayed on YouTube's Opus. Taken out before any
+        // bracket or dash is read, so every shape of it goes the same way.
+        // Never down to nothing: a title that is only the label keeps it.
+        // At the end it goes with the separators in front of it; with more
+        // after it only the two words go, so a dash or bracket that leads on
+        // to a version ("Song - Eclipsa Audio Live") is still read as one.
+        text.replace(IMMERSIVE_LABEL_AT_END, "").replace(IMMERSIVE_LABEL, " ")
+            .takeIf { it.isNotBlank() }?.let { text = it }
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -458,7 +499,17 @@ object TrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // The same trailing labels the word loop above drops, or
+            // "봄날 Eclipsa Audio Official" keeps "official" in its core and
+            // misses the stereo "봄날". A label only comes off after a
+            // separator, so the title itself is never one of them.
+            var coreText = text
+            while (true) {
+                val tail = TRAILING_LABEL.find(coreText) ?: break
+                if (tail.groupValues[1] !in TRAILING_NOISE) break
+                coreText = coreText.substring(0, tail.range.first)
+            }
+            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -813,6 +864,17 @@ object TrackMatcher {
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
 
+    /** YouTube's immersive-upload label, wherever a title carries it; see [parseTitle]. */
+    private val IMMERSIVE_LABEL = Regex("""(?<![\p{L}\p{N}])eclipsa\s+audio(?![\p{L}\p{N}])""")
+
+    /**
+     * The label as the last words of a title, with the separators in front of
+     * it ("봄날·Eclipsa Audio") but never a bracket, which belongs to an aside.
+     */
+    private val IMMERSIVE_LABEL_AT_END =
+        Regex("""[\s\p{P}\p{S}&&[^()\[\]]]*(?<![\p{L}\p{N}])eclipsa\s+audio(?=[^\p{L}\p{N}]*$)""")
+    /** The last word of a title and the separators around it; see the CJK core in [parseTitle]. */
+    private val TRAILING_LABEL = Regex("""[\s\p{P}\p{S}]+([\p{L}\p{N}]+)[\s\p{P}\p{S}]*$""")
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")

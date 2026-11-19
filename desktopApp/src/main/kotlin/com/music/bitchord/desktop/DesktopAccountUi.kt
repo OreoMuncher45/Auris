@@ -362,7 +362,8 @@ internal fun DesktopSignInDialog(
                             .heightIn(min = 84.dp, max = 160.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color.White.copy(alpha = 0.08f))
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .desktopTextInput(),
                     )
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp),

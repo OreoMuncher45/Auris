@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.utils.containSheetGestures
+import com.music.bitchord.ui.components.liveMenuFrost
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -125,7 +126,7 @@ internal fun LyricsOffsetSheet(
                             Modifier.background(Color(0xFF121212))
                         } else {
                             Modifier
-                                .optimizedHazeEffect(
+                                .liveMenuFrost(
                                     state = hazeState,
                                     style = HazeMaterials.regular(Color(0xFF141414)),
                                 )

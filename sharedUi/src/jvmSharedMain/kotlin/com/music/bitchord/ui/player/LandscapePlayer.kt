@@ -52,6 +52,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
@@ -86,6 +88,20 @@ private val LANDSCAPE_COMPACT_HEIGHT = 440.dp
  * phone-height window, in place of [PLAYER_GUTTER].
  */
 private val LANDSCAPE_GUTTER_COMPACT = 20.dp
+
+/**
+ * How much of the landscape column's width the gap between the transport
+ * buttons takes, and the bounds it is held to.
+ *
+ * The portrait gap — 15dp, measured off the reference player — is right for a
+ * column one screen wide and wrong for one twice as wide: the three buttons
+ * end up crowded together at one end of the deck. The gap grows with the
+ * column instead, and stops at 40dp, past which the three read as three
+ * separate buttons rather than one transport.
+ */
+private const val TRANSPORT_LANDSCAPE_SPREAD = 0.09f
+private val TRANSPORT_LANDSCAPE_MIN_SPACING = 24.dp
+private val TRANSPORT_LANDSCAPE_MAX_SPACING = 40.dp
 
 /**
  * How the right column hands over between the player, the lyrics and the
@@ -361,7 +377,12 @@ internal fun LandscapeMainPane(
     /** The one-line lyric over the scrubber; null where synced lyrics are off. */
     lyricStrip: (@Composable () -> Unit)?,
     scrubber: @Composable () -> Unit,
-    transport: @Composable () -> Unit,
+    /**
+     * The transport row, with the gap its column has room for: the landscape
+     * player's column is twice the portrait one's width, and the portrait gap
+     * leaves the three buttons crowded there.
+     */
+    transport: @Composable (spacing: Dp) -> Unit,
     /** Null where Settings hides the volume bar. */
     volume: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
@@ -385,7 +406,26 @@ internal fun LandscapeMainPane(
         lyricStrip?.invoke()
         scrubber()
         Spacer(Modifier.height(if (compact) 0.dp else 8.dp))
-        transport()
+        // The transport sits under the middle of the scrubber, not under the
+        // left edge of the column.
+        //
+        // It used to be a row of its own, left-aligned with everything else
+        // above it, which on a wide screen left the three buttons bunched at
+        // one end of the deck while the scrubber and the volume bar ran the
+        // whole width. The portrait player's row is centred by the column that
+        // owns it; this one is the same row in a column twice as wide, so it
+        // is centred here, and the gap between the buttons grows with the
+        // room — the portrait gap is measured for a narrow screen and leaves
+        // the three of them crowded on a landscape one.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val spacing = (maxWidth * TRANSPORT_LANDSCAPE_SPREAD).coerceIn(
+                TRANSPORT_LANDSCAPE_MIN_SPACING,
+                TRANSPORT_LANDSCAPE_MAX_SPACING,
+            )
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                transport(spacing)
+            }
+        }
         if (volume != null) {
             Spacer(Modifier.height(if (compact) 0.dp else 12.dp))
             volume()
@@ -409,6 +449,8 @@ internal fun LandscapeCredits(
     showRevertCue: Boolean,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
+    /** Where the three-dot button sits, so the menu can hang off it. */
+    onMenuAnchor: ((IntRect) -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     /** Null browse id for anyone but the lead credit — see [NowPlayingScreen]. */
     onOpenArtist: (browseId: String?, name: String) -> Unit,
@@ -450,10 +492,11 @@ internal fun LandscapeCredits(
                 )
             }
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(4.dp))
         // Same gate as the portrait player's: no account to like against for a
         // guest, and no YouTube identity to rate a local file or a finished
-        // download against either.
+        // download against either. The marks are bare here too — the two
+        // layouts are the same player at two shapes.
         if (signedIn && song.localUri == null) {
             val liked = likeStatus == LikeStatus.LIKE
             CircleGlyph(
@@ -462,16 +505,21 @@ internal fun LandscapeCredits(
                     if (liked) Res.string.remove_from_liked else Res.string.like,
                 ),
                 onClick = onToggleLike,
-                active = liked,
                 haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                glyphSize = 22.dp,
+                glyphSize = 24.dp,
+                touchSize = 40.dp,
+                disc = false,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(2.dp))
         }
         CircleGlyph(
             icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
             contentDescription = stringResource(Res.string.more),
             onClick = onOpenMenu,
+            glyphSize = 22.dp,
+            touchSize = 40.dp,
+            disc = false,
+            modifier = Modifier.reportMenuAnchor(onMenuAnchor),
         )
     }
 }
@@ -517,7 +565,12 @@ internal fun LandscapeLyricsPane(
                 Text(
                     text = placeholder,
                     style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.6f),
+                    // The panel's ink, like every other word in it: the
+                    // placeholder sits over the artwork, and it was the one
+                    // line in the pane that stayed white while the lyrics
+                    // around it followed the cover.
+                    color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current.value)
+                        .copy(alpha = 0.6f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.align(Alignment.Center),
                 )

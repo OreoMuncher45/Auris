@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -107,11 +108,42 @@ object PlayerIcons {
     /** The queue, in the player's bottom row. */
     val Queue = PlayerIcon.Vector(BitChordIcons.PlayerQueue)
 
+    /**
+     * The queue with repeat arrows in its badge.
+     *
+     * The bottom row has three glyphs and one of them is the queue; the mode
+     * toggles live in the queue itself, so the button that opens it also says
+     * which mode is on. See [QueueWithRepeatOne], [QueueWithShuffle] and
+     * [QueueWithAutoplay].
+     */
+    val QueueWithRepeat = PlayerIcon.Vector(BitChordIcons.PlayerQueueRepeat)
+
+    /** The queue with a pair of crossing arrows: shuffle is on. */
+    val QueueWithShuffle = PlayerIcon.Vector(BitChordIcons.PlayerQueueShuffle)
+
+    /** The queue with the lemniscate: autoplay is on. */
+    val QueueWithAutoplay = PlayerIcon.Vector(BitChordIcons.PlayerQueueAutoplay)
+
+    /**
+     * The dismiss chevron at the top of the player.
+     *
+     * Its own role rather than a Material icon: the player's chrome is drawn at
+     * one stroke weight, and two strokes that meet at a rounded point are the
+     * whole of it.
+     */
+    val ChevronDown = PlayerIcon.Vector(BitChordIcons.PlayerChevronDown)
+
     /** Lyrics, in the player's bottom row. */
     val Lyrics = PlayerIcon.Vector(BitChordIcons.PlayerLyrics)
 
-    /** The three-dot menu, in the credits row. */
-    val More = PlayerIcon.Vector(BitChordIcons.PlayerEllipsis)
+    /**
+     * The three-dot menu, in the credits row.
+     *
+     * Material's horizontal ellipsis — the same mark BitChord draws. Three
+     * dots on one line at one weight, rather than a hand-built set that reads
+     * a fraction heavier against the artwork than the mark it replaced.
+     */
+    val More = PlayerIcon.Vector(Icons.Rounded.MoreHoriz)
 
     // ---- Like ------------------------------------------------------------
 
@@ -143,9 +175,10 @@ object PlayerIcons {
     /**
      * AirPlay, as a route the player can hand the sound to.
      *
-     * The output sheet shows one glyph whether or not a route is connected, and
-     * carries the state in the row's own tint — so this is the plain AirPlay
-     * mark rather than the connected variant.
+     * One glyph whatever the state — the state is its tint. The row draws it in
+     * the player's ink while the sound is on this device and in the connected
+     * green once it is on a receiver, so nothing about the mark changes shape
+     * when a route is picked.
      */
     val AirPlay = PlayerIcon.Vector(BitChordIcons.PlayerAirPlay)
 

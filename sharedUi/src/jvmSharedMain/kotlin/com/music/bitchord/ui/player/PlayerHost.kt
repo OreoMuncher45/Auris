@@ -10,10 +10,12 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +49,14 @@ interface PlayerHost {
      */
     @Composable
     fun rememberRemoteArtworkUrl(song: Song?): String?
+
+    /**
+     * The Flow station's own looping clip: the wide cut for the radio banner
+     * and the square cut for its home tile. Null where the platform ships no
+     * such asset, in which case callers keep their gradient.
+     */
+    @Composable
+    fun rememberFlowVideo(square: Boolean): CanvasArtwork? = null
 
     /** The system output level the player's volume bar drives, if it drives one. */
     val volume: SystemVolume
@@ -108,7 +118,57 @@ interface PlayerHost {
      */
     @Composable
     fun LyricsShareSheet(hazeState: HazeState, request: LyricsShareRequest, onDismiss: () -> Unit) = Unit
+
+    /**
+     * Whether this platform can search for songs to put on the queue.
+     *
+     * False hides the search row altogether rather than offering one that
+     * leads to an empty screen. The phone answers true; a platform with no
+     * catalogue behind it has nothing to search.
+     */
+    val queueSearchAvailable: Boolean get() = false
+
+    /**
+     * The songs [query] is asking for, for the queue's search.
+     *
+     * One list, two sources: the catalogue's answer and the device's own
+     * songs, with the device's copy first where both have one — a song the
+     * listener downloaded is a song they can hear without a network. The
+     * platform reads both; [QueueSearch][com.music.bitchord.playback.QueueSearch]
+     * decides what the two lists mean together, so the rule is one rule.
+     *
+     * A platform with no catalogue answers with the device's songs and
+     * [QueueSearchResult.catalogueUnavailable] false — there was nothing to
+     * fail.
+     */
+    suspend fun searchQueueSongs(query: String): QueueSearchResult = QueueSearchResult(emptyList())
+
+    /**
+     * The songs to offer for [song] under [mode]: what else sounds like it,
+     * what else the artist has, the rest of its record.
+     *
+     * A platform with no catalogue answers with nothing, which the box reads as
+     * an empty list rather than as a failure — there was nothing to fail.
+     */
+    suspend fun queueSuggestions(
+        song: Song,
+        mode: com.music.bitchord.playback.QueueSuggestion,
+    ): List<Song> = emptyList()
 }
+
+/** What the queue's search found. */
+data class QueueSearchResult(
+    val songs: List<Song>,
+    /**
+     * True when the catalogue could not be reached and [songs] is only what
+     * the device holds.
+     *
+     * Said out loud on the search screen, because "nothing found" and "the
+     * catalogue is unreachable" look exactly alike otherwise — and on a train
+     * the second one is the answer, with the downloaded songs under it.
+     */
+    val catalogueUnavailable: Boolean = false,
+)
 
 private val NoCast = MutableStateFlow(CastUi())
 
@@ -141,20 +201,45 @@ interface PlayerSettingsSource {
     val audioQualityWifi: StateFlow<AudioQuality>
     val canvasOverCellular: StateFlow<Boolean>
     val fullBleedArtwork: StateFlow<Boolean>
+    /** Whether the album art is drawn a little smaller inside its card. */
+    val zoomOutAlbumArt: StateFlow<Boolean>
     val hideSongStatus: StateFlow<Boolean>
+    /** Hide the device status bar while the player is up. Always false where there is none. */
+    val hideStatusBar: StateFlow<Boolean>
     val hideVolumeBar: StateFlow<Boolean>
     val lastPlayerScreen: StateFlow<LastPlayerScreen>
     val legacyMeshGradient: StateFlow<Boolean>
     val lyricsBlur: StateFlow<Boolean>
+    /**
+     * Re-read a playing cover's frame often enough to follow it, rather than
+     * once a second. The player's one battery-for-motion switch.
+     */
+    val liveBlur: StateFlow<Boolean>
+    val textGlow: StateFlow<Boolean>
     val lyricsOffsetMs: StateFlow<Int>
     val lyricsSourceOrder: StateFlow<List<LyricsSource>>
     val meteredConnection: StateFlow<Boolean?>
     val preferUsbDac: StateFlow<Boolean>
     val prioritizeSpotifyCanvas: StateFlow<Boolean>
+    /** Whether Spotify Canvas is looked up at all; the other providers still are. */
+    val spotifyCanvasEnabled: StateFlow<Boolean>
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
+    /** Whether the Automix "this song / next song" line under the sleeve is drawn. */
+    val showNextTrackStatus: StateFlow<Boolean>
+    /** Whether the "Upgrading quality" badge is drawn while a better copy is sought. */
+    val showUpgradeBadge: StateFlow<Boolean>
+    /** Whether the "Lossless" badge is drawn for a losslessly decoded stream. */
+    val showLosslessBadge: StateFlow<Boolean>
+    /** Whether that badge may say "Hi-Res Lossless" instead of "Lossless". */
+    val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
+    /**
+     * Everything the Automix panel shows: the analysis in full, the plan that
+     * came out of it, and the listener's own choice for the playing track.
+     */
+    val automixPanel: StateFlow<AutomixPanelState>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
@@ -163,11 +248,65 @@ interface PlayerSettingsSource {
     val smartTransitionWindow: StateFlow<TransitionWindow?>
     val spotifyCanvasAutoHide: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>
+    val showNowPlayingLyrics: StateFlow<Boolean>
     val translationLanguage: StateFlow<String>
     val versionAlignmentInProgress: StateFlow<Boolean>
 
     fun setLastPlayerScreen(value: LastPlayerScreen)
     fun setLyricsOffsetMs(value: Int)
+
+    /**
+     * Turns the full-bleed artwork on or off.
+     *
+     * The player's own fullscreen switch: tapping the album art in the player
+     * calls this, so the answer has to be written wherever the preference
+     * lives rather than kept in the composition that asked for it.
+     */
+    fun setFullBleedArtwork(value: Boolean)
+
+    /** Draws the album art a little smaller inside its card, or not. */
+    fun setZoomOutAlbumArt(value: Boolean)
+
+    /**
+     * Stores the listener's own Automix choice for a track.
+     *
+     * The choice lives with the song, so it means the same thing every time
+     * that song plays. An empty choice is the same as no choice, and clears
+     * the track's entry rather than storing an empty one.
+     */
+    fun setAutomixProfile(trackId: String, override: AutomixOverride)
+
+    /** Forgets the listener's Automix choice for a track, leaving Automix to decide. */
+    fun clearAutomixProfile(trackId: String)
+
+    /**
+     * Whether this platform can play a preview of the transition on demand.
+     *
+     * False hides the button altogether rather than offering one that does
+     * nothing: a desktop has no second deck to mix with, and a control that
+     * does nothing when it is pressed is worse than no control at all.
+     */
+    val automixPreviewAvailable: Boolean get() = true
+
+    /**
+     * Plays the planned transition, or stops the one that is playing.
+     *
+     * A preview of the handoff and nothing else: the music either side of it
+     * is left where it was afterwards, so hearing the transition does not
+     * consume it. A platform with no second deck to blend with does nothing.
+     */
+    fun previewAutomix(start: Boolean)
+
+    /**
+     * Asks for the pair's analysis to be fetched and measured *now*.
+     *
+     * The panel's own demand, and the reason it is not the same as the
+     * background analysis the engine already does: the background analysis
+     * runs on its own schedule, and the panel opens on two lanes that the
+     * listener is looking at. A platform with no analysis engine does
+     * nothing.
+     */
+    fun forceAutomixAnalysis() = Unit
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */
@@ -298,8 +437,15 @@ fun CanvasArtworkPlayer(
     )
 }
 
-/** The longest edge of a frame handed to [CanvasArtworkPlayer]'s onFrameCaptured. */
-const val CANVAS_FRAME_CAPTURE_PX = 128
+/**
+ * The longest edge of a frame handed to [CanvasArtworkPlayer]'s onFrameCaptured.
+ *
+ * Small on purpose. Everything downstream averages the frame down — the mesh
+ * to thirty-six cells, the palette to a handful of colours — so a bigger
+ * frame buys nothing but a bigger copy off the GPU, and the copy is what
+ * decides whether a phone stays cool while a clip plays.
+ */
+const val CANVAS_FRAME_CAPTURE_PX = 64
 
 /** Media3's repeat modes, by value, so the transport can speak them without Media3. */
 object RepeatModes {
@@ -318,6 +464,10 @@ internal fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit =
 @Composable
 internal fun rememberRemoteArtworkUrl(song: Song?): String? =
     PlayerPlatform.host.rememberRemoteArtworkUrl(song)
+
+@Composable
+internal fun rememberFlowVideo(square: Boolean): CanvasArtwork? =
+    PlayerPlatform.host.rememberFlowVideo(square)
 
 @Composable
 internal fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) =

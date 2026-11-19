@@ -106,8 +106,19 @@ object QueueCoordinator {
             }
         }
 
-        for (i in playedIndices.asReversed()) {
-            player.removeMediaItem(i)
+        // Removed as contiguous runs, last run first so earlier indices stay
+        // valid. Each removal is a PLAYLIST_CHANGED that the service's timeline
+        // listener and every controller's queue mirror handle on the main
+        // thread; a block of played queue rows is usually one run, so this is
+        // usually one event instead of one per row.
+        var end = playedIndices.size
+        while (end > 0) {
+            var start = end - 1
+            while (start > 0 && playedIndices[start - 1] == playedIndices[start] - 1) start--
+            val from = playedIndices[start]
+            val to = playedIndices[end - 1] + 1
+            if (to - from == 1) player.removeMediaItem(from) else player.removeMediaItems(from, to)
+            end = start
         }
     }
 

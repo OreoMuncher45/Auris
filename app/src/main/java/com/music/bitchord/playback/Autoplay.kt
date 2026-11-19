@@ -101,9 +101,18 @@ suspend fun loadAutoplayTracks(
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
 ): Result<List<Song>> {
+    // One algorithm, whichever catalogue the listener browses: YouTube
+    // Music's radio, seeded from the song that is playing. A Spotify track is
+    // matched to something YouTube carries first, so a row that came from
+    // Spotify still starts a station that knows what to play next.
+    //
+    // The seed song is unchanged — a Spotify-provider session still continues
+    // from the song that is playing — and the queue-entry mapping below is
+    // shared, so the batch lands in the queue looking exactly like any other.
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
     val extra = QueueBuilder.extend(existing, related, limit)
+        .filterNot(com.music.bitchord.data.settings.AppSettings::isSongBlocked)
     if (extra.isEmpty()) return Result.success(emptyList())
 
     return Result.success(extra.map {

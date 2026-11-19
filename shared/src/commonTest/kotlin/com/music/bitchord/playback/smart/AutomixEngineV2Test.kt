@@ -8,8 +8,8 @@ import kotlin.test.assertTrue
 /**
  * Engine V2 policies against synthetic analyses: entrance rescoring moves
  * the drop onto the drums, the vocal gate waits out a lyric, and nothing
- * moves without evidence. Full-plan cases pin that legacy output is
- * untouched when V2 has nothing to act on.
+ * moves without evidence. Full-plan cases pin that the plan is untouched
+ * when V2 has nothing to act on.
  */
 class AutomixEngineV2Test {
 
@@ -58,7 +58,7 @@ class AutomixEngineV2Test {
         )
     }
 
-    private fun plan(current: TrackAnalysis, next: TrackAnalysis, v2: Boolean) = planTransition(
+    private fun plan(current: TrackAnalysis, next: TrackAnalysis) = planTransition(
         analysis = current,
         nextAnalysis = next,
         currentTrack = TransitionTrackInfo(current.trackId, (current.duration * 1000).toLong()),
@@ -67,7 +67,6 @@ class AutomixEngineV2Test {
         duration = current.duration,
         mode = CrossfadeMode.SMART,
         advanced = true,
-        engineV2 = v2,
     )
 
     // ── Entrance rescoring ──────────────────────────────────────────
@@ -158,14 +157,13 @@ class AutomixEngineV2Test {
     // ── Full plans ──────────────────────────────────────────────────
 
     @Test
-    fun v2LeavesFlatEvidencePlansAlone() {
+    fun flatEvidenceMakesNoMoves() {
+        // Nothing to rank, nothing to wait out: the plan carries no policy
+        // move at all, so the advanced plan is the whole of it.
         val current = track("a")
         val next = track("b")
-        val legacy = plan(current, next, v2 = false)
-        val v2 = plan(current, next, v2 = true)
-        assertEquals(legacy.transitionStart, v2.transitionStart)
-        assertEquals(legacy.incomingCueTime, v2.incomingCueTime)
-        assertTrue(v2.policyReasons.none { it.startsWith("v2-") })
+        val plan = plan(current, next)
+        assertTrue(plan.policyReasons.none { it.startsWith("v2-") }, "got: ${plan.policyReasons}")
     }
 
     @Test
@@ -186,7 +184,7 @@ class AutomixEngineV2Test {
         )
         // Existing track() hardcodes C major; F# forces the filter path.
         val nextMismatch = next.copy(key = "F♯ major")
-        val v2 = plan(current, nextMismatch, v2 = true)
+        val v2 = plan(current, nextMismatch)
         assertTrue(
             v2.policyReasons.any { it.startsWith("v2-entrance") },
             "expected a v2-entrance tag, got: ${v2.policyReasons}",
@@ -194,16 +192,14 @@ class AutomixEngineV2Test {
     }
 
     @Test
-    fun v2AllSungKeepsLegacyStart() {
+    fun allSungMakesNoGateMove() {
         // Vocals everywhere: no gap to wait for, so the gate stays silent
-        // and the start matches legacy exactly.
+        // and says nothing.
         val energy = energyLevels()
         val mask = energy.map { 1.0 }
         val current = track("a", vocals = mask)
         val next = track("b")
-        val legacy = plan(current, next, v2 = false)
-        val v2 = plan(current, next, v2 = true)
-        assertEquals(legacy.transitionStart, v2.transitionStart)
-        assertTrue(v2.policyReasons.none { it.startsWith("v2-vocal-gate") })
+        val plan = plan(current, next)
+        assertTrue(plan.policyReasons.none { it.startsWith("v2-vocal-gate") })
     }
 }

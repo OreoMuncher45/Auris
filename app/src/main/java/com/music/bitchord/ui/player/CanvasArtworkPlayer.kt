@@ -13,7 +13,13 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.SurfaceTexture
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.PixelCopy
+import android.view.Surface
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -46,6 +52,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.ui.rememberIsForeground
@@ -55,6 +62,8 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import java.util.Locale
@@ -68,6 +77,69 @@ private const val TAG = "CanvasArtworkPlayer"
  * coming back does not sit there as a hole for the length of a glance.
  */
 private const val REPAINT_TIMEOUT_MS = 700L
+
+/**
+ * How long after a clip leaves the screen its player is released.
+ *
+ * Not released at once: `ExoPlayer.release()` blocks the thread it is called
+ * on until the decoder has been torn down — 40–50 ms — and the thread it is
+ * called on here is the one that draws the screen. Released as the player
+ * closes, that block lands on the last frame of the movement.
+ *
+ * `stop()` hands the decoder back on the player's own thread and returns at
+ * once; the release that follows is a thread quitting, and it runs a second
+ * later, when the close is long over.
+ */
+private const val DEFERRED_RELEASE_MS = 1_000L
+
+/** Where a pixel copy's result comes back on — see [captureLiveFrame]. */
+private val mainHandler = Handler(Looper.getMainLooper())
+
+/**
+ * The thread a clip's frame copies report back on.
+ *
+ * Its own thread, and not the app's main one.
+ *
+ * A copy is a read of the clip's frame off the GPU: it finishes when the GPU
+ * finishes with it. It used to be told to report back to the main thread,
+ * where it waited behind whatever the main thread was doing — and on a busy
+ * phone the main thread is busy. The live blur's frames then arrived at the
+ * rate the main thread got round to them: two a second, sometimes none, and
+ * the wash behind an animated cover trailed it by seconds.
+ *
+ * The copy now reports to a thread of its own, so it finishes when the copy
+ * finishes. One thread, alive only while a clip is on screen.
+ */
+private class FrameCopyThread {
+    private val thread = HandlerThread("AurisFrameCopy").apply { start() }
+    val handler = Handler(thread.looper)
+
+    fun stop() {
+        thread.quitSafely()
+    }
+}
+/**
+ * What a clip's player needs to leave the screen without blocking it.
+ *
+ * A surface taken away while the player was closing or collapsing is kept
+ * alive rather than handed back to ExoPlayer. Told the surface is gone,
+ * ExoPlayer blocks the main thread until the decoder has stopped writing to
+ * it — which is the decoder being torn down, on the thread that is drawing
+ * the screen. Left holding a surface that still exists, the decoder can be
+ * stopped and released at leisure, or move onto the next surface it is
+ * given; this one is released after either.
+ */
+private class Teardown {
+    var disposed = false
+
+    /** The surface kept alive across the teardown, if there was one. */
+    var orphan: SurfaceTexture? = null
+
+    fun releaseOrphan() {
+        orphan?.release()
+        orphan = null
+    }
+}
 
 /**
  * The looping video that plays over a track's cover art, sized to fill and
@@ -169,6 +241,9 @@ internal fun AndroidCanvasArtworkPlayer(
     // Aspect of the clip itself. Zero until the decoder reports it, which is
     // also the signal that there is nothing sensible to crop to yet.
     var clipAspect by remember(canvas) { mutableFloatStateOf(0f) }
+    // The clip's own size, as the decoder reports it. The live frame copy
+    // is sized from this — see [captureLiveFrame].
+    var currentVideoSize by remember(canvas) { mutableStateOf<VideoSize?>(null) }
     var bounds by remember { mutableStateOf(IntSize.Zero) }
     var textureView by remember(canvas) { mutableStateOf<TextureView?>(null) }
     // Frames are counted rather than flagged, because [rendered] cannot answer
@@ -184,7 +259,9 @@ internal fun AndroidCanvasArtworkPlayer(
     val currentAlignPortraitTop by rememberUpdatedState(alignPortraitTop)
     val currentPortraitRevealBounds by rememberUpdatedState(portraitRevealBounds)
     val currentPresentationAlpha by rememberUpdatedState(presentationAlpha)
+    val currentPausedForTransition by rememberUpdatedState(pausedForTransition)
     val reportAspect by rememberUpdatedState(onAspectRatioChanged)
+    val teardown = remember { Teardown() }
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -193,8 +270,15 @@ internal fun AndroidCanvasArtworkPlayer(
             // loop past the first is read off disk rather than re-fetched;
             // see that object's doc for why this matters far more here than
             // it would for a clip played once.
+            // Raw-resource clips (the Flow station) bypass the HTTP cache
+            // through DefaultDataSource, while remote clips keep it.
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client))),
+                DefaultMediaSourceFactory(
+                    DefaultDataSource.Factory(
+                        context,
+                        CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client)),
+                    ),
+                ),
             )
             .build()
             .apply {
@@ -215,6 +299,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 } else 0f
                 if (aspect != clipAspect) rendered = false
                 clipAspect = aspect
+                currentVideoSize = videoSize
                 reportAspect(aspect)
                 textureView?.applyContentTransform(clipAspect, currentContentMode, currentAlignPortraitTop)
             }
@@ -234,13 +319,28 @@ internal fun AndroidCanvasArtworkPlayer(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            player.release()
+            // Not release(), which blocks the main thread until the decoder
+            // has been torn down — 40–50 ms, landing on the last frame of the
+            // player closing. stop() hands the decoder back on the player's
+            // own thread; the release left after that is a thread quitting,
+            // and runs once the close is long over. The surface goes with it,
+            // for the reason [Teardown] gives.
+            teardown.disposed = true
+            player.stop()
+            mainHandler.postDelayed(
+                {
+                    player.release()
+                    teardown.releaseOrphan()
+                },
+                DEFERRED_RELEASE_MS,
+            )
         }
     }
 
     LaunchedEffect(url) {
         rendered = false
         clipAspect = 0f
+        currentVideoSize = null
         reportAspect(0f)
         val item = MediaItem.Builder().setUri(url)
         mimeTypeOf(url)?.let { item.setMimeType(it) }
@@ -257,13 +357,18 @@ internal fun AndroidCanvasArtworkPlayer(
     // because "the page is only up while it's being read": true of a page being
     // looked at, not of one left open behind a locked screen.
     //
+    // Paused audio stops it too. A paused track's clip is a still as far as the
+    // listener is concerned, and looping it off-screen is a decoder, a GPU
+    // upload and a surface composite spent on a frame that is not changing —
+    // the single largest thing the UI did while the phone sat paused in a
+    // pocket. The last frame stays on the surface, so resuming picks up where
+    // it stopped with nothing to repaint.
+    //
     // Held inside this component rather than asked of each caller, so no call
-    // site can forget it. The player now runs continuously in the foreground
-    // regardless of playback state, so coming back from background always has
-    // a surface ready and `onRenderedFirstFrame()` fires naturally.
+    // site can forget it.
     val foreground = rememberIsForeground()
-    LaunchedEffect(foreground, pausedForTransition) {
-        player.playWhenReady = foreground && !pausedForTransition
+    LaunchedEffect(foreground, isPlaying, pausedForTransition) {
+        player.playWhenReady = foreground && isPlaying && !pausedForTransition
     }
 
     // Repaint onto a surface that has just been handed back. A TextureView's
@@ -286,6 +391,12 @@ internal fun AndroidCanvasArtworkPlayer(
     }
 
     val reportRendered by rememberUpdatedState(onRenderedChanged)
+    // The thread the frame copies report back on — see [FrameCopyThread]. It
+    // exists only while a clip is on screen.
+    val copyThread = remember { FrameCopyThread() }
+    DisposableEffect(copyThread) {
+        onDispose { copyThread.stop() }
+    }
     LaunchedEffect(rendered) {
         reportRendered(rendered)
         if (!rendered) return@LaunchedEffect
@@ -294,9 +405,23 @@ internal fun AndroidCanvasArtworkPlayer(
         // can still catch the previous, empty buffer.
         withFrameMillis { }
         val view = textureView ?: return@LaunchedEffect
-        val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+        // Off the main thread, as the periodic read is. This one lands at the
+        // worst possible moment otherwise: the clip has just faded in, which
+        // is the frame the player is opening on, and a synchronous copy of
+        // the texture there is a GPU stall on the screen's own thread.
+        val bitmap = view.captureLiveFrame(
+            frameCapturePx,
+            currentVideoSize,
+            clipAspect,
+            contentMode,
+            alignPortraitTop,
+            copyThread.handler,
+        )
         if (bitmap != null) {
             Log.d(TAG, "frame captured after rendered=true, size=${bitmap.width}x${bitmap.height}")
+            com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
+            )
             onFrameCaptured(bitmap.asImageBitmap())
         } else {
             Log.w(TAG, "frame capture returned null after rendered=true")
@@ -308,20 +433,65 @@ internal fun AndroidCanvasArtworkPlayer(
     // folded into the one above: that one is keyed on [rendered] so it fires
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
-    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop) {
-        val interval = refreshFrameEveryMs ?: return@LaunchedEffect
-        Log.d(TAG, "periodic frame refresh started, interval=$interval")
-        if (!rendered) return@LaunchedEffect
+    LaunchedEffect(
+        rendered,
+        refreshFrameEveryMs,
+        frameCapturePx,
+        clipAspect,
+        contentMode,
+        alignPortraitTop,
+        foreground,
+        isPlaying,
+        pausedForTransition,
+        currentVideoSize,
+    ) {
+        val requested = refreshFrameEveryMs ?: return@LaunchedEffect
+        Log.d(TAG, "periodic frame refresh started, interval=$requested")
+        // A paused clip has no new colours to follow; re-reading the same
+        // frame off the GPU would only stall it.
+        if (!rendered || !foreground || !isPlaying || pausedForTransition) return@LaunchedEffect
         while (isActive) {
-            delay(interval)
-            val view = textureView ?: continue
-            val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+            val view = textureView
+            if (view == null) {
+                // The view is not there — the clip has not been laid out, or
+                // its surface has gone. This used to be a bare `continue`, and
+                // a loop with no delay in it is a loop that spins: a whole
+                // core, burning, with no frame read and nothing on screen to
+                // show for it. It waits instead.
+                delay(100)
+                continue
+            }
+            val started = SystemClock.elapsedRealtime()
+            val bitmap = view.captureLiveFrame(
+                frameCapturePx,
+                currentVideoSize,
+                clipAspect,
+                contentMode,
+                alignPortraitTop,
+                copyThread.handler,
+            )
+            val cost = SystemClock.elapsedRealtime() - started
             if (bitmap != null) {
-                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}")
-                onFrameCaptured(bitmap.asImageBitmap())
+                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}, cost=${cost}ms")
+                com.music.bitchord.data.PerfCounters.bump(
+                com.music.bitchord.data.PerfCounters.Counter.FRAME_READ,
+            )
+            onFrameCaptured(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
             }
+            // The period is the caller's interval, and the read is taken out
+            // of it rather than added on top of it: a read that took 12ms of
+            // a 33ms interval still leaves a frame every 33ms.
+            //
+            // The old policy doubled the gap every time a read came back
+            // slower than 12ms and never halved it back — so on a phone
+            // where the read costs 15ms the picture arrived every 400ms and
+            // then every 800ms and then every 1.6s, and the backdrop behind
+            // an animated cover lagged it by seconds and looked frozen. What
+            // is left here is the read's own cost: a phone that cannot read
+            // faster than that has said so, and is not asked to read faster.
+            delay((requested - cost).coerceAtLeast(0L))
         }
     }
 
@@ -383,6 +553,9 @@ internal fun AndroidCanvasArtworkPlayer(
                         height: Int,
                     ) {
                         delegate?.onSurfaceTextureAvailable(surface, width, height)
+                        // The player has moved onto the new surface, so the one
+                        // it was left holding can go.
+                        teardown.releaseOrphan()
                         // The first surface needs nothing: prepare() paints it.
                         if (!replacing) return
                         replacing = false
@@ -409,6 +582,14 @@ internal fun AndroidCanvasArtworkPlayer(
                         // artwork immediately so an empty replacement surface
                         // can never become the only visible artwork layer.
                         rendered = false
+                        // Going with the player — see [Teardown]. The surface
+                        // is kept alive rather than handed back, so the
+                        // decoder's teardown cannot block the thread that is
+                        // drawing the screen while the player is closing.
+                        if (currentPausedForTransition || teardown.disposed) {
+                            teardown.orphan = surface
+                            return false
+                        }
                         return delegate?.onSurfaceTextureDestroyed(surface) ?: true
                     }
 
@@ -537,6 +718,79 @@ private fun TextureView.captureAt(
             (frame.height - top).coerceAtLeast(top + 1)
         Bitmap.createBitmap(frame, left, top, right - left, bottom - top)
     }.getOrNull()
+}
+
+/**
+ * A frame off the clip, copied off the GPU without stalling the main thread.
+ *
+ * [TextureView.getBitmap] is a synchronous copy: it takes the texture layer's
+ * pixels back off the GPU and blocks until they are here. Done on the thread
+ * that draws the screen, that is a stall on every frame of a moving clip — and
+ * the stall was what made the caller back its own cadence off, so the picture
+ * arrived every 400ms and then every 800ms, and the backdrop behind an
+ * animated cover lagged it by seconds.
+ *
+ * [PixelCopy] asks the render thread for the copy instead and hands the
+ * picture back when it is done, so the main thread keeps running and the
+ * cadence stays where the caller asked for it.
+ *
+ * The copy is of the clip's own frame — no view transform, no letterbox
+ * margins — which is what the colour averages want anyway: they used to have
+ * to crop the transparent margins out of a contained portrait clip first, and
+ * a frame with no margins in it needs none of that.
+ *
+ * Where the copy cannot be made, the view is read the old way instead.
+ */
+private suspend fun TextureView.captureLiveFrame(
+    maxPx: Int,
+    video: VideoSize?,
+    clipAspect: Float,
+    contentMode: CanvasContentMode,
+    alignPortraitTop: Boolean,
+    copyHandler: Handler,
+): Bitmap? {
+    val texture = surfaceTexture
+    val size = video
+    if (texture == null || size == null || size.width <= 0 || size.height <= 0) {
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    val videoWidth = (size.width * size.pixelWidthHeightRatio).roundToInt()
+    val videoHeight = size.height
+    if (videoWidth <= 0 || videoHeight <= 0) {
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    // The clip's own shape, no bigger than [maxPx] on its longest edge.
+    val scale = minOf(1f, maxPx.toFloat() / maxOf(videoWidth, videoHeight))
+    val bitmap = Bitmap.createBitmap(
+        (videoWidth * scale).roundToInt().coerceAtLeast(1),
+        (videoHeight * scale).roundToInt().coerceAtLeast(1),
+        Bitmap.Config.ARGB_8888,
+    )
+    val surface = Surface(texture)
+    val result = runCatching {
+        suspendCancellableCoroutine { continuation ->
+            PixelCopy.request(
+                surface,
+                bitmap,
+                { copied ->
+                    // Let go of the surface here rather than on cancellation:
+                    // the copy may still be reading from it.
+                    if (continuation.isActive) continuation.resume(copied)
+                },
+                // The copy's own thread, not the main one: the copy finishes
+                // when the GPU finishes with it, and the main thread's
+                // backlog is not part of that. See [FrameCopyThread].
+                copyHandler,
+            )
+        }
+    }.getOrDefault(PixelCopy.ERROR_UNKNOWN)
+    surface.release()
+    if (result != PixelCopy.SUCCESS) {
+        Log.w(TAG, "live frame copy failed ($result), reading the view instead")
+        bitmap.recycle()
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    return bitmap
 }
 
 /**

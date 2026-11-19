@@ -2,7 +2,6 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.AddonManifest
@@ -198,7 +197,12 @@ class AddonSource(
             if (query.isBlank()) return@withContext emptyList()
             if (!admitted("a search")) return@withContext emptyList()
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
-            val tracks = client.search(query, tier).getOrElse { failure ->
+            // The immersive mix is asked for on the search too, when the
+            // request wants it: a catalogue that publishes the spatial mix as
+            // its own row offers it as a row or not at all, and a search that
+            // did not ask would never bring it back to be preferred.
+            val wantsAtmos = request != null && atmosWanted(request)
+            val tracks = client.search(query, tier, wantsAtmos).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 return@withContext emptyList()
             }
@@ -237,38 +241,108 @@ class AddonSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
-            val tier = request.tier
-            val result = client.stream(trackId, tier)
-            val answer = result.getOrNull()
-
-            if (answer == null) {
-                // A 404 is the addon saying it does not hold this recording,
-                // which is a miss and belongs in no log. Anything else is a
-                // fault worth a line, and both end the same way: whatever the
-                // search row had, else null so [SourceResolver] moves on.
-                val failure = result.exceptionOrNull()
-                if (failure !is AddonNotFound) {
-                    TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
+            // The same walk the reference host uses, with the rungs this app
+            // has. For an Atmos request that is atmos → hi_res → lossless →
+            // high; without Atmos it is lossless → hi_res → high. Each rung is
+            // a separate question to a tier-aware catalogue, and a backend that
+            // files a whole class of masters above `lossless` answers none of
+            // them to a request that skips it.
+            //
+            // The loop stops at the first answer that satisfies what was asked
+            // for — Atmos, bit-exact, or a rendition that declines to describe
+            // itself. Anything lossy is kept as a floor and the walk continues,
+            // so a failed Atmos+FLAC attempt still ends on the best stereo copy
+            // this addon has rather than on YouTube.
+            var settleFor: SourceStream? = null
+            val atmosAllowed = atmosWanted(request)
+            for (tier in tiersFor(request)) {
+                val result = client.stream(trackId, tier)
+                val answer = result.getOrNull()
+                val stream = when {
+                    answer == null -> {
+                        // A 404 is the addon saying it does not hold this
+                        // recording, which is a miss and belongs in no log.
+                        // Anything else is a fault worth a line.
+                        val failure = result.exceptionOrNull()
+                        if (failure !is AddonNotFound) {
+                            TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId at $tier — ${failure?.message}")
+                        }
+                        fromRow(trackId, tier, atmosAllowed)
+                    }
+                    answer.url.isBlank() -> {
+                        // The addon answered, and said it has nothing for this
+                        // one. Its own words when it gave any: some report a
+                        // backend that came up empty, others a credential the
+                        // user has to go and set on the addon's own setup page.
+                        TrackLog.w(
+                            TAG,
+                            "${config.displayName}: no $tier stream for $trackId" +
+                                (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
+                        )
+                        fromRow(trackId, tier, atmosAllowed)
+                    }
+                    else -> openable(answer.url, answer, trackId, tier, atmosAllowed)
                 }
-                return@withContext fromRow(trackId, tier)
-            }
+                if (stream == null) continue
 
-            val url = answer.url.ifBlank { null } ?: run {
-                // The addon answered, and said it has nothing for this one. Its
-                // own words when it gave any: some report a backend that came
-                // up empty, others a credential the user has to go and set on
-                // the addon's own setup page — and that second kind is only
-                // ever actionable if it is said out loud here.
-                TrackLog.w(
-                    TAG,
-                    "${config.displayName}: no stream for $trackId" +
-                        (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
-                )
-                return@withContext fromRow(trackId, tier)
+                val format = stream.format
+                if (tier == AddonClient.TIER_ATMOS) {
+                    // Only an immersive answer settles the rung it was asked
+                    // for. A stereo reply is a legitimate catalogue answer, not
+                    // a hit — the rungs below it exist to ask for it properly.
+                    if (format.isDolbyAtmos) return@withContext stream
+                    if (settleFor == null || SourceResolver.isBetter(format, settleFor?.format)) {
+                        settleFor = stream
+                    }
+                    continue
+                }
+                // The immersive rung is satisfied by a bit-exact answer too: it
+                // falls back down the lossless ladder rather than to a lossy
+                // file, so a track with no spatial master still has one worth
+                // keeping.
+                if (!request.wantsLossless) return@withContext stream
+                if (format.isDolbyAtmos || format.isLossless == true || format.statesNothingLossy) {
+                    return@withContext stream
+                }
+                if (settleFor == null || SourceResolver.isBetter(format, settleFor?.format)) {
+                    settleFor = stream.copy(belowRequest = true)
+                }
             }
-
-            openable(url, answer, trackId, tier)
+            settleFor
         }
+
+    /**
+     * The rungs one request walks, best first — see [stream].
+     *
+     * The order is the reference player's. It matters on a catalogue that
+     * publishes an Atmos master and a hi-res master as different entries of the
+     * same track: jumping from the immersive rung straight to `lossless` skips
+     * the only rung that names the hi-res copy. `high` is last and only reached
+     * when nothing above it answered; it is the floor, not a peer.
+     *
+     * The immersive rung is walked only when the request asks for it *and* the
+     * device can decode the answer. A phone with no spatial decoder is never
+     * offered one — [ModuleSource.unplayable] would refuse it on the way back
+     * — so asking would spend a request to be told no.
+     */
+    private fun tiersFor(request: StreamRequest): List<String> = when {
+        request.wantsAtmos && DeviceCodecs.playsDolbyAtmos -> listOf(
+            AddonClient.TIER_ATMOS,
+            AddonClient.TIER_HI_RES,
+            AddonClient.TIER_LOSSLESS,
+            AddonClient.TIER_HIGH,
+        )
+        request.wantsLossless -> listOf(
+            AddonClient.TIER_LOSSLESS,
+            AddonClient.TIER_HI_RES,
+            AddonClient.TIER_HIGH,
+        )
+        else -> listOf(request.tier)
+    }
+
+    /** Whether a format has said nothing that rules lossless out — see `SourceResolver.streamBest`. */
+    private val StreamFormat.statesNothingLossy: Boolean
+        get() = isLossless == null && kbps == null
 
     /**
      * The stream the search row carried, when the `/stream` call had nothing.
@@ -281,11 +355,11 @@ class AddonSource(
      * addon that serves permanent direct links and treats `/stream` as optional
      * is otherwise unplayable here for no good reason.
      */
-    private fun fromRow(trackId: String, tier: String): SourceStream? {
+    private fun fromRow(trackId: String, tier: String, atmosAllowed: Boolean): SourceStream? {
         val row = rows[trackId] ?: return null
         val url = row.streamURL?.ifBlank { null } ?: return null
         TrackLog.d(TAG, "${config.displayName}: using the search row's own URL for $trackId")
-        return openable(url, AddonStream(url = url, format = row.format), trackId, tier)
+        return openable(url, AddonStream(url = url, format = row.format), trackId, tier, atmosAllowed)
     }
 
     /**
@@ -303,7 +377,27 @@ class AddonSource(
      *    the *only* one offered for a track, so there is no lower sibling to
      *    fall back to and refusing is what lets another source be heard.
      */
-    private fun openable(url: String, answer: AddonStream, trackId: String, tier: String): SourceStream? {
+    /**
+     * Whether this request should go looking for an immersive answer: the
+     * phone can decode one and the request asked for one — the Dolby Atmos
+     * rung on the stream, or the Dolby Atmos rung on a download.
+     *
+     * Read off the request rather than off a setting, so the file being kept
+     * and the stream being played are two questions: a Lossless download is
+     * answered with a lossless file even while a Dolby stream is playing, and
+     * a Dolby download is answered with the spatial mix even while the stream
+     * is plain lossless.
+     */
+    private fun atmosWanted(request: StreamRequest): Boolean =
+        DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
+
+    private fun openable(
+        url: String,
+        answer: AddonStream,
+        trackId: String,
+        tier: String,
+        atmosAllowed: Boolean,
+    ): SourceStream? {
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
                 TAG,
@@ -314,16 +408,16 @@ class AddonSource(
         if (answer.isEncrypted) {
             TrackLog.w(
                 TAG,
-                "${config.displayName}: $trackId came back encrypted, which BitChord never asked for — passing",
+                "${config.displayName}: $trackId came back encrypted, which Auris never asked for — passing",
             )
             return null
         }
 
         val format = formatOf(answer, url, tier)
         val playsAtmos = DeviceCodecs.playsDolbyAtmos
-        if (ModuleSource.unplayable(format, atmosAllowed = playsAtmos && AppSettings.dolbyAtmos.value)) {
+        if (ModuleSource.unplayable(format, atmosAllowed = atmosAllowed)) {
             val why = if (playsAtmos) {
-                "which is switched off in Settings"
+                "which this request did not ask for"
             } else {
                 "which this device has no decoder for"
             }
@@ -340,6 +434,14 @@ class AddonSource(
         // extractor and fails as an unreadable container. The addon told us
         // what it is; the player only needed to be passed it on.
         answer.transport?.let { StreamContainer.declare(url, it) }
+        if (format.isDolbyAtmos) {
+            TrackLog.i(
+                "ATMOS",
+                "${config.displayName}: $trackId → ${format.summary} " +
+                    "(${answer.transport ?: "no transport"}, decoder=$playsAtmos, " +
+                    "atmos=$atmosAllowed)",
+            )
+        }
 
         return SourceStream(
             url = url,
@@ -363,18 +465,38 @@ class AddonSource(
      * answering "no" when it does not know is not.
      */
     private fun formatOf(answer: AddonStream, url: String, tier: String): StreamFormat {
-        val codec = answer.statedCodec?.takeIf { it in AUDIO_CODECS }
-            ?: answer.statedContainer?.takeIf { it in SELF_DESCRIBING_CONTAINERS }
-            ?: answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()
-                ?.lowercase(Locale.ROOT)?.takeIf { it in AUDIO_CODECS }
-            ?: if (answer.isDolbyAtmos) {
-                "eac3-joc"
-            } else if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
+        val stated = normalizedCodec(answer.statedCodec)
+        val container = answer.statedContainer?.takeIf { it in SELF_DESCRIBING_CONTAINERS }
+        val mime = normalizedCodec(
+            answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim(),
+        )
+        val extension = normalizedCodec(
+            url.substringBefore('?').substringAfterLast('.').takeIf { it.isNotEmpty() },
+        )
+
+        val codec = when {
+            // An answer the addon flags as immersive *is* E-AC-3 with joint
+            // object coding, and that outranks anything that only names the
+            // envelope. This chain used to run codec -> container -> mime
+            // first, so an addon stating `codec: "eac3"` or `"mp4"` — or a
+            // generic `audio/mp4` — won before the Atmos hint was ever
+            // consulted, and a stream the listener asked to hear as Atmos was
+            // ranked, badged and refused as an ordinary lossy file. A codec
+            // that names a different, specific payload is still trusted: FLAC
+            // is a more specific claim than a quality label, and a stream that
+            // truly says FLAC is not made immersive by one.
+            answer.isDolbyAtmos &&
+                (stated == null || stated == DOLBY_ATMOS || stated == "eac3" || stated in CONTAINERS) ->
+                DOLBY_ATMOS
+            stated != null -> stated
+            container != null -> container
+            mime != null -> mime
+            else -> if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
                 "flac"
             } else {
-                url.substringBefore('?').substringAfterLast('.')
-                    .lowercase(Locale.ROOT).takeIf { it in AUDIO_CODECS }
+                extension
             }
+        }
 
         return StreamFormat(
             codec = codec,
@@ -391,9 +513,36 @@ class AddonSource(
         )
     }
 
+    /**
+     * One codec id from whichever spelling an addon used.
+     *
+     * The Dolby family is the reason this exists. The same payload arrives as
+     * `eac3_joc`, `eac3-joc`, `ec-3`, `ec3`, `eac3`, `ac-3` or `ac3` depending
+     * on the backend, and [StreamFormat.isDolbyAtmos] compares against one
+     * hyphenated spelling. Passing the raw field through is what made the
+     * underscore payload the tests carry depend on a fallback branch; anything
+     * else — a plain `eac3`, say — fell straight into the lossy ladder and
+     * never reached the Atmos label at all. Normalising here makes every
+     * spelling one codec before anything decides what it is.
+     */
+    private fun normalizedCodec(raw: String?): String? {
+        val value = raw?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return null
+        return when (value) {
+            in JOC_CODECS -> DOLBY_ATMOS
+            in EAC3_CODECS -> "eac3"
+            "ac-3", "ac3" -> "ac3"
+            else -> value.takeIf { it in AUDIO_CODECS }
+        }
+    }
+
     /** What this app asks an addon for, in the vocabulary the reference host uses. */
     private val StreamRequest.tier: String
         get() = when (this) {
+            // The immersive rung has no tier of its own in this vocabulary —
+            // it is `atmos`, and it is asked for on the stream walk rather than
+            // as the search's quality. The search asks for the bit-exact tier
+            // and lets the walk below it find the spatial mix.
+            is StreamRequest.Atmos -> AddonClient.TIER_LOSSLESS
             is StreamRequest.Lossless -> AddonClient.TIER_LOSSLESS
             is StreamRequest.Best -> AddonClient.TIER_HIGH
             is StreamRequest.Capped ->
@@ -450,7 +599,23 @@ class AddonSource(
          */
         val AUDIO_CODECS = setOf(
             "flac", "alac", "wav", "aiff", "mp3", "aac", "he-aac", "m4a", "mp4",
-            "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc",
+            "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc", "eac3", "ac3",
         )
+
+        /** The codec id every immersive answer is recorded as. */
+        const val DOLBY_ATMOS = "eac3-joc"
+
+        /** Joint-object-coding spellings, all of which mean the Atmos mix. */
+        val JOC_CODECS = setOf("eac3-joc", "eac3_joc", "ec3-joc", "ec3_joc", "dolby-atmos")
+
+        /** The E-AC-3 core, which may carry Atmos objects or may be a plain bed. */
+        val EAC3_CODECS = setOf("eac3", "eac-3", "ec-3", "ec3")
+
+        /**
+         * Envelopes an addon may put in its `codec` field. Unlike
+         * [SELF_DESCRIBING_CONTAINERS] these say nothing about the payload, so
+         * they lose to a flagged Atmos answer rather than overriding it.
+         */
+        val CONTAINERS = setOf("mp4", "m4a", "webm", "ogg")
     }
 }

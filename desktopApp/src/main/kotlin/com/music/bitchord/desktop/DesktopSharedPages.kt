@@ -73,6 +73,20 @@ internal object DesktopAppUiHost : AppUiHost {
         _homeRecentsViewType.value = value
     }
 
+    private val _libraryPlaylistsViewType = MutableStateFlow(
+        runCatching {
+            LibraryViewType.valueOf(
+                persistence.string(KEY_LIBRARY_PLAYLISTS_VIEW, LibraryViewType.GRID.name),
+            )
+        }.getOrDefault(LibraryViewType.GRID),
+    )
+    override val libraryPlaylistsViewType: StateFlow<LibraryViewType> = _libraryPlaylistsViewType
+
+    override fun setLibraryPlaylistsViewType(value: LibraryViewType) {
+        persistence.saveString(KEY_LIBRARY_PLAYLISTS_VIEW, value.name)
+        _libraryPlaylistsViewType.value = value
+    }
+
     /** Nothing is pinned here: the desktop has no pin action to put anything first. */
     override val pinnedPlaylists: StateFlow<List<String>> = MutableStateFlow(emptyList())
 
@@ -98,6 +112,7 @@ internal object DesktopAppUiHost : AppUiHost {
 
     private const val KEY_SWIPE_PLAY_NEXT = "swipe_play_next"
     private const val KEY_HOME_RECENTS_VIEW = "home_recents_view"
+    private const val KEY_LIBRARY_PLAYLISTS_VIEW = "library_playlists_view"
 }
 
 /**

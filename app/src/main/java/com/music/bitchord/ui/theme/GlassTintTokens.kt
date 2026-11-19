@@ -85,9 +85,10 @@ object GlassTintTokens {
      * tab bar capsule over a luminance-104 list reads 124 = +13% white, the same value the
      * common CSS recreation lands on (rgba(255,255,255,.13) + blur 12px + saturate 170%).
      */
-    // 0.15, not the measured 0.13: blur and saturation spread the lift, and on device the
-    // surface read 0.09-0.11 at 0.13 (measured on SM-M346B screenshots, 2026-09-14).
-    const val BaseSurfaceOpacityDark = 0.15f
+    // 0.60, not the old 0.15 white lift: the dark base below is now a smoked
+    // near-black, so the glass reads as a dark tinted sheet over the blurred
+    // backdrop instead of a faint white wash.
+    const val BaseSurfaceOpacityDark = 0.60f
     const val BaseSurfaceOpacityLight = 0.40f // spec default
 
     const val NavPillFillOpacityDark = 0.55f
@@ -116,7 +117,7 @@ object GlassTintTokens {
     val ShadowColorLight = Color(0x1F000000) // 0 4px 16px rgba(0,0,0,0.12)
 
     /** Base of a live liquid-glass surface: white lift in dark (see [BaseSurfaceOpacityDark]), #F5F5F7 in light. */
-    fun glassBaseColor(isDark: Boolean): Color = if (isDark) Color.White else SurfaceBaseLight
+    fun glassBaseColor(isDark: Boolean): Color = if (isDark) Color(0xFF0A0A0C) else SurfaceBaseLight
 
     fun baseSurfaceColor(isDark: Boolean): Color =
         if (isDark) SurfaceBaseDark else SurfaceBaseLight

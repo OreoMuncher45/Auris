@@ -21,6 +21,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withQuickPicks
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
@@ -62,7 +63,10 @@ object YtMusicRepository {
      */
     suspend fun home(): Result<HomeFeed> = call("home") {
         val home = Innertube.browse("FEmusic_home")
-        HomeFeed(InnertubeParser.parseHome(home), InnertubeParser.continuationToken(home))
+        HomeFeed(
+            shelves = InnertubeParser.parseHome(home).withQuickPicks(),
+            continuation = InnertubeParser.continuationToken(home),
+        )
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */
@@ -490,7 +494,12 @@ object YtMusicRepository {
             val shelves = LIBRARY_FEEDS
                 .map { (title, browseId) ->
                     async {
-                        HomeShelf(title, runCatching { libraryItemsPaged(browseId) }.getOrDefault(emptyList()))
+                        HomeShelf(
+                            title,
+                            runCatching { libraryItemsPaged(browseId) }
+                                .getOrDefault(emptyList())
+                                .let(::withoutYoutubeEpisodesForLater),
+                        )
                     }
                 }
                 .awaitAll()
@@ -700,11 +709,15 @@ object YtMusicRepository {
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
             return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
         }
+        // A podcast page's episodes don't name their own show — the header
+        // does, once. Carry it down so every episode is credited to the show
+        // it belongs to instead of to nobody.
+        val show = InnertubeParser.podcastShow(response)
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
             // map used to take care of that; paging by hand means saying so.
-            songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId },
+            songs = InnertubeParser.collectSongsDeep(response, show).distinctBy { it.videoId },
             continuation = InnertubeParser.continuationToken(response),
             library = library,
             header = header,
@@ -762,6 +775,19 @@ object YtMusicRepository {
     }
 
     /**
+     * Every song on a playlist or album page, following the feed's
+     * continuations.
+     *
+     * Public because the download sync needs it. A song added to a playlist
+     * is *appended* to it, so the first page — which is all [browseSongs]
+     * reads — is exactly where a new song is not. Reading the whole page is
+     * the only way to notice one, and noticing one is the whole of what a
+     * downloaded playlist needs.
+     */
+    suspend fun browseSongsPaged(browseId: String): Result<List<Song>> =
+        call("browsePaged:$browseId") { songsPaged(browseId) }
+
+    /**
      * Every saved library card behind a feed browse id, following continuations.
      *
      * The library shelves are capped by YouTube's first page just like search:
@@ -803,6 +829,9 @@ object YtMusicRepository {
 
     /** Saved and own playlists; also what the "add to playlist" picker lists. */
     private const val LIBRARY_PLAYLISTS = "FEmusic_liked_playlists"
+
+    /** YouTube Music's podcast feed: shows the account follows. */
+    private const val LIBRARY_PODCASTS = "FEmusic_library_non_music_audio_list"
 
     /**
      * What the playlists shelf is called in a [LibraryPage].
@@ -885,6 +914,51 @@ object YtMusicRepository {
      */
     suspend fun libraryPlaylists(): Result<List<ShelfItem>> = call("libraryPlaylists") {
         InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PLAYLISTS))
+            .let(::withoutYoutubeEpisodesForLater)
+    }
+
+    /**
+     * YouTube Music's own "Episodes for later", dropped from every feed.
+     *
+     * YouTube keeps the podcast episodes a listener saved in an auto-playlist
+     * of its own, and that card turns up in the library's playlist feed. It is
+     * not ours: Auris takes its podcasts from Apple's catalogue, so YouTube's
+     * list is always empty here, and it sits next to our own shelf of the
+     * same name wearing the same words — two lists, one of them a dead end.
+     *
+     * Matched by the browse id YouTube gives it (`VLSE…`) and by the title it
+     * is filed under, because either one alone is a guess: the id is what
+     * YouTube calls the auto-playlist today, and the title is what it was
+     * called when the id was something else.
+     */
+    internal fun withoutYoutubeEpisodesForLater(items: List<ShelfItem>): List<ShelfItem> =
+        items.filterNot { item ->
+            item.browseId?.startsWith("VLSE") == true ||
+                item.title.trim().equals("Episodes for later", ignoreCase = true)
+        }
+
+    /**
+     * The podcast shows the account follows, as library cards.
+     *
+     * YouTube Music keeps podcasts in its own library feed, apart from
+     * playlists and albums — a show is a thing you subscribe to, not a
+     * playlist, and it carries its own episodes rather than tracks.
+     */
+    suspend fun podcastShows(): Result<List<ShelfItem>> = call("podcastShows") {
+        InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PODCASTS))
+            .let(::withoutYoutubeEpisodesForLater)
+    }
+
+    /**
+     * One show's episodes, credited to the show.
+     *
+     * An episode row never names its own show — the page header does, once,
+     * at the top of the first response. So the header is read first and
+     * carried down, or every episode would be credited to nobody.
+     */
+    suspend fun podcastEpisodes(browseId: String): Result<List<Song>> = call("podcastEpisodes") {
+        val response = Innertube.browse(browseId)
+        InnertubeParser.collectSongsDeep(response, InnertubeParser.podcastShow(response))
     }
 
     /** Creates a playlist, optionally seeded with [videoIds]; returns its id. */

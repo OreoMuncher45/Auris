@@ -11,7 +11,6 @@ import com.music.bitchord.playback.smart.TrackFeatures
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlinx.coroutines.runBlocking
 
 /** A file on this machine — a download or a local track — rather than anything streamed. */
 internal val DesktopStream.isLocalFile: Boolean
@@ -93,11 +92,21 @@ internal class DesktopTrackAnalyzer(
     /**
      * Asks for [song] to be analysed, if it has not been already.
      *
-     * [stream] is only read when it is a file on this machine. Anything streamed is measured on
-     * the track's YouTube Opus instead — never on the addon, JioSaavn or lossless copy playback
-     * may be using — exactly as Android's analyser reads its own pinned Opus rendition (see
-     * `AutomixAnalysisSource`). That keeps an addon from being asked for a track nobody is
-     * playing yet, and one recording's measurements from being stored under another's id.
+     * [stream] is the copy playback is using — a file on this machine, or the
+     * addon's or JioSaavn's own stream. It is the only thing measured.
+     *
+     * A streamed track used to be measured on a YouTube Opus copy of the same
+     * recording instead: the YouTube id was looked up, its stream fetched
+     * outside the source race, and the measurement stored under the track's
+     * own id. That made Automix depend on YouTube to measure a track YouTube
+     * had nothing to do with — with YouTube switched off there was no copy to
+     * measure at all, so every addon-served track went into its transition
+     * unanalysed — and it made the evidence describe a different rendition of
+     * the song than the one under the listener.
+     *
+     * A track with no stream of its own yet is not measured and not written
+     * off: the engine asks again as soon as it has one, which is the tick
+     * after the source answers.
      */
     fun request(song: Song, stream: DesktopStream?, durationSeconds: Double) {
         val trackId = song.videoId
@@ -113,12 +122,14 @@ internal class DesktopTrackAnalyzer(
         if (results.containsKey(trackId) || restored(trackId) != null) return
         // Asked every tick; a track that just failed is not resolved and decoded again each time.
         failedAt[trackId]?.let { if (System.currentTimeMillis() - it < RETRY_AFTER_MS) return }
+        // No stream of its own yet: nothing to measure, and nothing to record
+        // as a failure either — the engine asks again once the source answers.
+        val source = stream ?: return
         if (!running.add(trackId)) return
         failed.remove(trackId)
-        val local = stream?.takeIf { it.isLocalFile }
         DesktopTrackLog.log(
             "automix: analysing '${song.title}' (${"%.0f".format(durationSeconds)}s)" +
-                if (local != null) " from the file" else " from YouTube Opus",
+                if (source.isLocalFile) " from the file" else " from the copy being played",
         )
 
         worker.execute {
@@ -132,7 +143,6 @@ internal class DesktopTrackAnalyzer(
                 Thread.currentThread().priority =
                     if (performance().yieldsToPlayback) Thread.MIN_PRIORITY else Thread.NORM_PRIORITY
                 val analysis = runCatching {
-                    val source = local ?: youTubeOpus(song) ?: return@runCatching null
                     analyse(trackId, source, durationSeconds)
                 }
                     .onFailure { DesktopTrackLog.log("analysis of '${song.title}' failed: ${it.message}") }
@@ -160,22 +170,6 @@ internal class DesktopTrackAnalyzer(
                 running.remove(trackId)
             }
         }
-    }
-
-    /**
-     * [song]'s YouTube Opus stream, bypassing the source race playback runs — or null when there
-     * is no YouTube copy of it to measure.
-     */
-    private fun youTubeOpus(song: Song): DesktopStream? = runBlocking {
-        val identity = DesktopSourceRegistry.youTubeIdentity(song)
-        if (identity == null) {
-            DesktopTrackLog.log("automix: no YouTube copy of '${song.title}' to measure")
-            return@runBlocking null
-        }
-        if (identity.videoId != song.videoId) {
-            DesktopTrackLog.log("automix: measuring '${song.title}' on YouTube's ${identity.videoId}")
-        }
-        DesktopStreamClient.resolve(identity).getOrThrow()
     }
 
     private fun analyse(

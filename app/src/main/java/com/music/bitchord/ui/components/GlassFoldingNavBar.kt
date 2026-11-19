@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -69,7 +70,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -203,9 +203,11 @@ private fun GlassFoldingNavBarChrome(
     BackHandler(enabled = search.visualActive, onBack = search.onExit)
 
     val contentColor = glassContentColor()
-    val selectedColor = contentColor
+    // Selected tab is Apple's systemRed, not the glass ink — see GlassTintTokens.
+    val selectedColor = com.music.bitchord.ui.theme.GlassTintTokens.selectedRedColor(glassUsesDarkAppearance())
     val unselectedColor = contentColor.copy(alpha = 0.65f)
     val glassSurface: @Composable () -> Modifier = { Modifier.liquidGlass(shape = NavBarShape) }
+    val glassHaptic = rememberLiquidGlassHaptics()
     val searchIndex = tabs.lastIndex
 
     val playerAccessory: (@Composable (Modifier, Boolean) -> Unit)? =
@@ -276,6 +278,7 @@ private fun GlassFoldingNavBarChrome(
             FoldingTabGroup(
                 selectedTabIndex = { selected },
                 onTabSelected = { index ->
+                    glassHaptic()
                     foldingTabs.getOrNull(index)?.onClick?.invoke()
                 },
                 backdrop = LocalAppBackdrop.current,
@@ -295,6 +298,11 @@ private fun GlassFoldingNavBarChrome(
             }
         },
     ) {
+        // Five tabs (Home / Explore / Radio / Library / Search) each get less
+        // width than the four-tab bar was drawn for. Trim the glyph and label a
+        // hair so the labels keep clear of their neighbours instead of
+        // ellipsising "Library" on a narrow phone.
+        val dense = tabs.size > 4
         tabs.forEachIndexed { index, tab ->
             val isSelected = index == selectedIndex
             tab(
@@ -305,7 +313,7 @@ private fun GlassFoldingNavBarChrome(
                         color = if (isSelected) selectedColor else unselectedColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        fontSize = 10.sp,
+                        fontSize = if (dense) 9.5.sp else 10.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     )
                 },
@@ -314,10 +322,11 @@ private fun GlassFoldingNavBarChrome(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
                         tint = if (isSelected) selectedColor else unselectedColor,
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(if (dense) 26.dp else 28.dp),
                     )
                 },
                 onClick = {
+                    glassHaptic()
                     when {
                         index == searchIndex ->
                             if (search.visualActive) search.onTapBar() else search.onTapSearchIcon()
@@ -375,14 +384,22 @@ private fun SearchBarPlaceholder(
             if (state.query.isNotEmpty()) {
                 Text(
                     text = state.query,
-                    style = TextStyle(color = contentColor, fontSize = 17.sp),
+                    // Built from the theme's body style rather than a bare TextStyle:
+                    // a bare one carries no fontFamily and falls back to Roboto.
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor,
+                        fontSize = 17.sp,
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             } else {
                 Text(
                     text = placeholder,
-                    style = TextStyle(color = contentColor.copy(alpha = 0.6f), fontSize = 17.sp),
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor.copy(alpha = 0.6f),
+                        fontSize = 17.sp,
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -400,10 +417,10 @@ private fun SearchBarPlaceholder(
                     .padding(9.dp),
             ) {
                 Icon(
-                    imageVector = if (state.searchSource == SearchSource.LIBRARY) {
-                        Icons.Rounded.LibraryMusic
-                    } else {
-                        Icons.Rounded.Language
+                    imageVector = when (state.searchSource) {
+                        SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
+                        SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,
                     tint = contentColor,
@@ -473,15 +490,21 @@ private fun NavBarSearchInputBar(
             if (state.query.isEmpty()) {
                 Text(
                     text = placeholder,
-                    style = TextStyle(color = contentColor.copy(alpha = 0.6f), fontSize = 17.sp),
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor.copy(alpha = 0.6f),
+                        fontSize = 17.sp,
+                    ),
                     maxLines = 1,
                 )
             }
             BasicTextField(
-                value = state.query,
-                onValueChange = state.onQueryChange,
+                value = state.textValue,
+                onValueChange = state.onTextValueChange,
                 singleLine = true,
-                textStyle = TextStyle(color = contentColor, fontSize = 17.sp),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = contentColor,
+                    fontSize = 17.sp,
+                ),
                 cursorBrush = SolidColor(contentColor),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
@@ -528,10 +551,10 @@ private fun NavBarSearchInputBar(
                     .padding(12.dp),
             ) {
                 Icon(
-                    imageVector = if (state.searchSource == SearchSource.LIBRARY) {
-                        Icons.Rounded.LibraryMusic
-                    } else {
-                        Icons.Rounded.Language
+                    imageVector = when (state.searchSource) {
+                        SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
+                        SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,
                     tint = contentColor,

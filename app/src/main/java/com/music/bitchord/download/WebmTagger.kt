@@ -59,16 +59,98 @@ object WebmTagger {
         insert(bytes, buildTail(title, artist, album, lyrics, cover, coverMime, wordLyrics))
     }.getOrDefault(bytes)
 
+    /**
+     * Tags a WebM file on disk, without holding it in memory.
+     *
+     * The in-memory route above is the general one, and it is the reason a
+     * long recording could take the process down: the whole file is read into
+     * a byte array, a second copy of it is built to append the tags to, and a
+     * third is taken when that copy is turned back into an array — a
+     * two-hour episode at 128 kbps is a hundred and twenty megabytes of file,
+     * and three of those is more than the app's heap holds.
+     *
+     * Nothing here needs the file in memory. Everything the rewrite touches
+     * is at the front: the EBML header, the Segment's id, and the Segment's
+     * own size. The tags are appended at the end and a declared size is
+     * widened in place, keeping its byte width — so the file is opened, read
+     * at the front, appended to, and one field written back. The audio
+     * between is never read.
+     *
+     * @return true when the file was dealt with. False asks the caller to
+     *   fall back, which happens for a file whose shape this doesn't
+     *   recognise; the file is untouched in that case.
+     */
+    fun tagFile(
+        file: java.io.File,
+        title: String,
+        artist: String,
+        album: String?,
+        lyrics: String?,
+        cover: ByteArray?,
+        coverMime: String,
+        wordLyrics: String? = null,
+    ): Boolean = runCatching {
+        val tail = buildTail(title, artist, album, lyrics, cover, coverMime, wordLyrics)
+        if (tail.isEmpty()) return@runCatching true
+        java.io.RandomAccessFile(file, "rw").use { raf ->
+            val head = ByteArray(minOf(HEAD_BYTES, raf.length().toInt()))
+            raf.seek(0)
+            raf.readFully(head)
+            val layout = layout(head, raf.length()) ?: return@runCatching false
+            if (layout.segmentSize.isUnknown) {
+                // The size is "read to the end", so appending needs no further
+                // change at all.
+                raf.seek(raf.length())
+                raf.write(tail)
+                return@runCatching true
+            }
+            val newSize = layout.segmentSize.value + tail.size
+            val maxForWidth = (1L shl (7 * layout.segmentSize.width)) - 2
+            if (newSize > maxForWidth) return@runCatching false
+            // The size field is widened in place, keeping its byte width:
+            // growing that width would shift the field itself and everything
+            // after it.
+            val field = ByteArray(layout.segmentSize.width)
+            writeVint(field, 0, newSize, layout.segmentSize.width)
+            raf.seek(layout.segmentSizeOffset.toLong())
+            raf.write(field)
+            raf.seek(raf.length())
+            raf.write(tail)
+            true
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Where the Segment's size lives in the file, and what it says.
+     *
+     * @param fileLength the whole file's length — a declared size only
+     *   matches this shape when it accounts for every byte already in the
+     *   file, and anything else (trailing padding, more top-level elements
+     *   after Segment) isn't a layout worth guessing at.
+     */
+    private class Layout(
+        val segmentSizeOffset: Int,
+        val segmentSize: Size,
+    )
+
+    private fun layout(head: ByteArray, fileLength: Long): Layout? {
+        if (head.size < 16 || !head.regionMatches(0, EBML_HEADER_ID)) return null
+        val headerSize = readSize(head, EBML_HEADER_ID.size) ?: return null
+        val segmentIdOffset = EBML_HEADER_ID.size + headerSize.width + headerSize.value.toInt()
+        if (segmentIdOffset + 4 > head.size || !head.regionMatches(segmentIdOffset, SEGMENT_ID)) return null
+        val segmentSize = readSize(head, segmentIdOffset + SEGMENT_ID.size) ?: return null
+        val segmentContentStart = segmentIdOffset + SEGMENT_ID.size + segmentSize.width
+        if (!segmentSize.isUnknown) {
+            val declaredEnd = segmentContentStart + segmentSize.value
+            if (declaredEnd != fileLength) return null
+        }
+        return Layout(segmentIdOffset + SEGMENT_ID.size, segmentSize)
+    }
+
     private fun insert(bytes: ByteArray, tail: ByteArray): ByteArray {
         if (tail.isEmpty()) return bytes
-        if (bytes.size < 16 || !bytes.regionMatches(0, EBML_HEADER_ID)) return bytes
-
-        val headerSize = readSize(bytes, EBML_HEADER_ID.size) ?: return bytes
-        val segmentIdOffset = EBML_HEADER_ID.size + headerSize.width + headerSize.value.toInt()
-        if (segmentIdOffset + 4 > bytes.size || !bytes.regionMatches(segmentIdOffset, SEGMENT_ID)) return bytes
-
-        val segmentSize = readSize(bytes, segmentIdOffset + SEGMENT_ID.size) ?: return bytes
-        val segmentContentStart = segmentIdOffset + SEGMENT_ID.size + segmentSize.width
+        val layout = layout(bytes, bytes.size.toLong()) ?: return bytes
+        val segmentSize = layout.segmentSize
 
         if (segmentSize.isUnknown) {
             val out = bytes.copyOf(bytes.size + tail.size)
@@ -76,21 +158,18 @@ object WebmTagger {
             return out
         }
 
-        // A declared size only matches this shape when it accounts for every
-        // byte already in the file — anything else (trailing padding, more
-        // top-level elements after Segment) isn't a layout worth guessing at.
-        val declaredEnd = segmentContentStart + segmentSize.value
-        if (declaredEnd != bytes.size.toLong()) return bytes
-
         val newSize = segmentSize.value + tail.size
         val maxForWidth = (1L shl (7 * segmentSize.width)) - 2
         if (newSize > maxForWidth) return bytes
 
         val out = bytes.copyOf(bytes.size + tail.size)
         tail.copyInto(out, bytes.size)
-        writeVint(out, segmentIdOffset + SEGMENT_ID.size, newSize, segmentSize.width)
+        writeVint(out, layout.segmentSizeOffset, newSize, segmentSize.width)
         return out
     }
+
+    /** How much of the front of the file the layout is read from. */
+    private const val HEAD_BYTES = 64 * 1024
 
     private fun buildTail(
         title: String,

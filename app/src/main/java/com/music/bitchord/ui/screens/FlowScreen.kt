@@ -1,12 +1,25 @@
 package com.music.bitchord.ui.screens
 
-import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,8 +39,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
@@ -44,12 +59,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,8 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -77,13 +91,13 @@ import com.music.bitchord.data.flow.FlowTuner
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.isSameTrackAs
+import com.music.bitchord.ui.components.AurisSlider
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.songListSkeleton
-import kotlin.math.roundToInt
 
 /**
  * Flow, per the approved proposal: dark gradient hero, left-aligned title
@@ -118,7 +132,7 @@ fun FlowScreen(
     onNewMix: () -> Unit,
     onToggleLike: () -> Unit,
     currentLiked: Boolean,
-    onApply: (FlowMood, Float, Float, Set<String>) -> Unit,
+    onApply: (FlowMood, Float, Float, Set<String>, Boolean) -> Unit,
     onUnban: (String) -> Unit,
     onBan: (Song) -> Unit,
     onSongClick: (List<Song>, Int) -> Unit,
@@ -134,9 +148,11 @@ fun FlowScreen(
     var draftDiscovery by remember(tuner.discovery) { mutableFloatStateOf(tuner.discovery) }
     var draftMemory by remember(tuner.memory) { mutableFloatStateOf(tuner.memory) }
     var draftExcluded by remember(tuner.excludedGenres) { mutableStateOf(tuner.excludedGenres) }
+    var draftSimilarLiked by remember(tuner.similarLiked) { mutableStateOf(tuner.similarLiked) }
     var showTuner by remember { mutableStateOf(false) }
     val dirty = draftMood != mood || draftDiscovery != tuner.discovery ||
-        draftMemory != tuner.memory || draftExcluded != tuner.excludedGenres
+        draftMemory != tuner.memory || draftExcluded != tuner.excludedGenres ||
+        draftSimilarLiked != tuner.similarLiked
     val songs = (tracksState as? UiState.Success)?.data.orEmpty()
 
     LazyColumn(
@@ -169,22 +185,37 @@ fun FlowScreen(
         }
         if (showTuner) {
             item(key = "flow:tuner") {
-                FlowTunerCard(
+                // The tuner unfolds rather than appearing whole: it is a panel
+                // that changes what the mix is, and a sheet that pops in reads
+                // as a different page rather than a part of this one.
+                val reveal = remember { MutableTransitionState(false) }
+                LaunchedEffect(Unit) { reveal.targetState = true }
+                AnimatedVisibility(
+                    visibleState = reveal,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
+                    FlowTunerGroup(
                     tuner = tuner.copy(
                         discovery = draftDiscovery,
                         memory = draftMemory,
                         excludedGenres = draftExcluded,
+                        similarLiked = draftSimilarLiked,
                     ),
                     onDiscovery = { draftDiscovery = it },
                     onMemory = { draftMemory = it },
+                    onSimilarLiked = { draftSimilarLiked = it },
                     onToggleGenre = { genre, enabled ->
                         draftExcluded = if (enabled) draftExcluded - genre.lowercase()
                         else draftExcluded + genre.lowercase()
                     },
                     dirty = dirty,
                     rebuilding = rebuilding,
-                    onApply = { onApply(draftMood, draftDiscovery, draftMemory, draftExcluded) },
-                )
+                        onApply = {
+                            onApply(draftMood, draftDiscovery, draftMemory, draftExcluded, draftSimilarLiked)
+                        },
+                    )
+                }
             }
         }
         if (songs.isNotEmpty()) {
@@ -227,6 +258,7 @@ fun FlowScreen(
                         key = { "flow:${songs[it].videoId}:$it" },
                     ) { index ->
                         val song = songs[index]
+                        Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) {
                         SongRow(
                             song = song,
                             onClick = { onSongClick(songs, index) },
@@ -244,6 +276,7 @@ fun FlowScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                             )
                         }
+                        }
                     }
                 }
             }
@@ -256,6 +289,9 @@ fun FlowScreen(
         item(key = "flow:spacer") { Spacer(Modifier.height(24.dp)) }
     }
 }
+
+/** How many genre chips the tuner shows before "more". */
+private const val FLOW_GENRES_COLLAPSED = 10
 
 /**
  * Compact header with no artwork: the mix art lives on the Listen Now
@@ -281,19 +317,26 @@ private fun FlowHero(
 ) {
     val fg = MaterialTheme.colorScheme.onBackground
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    // The hero settles in rather than being there: it is the first thing after
+    // a tab change, and a page that fades and rises reads as arriving instead
+    // of as having been underneath the previous one.
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val appear by animateFloatAsState(
+        targetValue = if (entered) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 320),
+        label = "flow-hero-in",
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 14.dp),
+            .padding(top = 8.dp, bottom = 14.dp)
+            .graphicsLayer {
+                alpha = appear
+                translationY = (1f - appear) * 18f
+            },
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(
-            text = stringResource(R.string.flow).uppercase(),
-            style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 3.sp),
-            color = dim,
-            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-        )
-        Spacer(Modifier.height(2.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = PAGE_GUTTER),
@@ -310,33 +353,53 @@ private fun FlowHero(
                 modifier = Modifier.size(30.dp),
             )
         }
-        Text(
-            text = if (mood == FlowMood.FLOW) {
+        AnimatedContent(
+            targetState = if (mood == FlowMood.FLOW) {
                 stringResource(R.string.flow_subtitle)
             } else {
                 mood.label + " · " + stringResource(R.string.flow_subtitle)
             },
-            style = MaterialTheme.typography.bodyLarge,
-            color = dim,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-        )
+            transitionSpec = {
+                (fadeIn(animationSpec = androidx.compose.animation.core.tween(200)) +
+                    slideInVertically { it / 3 }) togetherWith
+                    fadeOut(animationSpec = androidx.compose.animation.core.tween(120))
+            },
+            label = "flow-subtitle",
+        ) { subtitle ->
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyLarge,
+                color = dim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+            )
+        }
         Spacer(Modifier.height(4.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(horizontal = PAGE_GUTTER),
         ) {
-            Text(
-                text = when {
+            AnimatedContent(
+                targetState = when {
                     isSaved -> stringResource(R.string.saved)
                     trackCount > 0 -> stringResource(R.string.flow_temp_meta, trackCount)
                     else -> stringResource(R.string.flow_temp_playlist)
                 },
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
-                color = dim,
-            )
+                transitionSpec = {
+                    (fadeIn(animationSpec = androidx.compose.animation.core.tween(180)) +
+                        slideInVertically { it / 2 }) togetherWith
+                        fadeOut(animationSpec = androidx.compose.animation.core.tween(120))
+                },
+                label = "flow-meta",
+            ) { text ->
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
+                    color = dim,
+                )
+            }
             if (isGrowing && !isSaved && trackCount > 0) {
                 Box(Modifier.size(5.dp).clip(CircleShape).background(dim))
                 Text(
@@ -359,6 +422,13 @@ private fun FlowHero(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val press = remember { MutableInteractionSource() }
+            val pressed by press.collectIsPressedAsState()
+            val scale by animateFloatAsState(
+                targetValue = if (pressed) 0.96f else 1f,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                label = "flow-play-press",
+            )
             Button(
                 onClick = onPlay,
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
@@ -366,7 +436,13 @@ private fun FlowHero(
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
                 contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp),
-                modifier = Modifier.weight(1f),
+                interactionSource = press,
+                modifier = Modifier
+                    .weight(1f)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    },
             ) {
                 Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(6.dp))
@@ -456,105 +532,121 @@ private fun FlowMoodStrip(
     mood: FlowMood,
     onMood: (FlowMood) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp)) {
-        Text(
-            text = stringResource(R.string.flow_moods),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-        )
-        Spacer(Modifier.height(8.dp))
+    Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp)) {
+        // No heading: the chips are the moods, and a label above them said
+        // the same thing in a bigger voice. The row reads as part of the
+        // header rather than as a section of its own.
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         ) {
             items(FlowMood.entries.toList()) { m ->
+                // The chosen mood leans forward a little. A chip that only
+                // changes colour reads as a form; one that moves reads as a
+                // choice.
+                val selected = m == mood
+                val lift by animateFloatAsState(
+                    targetValue = if (selected) 1.04f else 1f,
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                    label = "mood-${m.name}",
+                )
                 FilterChip(
-                    selected = m == mood,
+                    selected = selected,
                     onClick = { onMood(m) },
                     label = { Text(m.label) },
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = lift
+                        scaleY = lift
+                    },
                 )
             }
         }
     }
 }
 
+/**
+ * The tuner, as a settings group.
+ *
+ * The same group, rows and dividers the Settings sheet is built from, so the
+ * Flow page reads as part of the app rather than as a card someone dropped
+ * into it. Nothing was dropped to get here: both sliders keep their two ends
+ * and their explanation, the genres keep their chips, and the switch that
+ * asks for songs like the ones the listener liked sits with the rest.
+ */
 @Composable
-private fun FlowTunerCard(
+private fun FlowTunerGroup(
     tuner: FlowTuner,
     onDiscovery: (Float) -> Unit,
     onMemory: (Float) -> Unit,
+    onSimilarLiked: (Boolean) -> Unit,
     onToggleGenre: (String, Boolean) -> Unit,
     dirty: Boolean,
     rebuilding: Boolean,
     onApply: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+    SettingsGroup(
+        header = stringResource(R.string.flow_tuner),
+        // No footer: the Apply button says what applying means, and a sentence
+        // explaining that nothing has happened yet is a sentence about the
+        // implementation rather than about the mix.
+        topSpacing = 8.dp,
     ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                stringResource(R.string.flow_tuner),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.flow_draft_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    stringResource(R.string.flow_personal),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+        FlowTunerSlider(
+            icon = Icons.Rounded.Explore,
+            title = stringResource(R.string.flow_discovery),
+            startLabel = stringResource(R.string.flow_personal),
+            endLabel = stringResource(R.string.flow_adventurous),
+            value = tuner.discovery,
+            onValue = onDiscovery,
+            subtitle = stringResource(R.string.flow_discovery_subtitle),
+        )
+        RowDivider()
+        FlowTunerSlider(
+            icon = Icons.Rounded.History,
+            title = stringResource(R.string.flow_memory),
+            startLabel = stringResource(R.string.flow_alltime),
+            endLabel = stringResource(R.string.flow_recent),
+            value = tuner.memory,
+            onValue = onMemory,
+            subtitle = stringResource(R.string.flow_memory_subtitle),
+        )
+        RowDivider()
+        SettingsRow(
+            icon = Icons.Rounded.Favorite,
+            title = stringResource(R.string.flow_similar_liked),
+            subtitle = stringResource(R.string.flow_similar_liked_subtitle),
+            trailing = {
+                Switch(
+                    checked = tuner.similarLiked,
+                    onCheckedChange = onSimilarLiked,
                 )
-                Text(
-                    stringResource(R.string.flow_adventurous),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            Slider(value = tuner.discovery, onValueChange = onDiscovery, modifier = Modifier.fillMaxWidth())
+            },
+        )
+        RowDivider()
+        // Genres are the one part of the tuner that grows without limit, so
+        // they are folded away by default: a listener tuning the mix wants the
+        // two sliders, not twenty chips pushing the Apply button off the
+        // screen. Two rows are shown, and the rest is one tap away.
+        var showAllGenres by remember { mutableStateOf(false) }
+        val shownGenres = if (showAllGenres) FLOW_TUNER_GENRES
+        else FLOW_TUNER_GENRES.take(FLOW_GENRES_COLLAPSED)
+        Column(
+            Modifier
+                .padding(start = ROW_INSET, end = ROW_INSET, top = 14.dp, bottom = 12.dp)
+                .animateContentSize(),
+        ) {
             Text(
-                stringResource(R.string.flow_discovery_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = stringResource(R.string.flow_genres),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
             )
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    stringResource(R.string.flow_alltime),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    stringResource(R.string.flow_recent),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            Slider(value = tuner.memory, onValueChange = onMemory, modifier = Modifier.fillMaxWidth())
-            Text(
-                stringResource(R.string.flow_memory_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stringResource(R.string.flow_genres),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             @OptIn(ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FLOW_TUNER_GENRES.forEach { genre ->
+                shownGenres.forEach { genre ->
                     FilterChip(
                         selected = tuner.isGenreEnabled(genre),
                         onClick = { onToggleGenre(genre, !tuner.isGenreEnabled(genre)) },
@@ -562,8 +654,29 @@ private fun FlowTunerCard(
                     )
                 }
             }
-            if (dirty) {
-                Spacer(Modifier.height(12.dp))
+            if (FLOW_TUNER_GENRES.size > FLOW_GENRES_COLLAPSED) {
+                val hidden = FLOW_TUNER_GENRES.size - FLOW_GENRES_COLLAPSED
+                TextButton(
+                    onClick = { showAllGenres = !showAllGenres },
+                    modifier = Modifier.padding(top = 6.dp),
+                ) {
+                    Text(
+                        if (showAllGenres) {
+                            stringResource(R.string.flow_genres_fewer)
+                        } else {
+                            stringResource(R.string.flow_genres_more, hidden)
+                        },
+                    )
+                }
+            }
+        }
+        if (dirty) {
+            RowDivider()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ROW_INSET, vertical = 12.dp),
+            ) {
                 Button(
                     onClick = onApply,
                     modifier = Modifier.fillMaxWidth(),
@@ -577,6 +690,72 @@ private fun FlowTunerCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * A slider with both of its ends named.
+ *
+ * [SliderRow] shows one value beside the label; these two are ranges, and
+ * what they mean is in the names at either end — Personal to Adventurous,
+ * All-time to Recent. So the ends are kept, under the label and above the
+ * track, where the tuner has always had them.
+ */
+@Composable
+private fun FlowTunerSlider(
+    icon: ImageVector,
+    title: String,
+    startLabel: String,
+    endLabel: String,
+    value: Float,
+    onValue: (Float) -> Unit,
+    subtitle: String,
+) {
+    Column(Modifier.padding(start = ROW_INSET, end = ROW_INSET, top = 14.dp, bottom = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(ICON_SIZE),
+            )
+            Spacer(Modifier.width(ICON_GAP))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ICON_SIZE + ICON_GAP, top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = startLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = endLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AurisSlider(
+            value = value,
+            onValueChange = onValue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ICON_SIZE + ICON_GAP),
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = ICON_SIZE + ICON_GAP, top = 2.dp),
+        )
     }
 }
 

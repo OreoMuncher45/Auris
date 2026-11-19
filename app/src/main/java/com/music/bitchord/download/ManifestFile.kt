@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.download.Mp4Boxes.boxes
 import com.music.bitchord.download.Mp4Boxes.child
 import com.music.bitchord.download.Mp4Boxes.find
@@ -12,6 +13,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.File
 import java.io.OutputStream
+import java.net.URI
 
 /**
  * A manifest's segments joined back into one ordinary file, so a lossless
@@ -57,8 +59,13 @@ internal object ManifestFile {
         onProgress: (Long, Long) -> Unit,
     ): Unit = withContext(Dispatchers.IO) {
         fun fetch(target: String): ByteArray {
+            // A local extension playlist carries per-part requirements that
+            // Media3 cannot express in M3U text. Use the same registry as
+            // playback, falling back to the response-wide map for remote
+            // manifests and ordinary HLS downloads.
+            val required = SflxSegments.headersFor(target) ?: headers
             val request = Request.Builder().url(target).apply {
-                headers.forEach { (name, value) -> header(name, value) }
+                required.forEach { (name, value) -> header(name, value) }
             }.build()
             return Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Segment failed (HTTP ${response.code})")
@@ -66,14 +73,24 @@ internal object ManifestFile {
             }
         }
 
-        val base = url.toHttpUrlOrNull() ?: error("Invalid manifest URL")
-        val index = String(fetch(url), Charsets.UTF_8)
+        // An extension's segmented answer is written to a local playlist so
+        // the player can stream it; the same file is what a download reads.
+        // Its segment URLs are absolute, so there is no base to resolve against.
+        val local = url.startsWith("file:", ignoreCase = true)
+        val base = if (local) null else url.toHttpUrlOrNull() ?: error("Invalid manifest URL")
+        val index = if (local) {
+            runCatching { File(URI(url)).readText() }.getOrElse { error("Unreadable playlist: ${it.message}") }
+        } else {
+            String(fetch(url), Charsets.UTF_8)
+        }
         val (initRef, mediaRefs) = if (dash) {
             OfflineDash.parse(index).let { it.initialization to it.media }
         } else {
             hlsSegments(index)
         }
-        fun resolve(ref: String) = base.resolve(ref)?.toString() ?: error("Invalid segment URL")
+        fun resolve(ref: String) = base?.resolve(ref)?.toString()
+            ?: ref.toHttpUrlOrNull()?.toString()
+            ?: error("Invalid segment URL")
         val total = mediaRefs.size + 1L
 
         val init = fetch(resolve(initRef))
