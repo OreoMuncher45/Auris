@@ -239,6 +239,7 @@ android {
                 // reaching an assertion. CI is x86_64 and runs them for real.
                 if (System.getProperty("os.arch") in setOf("aarch64", "arm64")) {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
                 }
             }
 

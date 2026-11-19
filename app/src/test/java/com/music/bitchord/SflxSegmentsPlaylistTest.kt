@@ -4,6 +4,7 @@ import com.music.bitchord.data.sources.module.ModuleStreamSegment
 import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.download.ManifestFile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -58,6 +59,60 @@ class SflxSegmentsPlaylistTest {
         // song rather than to a nominal duration invented by the host.
         assertTrue(body.contains("#EXTINF:50.000,"))
         assertTrue(body.contains("#EXT-X-TARGETDURATION:50"))
+    }
+
+    @Test
+    fun `response and per-part headers are retained for every fragment`() {
+        val directory = Files.createTempDirectory("sflx-playlist").toFile()
+        val parts = segments().mapIndexed { index, url ->
+            ModuleStreamSegment(
+                url = url,
+                headers = if (index == 2) mapOf("Authorization" to "part-token") else null,
+            )
+        }
+        SflxSegments.playlist(
+            directory = directory,
+            extensionId = "tidal-web",
+            key = "tidal:headers",
+            segments = parts,
+            durationMs = 200_000L,
+            headers = mapOf("User-Agent" to "Tidal/1.0", "Authorization" to "response-token"),
+        )!!
+
+        assertEquals(
+            mapOf("User-Agent" to "Tidal/1.0", "Authorization" to "response-token"),
+            SflxSegments.headersFor("https://cdn.example/init.mp4"),
+        )
+        assertEquals(
+            mapOf("User-Agent" to "Tidal/1.0", "Authorization" to "part-token"),
+            SflxSegments.headersFor("https://cdn.example/1.mp4?token=abc"),
+        )
+    }
+
+    @Test
+    fun `a new rendition never overwrites the playlist already playing`() {
+        val directory = Files.createTempDirectory("sflx-playlist").toFile()
+        val first = SflxSegments.playlist(
+            directory = directory,
+            extensionId = "tidal-web",
+            key = "tidal:1",
+            segments = segments().map { ModuleStreamSegment(url = it) },
+            durationMs = 200_000L,
+        )!!
+        val before = first.readText()
+        val second = SflxSegments.playlist(
+            directory = directory,
+            extensionId = "tidal-web",
+            key = "tidal:1",
+            segments = segments().map {
+                ModuleStreamSegment(url = it.replace("cdn.example", "new-cdn.example"))
+            },
+            durationMs = 200_000L,
+        )!!
+
+        assertNotEquals(first.absolutePath, second.absolutePath)
+        assertEquals(before, first.readText())
+        assertTrue(second.readText().contains("new-cdn.example"))
     }
 
     @Test

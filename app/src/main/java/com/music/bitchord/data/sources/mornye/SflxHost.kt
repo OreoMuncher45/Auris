@@ -424,6 +424,7 @@ class SflxHost(
                         key = trackId,
                         segments = segments,
                         durationMs = durationMsOf(prepared),
+                        headers = headers,
                     ) ?: throw SflxException("the segments could not be written as a playlist")
                     "file://${playlist.absolutePath}"
                 }
@@ -626,8 +627,8 @@ class SflxHost(
     }
 
     /**
-     * Where this extension may be told to write, and where a segmented start is
-     * assembled.
+     * Where this extension may be told to write, and where a segmented start's
+     * streaming playlist (or legacy assembled file) lives.
      *
      * Inside the extension's own directory, so removing the package removes
      * everything it caused to exist — a preview, a half-fetched song, the file

@@ -1567,6 +1567,52 @@ class SourcesTest {
         }
     }
 
+    @Test
+    fun `strict length reaches a stream when the catalogue omits the runtime`() = runBlocking {
+        // Amazon's live showSearch response names the exact Barry Bonds track
+        // but reports duration_ms=0. Rejecting that as a length mismatch meant
+        // the resolver never called getTrackStreamUrl at all.
+        val amazon = FakeSource(
+            displayName = "Amazon",
+            answerAfterMs = 0,
+            format = StreamFormat("flac"),
+            kind = SourceKind.MODULE,
+            candidates = listOf(
+                song("Barry Bonds [feat. Lil Wayne]", "Kanye West feat. Lil Wayne", null)
+                    .copy(videoId = "B073T6VWYT"),
+            ),
+        )
+        val target = TrackMatcher.Target(
+            "Barry Bonds (feat. Lil Wayne)",
+            "Kanye West",
+            durationSec = 205,
+        )
+
+        val stream = SourceResolver.bestAcross(
+            listOf(amazon), target, StreamRequest.Lossless, strictLength = true,
+        )
+
+        assertNotNull("an unknown duration is not a stated mismatch", stream)
+        assertEquals("https://Amazon/B073T6VWYT", stream?.second?.url)
+    }
+
+    @Test
+    fun `strict length still refuses a stated mismatch`() = runBlocking {
+        val source = FakeSource(
+            displayName = "Amazon",
+            answerAfterMs = 0,
+            format = StreamFormat("flac"),
+            kind = SourceKind.MODULE,
+            candidates = listOf(song(RACE_TITLE, RACE_ARTIST, "2:10")),
+        )
+
+        assertNull(
+            SourceResolver.bestAcross(
+                listOf(source), raceTarget(), StreamRequest.Lossless, strictLength = true,
+            ),
+        )
+    }
+
     /**
      * The patient path is not allowed to be infinitely patient. A queued track
      * can be minutes away, not hours, and a source whose stream is a conversion

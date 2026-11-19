@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.download.Mp4Boxes.boxes
 import com.music.bitchord.download.Mp4Boxes.child
 import com.music.bitchord.download.Mp4Boxes.find
@@ -58,8 +59,13 @@ internal object ManifestFile {
         onProgress: (Long, Long) -> Unit,
     ): Unit = withContext(Dispatchers.IO) {
         fun fetch(target: String): ByteArray {
+            // A local extension playlist carries per-part requirements that
+            // Media3 cannot express in M3U text. Use the same registry as
+            // playback, falling back to the response-wide map for remote
+            // manifests and ordinary HLS downloads.
+            val required = SflxSegments.headersFor(target) ?: headers
             val request = Request.Builder().url(target).apply {
-                headers.forEach { (name, value) -> header(name, value) }
+                required.forEach { (name, value) -> header(name, value) }
             }.build()
             return Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Segment failed (HTTP ${response.code})")
