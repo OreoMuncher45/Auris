@@ -146,6 +146,7 @@ fun <T : Any> AppSheet(
             // Pushing back up returns the sheet before the list scrolls again.
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (sheet.drag <= 0f || available.y >= 0f) return Offset.Zero
+                sheet.springBack?.cancel()
                 val used = available.y.coerceAtLeast(-sheet.drag)
                 sheet.drag += used
                 return Offset(0f, used)
