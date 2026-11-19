@@ -440,29 +440,34 @@ fun SettingsScreen(
  * the listener left it.
  */
 @Composable
-private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): ScrollState {
+internal fun rememberSettingsScroll(scrollPage: String, searchQuery: String): ScrollState {
     val searchActive = searchQuery.isNotBlank()
-    // A fresh scroll state per page, so one page's offset never carries into
-    // another.
-    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
     // Where this page was left the last time it was closed. Read once, when
-    // the page opens, on purpose: the restore below may wait for a first
-    // layout, and meanwhile the scroll saver can already have written the
-    // unrestored top (0) back, which a fresh read would then restore.
-    val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
-    // Restored once the page has been measured: a scroll state cannot hold an
-    // offset its content has not got yet, so asking for it before the first
-    // layout would land on zero — which is exactly what the page did before
-    // this, every time it was opened.
-    //
-    // Once per page, not per query: a cleared search restores the page's
-    // place itself, below, from the offset saved since. If a search starts
-    // while the page is still being measured, the search's list wins.
+    // the page opens, on purpose: a fresh read later could see what the
+    // scroll saver below has written since, rather than the page's place.
+    // Not while a search is running: the search's list starts at its top.
+    val restoredOffset = remember(scrollPage) {
+        if (searchActive) 0 else AppSettings.settingsScrollOffset(scrollPage)
+    }
+    // A fresh scroll state per page, so one page's offset never carries into
+    // another, made at the page's place rather than at the top. The first
+    // layout clamps an offset the content is too short for, so the first
+    // frame is already where the page was left. Starting at 0 and scrolling
+    // there once the page had been laid out showed the top of the list for
+    // a frame first, Discord/Reddit card and all (GitHub #61).
+    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) {
+        ScrollState(restoredOffset)
+    }
+    // Only for a page that was not all there at its first layout, so that
+    // layout clamped the offset short: scrolled the rest of the way once the
+    // page has a height to scroll in. A page whose first layout already holds
+    // the offset is left alone. maxValue is Int.MAX_VALUE until a first
+    // layout has given it a real one.
     val currentQuery by rememberUpdatedState(searchQuery)
     LaunchedEffect(scrollState, scrollPage) {
         if (restoredOffset <= 0 || currentQuery.isNotBlank()) return@LaunchedEffect
-        snapshotFlow { scrollState.maxValue }.first { it > 0 }
-        if (currentQuery.isNotBlank()) return@LaunchedEffect
+        snapshotFlow { scrollState.maxValue }.first { it in 1 until Int.MAX_VALUE }
+        if (currentQuery.isNotBlank() || scrollState.value >= restoredOffset) return@LaunchedEffect
         scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
     }
     // Written out as the listener scrolls, so the place survives the app
