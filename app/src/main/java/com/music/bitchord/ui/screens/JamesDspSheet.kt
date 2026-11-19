@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.HostedSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,10 +68,7 @@ fun JamesDspSheet(onDismiss: () -> Unit) {
     val limiter by AppSettings.jamesDspLimiter.collectAsStateWithLifecycle()
     val available = remember { JamesDspNative.available }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    HostedSheet(onDismiss = onDismiss) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()

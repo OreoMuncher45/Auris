@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.HostedSheet
 import android.content.Intent
 import android.text.format.DateFormat
 import android.widget.Toast
@@ -53,7 +54,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -161,17 +161,13 @@ fun ListenTogetherScreen(
     var pendingServerSwitchInvite by remember { mutableStateOf<Pair<String, String>?>(null) }
     var sheet by remember { mutableStateOf<PartySheet?>(null) }
 
-    // Hoisted so a sheet can be *animated* away rather than dropped out of the
-    // composition, which is the only way one sheet can hand over to another:
-    // see the invite that follows a create.
-    val sheetState = rememberModalBottomSheetState()
-
     /**
      * Hands the create sheet over to the invite sheet, with the party page
      * visible in between.
      *
      * Three separate things, and the order is the whole point. The create sheet
-     * is *animated* down rather than dropped out of the composition, because
+     * is *animated* down (the app's sheet plays its exit when let go) rather
+     * than swapped in place, because
      * swapping one sheet's contents for another's under a drawer that never
      * moved is a swap, and a swap is the one thing that does not read as a new
      * sheet arriving. Then a beat with nothing over the page at all: what is
@@ -180,9 +176,9 @@ fun ListenTogetherScreen(
      * then the invite, from a fresh mount, so it slides.
      */
     val showInviteAfterCreate: suspend () -> Unit = {
-        runCatching { sheetState.hide() }
         sheet = null
-        delay(INVITE_SHEET_DELAY_MS)
+        // The create sheet's own exit, then the beat with nothing over the page.
+        delay(SHEET_EXIT_MS + INVITE_SHEET_DELAY_MS)
         // A second is long enough to have gone and opened something else in,
         // and being interrupted by a drawer nobody asked for is worse than not
         // being offered the link.
@@ -346,17 +342,15 @@ fun ListenTogetherScreen(
     }
 
     sheet?.let { open ->
-        ModalBottomSheet(
-            onDismissRequest = {
+        HostedSheet(
+            onDismiss = {
                 sheet = null
                 // Closed with the message unread is still read: leaving it set
                 // would surface it on the page underneath, as a line about a
                 // sheet that is no longer there.
                 failure = null
             },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
+        ) { _ ->
             when (open) {
                 PartySheet.Create -> CreatePartySheet(
                     avatarUrl = ListenTogether.myAvatarUrl(),
@@ -694,6 +688,9 @@ private fun ServerConnectionLine(connection: ServerConnectionState) {
  * Long enough to be a page that was arrived at rather than a frame that flashed
  * past, short enough that nobody has started reading the member list yet.
  */
+/** How long the app's sheet takes to go (see AppSheet's exit). */
+private const val SHEET_EXIT_MS = 220L
+
 private const val INVITE_SHEET_DELAY_MS = 1_000L
 
 /** The six cells of [PartyCodeField], and the Join button under them. */

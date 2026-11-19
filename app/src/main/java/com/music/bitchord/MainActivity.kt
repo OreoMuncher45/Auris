@@ -281,6 +281,9 @@ import com.music.bitchord.ui.components.menu.AppSheet
 import com.music.bitchord.ui.components.menu.LocalMenuHost
 import com.music.bitchord.ui.components.menu.MenuHostOverlay
 import com.music.bitchord.ui.components.menu.MenuHostState
+import com.music.bitchord.ui.components.menu.LocalSheetHost
+import com.music.bitchord.ui.components.menu.SheetHostOverlay
+import com.music.bitchord.ui.components.menu.SheetHostState
 import com.music.bitchord.ui.components.menu.MenuHeader
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
@@ -541,8 +544,12 @@ class MainActivity : AppCompatActivity() {
                 // ones included, which can't call the Android menu directly.
                 // Drawn last among the root's overlays (see RootOverlays).
                 val menuHost = remember { MenuHostState() }
+                // The one in-place sheet a screen not on top of everything
+                // asks for (Settings): drawn by the root, under the menus.
+                val sheetHost = remember { SheetHostState() }
                 CompositionLocalProvider(
                     LocalMenuHost provides menuHost,
+                    LocalSheetHost provides sheetHost,
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     // The engine's own defaults (see [GlassEffectConfig]) with
@@ -7416,8 +7423,10 @@ private fun RootOverlays(
         )
     }
 
-    // Last, so it is over everything above, the player included: the menu
-    // any screen asked LocalMenuHost for.
+    // The sheet any screen asked LocalSheetHost for, then over it the menu
+    // any screen asked LocalMenuHost for — last, over everything above, the
+    // player included, and a menu opened from the sheet over the sheet.
+    LocalSheetHost.current?.let { SheetHostOverlay(it) }
     (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
 }
 
