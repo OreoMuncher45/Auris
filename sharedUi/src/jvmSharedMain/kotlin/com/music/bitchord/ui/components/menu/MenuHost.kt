@@ -35,6 +35,13 @@ interface MenuHost {
 
     /** Closes whatever this host has up. */
     fun close()
+
+    /**
+     * Closes the menu only if it is still the one opened with [content] —
+     * for a surface going away, so it takes its own menu with it and leaves
+     * a newer one opened elsewhere alone.
+     */
+    fun closeIfShowing(content: @Composable ColumnScope.(close: () -> Unit) -> Unit)
 }
 
 val LocalMenuHost = staticCompositionLocalOf<MenuHost?> { null }

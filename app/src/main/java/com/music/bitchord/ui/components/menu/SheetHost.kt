@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -34,6 +35,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 @Stable
 class SheetHostState {
     internal class Request(
+        /** The sheet this one was opened from, if any: it goes when that one does. */
+        val parent: Request?,
         val dragFromContent: Boolean,
         val onClosed: () -> Unit,
         val content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
@@ -50,22 +53,35 @@ class SheetHostState {
     internal val shown = mutableStateListOf<Request>()
 
     internal fun open(
+        parent: Request?,
         dragFromContent: Boolean,
         onClosed: () -> Unit,
         content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
-    ): Request = Request(dragFromContent, onClosed, content).also {
+    ): Request = Request(parent, dragFromContent, onClosed, content).also {
         requests += it
         shown += it
     }
 
     /** [request] closed from the sheet — the scrim, Back, a drag, a row: tells its asker. */
     internal fun close(request: Request) {
-        if (requests.remove(request)) request.onClosed()
+        if (requests.remove(request)) {
+            withdrawOpenedFrom(request)
+            request.onClosed()
+        }
     }
 
     /** [request] let go by its asker, who already knows. */
     internal fun withdraw(request: Request) {
-        requests.remove(request)
+        if (requests.remove(request)) withdrawOpenedFrom(request)
+    }
+
+    /**
+     * Any sheet opened from [request] goes with it, at once: its asker is
+     * inside [request]'s content, which stays composed only for the exit, and
+     * would otherwise keep it up — and on top — until that exit ends.
+     */
+    private fun withdrawOpenedFrom(request: Request) {
+        requests.filter { it.parent === request }.forEach(::withdraw)
     }
 
     /** [request] is all the way down after going. */
@@ -75,6 +91,9 @@ class SheetHostState {
 }
 
 val LocalSheetHost = staticCompositionLocalOf<SheetHostState?> { null }
+
+/** The hosted sheet whose content this is, for a sheet opened from it. */
+private val LocalSheetRequest = staticCompositionLocalOf<SheetHostState.Request?> { null }
 
 /** Draws [state]'s sheets, each over the one before. Compose it among the root's last overlays. */
 @Composable
@@ -89,7 +108,9 @@ fun SheetHostOverlay(state: SheetHostState) {
                 trapFocus = { state.requests.lastOrNull() === request },
                 onGone = { state.gone(request) },
             ) { shown ->
-                shown.content(this) { state.close(shown) }
+                CompositionLocalProvider(LocalSheetRequest provides shown) {
+                    shown.content(this) { state.close(shown) }
+                }
             }
         }
     }
@@ -113,8 +134,10 @@ fun HostedSheet(
     val host = LocalSheetHost.current ?: return
     val currentContent by rememberUpdatedState(content)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val parent = LocalSheetRequest.current
     DisposableEffect(host) {
         val request = host.open(
+            parent = parent,
             dragFromContent = dragFromContent,
             onClosed = { currentOnDismiss() },
         ) { close -> currentContent(this, close) }

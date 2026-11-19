@@ -61,6 +61,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -527,6 +529,26 @@ internal fun PlaybackQualityLabel(
     // and dark like the player; desktop, with no host, keeps its popup.
     val menuHost = LocalMenuHost.current
     val origin = rememberMenuButtonOrigin()
+    val qualityMenu: @Composable ColumnScope.(close: () -> Unit) -> Unit = remember {
+        { close ->
+            // Live: the numbers settle while the card is up.
+            // Gone (the track changed under it), the card goes
+            // too, rather than leaving an empty menu up — the
+            // same rule the popup's `measured != null` keeps.
+            val live by NerdStats.current.collectAsStateWithLifecycle()
+            val stats = live
+            if (stats != null) {
+                QualityDetailsCard(stats = stats, framed = false)
+            } else {
+                LaunchedEffect(Unit) { close() }
+            }
+        }
+    }
+    // The menu goes with the badge: the player dismissed under it (an
+    // invite opening, say) takes the card with it, as the popup did.
+    DisposableEffect(menuHost) {
+        onDispose { menuHost?.closeIfShowing(qualityMenu) }
+    }
     Box(modifier = modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
         LosslessOrStats(
             isLoading = isLoading,
@@ -542,19 +564,7 @@ internal fun PlaybackQualityLabel(
                 .menuOriginOf(origin)
                 .clickable(enabled = nerdStats != null) {
                     if (menuHost != null) {
-                        menuHost.open(origin.boundsInWindow(), dark = true) { close ->
-                            // Live: the numbers settle while the card is up.
-                            // Gone (the track changed under it), the card goes
-                            // too, rather than leaving an empty menu up — the
-                            // same rule the popup's `measured != null` keeps.
-                            val live by NerdStats.current.collectAsStateWithLifecycle()
-                            val stats = live
-                            if (stats != null) {
-                                QualityDetailsCard(stats = stats, framed = false)
-                            } else {
-                                LaunchedEffect(Unit) { close() }
-                            }
-                        }
+                        menuHost.open(origin.boundsInWindow(), dark = true, content = qualityMenu)
                     } else {
                         details = true
                     }

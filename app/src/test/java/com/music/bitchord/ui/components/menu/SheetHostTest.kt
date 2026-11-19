@@ -24,6 +24,8 @@ import com.music.bitchord.ui.AndroidAppUiHost
 import com.music.bitchord.ui.AppUi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import androidx.compose.runtime.snapshots.Snapshot
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -122,6 +124,27 @@ class SheetHostTest {
         compose.onNodeWithTag(PICKER).assertDoesNotExist()
         compose.onNodeWithTag(BODY).assertExists()
         assertEquals("closing the picker isn't closing the sheet", 0, dismissed)
+    }
+
+    @Test
+    fun aSheetLetGoTakesTheSheetOpenedFromItDownAtOnce() {
+        wanted = true
+        compose.waitForIdle()
+        picking = true
+        compose.waitForIdle()
+
+        compose.mainClock.autoAdvance = false
+        // The screen lets go of the sheet with the picker still up over it.
+        wanted = false
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeByFrame()
+        compose.runOnIdle {
+            assertTrue("the picker is let go with its sheet, not after its exit", host.requests.isEmpty())
+        }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        compose.onNodeWithTag(PICKER).assertDoesNotExist()
+        assertEquals(0, dismissed)
     }
 
     private companion object {

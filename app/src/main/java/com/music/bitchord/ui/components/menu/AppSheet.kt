@@ -264,8 +264,9 @@ fun <T : Any> AppSheet(
                 .onSizeChanged { sheet.height = it.height }
                 // Outside the slide's layer — see the tracking note below. The
                 // sheet only ever moves down from where it rests, so where it
-                // rests is all it can be touched in.
-                .pointerInput(Unit) {
+                // rests is all it can be touched in. Restarted for a new
+                // item, so a drag begun on one can't dismiss the next.
+                .pointerInput(current) {
                     val tracker = VelocityTracker()
                     // Tracked from the finger's first touch, not from where
                     // the drag cleared the touch slop: a short flick is only

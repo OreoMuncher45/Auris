@@ -41,6 +41,10 @@ class MenuHostState : MenuHost {
     override fun close() {
         request = null
     }
+
+    override fun closeIfShowing(content: @Composable ColumnScope.(close: () -> Unit) -> Unit) {
+        if (request?.content === content) request = null
+    }
 }
 
 /**

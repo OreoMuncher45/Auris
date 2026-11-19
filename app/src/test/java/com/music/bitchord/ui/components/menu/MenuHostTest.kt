@@ -140,6 +140,25 @@ class MenuHostTest {
     }
 
     @Test
+    fun aSurfaceGoingTakesOnlyItsOwnMenuWithIt() {
+        val badge: @androidx.compose.runtime.Composable androidx.compose.foundation.layout.ColumnScope.(() -> Unit) -> Unit =
+            { close -> MenuRow(icon = null, label = "Card", ink = Color.White, modifier = Modifier.testTag(ROW)) { close() } }
+        host.open(button, content = badge)
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertExists()
+        host.closeIfShowing(badge)
+        compose.waitForIdle()
+        assertNull("the badge's own menu goes with it", host.request)
+
+        // A newer menu, opened elsewhere, isn't the badge's to close.
+        host.open(button, content = badge)
+        openChoices()
+        host.closeIfShowing(badge)
+        compose.waitForIdle()
+        assertNotNull("a newer menu stays up", host.request)
+    }
+
+    @Test
     fun aMenuReplacingAScrolledOneStartsAtItsOwnTop() {
         fun rows(prefix: String) = host.open(button) { close ->
             repeat(40) { i ->
