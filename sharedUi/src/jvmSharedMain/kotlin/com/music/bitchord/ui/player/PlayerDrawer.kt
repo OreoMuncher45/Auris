@@ -2,6 +2,14 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.foundation.focusGroup
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import com.music.bitchord.ui.components.menu.LocalMenuInteractive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -210,7 +218,7 @@ fun DrawerHostOverlay(state: DrawerHostState) {
  * The scrim used to be computed from the drag while composing, which
  * recomposed the drawer on every frame of a drag (UI 12, stage 0).
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
+@OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun DrawerBody(
     visible: Boolean,
@@ -238,6 +246,13 @@ private fun DrawerBody(
     val drag = remember { mutableFloatStateOf(0f) }
     val height = remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+    // Going, it keeps nothing focused and lets nothing in: a reset button
+    // focused as it closed can't be pressed with Enter on the way down. The
+    // focus is cleared only while it is the drawer's own, so a surface opened
+    // over it keeps its own.
+    val focusManager = LocalFocusManager.current
+    val holdsFocus = remember { BooleanArray(1) }
+    if (!visible) SideEffect { if (holdsFocus[0]) focusManager.clearFocus(force = true) }
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     // A short drag's way back to rest, while it runs: stopped by the next
     // drag, so the two never write the offset over each other.
@@ -366,6 +381,10 @@ private fun DrawerBody(
                     onClick = {},
                 )
                 .then(if (visible) Modifier else Modifier.clearAndSetSemantics { })
+                .onFocusChanged { holdsFocus[0] = it.hasFocus }
+                .onPreviewKeyEvent { !visible }
+                .focusProperties { if (!visible) enter = { FocusRequester.Cancel } }
+                .focusGroup()
                 // Dragged down to dismiss, like every other sheet in the app.
                 // Upward drag is clamped to zero rather than followed: there is
                 // nothing above the drawer to reveal.

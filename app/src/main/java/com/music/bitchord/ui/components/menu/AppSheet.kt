@@ -176,14 +176,13 @@ fun <T : Any> AppSheet(
         // hand it straight back to that field.
         if (expanded && !sheet.holdsFocus && trapFocus()) sheetFocus.requestFocus()
     }
-    LaunchedEffect(keyboard) {
-        // A keyboard coming into use brings the focus in only to a sheet
-        // nothing covers: under a sheet stacked on it, a dialog or a menu,
-        // the focus stays with the one on top.
-        val covered = !trapFocus() ||
-            dialogs?.requests?.isNotEmpty() == true ||
-            menus?.request != null
-        if (keyboard && expanded && !sheet.holdsFocus && !covered) sheetFocus.requestFocus()
+    // A keyboard coming into use — or a dialog or menu over the sheet going
+    // away under one — brings the focus back in, but only to a sheet nothing
+    // covers: under a sheet stacked on it, a dialog or a menu, the focus
+    // stays with the one on top.
+    val covered = dialogs?.requests?.isNotEmpty() == true || menus?.request != null
+    LaunchedEffect(keyboard, covered) {
+        if (keyboard && expanded && !sheet.holdsFocus && !covered && trapFocus()) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)
@@ -276,7 +275,7 @@ fun <T : Any> AppSheet(
                 // sheet only ever moves down from where it rests, so where it
                 // rests is all it can be touched in. Restarted for a new
                 // item, so a drag begun on one can't dismiss the next.
-                .pointerInput(current) {
+                .pointerInput(opening, current) {
                     val tracker = VelocityTracker()
                     // Tracked from the finger's first touch, not from where
                     // the drag cleared the touch slop: a short flick is only
@@ -299,7 +298,16 @@ fun <T : Any> AppSheet(
                             sheet.drag = (sheet.drag + over).coerceAtLeast(0f)
                             track(change)
                         } ?: return@awaitEachGesture
+                        // The drag follows another finger if the first lifts;
+                        // the last one it followed is the one whose lift ends it.
+                        var last = start.id
                         val ended = verticalDrag(start.id) { change ->
+                            if (change.id != last) {
+                                // A new finger: its own samples only, not a
+                                // jump from where the last one was.
+                                tracker.resetTracking()
+                                last = change.id
+                            }
                             sheet.drag = (sheet.drag + change.positionChange().y).coerceAtLeast(0f)
                             change.consume()
                             track(change)
@@ -307,7 +315,7 @@ fun <T : Any> AppSheet(
                         // The lift itself, which the drag never hands over: a
                         // flick that stopped before letting go reads as the
                         // stop it ended in, not the flick before it.
-                        if (ended) currentEvent.changes.firstOrNull { it.id == start.id }?.let(::track)
+                        if (ended) currentEvent.changes.firstOrNull { it.id == last }?.let(::track)
                         currentSettle(if (ended) tracker.calculateVelocity().y else 0f)
                     }
                 }

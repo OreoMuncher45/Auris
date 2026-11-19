@@ -17,6 +17,13 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
@@ -52,6 +59,8 @@ class PlayerDrawerTest {
     private var gone = false
     private var bodyCompositions = 0
     private var pageTaps = 0
+    private var resets = 0
+    private val reset = FocusRequester()
 
     @Before
     fun setUp() {
@@ -69,6 +78,15 @@ class PlayerDrawerTest {
                                     onDispose { gone = true }
                                 }
                                 Box(Modifier.fillMaxWidth().height(200.dp))
+                                // A reset button, the kind a drawer carries.
+                                Box(
+                                    Modifier
+                                        .focusRequester(reset)
+                                        .focusProperties { canFocus = true }
+                                        .clickable { resets++ }
+                                        .height(48.dp)
+                                        .fillMaxWidth(),
+                                )
                             }
                         }
                         DrawerHostOverlay(host)
@@ -92,6 +110,29 @@ class PlayerDrawerTest {
         compose.mainClock.autoAdvance = true
         compose.waitForIdle()
         assertTrue("gone once it is down", gone)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun aButtonFocusedAsItClosesCantBePressedOnTheWayDown() {
+        open = true
+        compose.waitForIdle()
+        compose.runOnIdle { reset.requestFocus() }
+        compose.waitForIdle()
+
+        compose.mainClock.autoAdvance = false
+        open = false
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+        compose.runOnIdle { }
+        assertFalse("still up for its way down", gone)
+        compose.onRoot().performKeyInput { pressKey(Key.Enter) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.runOnIdle { }
+        assertEquals("Enter presses nothing on a drawer that is going", 0, resets)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
     }
 
     @Test

@@ -326,6 +326,55 @@ class AppSheetFocusTest {
         assertTrue("the covered sheet leaves the field the focus", fieldFocused)
     }
 
+    @OptIn(ExperimentalComposeUiApi::class, ExperimentalTestApi::class)
+    @Test
+    fun aMenuClosingOverTheSheetGivesItTheFocusBack() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var behindFocused = false
+        var insideFocused = false
+        val menus = MenuHostState()
+        compose.setContent {
+            val modes = LocalInputModeManager.current
+            CompositionLocalProvider(LocalMenuHost provides menus) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        Box(
+                            Modifier
+                                .onFocusChanged { behindFocused = it.isFocused }
+                                .focusable(),
+                        )
+                        AppSheet(item = item, onDismiss = { item = null }) {
+                            Box(
+                                Modifier
+                                    .testTag(INSIDE)
+                                    .onFocusChanged { insideFocused = it.isFocused }
+                                    .focusable(),
+                            )
+                        }
+                        MenuHostOverlay(menus)
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { modes.requestInputMode(InputMode.Keyboard) }
+        }
+        item = "downloads"
+        compose.waitForIdle()
+
+        // A menu opened from one of the sheet's rows takes the focus…
+        menus.open(null) { close ->
+            MenuRow(icon = null, label = "Sort", ink = androidx.compose.ui.graphics.Color.White) { close() }
+        }
+        compose.waitForIdle()
+        // …and closing it hands the focus back to the sheet, not to nothing.
+        menus.close()
+        compose.waitForIdle()
+        compose.onRoot().performKeyInput { pressKey(Key.Tab) }
+        compose.waitForIdle()
+        assertFalse("the focus didn't land behind the sheet", behindFocused)
+        assertTrue("one Tab from the sheet's handle reaches its control", insideFocused)
+    }
+
     @Test
     fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
         AppUi.install(AndroidAppUiHost)
