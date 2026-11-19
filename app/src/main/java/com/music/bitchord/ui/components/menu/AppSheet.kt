@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.focus.focusRequester
@@ -145,15 +146,16 @@ fun <T : Any> AppSheet(
     // focus back.
     if (!expanded) SideEffect { focusManager.clearFocus(force = true) }
 
-    // With a keyboard, focus moves into the sheet as it opens, rather than
-    // staying on whatever opened it behind the scrim. Only with a keyboard:
-    // in touch mode focusing the sheet would mean nothing but a focus ring.
-    // Content that focuses something of its own (a form's field) does so
-    // after this and wins.
+    // With a keyboard, focus moves into the sheet — as it opens, or as the
+    // keyboard comes into use while it is up — rather than staying on
+    // whatever opened it behind the scrim. Only with a keyboard: in touch
+    // mode focusing the sheet would mean nothing but a focus ring. Never
+    // when the focus is already inside (a form's field the listener is
+    // typing in): content that focuses its own field keeps it.
     val sheetFocus = remember { FocusRequester() }
-    val inputModes = LocalInputModeManager.current
-    LaunchedEffect(expanded) {
-        if (expanded && inputModes.inputMode == InputMode.Keyboard) sheetFocus.requestFocus()
+    val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    LaunchedEffect(expanded, keyboard) {
+        if (expanded && keyboard && !sheet.holdsFocus) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)
@@ -301,6 +303,7 @@ fun <T : Any> AppSheet(
                         // nothing behind it can be reached, and while it goes,
                         // nothing on it can be — not even by the window
                         // handing its focus back to the first thing it finds.
+                        .onFocusChanged { sheet.holdsFocus = it.hasFocus }
                         .focusRequester(sheetFocus)
                         .focusProperties {
                             if (expanded) {
@@ -337,6 +340,9 @@ private class SheetState<T : Any> {
     var opening: Any? = null
     val progress = Animatable(0f)
     val stillVisible by derivedStateOf { progress.value > 0f }
+
+    /** Whether anything inside the sheet has the focus. Read when deciding to take it, never composed. */
+    var holdsFocus = false
 
     /** A short drag's way back to rest, while it runs. */
     var springBack: Job? = null

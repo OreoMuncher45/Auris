@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.withKeyDown
@@ -140,6 +145,53 @@ class AppSheetFocusTest {
         compose.waitForIdle()
         assertFalse("Shift+Tab doesn't reach what is behind the sheet", behindFocused)
         assertTrue("the focus stays in the sheet", insideFocused)
+    }
+
+    @Test
+    fun aKeyboardComingIntoUseWhileTheSheetIsUpBringsTheFocusIn() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var behindFocused = false
+        var insideFocused = false
+        val behind = FocusRequester()
+        // The test host has no touch mode to enter, so the mode is the test's.
+        val modes = object : InputModeManager {
+            var mode by mutableStateOf(InputMode.Touch)
+            override val inputMode: InputMode get() = mode
+            @ExperimentalComposeUiApi
+            override fun requestInputMode(inputMode: InputMode): Boolean {
+                mode = inputMode
+                return true
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalInputModeManager provides modes) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        Box(
+                            Modifier
+                                .focusRequester(behind)
+                                .onFocusChanged { behindFocused = it.isFocused }
+                                .focusable(),
+                        )
+                        AppSheet(item = item, onDismiss = { item = null }) {
+                            Box(Modifier.onFocusChanged { insideFocused = it.isFocused }.focusable())
+                        }
+                    }
+                }
+            }
+        }
+        compose.runOnIdle { behind.requestFocus() }
+        // Opened by touch: nothing moves the focus.
+        item = "downloads"
+        compose.waitForIdle()
+        assertFalse("a touch-opened sheet takes nothing", insideFocused)
+
+        // Then a key is pressed.
+        modes.mode = InputMode.Keyboard
+        compose.waitForIdle()
+        assertFalse("the focus left what is behind the sheet", behindFocused)
+        assertTrue("…for the sheet", insideFocused)
     }
 
     @Test
