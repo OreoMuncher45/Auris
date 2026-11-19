@@ -67,4 +67,14 @@ class RootPageKeyTest {
         assertEquals("settings", key(nav = nav))
         assertEquals("replay", key(nav = RootNav().apply { showReplay = true }, detail = playlist))
     }
+
+    @Test fun `Replay opened from Settings is shown over Settings`() {
+        val nav = RootNav().apply {
+            showSettings = true
+            settingsCategory = "data"
+            settingsSubScreen = "replay"
+            showReplay = true
+        }
+        assertEquals("replay", key(nav = nav))
+    }
 }

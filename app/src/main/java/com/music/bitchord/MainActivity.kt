@@ -4218,6 +4218,7 @@ private fun BitChordApp(
                         nav.showSources -> stringResource(R.string.sources)
                         nav.showListenTogether -> stringResource(R.string.listen_together)
                         nav.showEqualizer -> stringResource(R.string.equalizer)
+                        nav.showReplay && nav.settingsSubScreen == "replay" -> stringResource(R.string.replay)
                         nav.showSettings -> nav.settingsCategory
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
@@ -4240,6 +4241,7 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
+                        nav.showReplay && nav.settingsSubScreen == "replay" -> replayScrolled
                         nav.showSettings || nav.showAccountScrobbling || nav.showSources || nav.showListenTogether ||
                             nav.showEqualizer ||
                             sheets.showDiscord || sheets.showHistory || sheets.showFlow || sheets.showQuickPicks ||
@@ -4277,6 +4279,10 @@ private fun BitChordApp(
                         })
                         nav.showEqualizer -> ({
                             nav.showEqualizer = false
+                            nav.settingsSubScreen = null
+                        })
+                        nav.showReplay && nav.settingsSubScreen == "replay" -> ({
+                            nav.showReplay = false
                             nav.settingsSubScreen = null
                         })
                         nav.showSettings && nav.settingsCategory != null -> ({
@@ -5104,10 +5110,24 @@ private fun RootPage(
             },
             onOpenArtist = { id, name ->
                 nav.showReplay = false
+                // Opened from Settings, Settings is still up beneath Replay and
+                // would hide the page being opened.
+                if (nav.settingsSubScreen == "replay") {
+                    nav.showSettings = false
+                    nav.settingsCategory = null
+                    nav.settingsSubScreen = null
+                }
                 pageActions.openByName(id, name, null, BrowseType.ARTIST, null)
             },
             onOpenAlbum = { id, title, artist, art ->
                 nav.showReplay = false
+                // Opened from Settings, Settings is still up beneath Replay and
+                // would hide the page being opened.
+                if (nav.settingsSubScreen == "replay") {
+                    nav.showSettings = false
+                    nav.settingsCategory = null
+                    nav.settingsSubScreen = null
+                }
                 pageActions.openByName(id, title, artist, BrowseType.ALBUM, art)
             },
             onShare = {
@@ -7469,6 +7489,9 @@ internal fun rootPageKey(
         nav.showSources -> "sources"
         nav.showListenTogether -> "listen_together"
         nav.showEqualizer -> "equalizer"
+        // Replay opened from Settings → Data is drawn over Settings, which
+        // stays up underneath it to come back to.
+        nav.showReplay && nav.settingsSubScreen == "replay" -> "replay"
         // Above Replay, not below it. The top bar's account
         // button sets `showSettings` from every page including
         // this one, so with Replay winning the tie the button
