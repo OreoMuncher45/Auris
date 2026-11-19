@@ -12,8 +12,23 @@
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
-set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+# The POSIX threading model, where the toolchain offers one. The win32 model ships no <mutex>
+# and no <thread> — the Windows libraries here use both — and Debian's alternatives point at it
+# by default, so a cross-build that took the bare name failed to compile at the first lock.
+# A compiler named on the command line wins: the build may have found a toolchain this file
+# cannot see.
+if(NOT CMAKE_CXX_COMPILER)
+    find_program(BITCHORD_MINGW_CXX NAMES x86_64-w64-mingw32-g++-posix x86_64-w64-mingw32-g++)
+    if(NOT BITCHORD_MINGW_CXX)
+        message(FATAL_ERROR "No MinGW-w64 C++ compiler found; install mingw-w64.")
+    endif()
+    message(STATUS "BitChord cross compiler: ${BITCHORD_MINGW_CXX}")
+    set(CMAKE_CXX_COMPILER ${BITCHORD_MINGW_CXX})
+endif()
+if(NOT CMAKE_C_COMPILER)
+    find_program(BITCHORD_MINGW_CC NAMES x86_64-w64-mingw32-gcc-posix x86_64-w64-mingw32-gcc)
+    set(CMAKE_C_COMPILER ${BITCHORD_MINGW_CC})
+endif()
 set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

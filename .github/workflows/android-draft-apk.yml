@@ -14,24 +14,231 @@ on:
       version:
         description: "Version stamped into the APK, verbatim"
         required: true
-        default: "3.0.3"
+        default: "3.1"
       version_code:
         description: "versionCode stamped into the APK"
         required: true
-        default: "103"
+        default: "155"
       tag:
         description: "Tag of the private draft release"
         required: true
-        default: "v3.0.3-draft"
+        default: "v3.1"
       title:
         description: "Title of the private draft release"
         required: true
-        default: "Auris 3.0.3 — private preview"
+        default: "Auris 3.1 — private preview"
       notes:
         description: "Release notes for the draft"
         required: false
-        default: ""
-
+        default: |
+          🔥Auris 3.1 — Extensions, a new Now Playing, a much lighter app & more
+          
+          Auris 3.1 — private preview
+          
+          Everything that landed since 3.0, in one place.
+          
+          Extensions
+          - Auris now runs extension packages from the Mornye store. An extension can
+            answer a search with the real track, stream the audio, hand back lyrics and
+            serve its own quality tiers — lossless, hi-res, Atmos — so new sources are
+            packages now, not new builds of the app.
+          - A signed session and a verification page: an extension that needs to prove
+            who you are opens its own page inside the app, and the answer comes back as
+            a session instead of a guess.
+          - Upgrades land. When a track moves to a better tier, the download is prepared
+            ahead of time and the switch happens without stopping the music.
+          - An extension that refuses a track — or a tier, like Atmos — is no longer the
+            end of the song: the next rung down plays instead, and the app says why.
+          - The store opens with nothing filtered out, there is no default store baked
+            into the app, extensions stay switched off across a restart unless you switch
+            them on, and a backoff inside an extension no longer holds a worker thread
+            while it waits.
+          
+          A new Now Playing
+          - The player is restyled after Apple Music: the transport, the volume bar, the
+            bottom row and the sleeve all sit where the reference sits, and the whole
+            deck is drawn to one grid.
+          - The title and the artist sit lower under the sleeve, and the sleeve itself
+            is bigger and lower when full-screen art is off. The lyric line, the
+            scrubber, the timestamps and the quality badge drop as one block, so
+            nothing collides on a small screen.
+          - In landscape the transport sits centred under the scrubber and the three
+            buttons are spread apart, instead of being crammed together in the middle
+            of the screen.
+          - The bottom row is lifted off the system bar: the volume, AirPlay, lyrics
+            and queue buttons now sit inside the player, with air under them, instead
+            of against the phone's own furniture.
+          - The wash under the sleeve is lifted with them, so the brightest band of
+            the picture rides up behind the art and the controls stand on a calmer
+            band of colour.
+          - Tapping the album art switches between the card and the full-screen
+            picture, in the player's own movement rather than a jump. The tap takes
+            nothing, so the drag on the artwork still opens the queue.
+          - A new switch draws the album art a little smaller inside its card, with a
+            thin edge of the card's own colour around it, for a cover that is cropped
+            too tightly. It is off by default.
+          - One ink. The title and the transport wear the player's own colour again,
+            like every other mark on the screen, so there is no second colour system to
+            fight with.
+          - Live blur is ON by default and now follows the picture: the colour behind
+            the player is read about eight times a second and the backdrop is redrawn
+            only when that wash has actually moved, so the colour moves with the art
+            instead of lagging behind it.
+          - The frosted-glass mode is back, and the transport is Auris's own rather than
+            a copy of somebody else's.
+          - The cover flies to the player, artwork arrives with a fade instead of
+            popping, the play and pause glyphs hand over to each other, and the title
+            travels into the mini player instead of vanishing.
+          - The lyrics panel takes its colour from the artwork, with its own overrides,
+            and when lyrics are missing the app now says what is missing instead of
+            "no lyrics found".
+          - Spotify Canvas can be switched off on its own.
+          - Automix's panel is a real editor now: the waveform is drawn from what the
+            analyser actually measured, the grid is a ruler, the snap is a magnet, the
+            edges resize, and a lane with a tempo always has a waveform. A beat-matched
+            pair is planned instead of refused.
+          
+          Lighter, cooler, longer-lived
+          - A performance monitor with a saveable log: the app's own share of the CPU,
+            the thread count, the memory, and counters for the three things that cost
+            the most — source searches, next-track preparations and WebView starts.
+            "Copy log" now carries the whole report, and the last crash with it, so
+            "it crashed" comes with the stack that says why.
+          - The monitor now names the threads that cost the most: the top eight, each
+            with its share of one core over the last window. The whole-phone CPU
+            columns are gone — Android has not let an app read them since Android 10,
+            so they only ever showed a flat zero.
+          - The next track's source search is single-flight: one search per track at a
+            time, and a second request waits for the answer instead of starting the same
+            patient search again. The queue changes several times a minute, and each
+            change used to restart that search from scratch. The answer itself is now
+            kept for a minute and handed out again, so a queue that changes three times
+            in seven seconds runs one search instead of three.
+          - The PO-token WebView — the browser page the app loads to prove it is not a
+            bot — is released after three minutes of doing nothing.
+          - Live blur no longer makes the screen redraw thirty times a second for a
+            wash nobody could see changing: the colour is published only when it has
+            actually moved far enough to see.
+          - The live wash is paid for once instead of three times over. Every captured
+            frame used to be read three ways — the mesh, the blur and the ink — and
+            then blurred again on the GPU on every backdrop redraw, which on a phone
+            rendering in software costs whole cores. Now one read serves them all, the
+            mesh is blurred on the CPU into its own texture, and the GPU blur is not
+            used for live meshes at all.
+          - The live picture is captured about eight times a second instead of thirty,
+            the ink is read four times a second instead of thirty, and a frame is only
+            handed to the backdrop that is actually on screen.
+          - The Automix planner used to rebuild a whole track's beat grid and score
+            every beat against the low-band curve four times a second, for a pair of
+            tracks whose analysis does not move. The score is now kept, and recomputed
+            only when the analysis it was made from has changed.
+          - The frame capture callback runs on its own thread instead of waiting for the
+            main thread, and the capture loop no longer spins when there is no picture
+            to copy.
+          - The Sing vocal remover only runs while Sing is switched on, and the
+            analyser stops when nothing is looking at it.
+          - The Automix's memory is bounded: the heavy waveform is dropped from every
+            track but the few the panel is drawing, and the oldest results are let go
+            once there are more than two dozen. Tempo, beat grid and mix points stay.
+          - The onboarding flow, the slide and the scroll stopped dropping frames. A
+            long track no longer takes the process down with it, and background work
+            can no longer take the app down with it.
+          - Album art arrives smaller: the player asks for the copy the screen can
+            actually show, so a cover no longer takes the frame when it lands. The
+            copies kept on the phone — the one filed in the gallery and the one
+            inside a downloaded track — are compressed as well, and look the same.
+          
+          Audio
+          - Dolby Atmos is now a rung for downloads on devices that can actually decode
+            it.
+          - A phone with no hardware Dolby decoder no longer gets the spatial mix.
+            Dolby's decoder ships with the maker's Android build, not with Android, and
+            E-AC-3 in six channels decoded in software costs whole cores for as long as
+            it plays. The Atmos rung now falls back to the lossless copy — the rung's
+            own fallback anyway — and the badge says "Lossless" because that is what is
+            playing. The performance report says which of the three it is: hardware,
+            software only, or none at all.
+          - ALAC is decoded by the bundled FFmpeg rather than the platform, so it plays
+            on phones whose Android build has no ALAC decoder.
+          - The Atmos switch is gone, and Lossless no longer serves an Atmos stream by
+            accident.
+          - The volume slider works again on a bit-perfect route. Bypassing Android's
+            mixer gives up the mixer's gain, so the phone's slider stopped controlling
+            anything, and a USB DAC was left at full volume. The slider is now an
+            offset from the level the output already has: the DAC's own knob stays
+            where you put it, and the phone's slider moves the sound down from there.
+            The audio pipeline says where the level is applied, and says so plainly
+            when the app is scaling the samples, because a gain on the samples is not
+            bit-exact.
+          - The phone's volume buttons now work on a bit-perfect route. Android's
+            buttons move the system media stream, and on that route the system mixer
+            is out of the way — and Android pins that stream at maximum when a USB DAC
+            attaches, so the buttons did nothing at all. Auris now reads the buttons
+            and hands them to whoever is holding the level: the DAC's own control or
+            the app's gain. Everywhere else Android still answers them as it always
+            did.
+          - The audio pipeline now shows the output volume: how far the slider has
+            turned the sound down, the gain that reaches the samples, and — where a
+            DAC has a control of its own — the absolute level the output ended up at.
+          
+          Spotify
+          - Spotify's own home is back. The catalogue switch decides where the
+            homepage and the search come from: switch to Spotify and the page is
+            Spotify's own feed, chips and all; switch back and it is YouTube Music's.
+          - One algorithm, whichever catalogue you browse. Flow, Autoplay and
+            "more like this" are YouTube Music's, always. The switch that used to
+            pick a provider's algorithm now picks only the catalogue the homepage
+            and the search come from.
+          - Spotify still knows you: your top tracks and what you played there lately
+            are read and matched to something playable, and they seed the mix whichever
+            catalogue is chosen — signed in.
+          - Your likes are yours. The radio is seeded from the songs you liked only
+            when "similar liked songs" is on; with it off, it is seeded from what you
+            are playing elsewhere. Spotify's Liked Songs are never read into the mix.
+          - Flow no longer repeats itself: the tracks just played are evidence for
+            ranking, not content for the mix, and the radio is closed to them too.
+          - A mix built by the old algorithm is dropped rather than restored, so the
+            stored mix always carries the one this build would build.
+          - The Auris Pass replaces the old listener card in Settings, and it is
+            findable from the search field too.
+          - Spotify rows now play the recording the row names — never another artist's
+            recording — and artist pages keep their own artists and releases.
+          - A track that came from Spotify can now be liked. The row is rated through
+            the recording behind it, so the like lands on the track you are actually
+            listening to.
+          - Podcasts and audiobooks have left the Spotify catalogue and live in their
+            own tab.
+          - The importer pages show the live operation table, and an upgrade actually
+            lands.
+          
+          Downloads and library
+          - A whole release can be put into a playlist: album to playlist, playlist to
+            playlist.
+          - Podcasts and audiobooks can be downloaded, kept and tidied up.
+          - The playlists shelf can be read as a list, and Spotify comes in from
+            Settings.
+          - The next download is prepared ahead of the next track.
+          - A downloaded playlist keeps itself whole: songs added to it are
+            downloaded by themselves. There is a switch for it on the playlist's
+            own page, and it is on unless you turn it off.
+          - A download you delete by hand is never fetched again — not by the
+            playlist sync, and not by anything else.
+          
+          First run
+          - A first-run flow, with a row to see it again, and the real Spotify mark in
+            the source selection.
+          
+          Fixes
+          - The "zoom out album art" switch no longer takes the app down. The picture's
+            corner radius was divided by the picture's own scale, and that scale was
+            zero whenever the player was open — a radius of nothing is not a shape
+            anything can draw. The picture now shrinks with the card, and stops
+            shrinking as the card slides into the mini player.
+          - An empty search now says which kind of empty it is.
+          - The Automix measures a streamed track's ending, not just its opening.
+          - Our own Episodes are in, with a switch that turns podcasts off.
+          
+          - Removed Herobrine
 permissions:
   contents: write
 
@@ -43,7 +250,7 @@ jobs:
   build:
     name: Build and draft
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -102,10 +309,9 @@ jobs:
           cp app/build/outputs/apk/dev/release/*.apk dist/
           ls -lh dist
 
-      # The Studio separator's front end lives in the analyser library, so
-      # its presence is the proof that this build carries the neural path
-      # and is not an older APK wearing a newer version name.
-      - name: The Studio front end is in the APK
+      # The analyser library's presence is the proof that this build carries
+      # the neural path and is not an older APK wearing a newer version name.
+      - name: The analyser is in the APK
         run: |
           set -euo pipefail
           for apk in dist/*.apk; do
@@ -120,6 +326,39 @@ jobs:
         with:
           name: android-draft-apk
           path: dist/*.apk
+
+      # The package, the version and the signing certificate, checked before
+      # anything is published: a tester installs this over the last draft, so
+      # the package has to be the same one, the versionCode has to be higher
+      # than the installed build's, and the certificate has to be the fork's.
+      - name: Check the package, version and signature
+        env:
+          EXPECTED_FINGERPRINT: "385af3b4b3f5b4357b7bb271fd71b267fad4d536be87e44f2057b0c2de8971ce"
+          EXPECTED_PACKAGE: "com.dev.bitchord"
+        run: |
+          set -euo pipefail
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          for apk in dist/*.apk; do
+            echo "== $apk"
+            badging="$("$bt/aapt2" dump badging "$apk" | grep -E "^package:" | head -1)"
+            echo "$badging"
+            echo "$badging" | grep -q "package: name='$EXPECTED_PACKAGE'"
+            echo "$badging" | grep -q "versionCode='${{ inputs.version_code }}'"
+            # The digest line is spelled differently by different build-tools
+            # ("Signer #1 certificate SHA-256 digest:" on older ones, "V2
+            # Signer: certificate SHA-256 digest:" on newer), so the hex is
+            # taken out of whatever line names the SHA-256 rather than by
+            # matching a label.
+            certs="$("$bt/apksigner" verify --print-certs "$apk")"
+            echo "$certs" | grep -i "sha-256" || true
+            cert="$(echo "$certs" | grep -i "sha-256" | head -1 | tr -d ':' | grep -oiE "[0-9a-f]{64}" | head -1)"
+            echo "signer: $cert"
+            if [ -z "$cert" ]; then
+              echo "no signer certificate found in $apk" >&2
+              exit 1
+            fi
+            test "$cert" = "$EXPECTED_FINGERPRINT"
+          done
 
       # The draft itself: private, untagged, no publish. GitHub creates the
       # tag only when a draft is published, so nothing is cut here — the
@@ -146,3 +385,6 @@ jobs:
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,assets \
             --jq '{tag: .tagName, name: .name, draft: .isDraft, assets: [.assets[].name]}'
+          # A published release would be public; a draft is not. Fail loudly
+          # rather than let one slip out.
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true"

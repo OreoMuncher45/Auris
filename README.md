@@ -2,7 +2,7 @@
 
 <br/>
 
-<img src="LOGO.png" alt="Auris app icon" width="250" />
+<img src="Logo.png" alt="Auris app icon" width="160" />
 
 # Auris
 
@@ -10,14 +10,13 @@
 
 <br/>
 
-[![Latest release](https://img.shields.io/github/v/release/OreoMuncher45/BitChordNext?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/releases)
-[![License](https://img.shields.io/github/license/OreoMuncher45/BitChordNext?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/OreoMuncher45/BitChordNext/total?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/releases)
+[![Latest release](https://img.shields.io/github/v/release/OreoMuncher45/Auris?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/releases)
+[![License](https://img.shields.io/github/license/OreoMuncher45/Auris?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/OreoMuncher45/Auris/total?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/releases)
 
 <br/>
-<img src="BANNER.png" alt="Auris app icon" width="500" />
 
-[**Features**](#features) · [**Sources & addons**](#sources--addons) · [**Download**](#download) · [**Build from source**](#build-from-source) · [**Support**](#support) · [**Credits & license**](#credits--license)
+[**Features**](#features) · [**Sources**](#sources) · [**Download**](#download) · [**Build from source**](#build-from-source) · [**Support**](#support) · [**Credits & license**](#credits--license)
 
 </div>
 
@@ -31,11 +30,14 @@
 
 ## What Auris is
 
-A free Android music player built around **lossless-first playback**. It plays your local library, YouTube Music, and optional lossless addons, with the same library, downloads, lyrics, scrobbling and Discord presence you expect from a modern player.
+A free Android music player built around **lossless-first playback**. It plays your local library, YouTube Music, and sources you add yourself, with the same library, downloads, lyrics, scrobbling and Discord presence you expect from a modern player.
 
 Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 ## Features
+
+### Audio engine
+- **JamesDSP** — reverb, bass boost, stereo width, tube warmth and a safety limiter, by **James Fung**, running inside the app's own playback stream. Used with permission; GPL-licensed, with its source and notices shipped in the app.
 
 ### Interface
 - **Apple Music–style layout** — full-bleed Now Playing, large artwork, and a seeded palette that follows the current cover.
@@ -57,24 +59,20 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 - **Save cover art** from any song menu.
 - **Replay** appears in Library through a Customisation toggle instead of taking over Home.
 
-## Sources & addons
+## Credits
 
-Auris ranks sources itself: your addons first, then JioSaavn if you opt in, then YouTube Music as the fallback. Each addon has a health check and reports stream refusals on its own row instead of failing silently.
+- **JamesDSP** — the native audio engine (reverb, bass boost, stereo width, tube warmth, limiter), by **James Fung**, used with permission. GPL-licensed; its source and notices ship with the app.
 
-For Example:
+## Sources
 
-| Addon | What it does |
-|---|---|
-| **Auris Addon** | Hi-Fi FLAC through community instances, with automatic failover and a refreshed instance list. |
-| **Auris Hi-Res Lossless Addon** | Direct FLAC files at measured quality — no converter, no account, no waiting. |
+Auris ranks sources itself: the ones you add first, then JioSaavn if you opt in, then YouTube Music as the fallback. Every row has a health check and reports stream refusals instead of failing silently.
 
-Those two names belong to the sources Auris ships, and only those are permanent. **Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak one of the built-in protocols. Adding an addon never creates a second "Auris" row.
 
-> **Why the addons aren't named after their backends:** they run on volunteers' servers and free tiers. Naming them draws traffic, and traffic gets things rate-limited or shut down. The endpoints, fallbacks and setup steps are all in the source for anyone who wants to look.
+**Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak a built-in protocol. Adding a source never creates a second "Auris" row.
 
 ## Download
 
-Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/BitChordNext/releases) page. Current build: **2.2.17** (`versionCode 79`, package `com.dev.bitchord`).
+Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **2.2.20** (`versionCode 82`, package `com.dev.bitchord`).
 
 | APK | Use it for |
 |---|---|
@@ -103,7 +101,7 @@ A signed, installable release APK is produced by the **Flow Debug APK** workflow
 
 Auris is free and open source, and it is staying that way. A star, a bug report or a pull request is appreciated as much as a donation.
 
-- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/BitChordNext/issues) · [Patreon](https://www.patreon.com/cw/crimsanity)
+- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/Auris/issues)
 
 | Asset | Address |
 |---|---|
@@ -130,7 +128,8 @@ u1z9k30yyvy63f5w0jypt02kvvw6dcpcgprlhzmsgc57mw6qc8rtuc5tfd9ny4atqhr448udexhkuc8x
 ## Credits & license
 
 - **BitChord** by [kushagra](https://github.com/kushagrasinghx) — the app this fork is built on. If you redistribute Auris, keep that credit.
-- Everyone whose libraries and community services make the addons possible.
+- **Zenith** by [rezapranata089-bit](https://github.com/rezapranata089-bit/Zenith), a fellow GPL-3.0 fork of BitChord: the unified mini/full player panel is ported from it.
+- Everyone whose libraries and community services make the sources possible.
 - Third-party components and their licences are listed in [NOTICE](NOTICE).
 
 Auris is free software under the **GNU General Public License v3.0**. You may use, study, share and modify it, including commercially, but any distribution must keep this credit and ship the corresponding source under the same licence. See [LICENSE](LICENSE).

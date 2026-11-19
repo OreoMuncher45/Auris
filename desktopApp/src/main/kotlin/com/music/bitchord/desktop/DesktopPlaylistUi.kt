@@ -216,7 +216,7 @@ private fun NewPlaylistForm(
                 cursorBrush = SolidColor(DesktopAccent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).desktopTextInput(),
             )
         }
         if (name.isNotEmpty()) {
@@ -289,7 +289,7 @@ internal fun DesktopRenamePlaylistDialog(
                 cursorBrush = SolidColor(DesktopAccent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).desktopTextInput(),
             )
         }
         DialogButtons(
