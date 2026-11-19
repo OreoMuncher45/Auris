@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +62,9 @@ import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.theme.AppFonts
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The Customisation settings, as sheets.
@@ -352,17 +356,27 @@ internal fun FontSheet(onDismiss: () -> Unit) {
     // A copy in the app's own storage: the document the listener picked can be
     // moved, deleted, or live on storage that is not mounted tomorrow, and a
     // face that vanishes takes every label with it.
+    // The copy runs off the main thread; the settings are applied back on it,
+    // and only once the copy has succeeded.
+    val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
-            target.parentFile?.mkdirs()
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            } ?: return@runCatching
-            AppFonts.forgetCustom()
-            AppSettings.setCustomFontPath(target.absolutePath)
-            AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+        val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
+        scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                runCatching {
+                    target.parentFile?.mkdirs()
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } != null
+                }.getOrDefault(false)
+            }
+            if (!copied) return@launch
+            runCatching {
+                AppFonts.forgetCustom()
+                AppSettings.setCustomFontPath(target.absolutePath)
+                AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+            }
         }
     }
 

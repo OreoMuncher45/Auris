@@ -372,6 +372,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Only a draft is touched. A published release keeps its assets
+            # and notes: --clobber would replace them before the check below.
+            if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "$TAG is a published release; refusing to change it" >&2
+              exit 1
+            fi
             gh release upload "$TAG" dist/*.apk --repo "$GITHUB_REPOSITORY" --clobber
             if [ -n "$NOTES" ]; then
               gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES"

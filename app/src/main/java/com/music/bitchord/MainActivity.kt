@@ -1411,6 +1411,8 @@ private fun BitChordApp(
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
         versions.switchingAudioVersion = true
+        val token = Any()
+        versions.switchToken = token
         versions.keepVideoId = null
         val holdUntilAligned = AppSettings.smartVersionAlignment.value
         if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = true
@@ -1477,7 +1479,7 @@ private fun BitChordApp(
             return true
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            versions.switchingAudioVersion = false
+            if (versions.switchToken === token) versions.switchingAudioVersion = false
         }
     }
 
@@ -1495,6 +1497,8 @@ private fun BitChordApp(
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
         versions.switchingAudioVersion = true
+        val token = Any()
+        versions.switchToken = token
         // Mirrors the music-only path: the bar lights up for the resolve and
         // the service keeps it lit through the measure-and-cut, and the row
         // stays on the audio version until that swap actually commits — see
@@ -1553,7 +1557,7 @@ private fun BitChordApp(
             if (resumeAfterResolution) c.play()
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            versions.switchingAudioVersion = false
+            if (versions.switchToken === token) versions.switchingAudioVersion = false
         }
     }
 
@@ -1672,10 +1676,12 @@ private fun BitChordApp(
          play(songs, index)
          val pos = song?.let { com.music.bitchord.data.settings.MediaProgress.positionMs(it.videoId) } ?: 0L
          if (song != null && pos > 0L && !com.music.bitchord.data.settings.MediaProgress.isListened(song.videoId)) {
-             val target = index
              scope.launch {
                  delay(1200)
-                 controller?.seekTo(target, pos)
+                 // Only if this episode is still the one playing: another item
+                 // may have started in the meantime.
+                 val c = controller ?: return@launch
+                 if (c.currentMediaItem?.mediaId == song.videoId) c.seekTo(c.currentMediaItemIndex, pos)
              }
          }
      }
@@ -1691,11 +1697,13 @@ private fun BitChordApp(
             versions.convertedFromVideo = null
             versions.convertedAudioId = null
             versions.switchingAudioVersion = false
+            versions.switchToken = null
         }
         if (player.song?.videoId != versions.convertedVideoId) {
             versions.convertedFromAudio = null
             versions.convertedVideoId = null
             versions.switchingAudioVersion = false
+            versions.switchToken = null
         }
     }
 
@@ -2338,9 +2346,14 @@ private fun BitChordApp(
      * from one; the show's own last played episode otherwise.
      */
     fun smartDownloadPodcast(anchor: Song?) {
-        val feed = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
+        val loaded = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
+        // An episode menu opened outside its show (Continue Listening, Home)
+        // finds the last opened show's feed here, so that feed and its history
+        // are only used when the anchor is one of its episodes.
+        val inFeed = anchor == null || loaded.any { it.videoId == anchor.videoId }
+        val feed = if (inFeed) loaded else emptyList()
         val showId = nav.itunesPodcastId
-        val played = showId?.let { viewModel.playedEpisodes(it) }.orEmpty()
+        val played = if (inFeed) showId?.let { viewModel.playedEpisodes(it) }.orEmpty() else emptyList()
         val seed = if (anchor != null) listOf(anchor) + played else played
         val picked = com.music.bitchord.data.podcast.PodcastSmartDownload.select(feed, seed)
         if (picked.isEmpty()) return
@@ -2822,9 +2835,17 @@ private fun BitChordApp(
     // so a menu opened before the lookup above resolves would otherwise be
     // stuck without album/artist rows even after the ids come in. Keep it in
     // sync while it's showing this track.
+    // Only the missing ids are filled in: the held row may be a different
+    // entry of the same track (its own setVideoId), and replacing it would
+    // point the menu's actions at the playing entry instead.
     LaunchedEffect(playerSong) {
-        if (playerSong != null && sheets.songMenu.song?.videoId == playerSong.videoId) {
-            sheets.songMenu.song = playerSong
+        if (playerSong == null) return@LaunchedEffect
+        sheets.songMenu.song?.takeIf { it.videoId == playerSong.videoId }?.let { held ->
+            sheets.songMenu.song = held.copy(
+                artistId = held.artistId ?: playerSong.artistId,
+                albumId = held.albumId ?: playerSong.albumId,
+                albumName = held.albumName ?: playerSong.albumName,
+            )
         }
     }
 
@@ -7778,6 +7799,9 @@ private class VersionSwitchState {
     var convertedFromVideo by mutableStateOf<Song?>(null)
     var convertedAudioId by mutableStateOf<String?>(null)
     var switchingAudioVersion by mutableStateOf(false)
+    // Which switch owns [switchingAudioVersion], so a slow one for an earlier
+    // track doesn't clear the flag of the switch that replaced it.
+    var switchToken: Any? = null
     // Revert is an explicit choice for this occurrence of the track. Without
     // remembering it, the automatic preference would see the restored video
     // as a fresh item and immediately convert it again.
