@@ -124,6 +124,8 @@ class ExclusiveUsbOutput(
 
     private val sessionBlockedDevices = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var currentDeviceKey: String? = null
+    /** The physical device the session was opened on; two DACs of one model share [currentDeviceKey]. */
+    @Volatile private var currentDevicePath: String? = null
     @Volatile private var sessionSummary: String = ""
 
     private val audioManager: AudioManager? =
@@ -597,6 +599,7 @@ class ExclusiveUsbOutput(
         if (reuse != null &&
             reuse.isAlive &&
             currentDeviceKey == deviceKey &&
+            currentDevicePath == usbDevice.deviceName &&
             configuredRateHz == sampleRate &&
             configuredChannelCount == channelCount &&
             active &&
@@ -629,6 +632,7 @@ class ExclusiveUsbOutput(
         stopStreamLocked()
         connection = null
         currentDeviceKey = deviceKey
+        currentDevicePath = usbDevice.deviceName
         // A fresh open replaces the held connection only once it succeeds, so
         // the DAC stays off Android's driver between tracks and a failed
         // reopen can still hand it back. Any failure below closes through
