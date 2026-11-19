@@ -555,23 +555,29 @@ object AudioCache {
             // still held.
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
-                // A playback request keeps the key its first open chose on
-                // every reopen, lent or its own. Media3 rebuilds the key per
-                // open but keeps the extractor, so a seek that picked another
-                // entry (Opus under the plain key, then a complete AAC sibling
-                // once the plain one was evicted) would feed one container's
-                // bytes to the other's parser. A lent key that has lost bytes
-                // is refused upstream and recovery picks anew; an own key is
-                // simply refilled from its own upstream, as before.
+                // Borrowing is decided on a playback request's first open only.
+                // Media3 rebuilds the key per open but keeps the extractor, so
+                // a reopen that switched entries would feed one container's
+                // bytes to the other's parser:
+                // - A request that was lent a sibling keeps it on every reopen.
+                //   A hole in it is refused upstream and recovery picks anew.
+                // - A request that started on its own key is never lent one
+                //   later (Opus under the plain key, then a complete AAC
+                //   sibling once the plain one was evicted). Its key is worked
+                //   out per open exactly as it was before siblings were lent,
+                //   so a fill goes where it always did — not pinned, which
+                //   after a settings change would write another source's
+                //   rendition into the middle of the entry it started on.
                 val request = if (rendition == null) openingRequest.get() else null
-                val pinned = request?.pinnedFor(videoId)
+                val reopen = request?.pinnedFor(videoId) != null
+                val lent = if (reopen) request?.lentFor(videoId) else null
                 when {
                     rendition != null -> "$videoId#$rendition"
-                    pinned != null -> pinned
+                    lent != null -> lent
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
-                    else -> completeSibling(videoId, videoId) ?: videoId
-                }.also { key -> if (request != null && pinned == null) request.pin(videoId, key) }
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { if (reopen) it else completeSibling(videoId, it) ?: it }
+                    else -> if (reopen) videoId else completeSibling(videoId, videoId) ?: videoId
+                }.also { key -> if (request != null && !reopen) request.pin(videoId, key) }
             }
             // A source-backed track keys on the source and its track id alone.
             // The full URI would work but carries the title and artist used

@@ -64,10 +64,9 @@ internal class BorrowedEntries {
     }
 
     /**
-     * For a per-request set only: the key each video's first open chose,
-     * lent or not, which every later open of the request keeps — see the key
-     * factory in [AudioCache]. Separate from the lent keys, because an own key
-     * may still be refilled from its own upstream.
+     * For a per-request set only: the key each video's first open chose, lent
+     * or not. Its presence marks every later open as a reopen, on which the
+     * key factory in [AudioCache] lends nothing new.
      */
     private val pinned = ConcurrentHashMap<String, String>()
 
