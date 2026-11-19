@@ -39,6 +39,21 @@ internal object MenuTokens {
     /** How wide an anchored menu wants to be; never wider than the host. */
     val Width = 300.dp
 
+    /**
+     * The glass blur of a menu floating over a page. The house glass (3dp) is
+     * tuned for bars over artwork; over rows of text it shows every word
+     * behind the menu's own, sharp enough to read. This frosts them away.
+     */
+    val PageFrost = 24.dp
+
+    /**
+     * The flat plate's opacity under a menu over a page, where glass is off.
+     * The plate's usual strength is for artwork, whose colour shows through
+     * as a tint; rows of text show through as words, and have to be all but
+     * covered for the menu's own to read.
+     */
+    const val PagePlateAlpha = 0.96f
+
     /** Above the first row and below the last, inside the panel. */
     val PanelPadding = 6.dp
 

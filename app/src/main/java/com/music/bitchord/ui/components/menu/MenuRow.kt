@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.components.menu
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -114,4 +117,46 @@ internal fun MenuDivider(color: Color, density: MenuDensity = MenuDensity.Menu) 
         thickness = MenuTokens.DividerThickness,
         color = color,
     )
+}
+
+/**
+ * What a menu opened from a list is about: the title on one line, the credit
+ * under it, then the break into the rows. Small on purpose — the row it came
+ * from is still on screen behind the scrim, so this only has to name it.
+ *
+ * Emitted ahead of the rows rather than inside their scroll, so it stays put
+ * while a long menu scrolls under it.
+ */
+@Composable
+internal fun MenuHeader(
+    title: String,
+    subtitle: String?,
+    ink: Color = MaterialTheme.colorScheme.onSurface,
+    mutedInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    dividerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) { heading() }
+            .padding(horizontal = MenuTokens.MenuRowPaddingH, vertical = MenuTokens.MenuRowPaddingV),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = mutedInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    MenuDivider(dividerColor)
 }

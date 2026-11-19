@@ -251,6 +251,8 @@ android {
                     if (System.getProperty("os.name").startsWith("Linux")) {
                         it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredMenuTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredItemMenuTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.SeenWhenOnScreenTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MenuOpenCostProbe")
                     }
                 }

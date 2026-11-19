@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -263,6 +264,10 @@ import com.music.bitchord.ui.components.PodcastEpisodeSheet
 import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.MenuHeader
+import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.ui.components.HeldContextMenu
@@ -762,16 +767,21 @@ private fun BitChordApp(
     val audiobookQueryState = rememberSaveable { mutableStateOf("") }
     var audiobookQuery by audiobookQueryState
 
-    /** Holding a row anywhere but the player — the menu without the player's rows. */
+    /**
+     * A track's menu from anywhere but the player — the menu without the
+     * player's rows: lifted out of the list when it was a hold, hung off the
+     * ⋮ when it was a tap.
+     */
     val openSongMenu: (Song) -> Unit = { song ->
         sheets.songMenu.fromPlayer = false
         sheets.songMenu.origin = LongPressOrigin.consume()
+        sheets.songMenu.anchor = MenuOrigin.consume()
         sheets.songMenu.song = song
     }
-    /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
+    /** An album or playlist's menu: the held card's popup, or hung off the ⋯ that was tapped. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
         sheets.browseMenu.origin = LongPressOrigin.consume()
-        sheets.browseMenu.renameInSheet = false
+        sheets.browseMenu.anchor = MenuOrigin.consume()
         sheets.browseMenu.target = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
@@ -5054,7 +5064,7 @@ private fun RootPage(
                     Toast.LENGTH_SHORT,
                 ).show()
             },
-            onMore = { episode -> podcastUi.episodeMenu = episode },
+            onMore = { episode -> podcastUi.openEpisodeMenu(episode) },
             listState = scroll.continueListening,
             contentPadding = listPadding,
         )
@@ -5325,7 +5335,7 @@ private fun RootPage(
             onDownload = { song ->
                 Downloads.enqueue(context, song, "Podcast")
             },
-            onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
+            onEpisodeMenu = { song -> podcastUi.openEpisodeMenu(song) },
             onSmartDownload = { pageActions.smartDownloadPodcast(null) },
         )
     } else if (key == "settings") {
@@ -5529,8 +5539,10 @@ private fun RootPage(
             // is where a whole release is asked for — and the tracks
             // arrive stamped with the album they came off, which is what
             // the download record groups them under.
+            // Through openBrowseMenu, so the menu hangs off the ⋯ that
+            // recorded itself and no earlier hold is reused.
             onMore = { songs ->
-                sheets.browseMenu.target = BrowseTarget(
+                pageActions.openBrowseMenu(BrowseTarget(
                     browseId = page.browseId,
                     title = page.title,
                     subtitle = page.subtitle,
@@ -5539,7 +5551,7 @@ private fun RootPage(
                     songs = songs.map(withAlbum),
                     fromCard = false,
                     downloadId = pageActions.downloadIdFor(page.browseId),
-                )
+                ))
             },
             onArtistClick = { id, name ->
                 viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
@@ -5683,12 +5695,12 @@ private fun RootPage(
             onOwnShelfItemLongPress = { item ->
                 val url = item.videoId
                 if (url != null && url.startsWith("http")) {
-                    podcastUi.episodeMenu = Song(
+                    podcastUi.openEpisodeMenu(Song(
                         videoId = url,
                         title = item.title,
                         artist = item.subtitle,
                         thumbnailUrl = item.thumbnailUrl,
-                    )
+                    ))
                 }
             },
             onShowClick = { item ->
@@ -6252,24 +6264,19 @@ private fun RootOverlays(
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
     // ---- Album / playlist detail ----
-    // ---- Long-press track actions ----
-    // One body for both presentations of the track menu: the sheet the ⋮
-    // and the player open, and the popup a held row lifts into. Every
-    // callback below is the same in either; only the frame differs.
-    // The sheet is for the menus opened from a row — a held row's own
-    // popup is the held item lifting into, and the ⋮ on a row is this.
-    // The player's own three-dot menu is not here: it hangs off the
-    // button, in the sheet's window, so it is drawn with the player.
-    sheets.songMenu.song?.takeIf { sheets.songMenu.origin == null && !sheets.songMenu.fromPlayer }?.let { song ->
-        ModalBottomSheet(
-            onDismissRequest = { sheets.songMenu.song = null },
-            // The sheet paints itself in the track's own colours, corners
-            // and drag handle included — see SongActionsSheet.
-            containerColor = Color.Transparent,
-            dragHandle = null,
-        ) {
-            songMenuBody(song, SongActionsPresentation.Sheet)
-        }
+    // ---- Track actions ----
+    // One body for every frame of the track menu: hung off the ⋮ that was
+    // tapped, and the popup a held row lifts into. Every callback below is
+    // the same in either; only the frame differs. The player's own
+    // three-dot menu is not here: it hangs off the button, in the player's
+    // window, so it is drawn with the player.
+    AnchoredItemMenu(
+        item = sheets.songMenu.song?.takeIf { sheets.songMenu.origin == null && !sheets.songMenu.fromPlayer },
+        anchorInWindow = { sheets.songMenu.anchor },
+        onDismiss = { sheets.songMenu.song = null },
+    ) { song ->
+        MenuHeader(title = song.title, subtitle = song.artist)
+        songMenuBody(song, SongActionsPresentation.Menu)
     }
     // Drawn over everything, tab bar and mini player included, and kept
     // composed through its own exit — so it is not gated on songMenu.song.
@@ -6300,6 +6307,31 @@ private fun RootOverlays(
     LaunchedEffect(sheets.songMenu.song == null) {
         if (sheets.songMenu.song == null) sheets.songMenu.origin = null
     }
+    // A playlist or folder being renamed, handed over by its menu: the
+    // frosted card every text prompt in the app uses.
+    sheets.rename?.let { request ->
+        var name by remember(request) { mutableStateOf(request.current) }
+        val close = { sheets.rename = null }
+        val newName = name.trim()
+        val changed = newName.isNotEmpty() && newName != request.current
+        BackHandler(onBack = close)
+        com.music.bitchord.ui.components.TextValueAlert(
+            hazeState = hazeState,
+            title = request.heading,
+            message = "",
+            placeholder = request.current,
+            value = name,
+            onValueChange = { name = it },
+            onSave = {
+                if (changed) {
+                    close()
+                    request.save(newName)
+                }
+            },
+            onDismiss = close,
+            saveEnabled = changed,
+        )
+    }
     // Flow save asks for a name instead of stamping "Flow — Flow".
     if (sheets.showFlowSave) {
         com.music.bitchord.ui.screens.FlowSaveDialog(
@@ -6316,44 +6348,45 @@ private fun RootOverlays(
     // What can be done to an episode. Not the track menu: an episode has
     // no rating, no playlist and no source, so the rows that would mean
     // nothing there are not here.
-    podcastUi.episodeMenu?.let { episode ->
-        val dismiss = { podcastUi.episodeMenu = null }
-        ModalBottomSheet(
-            onDismissRequest = dismiss,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            PodcastEpisodeSheet(
-                episode = episode,
-                isLiked = viewModel.isEpisodeLiked(episode.videoId),
-                isLater = viewModel.isEpisodeLater(episode.videoId),
-                isInContinueListening = viewModel.isEpisodeInContinueListening(episode.videoId),
-                onDownload = {
-                    dismiss()
-                    Downloads.enqueue(context, episode, "Podcast")
-                },
-                onSmartDownload = {
-                    dismiss()
-                    smartDownloadPodcast(episode)
-                },
-                onToggleLike = {
-                    dismiss()
-                    viewModel.toggleEpisodeLiked(episode)
-                },
-                onToggleLater = {
-                    dismiss()
-                    viewModel.toggleEpisodeLater(episode)
-                },
-                onRemoveFromContinueListening = {
-                    dismiss()
-                    viewModel.removeRecentEpisode(episode.videoId)
-                    Toast.makeText(
-                        context,
-                        R.string.continue_listening_removed,
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                },
-            )
-        }
+    val dismissEpisodeMenu = { podcastUi.episodeMenu = null }
+    AnchoredItemMenu(
+        item = podcastUi.episodeMenu,
+        anchorInWindow = { podcastUi.episodeMenuAnchor },
+        onDismiss = dismissEpisodeMenu,
+    ) { episode ->
+        val dismiss = dismissEpisodeMenu
+        MenuHeader(title = episode.title, subtitle = episode.artist)
+        PodcastEpisodeSheet(
+            episode = episode,
+            isLiked = viewModel.isEpisodeLiked(episode.videoId),
+            isLater = viewModel.isEpisodeLater(episode.videoId),
+            isInContinueListening = viewModel.isEpisodeInContinueListening(episode.videoId),
+            onDownload = {
+                dismiss()
+                Downloads.enqueue(context, episode, "Podcast")
+            },
+            onSmartDownload = {
+                dismiss()
+                smartDownloadPodcast(episode)
+            },
+            onToggleLike = {
+                dismiss()
+                viewModel.toggleEpisodeLiked(episode)
+            },
+            onToggleLater = {
+                dismiss()
+                viewModel.toggleEpisodeLater(episode)
+            },
+            onRemoveFromContinueListening = {
+                dismiss()
+                viewModel.removeRecentEpisode(episode.videoId)
+                Toast.makeText(
+                    context,
+                    R.string.continue_listening_removed,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+        )
     }
 
     // ---- Download manager ----
@@ -6539,7 +6572,7 @@ private fun RootOverlays(
     // overflow. What a track's long-press menu is to one song, this is to
     // the whole release — the queue rows above all.
     // One body for the sheet and the popup alike — see songMenuBody.
-    val browseMenuBody: @Composable (BrowseTarget, SongActionsPresentation) -> Unit = { target, presentation ->
+    val browseMenuBody: @Composable (BrowseTarget) -> Unit = { target ->
         // Every row here closes the menu first: the tracks may still have to
         // be fetched, and leaving the sheet up over a request nothing on it
         // reports on reads as a tap that didn't land.
@@ -6582,7 +6615,6 @@ private fun RootOverlays(
         BrowseActionsSheet(
             // The live answer, not the one the target was built with.
             target = target.copy(playlist = playlist),
-            presentation = presentation,
             localCollection = localFolder?.let { folder ->
                 com.music.bitchord.ui.components.LocalCollectionActions(
                     title = folder.title,
@@ -6599,11 +6631,12 @@ private fun RootOverlays(
                     },
                 )
             },
-            onRenameInSheet = {
-                sheets.browseMenu.renameInSheet = true
-                sheets.browseMenu.origin = null
+            // Typing is a dialog's job: the menu closes and hands the name
+            // over to the one the root keeps for it.
+            onAskForName = { heading, current, save ->
+                sheets.browseMenu.target = null
+                sheets.rename = RootSheets.RenameRequest(heading, current, save)
             },
-            startRenaming = sheets.browseMenu.renameInSheet,
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
             onPlay = act { songs -> tracks.play(songs, 0) }.takeIf { target.fromCard },
@@ -6739,13 +6772,13 @@ private fun RootOverlays(
             },
         )
     }
-    sheets.browseMenu.target?.takeIf { sheets.browseMenu.origin == null }?.let { target ->
-        ModalBottomSheet(
-            onDismissRequest = { sheets.browseMenu.target = null },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            browseMenuBody(target, SongActionsPresentation.Sheet)
-        }
+    AnchoredItemMenu(
+        item = sheets.browseMenu.target?.takeIf { sheets.browseMenu.origin == null },
+        anchorInWindow = { sheets.browseMenu.anchor },
+        onDismiss = { sheets.browseMenu.target = null },
+    ) { target ->
+        MenuHeader(title = target.title, subtitle = target.subtitle)
+        browseMenuBody(target)
     }
     HeldContextMenu(
         item = sheets.browseMenu.target,
@@ -6767,13 +6800,10 @@ private fun RootOverlays(
             }
         },
     ) { target ->
-        browseMenuBody(target, SongActionsPresentation.Menu)
+        browseMenuBody(target)
     }
     LaunchedEffect(sheets.browseMenu.target == null) {
-        if (sheets.browseMenu.target == null) {
-            sheets.browseMenu.origin = null
-            sheets.browseMenu.renameInSheet = false
-        }
+        if (sheets.browseMenu.target == null) sheets.browseMenu.origin = null
     }
 
     // ---- Reorder playlist ----
@@ -7433,6 +7463,17 @@ private class PodcastUiState {
     var showContinueListening by mutableStateOf(false)
     /** The episode whose menu is open, or null when it is shut. */
     var episodeMenu by mutableStateOf<Song?>(null)
+    /**
+     * Where that menu hangs from, in window coordinates: the ⋮ that opened it,
+     * or the card that was held. A plain field, read while the menu is placed.
+     */
+    var episodeMenuAnchor: Rect? = null
+
+    /** Opens [episode]'s menu off whatever was just tapped or held. */
+    fun openEpisodeMenu(episode: Song) {
+        episodeMenuAnchor = MenuOrigin.consume() ?: LongPressOrigin.consume()?.bounds
+        episodeMenu = episode
+    }
     /** What the page's search is looking for. */
     var continueQuery by mutableStateOf("")
 }
@@ -7746,10 +7787,16 @@ internal class RootSheets {
         /**
          * The row or card that was held to open the track menu, or null when it
          * was opened any other way. Non-null lifts that item into
-         * [HeldContextMenu]; null keeps the bottom sheet — which is what the ⋮ on
-         * the very same row still opens.
+         * [HeldContextMenu]; null hangs the menu off [anchor] instead — which is
+         * what the ⋮ on the very same row opens.
          */
         var origin by mutableStateOf<HeldItem?>(null)
+        /**
+         * The ⋮ that opened the menu, in window coordinates, or null when
+         * nothing reported one (the menu then opens at the top end). A plain
+         * field: it is read while the menu is placed, never while composed.
+         */
+        var anchor: Rect? = null
     }
 
     /**
@@ -7776,9 +7823,19 @@ internal class RootSheets {
         var target by mutableStateOf<BrowseTarget?>(null)
         /** The card held to open it — see [SongMenu.origin]. */
         var origin by mutableStateOf<HeldItem?>(null)
-        /** Rename asked for from the popup, which hands it on to the sheet's form. */
-        var renameInSheet by mutableStateOf(false)
+        /** The ⋯ tapped to open it — see [SongMenu.anchor]. */
+        var anchor: Rect? = null
     }
+
+    /**
+     * A name being typed — renaming a playlist or a folder — or null when no
+     * one is. Text input is a dialog's job, not a menu's, so the menu closes
+     * and hands the job here.
+     */
+    var rename by mutableStateOf<RenameRequest?>(null)
+
+    /** What [rename] is asking for: the heading, the name as it stands, and what to do with the new one. */
+    class RenameRequest(val heading: String, val current: String, val save: (String) -> Unit)
 
     /** The playlist reorder sheet. */
     class Reorder {
@@ -7868,7 +7925,13 @@ internal fun FrostedSortMenu(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            .clickable(onClick = onDismiss),
+            // A tap on the page dismisses; nothing on the page was pressed,
+            // so nothing ripples across it.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
         contentAlignment = Alignment.TopEnd,
     ) {
         Surface(
@@ -7889,7 +7952,12 @@ internal fun FrostedSortMenu(
                         )
                     },
                 )
-                .clickable(onClick = {}),
+                // Swallows taps between rows; it isn't a control itself.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 // Date added is one row, Spotify-style: the arrow on it shows
