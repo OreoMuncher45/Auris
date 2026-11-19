@@ -95,6 +95,8 @@ class SflxStreamAdapterTest {
                   { item_type: 'song', id: 'SONG', name: 'A song', artists: 'Someone' },
                   { type: 'resolve', id: 'LOOSE', name: 'Loose type', artists: 'Someone' },
                   { type: 'album', id: 'LOOSEALB', name: 'Loose album', artists: 'Someone' },
+                  { item_type: 'constructor', id: 'PROTO', name: 'Inherited name', artists: 'Someone' },
+                  { type: 'constructor', id: 'LOOSEPROTO', name: 'Loose inherited name', artists: 'Someone' },
                 ];
               },
               checkAvailability(isrc, name, artist, options) {
@@ -207,7 +209,7 @@ class SflxStreamAdapterTest {
     @Test
     fun `a search keeps the tracks and drops artists, albums and playlists`() {
         val ids = case("search").answer().getValue("ids").jsonArray.map { it.jsonPrimitive.content }
-        assertEquals(listOf("TRK", "UNTYPED", "SONG", "LOOSE"), ids)
+        assertEquals(listOf("TRK", "UNTYPED", "SONG", "LOOSE", "LOOSEPROTO"), ids)
     }
 
     @Test
