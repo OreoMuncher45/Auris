@@ -170,6 +170,32 @@ class CencReviewCasesTest {
     }
 
     @Test
+    fun `a use survives a restart, and keeps its key through eviction`() {
+        val dir = Files.createTempDirectory("cenc").toFile()
+        CencKeys.clear()
+        try {
+            var now = 1_000_000_000_000L
+            CencKeys.clock = { now }
+            CencKeys.init(dir)
+            val recent = ByteArray(16) { 0x33 }
+            CencKeys.register(recent, key)
+            for (i in 0 until 4095) CencKeys.register(ByteArray(16).also { java.nio.ByteBuffer.wrap(it).putInt(i + 1) }, key)
+            now += 40L * 24 * 60 * 60 * 1000
+            CencKeys.keyFor(recent) // played from the cache
+            // Restart a day later.
+            now += 1L * 24 * 60 * 60 * 1000
+            CencKeys.clear()
+            CencKeys.clock = { now }
+            CencKeys.init(dir)
+            CencKeys.register(ByteArray(16) { 0x44 }, key) // pushes the store over the cap
+            assertArrayEquals("the recently used key outlived the restart and the eviction", key, CencKeys.keyFor(recent))
+        } finally {
+            CencKeys.clear()
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a saved flac from a source with an unknown length is seekable`() {
         // The fixture with its dfLa STREAMINFO total zeroed: "unknown".
         val bytes = resource("sine-cenc.mp4").readBytes()

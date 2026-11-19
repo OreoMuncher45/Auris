@@ -83,7 +83,7 @@ internal class CencTrackOutput(
         // fragment that names a different id than the file's default (a
         // `seig` sample group) is not decrypted with the wrong key, and fails
         // here, saying which id it needed.
-        val key = keyFor(cryptoData.encryptionKey)
+        val key = keyOf(cryptoData.encryptionKey)
             ?: throw ParserException.createForMalformedContainer(
                 "no key for ${CencKeys.hex(cryptoData.encryptionKey)}: the source's key is for a different key id",
                 null,
@@ -132,6 +132,18 @@ internal class CencTrackOutput(
         delegate.sampleData(ParsableByteArray(buffer.copyOfRange(at, buffered)), sampleLength, TrackOutput.SAMPLE_DATA_PART_MAIN)
         buffered = 0
         delegate.sampleMetadata(timeUs, flags and C.BUFFER_FLAG_ENCRYPTED.inv(), sampleLength, 0, null)
+    }
+
+    // A track's samples are under one key id, so the lookup is made once.
+    private var lastKid: ByteArray? = null
+    private var lastKey: ByteArray? = null
+
+    private fun keyOf(kid: ByteArray): ByteArray? {
+        if (lastKid?.contentEquals(kid) == true) return lastKey
+        return keyFor(kid)?.also { found ->
+            lastKid = kid.copyOf()
+            lastKey = found
+        }
     }
 
     /** Drops a sample the extractor abandoned, as it does on a seek. */

@@ -29,6 +29,14 @@ object CencKeys {
 
     private const val MAX_KEYS = 4096
     private const val KEEP_MS = 30L * 24 * 60 * 60 * 1000
+    /**
+     * How stale a use time may be before a use moves it, and how often such a
+     * move is written: at most once an hour, so a restart loses at most an
+     * hour of refreshes against a 30-day window, and a sample lookup never
+     * costs a write.
+     */
+    private const val TOUCH_MS = 60L * 60 * 1000
+    private var lastWrite = 0L
 
     private class Entry(val key: ByteArray, var usedAt: Long)
 
@@ -65,7 +73,7 @@ object CencKeys {
     /** The key for [kid], or null. */
     fun keyFor(kid: ByteArray): ByteArray? = synchronized(keys) {
         keys[hex(kid)]?.let { entry ->
-            entry.usedAt = clock()
+            touch(entry, clock())
             entry.key.copyOf()
         }
     }
@@ -78,7 +86,7 @@ object CencKeys {
             val now = clock()
             val known = keys[id]
             if (known != null && known.key.contentEquals(key) && !dirty) {
-                known.usedAt = now
+                touch(known, now)
                 return
             }
             keys[id] = Entry(key.copyOf(), now)
@@ -86,6 +94,14 @@ object CencKeys {
             dirty = true
             persist()
         }
+    }
+
+    /** A use: moves a stale use time, and writes it when the last write is an hour old. Lock held. */
+    private fun touch(entry: Entry, now: Long) {
+        if (now - entry.usedAt < TOUCH_MS) return
+        entry.usedAt = now
+        dirty = true
+        if (now - lastWrite >= TOUCH_MS) persist()
     }
 
     /** Drops the least recently used keys above the cap, but only ones idle for [KEEP_MS]. */
@@ -114,6 +130,7 @@ object CencKeys {
             )
         }
         dirty = written.isFailure
+        if (written.isSuccess) lastWrite = clock()
     }
 
     /** For tests: forget everything held in memory, and where it was kept. */
@@ -121,6 +138,7 @@ object CencKeys {
         keys.clear()
         file = null
         dirty = false
+        lastWrite = 0L
         clock = System::currentTimeMillis
     }
 
