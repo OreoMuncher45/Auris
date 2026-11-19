@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.sources.module.QuickJsExecutor
 import com.music.bitchord.data.sources.mornye.SflxException
 import com.music.bitchord.data.sources.mornye.SflxManifestParser
 import com.music.bitchord.data.sources.mornye.SflxPackages
@@ -157,6 +158,30 @@ class SflxPackageTest {
         assertFalse(permissions.allowsHost("qobuz.com.evil.io"))
         assertFalse(permissions.allowsHost(""))
         assertFalse(SflxManifestParser.parse(manifest(network = "\"\"")).permissions.allowsHost("qobuz.com"))
+    }
+
+    @Test
+    fun aBareStarGrantsAnyHostAndOrdinaryGrantsStayNarrow() {
+        // Jellyfin 1.1.1 declares `"network": ["*"]`: its server is wherever the
+        // listener runs one. `*` was matched as a literal hostname, so every
+        // request it made was refused.
+        val anyHost = SflxManifestParser.parse(manifest(network = "\"*\"")).permissions
+        assertTrue(anyHost.allowsHost("demo.jellyfin.org"))
+        assertTrue(anyHost.allowsHost("media.example.net:8920"))
+        assertTrue(QuickJsExecutor.mayReach("https://demo.jellyfin.org/Users", listOf("*")))
+        assertTrue(QuickJsExecutor.mayReach("https://192.168.1.20:8920/Items", listOf(" * ")))
+
+        // Every other grant still allows only what it lists.
+        val listed = listOf("qobuz.com", "*.qobuz.com")
+        assertTrue(QuickJsExecutor.mayReach("https://play.qobuz.com/x", listed))
+        assertTrue(QuickJsExecutor.mayReach("https://qobuz.com/x", listed))
+        assertFalse(QuickJsExecutor.mayReach("https://demo.jellyfin.org/x", listed))
+        assertFalse(QuickJsExecutor.mayReach("https://evil-qobuz.com/x", listed))
+        assertFalse(QuickJsExecutor.mayReach("https://x.example/", listOf("*.")))
+        assertFalse(QuickJsExecutor.mayReach("https://x.example/", listOf("**")))
+        assertFalse(SflxManifestParser.parse(manifest()).permissions.allowsHost("demo.jellyfin.org"))
+        // A bare star is not a pattern inside a host name.
+        assertFalse(SflxManifestParser.parse(manifest(network = "\"*qobuz.com\"")).permissions.allowsHost("evilqobuz.com"))
     }
 
     @Test

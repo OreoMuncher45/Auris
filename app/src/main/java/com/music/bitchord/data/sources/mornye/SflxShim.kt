@@ -1009,7 +1009,15 @@ internal object SflxShim {
                         .trim();
                 },
                 buildFilename: function () { return ''; },
-                getLocalTime: function () { return { error: 'this host does not implement gobackend.getLocalTime' }; },
+                // The device's wall clock, in the reference host's shape.
+                // QuickJS has no `Intl`, so the zone is "Local" and the offset
+                // carries it, in `Date#getTimezoneOffset` minutes (UTC+7 is
+                // -420), the convention Spotify Web's own table is keyed by.
+                getLocalTime: function () {
+                    var now = new Date();
+                    return { hour: now.getHours(), minute: now.getMinutes(), timezone: 'Local',
+                             offsetMinutes: now.getTimezoneOffset() };
+                },
                 getAudioQuality: function () { return { error: 'this host does not read files' }; },
                 getLyricsLRC: function () { return { error: 'this host does not implement gobackend.getLyricsLRC' }; },
                 checkISRCExists: function () { return { exists: false }; },
@@ -1737,9 +1745,17 @@ internal object SflxShim {
                     // being "found" and another downloaded. The row also goes
                     // in as `host_track`, the name Amazon's downloader reads,
                     // so it does not fetch the same track's metadata again.
+                    //
+                    // Only as `host_track`, never as `preparedContext.track`.
+                    // That key means "the object you yourself prepared", and an
+                    // extension that finds one with the right id trusts it over
+                    // its own lookup. This row is the host's search row, not
+                    // the extension's prepared object: SoundCloud took it, found
+                    // no `media.transcodings` in it and gave up on every stream.
+                    // Amazon, Qobuz and Deezer read `host_track`.
                     var ownRow = row && text(firstOf(row.id, row.track_id, row.trackId, row.song_id)) === playableId;
                     if (ownRow) {
-                        options.preparedContext = { track: row, host_track: row };
+                        options.preparedContext = { host_track: row };
                     } else if (typeof extension.checkAvailability === 'function') {
                         try {
                             var availability = await extension.checkAvailability(

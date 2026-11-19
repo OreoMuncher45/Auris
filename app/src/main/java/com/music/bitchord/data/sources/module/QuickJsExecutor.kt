@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -844,8 +845,8 @@ internal object QuickJsExecutor {
      *
      * `*.` is a subdomain wildcard and nothing else — `*.spotify.com` matches
      * `api.spotify.com` and `open.spotify.com` but not `spotify.com` itself,
-     * and not `notspotify.com`. That is the manifest format's own rule; see
-     * [SflxPermissions.allowsHost].
+     * and not `notspotify.com`. A bare `*` means any host. That is the
+     * manifest format's own rule; see [SflxPermissions.allowsHost].
      */
     internal fun mayReach(url: String, allowedHosts: List<String>?): Boolean {
         if (allowedHosts == null) return true
@@ -854,6 +855,10 @@ internal object QuickJsExecutor {
             val allowed = pattern.trim().lowercase(Locale.ROOT)
             when {
                 allowed.isEmpty() -> false
+                // A bare `*` is the manifest's grant of any host. Jellyfin
+                // declares it, because its server is wherever the listener
+                // runs one. It is shown at install like any other grant.
+                allowed == "*" -> true
                 // `*.example.com` is a subdomain wildcard: it must leave the dot
                 // in place, or `evilexample.com` would match it.
                 allowed.startsWith("*.") -> host.endsWith(allowed.substring(1))
@@ -876,9 +881,9 @@ internal object QuickJsExecutor {
         }
     }
 
-    private data class FetchResult(val code: Int, val body: String, val headers: JSONObject)
+    internal data class FetchResult(val code: Int, val body: String, val headers: JSONObject)
 
-    private fun fetchUrlSync(
+    internal fun fetchUrlSync(
         url: String,
         method: String,
         headersJson: String,
@@ -887,12 +892,14 @@ internal object QuickJsExecutor {
         val builder = Request.Builder().url(url)
 
         var hasUserAgent = false
+        var contentType: String? = null
         try {
             val headersObj = JSONObject(headersJson)
             for (key in headersObj.keys()) {
                 val value = headersObj.optString(key, "")
                 builder.header(key, value)
                 if (key.equals("user-agent", ignoreCase = true)) hasUserAgent = true
+                if (key.equals("content-type", ignoreCase = true)) contentType = value
             }
         } catch (_: Exception) {
         }
@@ -906,8 +913,8 @@ internal object QuickJsExecutor {
         }
 
         when (method.uppercase(Locale.ROOT)) {
-            "POST" -> builder.post((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
-            "PUT" -> builder.put((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
+            "POST" -> builder.post(requestBodyOf(body, contentType))
+            "PUT" -> builder.put(requestBodyOf(body, contentType))
             "DELETE" -> builder.delete()
             "HEAD" -> builder.head()
             else -> builder.get()
@@ -924,6 +931,25 @@ internal object QuickJsExecutor {
             }
             return FetchResult(response.code, responseBody, responseHeaders)
         }
+    }
+
+    /**
+     * A POST or PUT body, sent with the extension's own `Content-Type`.
+     *
+     * OkHttp sends the body's media type as the request's `Content-Type`,
+     * over any header the extension set, so a fixed media type here replaced
+     * every extension's own. And a body made from a String gains
+     * `; charset=utf-8` when its media type names no charset. Spotify's
+     * client-token endpoint answers 400 to `application/json; charset=utf-8`
+     * and 200 to the `application/json` Spotify Web asks for, so every Spotify
+     * Web search failed. The body is built from its bytes, so what goes out is
+     * exactly what the extension asked for. JSON stays the default for an
+     * extension that names no type.
+     */
+    private fun requestBodyOf(body: String?, contentType: String?): okhttp3.RequestBody {
+        val type = contentType?.trim()?.takeIf { it.isNotEmpty() }?.toMediaTypeOrNull()
+            ?: "application/json; charset=utf-8".toMediaType()
+        return (body ?: "").toByteArray(Charsets.UTF_8).toRequestBody(type)
     }
 
     // ── Polyfills ────────────────────────────────────────────────────────
