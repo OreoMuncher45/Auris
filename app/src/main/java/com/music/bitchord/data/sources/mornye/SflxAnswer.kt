@@ -62,9 +62,11 @@ internal object SflxAnswer {
      * A URL, or the parts of one. Tidal, Amazon and Apple Music answer with
      * `streamUrl: null` and a list of segments, and the segments are the
      * answer: the host writes them as a streaming playlist (see [SflxSegments])
-     * and hands the player that.
+     * and hands the player that. Or a file the extension wrote in its own
+     * folder ([localFile]): Deezer decrypts its download and answers with that.
      */
-    fun carriesStream(raw: String): Boolean = streamUrl(raw) != null || segments(raw).isNotEmpty()
+    fun carriesStream(raw: String): Boolean =
+        streamUrl(raw) != null || segments(raw).isNotEmpty() || localFile(raw) != null
 
     /** The headers the extension built for the audio request. */
     fun headers(raw: String): Map<String, String> = headerMap(field(raw, "headers"))

@@ -13,6 +13,8 @@ import com.music.bitchord.data.sources.mornye.SflxAnswer
 import com.music.bitchord.data.sources.mornye.SflxFiles
 import com.music.bitchord.data.sources.mornye.SflxManifestParser
 import com.music.bitchord.data.sources.mornye.SflxShim
+import com.music.bitchord.data.sources.mornye.SflxHost
+import com.music.bitchord.data.sources.mornye.SflxStore
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
@@ -56,6 +58,7 @@ class SflxDecryptedPlaybackTest {
     private lateinit var folder: File
     private lateinit var files: SflxFiles
     private lateinit var server: ServerSocket
+    private lateinit var client: OkHttpClient
     @Volatile private var served: ByteArray = ByteArray(0)
 
     private val key = ByteArray(16) { (it * 7 + 3).toByte() }
@@ -67,15 +70,10 @@ class SflxDecryptedPlaybackTest {
         val certificate = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
         val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        files = SflxFiles(
-            folder,
-            allowedHosts = listOf("127.0.0.1"),
-            client = SflxFiles.client(
-                OkHttpClient.Builder()
-                    .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
-                    .build(),
-            ),
-        )
+        client = OkHttpClient.Builder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .build()
+        files = SflxFiles(folder, allowedHosts = listOf("127.0.0.1"), client = SflxFiles.client(client))
         server = serverCertificates.sslContext().serverSocketFactory
             .createServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         thread(isDaemon = true) {
@@ -121,15 +119,13 @@ class SflxDecryptedPlaybackTest {
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
-    private fun loadFakeDeezer() = runBlocking {
-        val manifest = SflxManifestParser.parse(
-            """{"id":"deezer","name":"deezer","displayName":"Deezer","version":"1.3.12",
-                "type":["metadata_provider","download_provider"],
-                "permissions":{"network":["127.0.0.1"],"storage":true,"file":true},
-                "qualityOptions":[{"id":"flac","label":"FLAC / Hi-Res"}]}""",
-        )
-        // Deezer 1.3.12's download(), cut down to the calls it makes.
-        val script = """
+    private val manifestJson = """{"id":"deezer","name":"deezer","displayName":"Deezer","version":"1.3.12",
+        "type":["metadata_provider","download_provider"],
+        "permissions":{"network":["127.0.0.1"],"storage":true,"file":true},
+        "qualityOptions":[{"id":"flac","label":"FLAC / Hi-Res","kind":"lossless"}]}"""
+
+    // Deezer 1.3.12's download(), cut down to the calls it makes.
+    private fun fakeScript() = """
             registerExtension({
               download(trackID, quality, outputPath, onProgress, options) {
                 var encryptedPath = outputPath.replace(/\.flac$/, '.encrypted.flac');
@@ -148,6 +144,10 @@ class SflxDecryptedPlaybackTest {
               }
             });
         """.trimIndent()
+
+    private fun loadFakeDeezer() = runBlocking {
+        val manifest = SflxManifestParser.parse(manifestJson)
+        val script = fakeScript()
         QuickJsExecutor.loadModule(
             moduleId = MODULE,
             jsCode = script,
@@ -171,14 +171,32 @@ class SflxDecryptedPlaybackTest {
     fun downloadsDecryptsInItsFolderAndPlays() {
         val clear = InstrumentationRegistry.getInstrumentation().context.assets.open("sflx/tone.flac").use { it.readBytes() }
         served = encrypt(clear)
-        loadFakeDeezer()
 
-        val raw = resolve("3135556")
-        assertEquals(raw, "", SflxAnswer.error(raw) ?: "")
-        assertNull("the CDN URL is not the answer", SflxAnswer.streamUrl(raw))
-        val local = files.resolve(SflxAnswer.localFile(raw)!!)
+        // Installed as a package and asked through the host, the way the app
+        // asks: the tier ladder, the answer's checks and the file:// it makes.
+        val packageBytes = java.io.ByteArrayOutputStream().also { bytes ->
+            java.util.zip.ZipOutputStream(bytes).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("manifest.json")); zip.write(manifestJson.toByteArray()); zip.closeEntry()
+                zip.putNextEntry(java.util.zip.ZipEntry("index.js")); zip.write(fakeScript().toByteArray()); zip.closeEntry()
+            }
+        }.toByteArray()
+        val store = SflxStore(File(folder.parentFile, "store").apply { mkdirs() })
+        store.install(packageBytes)
+        val host = SflxHost(store, "3.3", signedSessionsDirectory = null, filesDirectory = folder.parentFile, filesClient = client)
+        val answer = try {
+            runBlocking { host.streamUrl("deezer", "3135556", "LOSSLESS") }.getOrThrow()
+        } finally {
+            host.unload("deezer")
+        }
+        val url = answer.streamUrl!!
+        assertTrue(url, url.startsWith("file://"))
+        val local = File(url.removePrefix("file://"))
+        assertEquals("in the extension's own folder", folder.canonicalPath, local.parentFile!!.canonicalPath)
         assertArrayEquals("decrypted to the original FLAC", clear, local.readBytes())
         assertEquals("only the decrypted file is left", listOf(local.name), folder.list()!!.toList())
+
+        // Removing the extension takes its folder with it.
+        val removed = SflxHost(store, "3.3", filesDirectory = folder.parentFile, filesClient = client)
 
         // And it plays.
         val ready = CountDownLatch(1)
@@ -212,6 +230,8 @@ class SflxDecryptedPlaybackTest {
         } finally {
             instrumentation.runOnMainSync { player?.release() }
         }
+        assertTrue(removed.remove("deezer"))
+        assertTrue("the folder is cleared on removal", !folder.exists())
     }
 
     /**

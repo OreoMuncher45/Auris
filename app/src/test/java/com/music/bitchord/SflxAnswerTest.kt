@@ -62,6 +62,15 @@ class SflxAnswerTest {
     }
 
     @Test
+    fun `a file the extension wrote is an answer, with no URL beside it`() {
+        // Deezer's: it decrypted its download in its own folder.
+        val raw = """{"track":{"id":"1"},"error":"","localFile":"/sandbox/1.flac"}"""
+        assertTrue(SflxAnswer.carriesStream(raw))
+        assertNull(SflxAnswer.streamUrl(raw))
+        assertEquals("/sandbox/1.flac", SflxAnswer.localFile(raw))
+    }
+
+    @Test
     fun `an answer with nothing in it carries nothing`() {
         assertFalse(SflxAnswer.carriesStream("""{"streamUrl":null,"error":"no stream"}"""))
         assertFalse(SflxAnswer.carriesStream("""{}"""))
