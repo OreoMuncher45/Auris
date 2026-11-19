@@ -64,6 +64,7 @@ import com.music.bitchord.ui.theme.AppFonts
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -345,6 +346,9 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
     }
 }
 
+/** Serialises custom-font imports, which all write the same file. */
+private val fontImportLock = kotlinx.coroutines.sync.Mutex()
+
 /** The face the whole app is set in, the listener's own file included. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -363,6 +367,8 @@ internal fun FontSheet(onDismiss: () -> Unit) {
         if (uri == null) return@rememberLauncherForActivityResult
         val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
         scope.launch {
+            // One import at a time: two picks in quick succession write the same file.
+            fontImportLock.withLock {
             val copied = withContext(Dispatchers.IO) {
                 runCatching {
                     target.parentFile?.mkdirs()
@@ -371,11 +377,12 @@ internal fun FontSheet(onDismiss: () -> Unit) {
                     } != null
                 }.getOrDefault(false)
             }
-            if (!copied) return@launch
+            if (!copied) return@withLock
             runCatching {
                 AppFonts.forgetCustom()
                 AppSettings.setCustomFontPath(target.absolutePath)
                 AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+            }
             }
         }
     }
