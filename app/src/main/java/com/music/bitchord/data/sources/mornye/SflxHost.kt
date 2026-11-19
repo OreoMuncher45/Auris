@@ -483,13 +483,18 @@ class SflxHost(
         // is checked against its folder there. A URL is only ever a network
         // one: a file:// here could name any of this app's private files, and
         // the downloader would copy it out.
-        if (url != null && !url.startsWith("https://", ignoreCase = true) &&
-            !url.startsWith("http://", ignoreCase = true)
-        ) {
+        fun network(link: String) =
+            link.startsWith("https://", ignoreCase = true) || link.startsWith("http://", ignoreCase = true)
+        if (url != null && !network(url)) {
             throw SflxException("the extension answered with a non-network URL")
         }
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
+        // The same rule for every part of a segmented answer: each one goes into
+        // the playlist the player reads.
+        if (segments.any { it.url.isNotBlank() && !network(it.url) }) {
+            throw SflxException("the extension answered with a non-network segment URL")
+        }
         if (url == null && segments.isEmpty()) {
             val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
             throw SflxException(why)
