@@ -437,15 +437,24 @@ object AudioCache {
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
         (family + exact).distinct().forEach { key ->
-            if (keepComplete && isComplete(key)) {
+            // One hold of SimpleCache's own monitor across the check and the
+            // removal, so a writer finishing the entry in between cannot have
+            // a just-completed song deleted for a network failure.
+            val removal = synchronized(cache as Object) {
+                if (keepComplete && isComplete(key)) {
+                    null
+                } else {
+                    // Forgotten under the same hold, so a copy lent again
+                    // straight after this removal keeps its fresh mark.
+                    runCatching { cache.removeResource(key) }.onSuccess { borrowedKeys.forget(key) }
+                }
+            }
+            if (removal == null) {
                 TrackLog.d(TAG, "kept complete cache entry $key through a network failure", about = about)
                 return@forEach
             }
-            runCatching { cache.removeResource(key) }
-                .onSuccess {
-                    borrowedKeys.forget(key)
-                    TrackLog.d(TAG, "discarded cache entry $key", about = about)
-                }
+            removal
+                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
         }
     }
