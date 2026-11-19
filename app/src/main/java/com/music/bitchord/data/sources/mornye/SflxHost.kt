@@ -404,7 +404,8 @@ class SflxHost(
     private fun playlistGone(answer: ModuleStreamResponse): Boolean {
         val url = answer.streamUrl ?: return false
         if (!url.startsWith("file://")) return false
-        return !File(url.removePrefix("file://")).exists()
+        val path = android.net.Uri.parse(url).path ?: return true
+        return !File(path).exists()
     }
 
     /** The extension's settings as one ordered string; the object itself has no order. */
@@ -543,7 +544,9 @@ class SflxHost(
         if (!file.isFile || file.length() == 0L) throw SflxException("the extension's file is missing or empty")
         Log.d(TAG, "sflx[${installed.id}] answered with its own file (${file.length()} bytes)")
         return ModuleStreamResponse(
-            streamUrl = "file://${file.absolutePath}",
+            // Encoded: a name the extension chose may hold `#` or `?`, which a
+            // bare "file://" + path would read as a fragment or a query.
+            streamUrl = android.net.Uri.fromFile(file).toString(),
             headers = null,
             segments = null,
             track = SflxAnswer.track(raw, trackId),
@@ -584,11 +587,18 @@ class SflxHost(
     /** Folders left behind by extensions that are no longer installed. */
     fun clearOrphanedFiles() {
         val root = filesDirectory ?: return
-        val installed = store.list().map { it.id }.toSet()
-        root.listFiles()?.forEach { folder ->
-            if (folder.name !in installed) folder.deleteRecursively()
+        // Under the same lock as install and remove: an extension installed
+        // between reading the list and deleting would lose a fresh folder.
+        synchronized(lifecycle) {
+            val installed = store.list().map { it.id }.toSet()
+            root.listFiles()?.forEach { folder ->
+                if (folder.name !in installed) folder.deleteRecursively()
+            }
         }
     }
+
+    /** Held while the installed set changes, or is read to delete by. */
+    private val lifecycle = Any()
 
     /**
      * An answer whose extension was stopped before it could hand over a key:
@@ -844,7 +854,7 @@ class SflxHost(
     /** Reinstalls from a package held in memory, digest-checked when one is given. */
     fun install(bytes: ByteArray, expectedSha256: String?, sourceUrl: String): Result<InstalledSflx> =
         runCatching {
-            val installed = store.install(bytes, expectedSha256, sourceUrl)
+            val installed = synchronized(lifecycle) { store.install(bytes, expectedSha256, sourceUrl) }
             // A reinstall of a running extension has to be a different object
             // in the sandbox, or the old script keeps answering.
             unload(installed.id)
@@ -854,7 +864,7 @@ class SflxHost(
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
 
     fun remove(id: String): Boolean {
-        val removed = store.remove(id)
+        val removed = synchronized(lifecycle) { store.remove(id) }
         if (removed) {
             unload(id)
             clearFiles(id)

@@ -132,7 +132,8 @@ class SflxDecryptedPlaybackTest {
                 var res = file.download('https://127.0.0.1:${server.localPort}/media/' + trackID + '.flac', encryptedPath,
                   { headers: { 'User-Agent': 'test' } });
                 if (!res || !res.success) return { success: false, error_message: 'download: ' + (res && res.error) };
-                var out = file.transformPatternedBlocks(res.path || encryptedPath, outputPath, {
+                // A name with a space and a '#': the host's file:// must encode it.
+                var out = file.transformPatternedBlocks(res.path || encryptedPath, outputPath.replace(/\.flac$/, ' #1.flac'), {
                   operation: 'decrypt', algorithm: 'blowfish', mode: 'cbc', key: '${hex(key)}', keyEncoding: 'hex',
                   iv: '0001020304050607', ivEncoding: 'hex', padding: 'none', segmentSize: 2048,
                   transformEvery: 3, transformOffset: 0, bufferSize: 1048576, transformPartial: false
@@ -190,7 +191,7 @@ class SflxDecryptedPlaybackTest {
         }
         val url = answer.streamUrl!!
         assertTrue(url, url.startsWith("file://"))
-        val local = File(url.removePrefix("file://"))
+        val local = File(Uri.parse(url).path!!)
         assertEquals("in the extension's own folder", folder.canonicalPath, local.parentFile!!.canonicalPath)
         assertArrayEquals("decrypted to the original FLAC", clear, local.readBytes())
         assertEquals("only the decrypted file is left", listOf(local.name), folder.list()!!.toList())
@@ -210,7 +211,8 @@ class SflxDecryptedPlaybackTest {
                     override fun onPlayerError(error: PlaybackException) { failure = error; ready.countDown() }
                     override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) ready.countDown() }
                 })
-                setMediaItem(MediaItem.fromUri(Uri.fromFile(local)))
+                // The URI the host answered with, as the player is handed it.
+                setMediaItem(MediaItem.fromUri(url))
                 prepare()
                 play()
             }
