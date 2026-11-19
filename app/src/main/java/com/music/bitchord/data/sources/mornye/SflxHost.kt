@@ -59,6 +59,14 @@ class SflxHost(
      * that was never a real install is a credential nobody asked for.
      */
     private val signedSessionsDirectory: File? = null,
+    /**
+     * Where extensions that ask for files get their private folders —
+     * `<cacheDir>/sflx-files`, one folder per extension id. Null gives no
+     * extension any files, which is what a test harness gets.
+     */
+    private val filesDirectory: File? = null,
+    /** The client their downloads go through; a test brings one that trusts its own server. */
+    private val filesClient: okhttp3.OkHttpClient? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
@@ -307,7 +315,7 @@ class SflxHost(
             functionName = "searchTracks",
             args = listOf(quote(query), limit.toString(), context(settings)),
         ).mapCatching { raw ->
-            val parsed = SflxRows.parse(raw)
+            val parsed = SflxRows.searchAnswer(raw).getOrThrow()
             SearchOutcome(response = parsed.response, rows = parsed.rows)
         }
     }
@@ -396,7 +404,8 @@ class SflxHost(
     private fun playlistGone(answer: ModuleStreamResponse): Boolean {
         val url = answer.streamUrl ?: return false
         if (!url.startsWith("file://")) return false
-        return !File(url.removePrefix("file://")).exists()
+        val path = android.net.Uri.parse(url).path ?: return true
+        return !File(path).exists()
     }
 
     /** The extension's settings as one ordered string; the object itself has no order. */
@@ -464,6 +473,11 @@ class SflxHost(
         raw: String,
     ): ModuleStreamResponse {
         val extensionId = installed.id
+        // A file the extension wrote is the whole answer: there is no URL or
+        // segment list beside it, so it is read before the check for those.
+        SflxAnswer.localFile(raw)?.let { path ->
+            return localAnswer(installed, trackId, path, raw)
+        }
         val url = SflxAnswer.streamUrl(raw)
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
@@ -515,6 +529,76 @@ class SflxHost(
             cencKid = cencKid,
         )
     }
+
+    /**
+     * An answer that is a file the extension wrote — downloaded and decrypted
+     * in its own folder. The path is the extension's, so it is resolved by the
+     * same rules its file calls were: a path outside the folder, through a
+     * link, or to anything but a non-empty file is refused.
+     */
+    private fun localAnswer(installed: InstalledSflx, trackId: String, path: String, raw: String): ModuleStreamResponse {
+        val files = filesFor(installed) ?: throw SflxException("this extension has no file access")
+        val file = runCatching { files.resolve(path) }.getOrElse { error ->
+            throw SflxException("the extension's file is not its own: ${error.message}")
+        }
+        if (!file.isFile || file.length() == 0L) throw SflxException("the extension's file is missing or empty")
+        Log.d(TAG, "sflx[${installed.id}] answered with its own file (${file.length()} bytes)")
+        return ModuleStreamResponse(
+            // Encoded: a name the extension chose may hold `#` or `?`, which a
+            // bare "file://" + path would read as a fragment or a query.
+            streamUrl = android.net.Uri.fromFile(file).toString(),
+            headers = null,
+            segments = null,
+            track = SflxAnswer.track(raw, trackId),
+            cencKid = null,
+        )
+    }
+
+    /**
+     * The private folder of an extension whose manifest asks for files, or
+     * null. One per extension, made on first use; the network list it may
+     * download from is the manifest's own.
+     */
+    private fun filesFor(installed: InstalledSflx): SflxFiles? {
+        val root = filesDirectory ?: return null
+        if (!installed.manifest.permissions.file) return null
+        return files.getOrPut(installed.id) {
+            val allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() }
+            filesClient?.let { client ->
+                SflxFiles(File(root, installed.id), allowedHosts, SflxFiles.client(client))
+            } ?: SflxFiles(File(root, installed.id), allowedHosts)
+        }
+    }
+
+    private val files = java.util.concurrent.ConcurrentHashMap<String, SflxFiles>()
+
+    /**
+     * Empties the private folder of [id], and forgets it. Called when the
+     * extension is removed, and for any folder whose extension is no longer
+     * installed.
+     */
+    private fun clearFiles(id: String) {
+        files.remove(id)
+        val root = filesDirectory ?: return
+        if (!SflxStore.isSafeId(id)) return
+        File(root, id).deleteRecursively()
+    }
+
+    /** Folders left behind by extensions that are no longer installed. */
+    fun clearOrphanedFiles() {
+        val root = filesDirectory ?: return
+        // Under the same lock as install and remove: an extension installed
+        // between reading the list and deleting would lose a fresh folder.
+        synchronized(lifecycle) {
+            val installed = store.list().map { it.id }.toSet()
+            root.listFiles()?.forEach { folder ->
+                if (folder.name !in installed) folder.deleteRecursively()
+            }
+        }
+    }
+
+    /** Held while the installed set changes, or is read to delete by. */
+    private val lifecycle = Any()
 
     /**
      * An answer whose extension was stopped before it could hand over a key:
@@ -678,7 +762,9 @@ class SflxHost(
                     installed.manifest,
                     settingsFor(installed).toString(),
                     appVersion,
-                    cacheDirectory(installed).absolutePath,
+                    // The folder it writes to, when it has one: the output
+                    // path it is handed must be one its file calls accept.
+                    (filesFor(installed)?.root ?: cacheDirectory(installed)).absolutePath,
                 ),
                 epilogue = SflxShim.ADAPTER,
                 // The manifest's declared hosts, when it declared any. An empty
@@ -691,6 +777,7 @@ class SflxHost(
                 // never streamed.
                 allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
                 sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+                fileCall = filesFor(installed)?.let { folder -> { method, args -> folder.call(method, args) } },
             ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
     }
@@ -740,6 +827,9 @@ class SflxHost(
      */
     fun warmUp() {
         hostScope.launch {
+            // Off the start-up path, like the loads: a folder whose extension
+            // was removed while the app was not running goes here.
+            runCatching { clearOrphanedFiles() }
             store.list().forEach { installed ->
                 if (!enabled(installed)) return@forEach
                 if (!installed.manifest.isDownloadProvider) return@forEach
@@ -764,17 +854,26 @@ class SflxHost(
     /** Reinstalls from a package held in memory, digest-checked when one is given. */
     fun install(bytes: ByteArray, expectedSha256: String?, sourceUrl: String): Result<InstalledSflx> =
         runCatching {
-            val installed = store.install(bytes, expectedSha256, sourceUrl)
-            // A reinstall of a running extension has to be a different object
-            // in the sandbox, or the old script keeps answering.
-            unload(installed.id)
-            installed
+            synchronized(lifecycle) {
+                val installed = store.install(bytes, expectedSha256, sourceUrl)
+                // A reinstall of a running extension has to be a different object
+                // in the sandbox, or the old script keeps answering.
+                unload(installed.id)
+                // Its folder's network list is the new manifest's, not the old one.
+                files.remove(installed.id)
+                installed
+            }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
 
-    fun remove(id: String): Boolean {
+    fun remove(id: String): Boolean = synchronized(lifecycle) {
+        // All of it under the lock: a reinstall between deleting the package
+        // and clearing its folder would otherwise lose the new folder.
         val removed = store.remove(id)
-        if (removed) unload(id)
-        return removed
+        if (removed) {
+            unload(id)
+            clearFiles(id)
+        }
+        removed
     }
 
     /** The listener's own answers for [id]'s settings block, as JSON text. */
@@ -1052,13 +1151,35 @@ internal object SflxRows {
      */
     data class Row(val result: ModuleSearchResult, val raw: kotlinx.serialization.json.JsonObject?)
 
-    data class Parsed(val response: ModuleSearchResponse, val rows: List<Row>)
+    /**
+     * [error] is the extension's own diagnosis, when the answer carried a
+     * non-blank one; it says nothing about whether any rows came with it.
+     */
+    data class Parsed(val response: ModuleSearchResponse, val rows: List<Row>, val error: String? = null)
+
+    /**
+     * A search answer, or the extension's refusal of the search.
+     *
+     * A refusal is not an empty search. Qobuz and Beatport answer an
+     * unverified search with `{"error":"VERIFY_REQUIRED"}` and no tracks. Read
+     * as "nothing found", it never reached the Verify advice in
+     * [SflxHost.search], and it was kept as an answer for the next caller. An
+     * error that comes with rows is only a note; the rows are the answer.
+     */
+    fun searchAnswer(text: String): Result<Parsed> {
+        val parsed = parse(text)
+        val error = parsed.error
+        return if (error != null && parsed.rows.isEmpty()) Result.failure(SflxException(error)) else Result.success(parsed)
+    }
 
     fun parse(text: String): Parsed {
         val root = runCatching {
             json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject
         }.getOrNull() ?: return Parsed(ModuleSearchResponse(), emptyList())
-        val tracks = root["tracks"] as? kotlinx.serialization.json.JsonArray ?: return Parsed(ModuleSearchResponse(), emptyList())
+        val error = (root["error"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() }
+        val tracks = root["tracks"] as? kotlinx.serialization.json.JsonArray
+            ?: return Parsed(ModuleSearchResponse(), emptyList(), error)
 
         val mapped = tracks.mapNotNull { element ->
             val track = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
@@ -1082,6 +1203,7 @@ internal object SflxRows {
         return Parsed(
             response = ModuleSearchResponse(tracks = mapped.map { it.result }, total = mapped.size),
             rows = mapped,
+            error = error,
         )
     }
 }

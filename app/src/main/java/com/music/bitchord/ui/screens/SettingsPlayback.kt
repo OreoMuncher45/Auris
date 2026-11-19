@@ -55,6 +55,10 @@ internal fun PlaybackSettings(
 ) {
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    // Bit-perfect output arms no blend at all — see
+    // CrossfadeController.considerAutoTransition — so both rows say so rather
+    // than describe a transition that will not happen (GitHub #60).
+    val bitPerfect by AppSettings.bitPerfect.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
@@ -96,7 +100,9 @@ internal fun PlaybackSettings(
                 SliderRow(
                     icon = Icons.Rounded.Waves,
                     title = crossfadeTitle,
-                    subtitle = stringResource(R.string.crossfade_subtitle),
+                    subtitle = stringResource(
+                        if (bitPerfect) R.string.transitions_off_bit_perfect else R.string.crossfade_subtitle,
+                    ),
                     value = if (crossfade == 0) stringResource(R.string.off) else "${crossfade}s",
                     sliderValue = crossfade.toFloat(),
                     onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
@@ -110,7 +116,9 @@ internal fun PlaybackSettings(
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
                 title = automixTitle,
-                subtitle = if (smartFade) {
+                subtitle = if (bitPerfect) {
+                    stringResource(R.string.transitions_off_bit_perfect)
+                } else if (smartFade) {
                     stringResource(R.string.automix_enabled_subtitle)
                 } else {
                     stringResource(R.string.automix_disabled_subtitle)

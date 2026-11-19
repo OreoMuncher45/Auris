@@ -1,7 +1,8 @@
 // Vendored from the decent-player USB audio driver (MIT, see LICENSE).
 // LastWave ships the same module; keeping the source identical is deliberate —
 // the usbdevfs isochronous path is hardware-sensitive and every deviation here
-// has to be re-proved on a DAC.
+// has to be re-proved on a DAC. Auris changes are marked "Auris:" or live in
+// files of their own (KernelDriverHandback).
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -42,4 +43,5 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    testImplementation("junit:junit:4.13.2")
 }

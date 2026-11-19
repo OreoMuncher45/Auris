@@ -35,6 +35,14 @@ class UsbAudioDevice private constructor(private val context: Context) {
     private var currentDevice: UsbDevice? = null
     private var claimedInterface: UsbInterface? = null
     /**
+     * Interfaces this app force-claimed, so the kernel's own driver is off
+     * them, and that have not been handed back yet. Kept across a close that
+     * reopens straight away, so a track-to-track reopen does not make Android
+     * drop and re-add its USB output in between.
+     */
+    private val detachedInterfaces = linkedSetOf<Int>()
+    private var detachedDevice: UsbDevice? = null
+    /**
      * bInterfaceNumber of the PLAYBACK AudioStreaming interface (-1 = unknown).
      * USB headset-style dongles also expose a CAPTURE (microphone) AS
      * interface; every alt-setting/descriptor operation must stay on the
@@ -177,22 +185,34 @@ class UsbAudioDevice private constructor(private val context: Context) {
     /** Cached device info from the last successful openDevice() call. */
     private var cachedDeviceInfo: UsbAudioDeviceInfo? = null
 
-    fun openDevice(device: UsbDevice): UsbAudioDeviceInfo? {
+    /**
+     * @param forceReopen opens a fresh connection even when one is cached,
+     *   for a session that needs the DAC set up again (a new track format).
+     */
+    fun openDevice(device: UsbDevice, forceReopen: Boolean = false): UsbAudioDeviceInfo? {
         // Return cached info if already open with valid connection
         val cached = cachedDeviceInfo
-        if (cached != null && connection != null) {
+        if (!forceReopen && cached != null && connection != null) {
             Log.i(TAG, "Device already open, reusing fd=${cached.fd}")
             return cached
         }
-        // Close any stale connection before opening new
-        closeDevice()
+        // A different DAC than the one this app holds: give the old one back
+        // to Android through its own connection before taking the new one.
+        val held = currentDevice
+        if (held != null && held.deviceName != device.deviceName) closeDevice(returnToAndroid = true)
         lastOpenError = null
         val conn = usbManager.openDevice(device)
         if (conn == null) {
             Log.e(TAG, "Failed to open device ${device.productName}")
             lastOpenError = "Android refused to open the device"
+            // The old connection is still open: use it to hand the DAC back.
+            closeDevice(returnToAndroid = true)
             return null
         }
+        // Only now close the old connection, before claiming on the new one.
+        // The claims are taken again below, so the kernel driver is not
+        // handed the DAC in between.
+        closeDevice(returnToAndroid = false)
         // The playback AS interface is the one owning an isochronous OUT
         // endpoint in some alt setting (capture interfaces only have IN).
         playbackInterfaceId = (0 until device.interfaceCount)
@@ -252,6 +272,7 @@ class UsbAudioDevice private constructor(private val context: Context) {
         if (streamingInterface == null || endpointOut < 0) {
             Log.e(TAG, "No suitable AudioStreaming interface/endpoint found")
             lastOpenError = "no playback endpoint in the USB descriptors"
+            returnToAndroid(conn, device)
             conn.close()
             return null
         }
@@ -262,6 +283,10 @@ class UsbAudioDevice private constructor(private val context: Context) {
                 .firstOrNull { it.interfaceClass == UsbConstants.USB_CLASS_AUDIO && it.interfaceSubclass == 1 }
 
         if (controlInterface != null) {
+            // A force claim detaches snd-usb-audio even when it then fails,
+            // so the interface counts as detached either way.
+            detachedDevice = device
+            detachedInterfaces += controlInterface.id
             val claimed = conn.claimInterface(controlInterface, true)
             Log.i(TAG, "Claimed AudioControl interface ${controlInterface.id} force=true: $claimed")
         }
@@ -269,12 +294,17 @@ class UsbAudioDevice private constructor(private val context: Context) {
         // Claim the AudioStreaming interface with force=true to disconnect kernel driver (snd-usb-audio)
         // NOTE: We claim the zero-bandwidth alt setting (alt=0). The actual streaming alt setting
         // will be activated later via setInterface() which allocates USB bandwidth.
+        detachedDevice = device
+        detachedInterfaces += streamingInterface.id
         val claimed = conn.claimInterface(streamingInterface, true)
         Log.i(TAG, "Claimed AudioStreaming interface ${streamingInterface.id} force=true: $claimed " +
                 "(alt=${streamingInterface.alternateSetting}, endpoints=${streamingInterface.endpointCount})")
         if (!claimed) {
             Log.e(TAG, "Failed to claim streaming interface — kernel driver may still be active")
             lastOpenError = "Android kept the DAC (interface ${streamingInterface.id} could not be claimed)"
+            // The AudioControl claim above already took the DAC off Android's
+            // driver; give it back, or the phone falls back to its speaker.
+            returnToAndroid(conn, device)
             conn.close()
             return null
         }
@@ -395,6 +425,10 @@ class UsbAudioDevice private constructor(private val context: Context) {
         // so the same fd is reused (native claims are on this fd).
         cachedDeviceInfo = null
         claimedInterface = null
+        // nativeUsbReset detaches and claims interfaces 0 and 1 itself.
+        currentDevice?.let { detachedDevice = it }
+        detachedInterfaces += 0
+        detachedInterfaces += 1
         // DO NOT close connection — the fd from reset+native claim must be reused
         // The next openDevice() will see connection != null and skip re-opening
     }
@@ -731,7 +765,14 @@ class UsbAudioDevice private constructor(private val context: Context) {
     /** True when the last accepted setSampleRate() wrote to a clock the descriptors name. */
     fun isRateWriteTrusted(): Boolean = lastRateWriteTrusted
 
-    fun closeDevice() {
+    /**
+     * Closes the direct session.
+     *
+     * @param returnToAndroid hands the DAC back to Android's own USB audio
+     *   driver, so the phone's normal USB output comes back instead of the
+     *   speaker. Only a close that reopens straight away passes false.
+     */
+    fun closeDevice(returnToAndroid: Boolean = true) {
         cachedDeviceInfo = null
         cachedSupportedRates = emptyList()
         clockSourceRateMap.clear()
@@ -745,15 +786,54 @@ class UsbAudioDevice private constructor(private val context: Context) {
         parsedAltSettings = emptyList()
         parsedAltRates = emptyMap()
         lastRateWriteTrusted = false
-        claimedInterface?.let { iface ->
-            connection?.releaseInterface(iface)
-            claimedInterface = null
+        val conn = connection
+        val device = currentDevice
+        if (returnToAndroid && conn != null && device != null) {
+            returnToAndroid(conn, device)
+        } else {
+            claimedInterface?.let { iface -> conn?.releaseInterface(iface) }
         }
+        claimedInterface = null
         connection?.close()
         connection = null
         currentDevice = null
         playbackInterfaceId = -1
         Log.i(TAG, "USB device closed")
+    }
+
+    /**
+     * Releases every interface this app holds on [device] and asks the kernel
+     * to rebind its own driver, so Android gets its USB audio output back.
+     * See [KernelDriverHandback].
+     */
+    private fun returnToAndroid(conn: UsbDeviceConnection, device: UsbDevice) {
+        if (detachedInterfaces.isEmpty()) return
+        if (detachedDevice != null && detachedDevice?.deviceName != device.deviceName) {
+            // The DAC that was detached is gone; its kernel state went with it.
+            detachedInterfaces.clear()
+            detachedDevice = null
+            return
+        }
+        val fd = conn.fileDescriptor
+        val audio = (0 until device.interfaceCount)
+            .map { device.getInterface(it) }
+            .filter { it.interfaceClass == UsbConstants.USB_CLASS_AUDIO }
+            .map { KernelDriverHandback.Interface(it.id, it.interfaceSubclass) }
+        val result = KernelDriverHandback.handBack(
+            claimed = detachedInterfaces.toList(),
+            audioInterfaces = audio,
+            port = object : KernelDriverHandback.Port {
+                override fun release(number: Int) = UsbAudioStream.nativeReleaseInterface(fd, number) == 0
+                override fun connect(number: Int) = UsbAudioStream.nativeConnectKernelDriver(fd, number)
+            },
+        )
+        detachedInterfaces.clear()
+        detachedDevice = null
+        Log.i(
+            TAG,
+            "Handed the DAC back to Android: released=${result.released} " +
+                "reattached=${result.connected} notReattached=${result.failed}",
+        )
     }
 
     /**

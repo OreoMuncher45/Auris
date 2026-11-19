@@ -876,7 +876,8 @@
 
     <string name="output_precision">Ausgabegenauigkeit</string>
     <string name="bit_perfect">Bitgenaue Ausgabe</string>
-    <string name="bit_perfect_subtitle">Gibt dekodierte Samples unverändert aus: kein DSP, keine Pegelanpassung, kein Crossfade. Die Ausgaberoute muss das Quellformat übertragen können.</string>
+    <string name="bit_perfect_subtitle">Gibt dekodierte Samples unverändert aus: kein DSP, keine Pegelanpassung, kein Crossfade, kein Automix. Die Ausgaberoute muss das Quellformat übertragen können.</string>
+    <string name="transitions_off_bit_perfect">Aus, solange die bitgenaue Ausgabe aktiv ist.</string>
 
     <string name="personal">Persönlich</string>
 

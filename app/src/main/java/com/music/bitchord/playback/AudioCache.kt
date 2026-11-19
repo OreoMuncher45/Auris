@@ -14,7 +14,9 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
@@ -420,15 +422,50 @@ object AudioCache {
      * Runs on the caller's thread rather than off in [scope], so that a caller
      * about to re-open the track can be sure the old bytes are gone first.
      * Call it off the main thread.
+     *
+     * @param keepComplete spare every entry that is on disk in full. For a
+     *   failure that was the network's rather than the file's — a dropped
+     *   connection, an expired URL, no connection at all. A complete entry is
+     *   never written to again, so it cannot be the half-filled seam this
+     *   exists to clear, and throwing it away for a network error is how
+     *   playing offline used to delete the very songs it was playing.
      */
-    fun discard(uri: Uri) {
+    fun discard(uri: Uri, keepComplete: Boolean = false) {
         val exact = keyFactory.buildCacheKey(DataSpec(uri))
         val about = mediaIdIn(uri)
         val family = uri.getQueryParameter("v")?.let { videoId ->
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
         (family + exact).distinct().forEach { key ->
-            runCatching { cache.removeResource(key) }
+            // One hold of SimpleCache's own monitor across the check and the
+            // removal, so a writer finishing the entry in between cannot have
+            // a just-completed song deleted for a network failure.
+            val removal = synchronized(cache as Object) {
+                if (keepComplete && isComplete(key)) {
+                    null
+                } else {
+                    // The lend token is struck first and explicitly: with a
+                    // hole still locked by another request, removeResource
+                    // drops the spans but keeps the metadata, and a refill
+                    // would then inherit the old token and pass a borrower's
+                    // check. If striking it fails, refills stay refused.
+                    val unstamped = runCatching {
+                        if (cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN) !=
+                            BorrowedEntries.NO_TOKEN
+                        ) {
+                            cache.applyContentMetadataMutations(key, ContentMetadataMutations().remove(META_LEND_TOKEN))
+                        }
+                    }.isSuccess
+                    // Forgotten under the same hold, so a copy lent again
+                    // straight after this removal keeps its fresh mark.
+                    runCatching { cache.removeResource(key) }.onSuccess { if (unstamped) borrowedKeys.forget(key) }
+                }
+            }
+            if (removal == null) {
+                TrackLog.d(TAG, "kept complete cache entry $key through a network failure", about = about)
+                return@forEach
+            }
+            removal
                 .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
         }
@@ -539,12 +576,29 @@ object AudioCache {
             // still held.
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
+                // Borrowing is decided on a playback request's first open only.
+                // Media3 rebuilds the key per open but keeps the extractor, so
+                // a reopen that switched entries would feed one container's
+                // bytes to the other's parser:
+                // - A request that was lent a sibling keeps it on every reopen.
+                //   A hole in it is refused upstream and recovery picks anew.
+                // - A request that started on its own key is never lent one
+                //   later (Opus under the plain key, then a complete AAC
+                //   sibling once the plain one was evicted). Its key is worked
+                //   out per open exactly as it was before siblings were lent,
+                //   so a fill goes where it always did — not pinned, which
+                //   after a settings change would write another source's
+                //   rendition into the middle of the entry it started on.
+                val request = if (rendition == null) openingRequest.get() else null
+                val reopen = request?.pinnedFor(videoId) != null
+                val lent = if (reopen) request?.lentFor(videoId) else null
                 when {
                     rendition != null -> "$videoId#$rendition"
+                    lent != null -> lent
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}"
-                    else -> videoId
-                }
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { if (reopen) it else completeSibling(videoId, it) ?: it }
+                    else -> if (reopen) videoId else completeSibling(videoId, videoId) ?: videoId
+                }.also { key -> if (request != null && !reopen) request.pin(videoId, key) }
             }
             // A source-backed track keys on the source and its track id alone.
             // The full URI would work but carries the title and artist used
@@ -564,6 +618,200 @@ object AudioCache {
             ?: spec.key
             ?: spec.uri.toString()
     }
+
+    /**
+     * The complete copy of [videoId] the cache holds under a sibling key, when
+     * [preferred] — the key the current settings name — holds nothing at all.
+     *
+     * Which key a track lands under depends on settings that can change after
+     * it was cached: ranking a source above YouTube, or turning Dolby Atmos
+     * off, moves it from `videoId` to `videoId#alt2` or `#alt2-noatmos`, and
+     * un-ranking it moves it back. Offline that made a track the Cached songs
+     * folder lists — fully on disk — fail to play at all, because the player
+     * asked for an empty entry and the network to fill it was not there.
+     *
+     * Only for a copy that is complete: a complete entry is never written to
+     * again, so reading it cannot start the mixed-file seam [keyFactory] keeps
+     * renditions apart to prevent.
+     *
+     * Online it depends on the direction. With a source ranked above YouTube
+     * the preferred `#alt2` key keeps its own rendition — falling back to the
+     * plain entry would hand back a YouTube Opus copy in place of the better
+     * one a source would resolve, and `#alt2` against `#alt2-noatmos` is the
+     * Atmos setting itself. With nothing ranked above YouTube, the plain key
+     * would only ever resolve the same YouTube stream, so a kept YouTube or
+     * JioSaavn copy under `#alt2` is taken online too, instead of writing a
+     * second, byte-identical file under the plain key.
+     *
+     * The span lookup goes first: nearly every open is of an entry that
+     * already holds something, and that answer is an in-memory index read.
+     * Offline is read from [AppSettings.effectiveOffline], a flow a network
+     * callback keeps current, so no open pays a ConnectivityManager binder
+     * call.
+     */
+    private fun completeSibling(videoId: String, preferred: String): String? {
+        if (!::cache.isInitialized) return null
+        return chooseCompleteSibling(
+            videoId = videoId,
+            preferred = preferred,
+            holdsBytes = { cache.getCachedSpans(it).isNotEmpty() },
+            offline = ::isOffline,
+            isComplete = ::isComplete,
+            isKeptOrigin = ::isKeptOrigin,
+        )?.let { key ->
+            // A playback request is only lent a copy it can later tell apart
+            // from a replacement. Unstamped, it plays the preferred key from
+            // the network instead; the complete copy stays for a later try.
+            val request = openingRequest.get()
+            if (request != null) {
+                val token = lendToken(key)
+                if (token == BorrowedEntries.NO_TOKEN) return null
+                request.lend(key, token)
+            }
+            borrowedKeys.lend(key)
+            key
+        }
+    }
+
+    /**
+     * Sibling entries handed to a request that would have resolved something
+     * else: a plain request reading a JioSaavn AAC copy under `#alt2`, say.
+     * See [BorrowedEntries] for why they are read-only and for how long.
+     */
+    private val borrowedKeys = BorrowedEntries()
+
+    /**
+     * The playback request whose CacheDataSource is opening on this thread, so
+     * [keyFactory] can tell it which key it was lent. Media3 builds the key at
+     * the top of `CacheDataSource.open`, on the opening thread, before any
+     * upstream is opened; [playbackFactory] sets this around that call only.
+     */
+    private val openingRequest = ThreadLocal<BorrowedEntries?>()
+
+    /**
+     * Stamps the copy of [key] being lent, so its borrowers can tell it from a
+     * later one: [discard] removes the metadata with the entry, and a refill
+     * by another request starts without the stamp. Written once per entry and
+     * only on a borrow, so ordinary opens never touch the index.
+     */
+    private fun lendToken(key: String): Long = synchronized(borrowedKeys) {
+        val existing = cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN)
+        if (existing != BorrowedEntries.NO_TOKEN) return existing
+        var token: Long
+        do token = java.util.concurrent.ThreadLocalRandom.current().nextLong() while (token == BorrowedEntries.NO_TOKEN)
+        runCatching {
+            cache.applyContentMetadataMutations(key, ContentMetadataMutations().set(META_LEND_TOKEN, token))
+        }
+        // Read back rather than trusted: SimpleCache can update the index in
+        // memory and then fail to persist it, and what the borrower is later
+        // checked against is the in-memory value. Anything else refuses the
+        // loan — see [completeSibling].
+        val stamped = cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN)
+        if (stamped == token) token else BorrowedEntries.NO_TOKEN
+    }
+
+    /**
+     * [cache], as one playback request sees it: a span of a key it was lent
+     * is only handed over while that key still holds the stamped copy — see
+     * [lendToken]. Otherwise the open fails as a cache error, the request
+     * falls through to its upstream, and [refusingLent] ends the read there.
+     * Keys the request was not lent pass straight through.
+     */
+    private fun lentView(lent: BorrowedEntries): Cache = object : Cache by cache {
+        // Every check runs under SimpleCache's own monitor — the one its
+        // remove, write and span methods synchronise on — so no discard or
+        // refill can land between the check and what it guards.
+        private val monitor = cache as Object
+
+        private fun check(key: String) {
+            val token = lent.tokenOf(key) ?: return
+            if (cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN) != token) {
+                throw Cache.CacheException("cache entry $key no longer holds the copy this request was lent")
+            }
+        }
+
+        // CacheDataSource reads the content length from here to decide where
+        // the entry ends, before it asks for any span: a shorter replacement
+        // would otherwise read as a clean end-of-input.
+        override fun getContentMetadata(key: String): ContentMetadata = synchronized(monitor) {
+            check(key)
+            cache.getContentMetadata(key)
+        }
+
+        override fun startReadWriteNonBlocking(key: String, position: Long, length: Long): CacheSpan? =
+            synchronized(monitor) {
+                check(key)
+                cache.startReadWriteNonBlocking(key, position, length)
+            }
+
+        // SimpleCache.startReadWrite's own loop, with the check repeated after
+        // every wait: the entry can be replaced while this request waits for
+        // another writer's hole to be released.
+        override fun startReadWrite(key: String, position: Long, length: Long): CacheSpan =
+            synchronized(monitor) {
+                var span: CacheSpan? = null
+                while (span == null) {
+                    check(key)
+                    span = cache.startReadWriteNonBlocking(key, position, length)
+                    if (span == null) monitor.wait()
+                }
+                span
+            }
+    }
+
+    /**
+     * The decision behind [completeSibling], with the cache and the network
+     * passed in so it can be pinned without either — see
+     * `AudioCacheSiblingTest`. Inline so the lambdas cost nothing on the open
+     * path, and ordered so the cheap answers go first: an entry that already
+     * holds bytes ends it before the offline flag or any metadata is read.
+     */
+    internal inline fun chooseCompleteSibling(
+        videoId: String,
+        preferred: String,
+        holdsBytes: (String) -> Boolean,
+        offline: () -> Boolean,
+        isComplete: (String) -> Boolean,
+        isKeptOrigin: (String) -> Boolean,
+    ): String? {
+        if (holdsBytes(preferred)) return null
+        val siblings = siblingKeysOf(videoId)
+        if (offline()) return siblings.firstOrNull { it != preferred && isComplete(it) }
+        if (preferred != videoId) return null
+        return siblings.firstOrNull { it != preferred && isComplete(it) && isKeptOrigin(it) }
+    }
+
+    /**
+     * Whether [key]'s bytes came from YouTube or JioSaavn — the copies kept
+     * past playback, see [Origin]. An addon's file is dropped once the queue
+     * moves past it, but until then may sit under `#alt2` as an Atmos or
+     * lossless rendition nothing ranked above YouTube would serve.
+     */
+    private fun isKeptOrigin(key: String): Boolean = runCatching {
+        val origin = cache.getContentMetadata(key).get(META_ORIGIN, null as String?)
+        origin == Origin.YOUTUBE.name || origin == Origin.JIOSAAVN.name
+    }.getOrDefault(false)
+
+    /**
+     * Every key [keyFactory] can file a YouTube [videoId]'s ordinary playback
+     * under, in the order a fallback should try them: the plain entry first,
+     * then the current `#alt2` buckets.
+     */
+    internal fun siblingKeysOf(videoId: String): List<String> =
+        listOf(videoId, "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
+
+    /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
+    private fun isComplete(key: String): Boolean = runCatching {
+        val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        length > 0 && cache.isCached(key, 0, length)
+    }.getOrDefault(false)
+
+    /**
+     * Whether playback cannot reach the network right now: the offline switch
+     * is on, or no validated network has been there for the grace period.
+     * See [AppSettings.effectiveOffline].
+     */
+    fun isOffline(): Boolean = AppSettings.effectiveOffline.value
 
     /**
      * Splits the `#alt` bucket in two along whatever this process currently
@@ -967,6 +1215,7 @@ object AudioCache {
     }
 
     private const val META_ORIGIN = "bc_origin"
+    private const val META_LEND_TOKEN = "bc_lend"
     private const val META_MEDIA_ID = "bc_media_id"
 
     /**
@@ -1054,7 +1303,15 @@ object AudioCache {
      * copied, the other is not contiguous audio.
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
-        val cacheDs = cacheFactory(upstream).createDataSource()
+        // What this one request was lent, kept for its whole life — every
+        // reopen of it included. [borrowedKeys] protects the file; this
+        // protects the stream: a reader part-way through a borrowed copy must
+        // not continue from another rendition even if the copy is discarded
+        // or evicted under it, when the file-wide mark has gone.
+        val lent = BorrowedEntries()
+        val cacheDs = cacheFactory(refusingLent(counted(upstream), lent))
+            .setCache(lentView(lent))
+            .createDataSource()
         val upstreamDs = upstream.createDataSource()
         object : DataSource {
             private var activeDs: DataSource = cacheDs
@@ -1065,8 +1322,17 @@ object AudioCache {
             }
 
             override fun open(dataSpec: DataSpec): Long {
-                activeDs = if (bypassesPlaybackCache(dataSpec)) upstreamDs else cacheDs
-                return activeDs.open(dataSpec)
+                if (bypassesPlaybackCache(dataSpec)) {
+                    activeDs = upstreamDs
+                    return upstreamDs.open(dataSpec)
+                }
+                activeDs = cacheDs
+                openingRequest.set(lent)
+                try {
+                    return cacheDs.open(dataSpec)
+                } finally {
+                    openingRequest.set(null)
+                }
             }
 
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
@@ -1080,9 +1346,30 @@ object AudioCache {
         }
     }
 
+    /**
+     * [upstream], refusing any fetch into a key this request was [lent] — see
+     * [playbackFactory]. Already counted: wrapped outside [counted] so a
+     * refusal never registers as a writer.
+     */
+    private fun refusingLent(upstream: DataSource.Factory, lent: BorrowedEntries): DataSource.Factory =
+        DataSource.Factory {
+            val inner = upstream.createDataSource()
+            object : DataSource by inner {
+                override fun open(dataSpec: DataSpec): Long {
+                    dataSpec.key?.let { key ->
+                        if (!lent.mayFill(key)) {
+                            throw IOException("cache entry $key was lent to this request whole; it is not refilled")
+                        }
+                    }
+                    return inner.open(dataSpec)
+                }
+            }
+        }
+
+    /** [upstream] arrives already [counted] (or is [NoUpstream], which needs no counting). */
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
-        .setUpstreamDataSourceFactory(counted(upstream))
+        .setUpstreamDataSourceFactory(upstream)
         .setCacheKeyFactory(keyFactory)
         // A cache write that fails (full disk, evicted mid-write) should drop
         // to streaming, not surface as a playback error.
@@ -1138,6 +1425,13 @@ object AudioCache {
                 inner.addTransferListener(transferListener)
 
             override fun open(dataSpec: DataSpec): Long {
+                // CacheDataSource sets the cache key on the spec it hands
+                // upstream. A borrowed sibling is read-only: see [borrowedKeys].
+                dataSpec.key?.let { key ->
+                    if (!borrowedKeys.mayFill(key)) {
+                        throw IOException("cache entry $key was lent whole to another request; it is not refilled")
+                    }
+                }
                 // Counted before the open, so before the resolver reads the
                 // pin: see [writerGate]'s releaseIf.
                 mediaIdIn(dataSpec.uri)?.let { id ->

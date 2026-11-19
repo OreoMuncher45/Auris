@@ -880,7 +880,8 @@
 
     <string name="output_precision">Precisione di uscita</string>
     <string name="bit_perfect">Uscita bit-perfect</string>
-    <string name="bit_perfect_subtitle">Invia i campioni decodificati invariati: nessun DSP, livellamento o crossfade. Il percorso deve poter trasportare il formato sorgente.</string>
+    <string name="bit_perfect_subtitle">Invia i campioni decodificati invariati: nessun DSP, livellamento, crossfade o Automix. Il percorso deve poter trasportare il formato sorgente.</string>
+    <string name="transitions_off_bit_perfect">Disattivato finché l\'uscita bit-perfect è attiva.</string>
 
     <string name="prefer_usb_dac">Preferisci DAC USB</string>
     <string name="loudness_normalization">Normalizzazione del volume</string>
