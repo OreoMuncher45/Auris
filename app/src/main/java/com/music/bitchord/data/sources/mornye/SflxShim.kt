@@ -1479,6 +1479,17 @@ internal object SflxShim {
                 };
             }
 
+            // Whether a search row is a recording rather than a collection.
+            var NON_TRACK_TYPES = {
+                artist: true, album: true, playlist: true, station: true, podcast: true,
+                episode: true, show: true, video: true, user: true, profile: true, mix: true
+            };
+            function isTrackRow(row) {
+                if (!row || typeof row !== 'object') return false;
+                var type = text(firstOf(row.item_type, row.itemType, row.type, row.kind)).toLowerCase();
+                return !type || !NON_TRACK_TYPES[type];
+            }
+
             function isArray(value) {
                 return Object.prototype.toString.call(value) === '[object Array]';
             }
@@ -1562,6 +1573,13 @@ internal object SflxShim {
                     var rows = [];
                     var candidates = tracksOf(result);
                     for (var i = 0; i < candidates.length; i++) {
+                        // Only tracks. Amazon's search answers with artists,
+                        // albums and playlists ahead of the recordings — for
+                        // "telekinesis travis scott", fourteen of them before
+                        // the one track — and each became a "song" that could
+                        // not be played and could push the real one out of a
+                        // shortened list. A row that names no type is kept.
+                        if (!isTrackRow(candidates[i])) continue;
                         var row = rowOf(candidates[i]);
                         if (row) rows.push(row);
                     }

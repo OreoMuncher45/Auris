@@ -84,6 +84,15 @@ class SflxStreamAdapterTest {
         // renames the path when the file is encrypted, and returns the key.
         private const val FAKE_EXTENSION = """
             registerExtension({
+              customSearch(query, options) {
+                return [
+                  { item_type: 'artist', id: 'ART', name: 'Travis Scott', artists: 'Travis Scott', provider_id: 'amazon' },
+                  { item_type: 'album', id: 'ALB', name: 'UTOPIA', artists: 'Travis Scott', provider_id: 'amazon' },
+                  { item_type: 'playlist', id: 'PL', name: 'Rap Rotation', provider_id: 'amazon' },
+                  { item_type: 'track', id: 'TRK', name: 'TELEKINESIS', artists: 'Travis Scott', duration_ms: 0, provider_id: 'amazon' },
+                  { id: 'UNTYPED', name: 'Untyped', artists: 'Someone' },
+                ];
+              },
               checkAvailability(isrc, name, artist, options) {
                 __calls.push('checkAvailability');
                 return { available: true, track_id: 'SEARCHED', prepared_context: { web_metadata: options.track || null } };
@@ -133,6 +142,8 @@ class SflxStreamAdapterTest {
                 out.push({ case: name, answer, calls: __calls.slice(),
                            restored: JSON.stringify(file.getSize()).indexOf('does not expose') >= 0 });
               }
+              const searched = JSON.parse(await module.exports.searchTracks('telekinesis', 5, { settings: {} }));
+              out.push({ case: 'search', answer: { ids: searched.tracks.map(t => t.id) }, calls: [], restored: true });
               console.log(JSON.stringify(out));
             })();
         """
@@ -187,6 +198,12 @@ class SflxStreamAdapterTest {
         val segmented = case("encrypted segments").answer()
         assertTrue(segmented.containsKey("segments"))
         assertEquals("ffeeddccbbaa99887766554433221100", segmented.getValue("decryption").jsonObject.text("key"))
+    }
+
+    @Test
+    fun `a search keeps the tracks and drops artists, albums and playlists`() {
+        val ids = case("search").answer().getValue("ids").jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("TRK", "UNTYPED"), ids)
     }
 
     @Test
