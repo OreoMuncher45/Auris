@@ -748,9 +748,18 @@ internal fun AutomixTransitionEditor(
                     // the handoff somewhere the listener did not choose.
                     if (decided && horizontal) {
                         val finished = live
-                        if (finished.start != latestWindow.start || finished.end != latestWindow.end) {
+                        // Only a gesture that moved the box is a choice of window.
+                        // A pan or a lane drag leaves it where it was, though the
+                        // planner may have moved the panel's window meanwhile.
+                        val movedWindow = grabbed == Grab.START_EDGE ||
+                            grabbed == Grab.END_EDGE || grabbed == Grab.BODY
+                        if (movedWindow && (finished.start != opened.start || finished.end != opened.end)) {
                             pending = finished
                             latestOnWindow(finished)
+                        } else if (latestWindow.length > 0.0) {
+                            // The sync above sat out the drag and will not run
+                            // again until the window changes, so catch up here.
+                            live = latestWindow
                         }
                         // The arriving track was moved, so the engine is told
                         // where it was put. Without this the drag was drawing
