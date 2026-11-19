@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.withKeyDown
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.input.key.Key
 import org.junit.Assert.assertEquals
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.swipeDown
@@ -88,12 +93,13 @@ class AppSheetFocusTest {
         compose.waitForIdle()
     }
 
-    @OptIn(ExperimentalComposeUiApi::class)
+    @OptIn(ExperimentalComposeUiApi::class, ExperimentalTestApi::class)
     @Test
     fun withAKeyboardTheSheetTakesTheFocusFromWhatOpenedIt() {
         AppUi.install(AndroidAppUiHost)
         var item by mutableStateOf<String?>(null)
         var behindFocused = false
+        var insideFocused = false
         val behind = FocusRequester()
         compose.setContent {
             val modes = LocalInputModeManager.current
@@ -107,7 +113,12 @@ class AppSheetFocusTest {
                             .focusable(),
                     )
                     AppSheet(item = item, onDismiss = { item = null }) {
-                        Box(Modifier.focusable())
+                        Box(
+                            Modifier
+                                .testTag(INSIDE)
+                                .onFocusChanged { insideFocused = it.isFocused }
+                                .focusable(),
+                        )
                     }
                 }
             }
@@ -120,6 +131,15 @@ class AppSheetFocusTest {
         item = "downloads"
         compose.waitForIdle()
         assertFalse("the sheet took the focus from what is behind it", behindFocused)
+        assertTrue("…and it is inside the sheet", insideFocused)
+
+        // Shift+Tab, the way back out a keyboard would take.
+        compose.onNodeWithTag(INSIDE).performKeyInput {
+            withKeyDown(Key.ShiftLeft) { pressKey(Key.Tab) }
+        }
+        compose.waitForIdle()
+        assertFalse("Shift+Tab doesn't reach what is behind the sheet", behindFocused)
+        assertTrue("the focus stays in the sheet", insideFocused)
     }
 
     @Test
@@ -152,6 +172,7 @@ class AppSheetFocusTest {
 
     private companion object {
         const val BODY = "body"
+        const val INSIDE = "inside"
         const val FIELD = "field"
     }
 }
