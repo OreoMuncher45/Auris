@@ -237,11 +237,13 @@ internal object QuickJsExecutor {
                 while (pools.size >= MAX_MODULES) {
                     val lruId = pools.keys.firstOrNull() ?: break
                     TrackLog.d(TAG, "  Evicting LRU module engine: $lruId")
-                    pools.remove(lruId)?.let { addAll(it.made) }
+                    pools.remove(lruId)?.let { add(it) }
                 }
             }
         }
-        evicted.forEach { runCatching { it.close() } }
+        // Retired, not closed outright: an evicted module may have an engine
+        // checked out, and closing that one from here would hang this thread.
+        evicted.forEach { retire(it) }
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
@@ -451,6 +453,16 @@ internal object QuickJsExecutor {
 
     fun unload(moduleId: String) {
         val pool = synchronized(engineLock) { pools.remove(moduleId) } ?: return
+        val closed = retire(pool)
+        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId) (closed $closed idle engines)")
+    }
+
+    /**
+     * Takes [pool] out of service: closes its idle engines now and leaves the
+     * checked-out ones to close themselves when handed back. Returns how many
+     * were closed here.
+     */
+    private fun retire(pool: Pool): Int {
         pool.retired = true
         // Closing the channel wakes anyone waiting in [acquire] for an engine
         // with a failure instead of leaving them parked forever; what is still
@@ -464,16 +476,16 @@ internal object QuickJsExecutor {
             runCatching { engine.close() }
             closed++
         }
-        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId) (closed $closed idle engines)")
+        return closed
     }
 
     fun unloadAll() {
         val all = synchronized(engineLock) {
-            val values = pools.values.flatMap { it.made }
+            val values = pools.values.toList()
             pools.clear()
             values
         }
-        all.forEach { runCatching { it.close() } }
+        all.forEach { retire(it) }
         TrackLog.d(TAG, "QuickJsExecutor.unloadAll()")
     }
 
