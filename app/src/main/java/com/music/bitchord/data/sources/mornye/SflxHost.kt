@@ -307,7 +307,7 @@ class SflxHost(
             functionName = "searchTracks",
             args = listOf(quote(query), limit.toString(), context(settings)),
         ).mapCatching { raw ->
-            val parsed = SflxRows.parse(raw)
+            val parsed = SflxRows.searchAnswer(raw).getOrThrow()
             SearchOutcome(response = parsed.response, rows = parsed.rows)
         }
     }
@@ -1052,13 +1052,35 @@ internal object SflxRows {
      */
     data class Row(val result: ModuleSearchResult, val raw: kotlinx.serialization.json.JsonObject?)
 
-    data class Parsed(val response: ModuleSearchResponse, val rows: List<Row>)
+    /**
+     * [error] is the extension's own diagnosis, when the answer carried a
+     * non-blank one; it says nothing about whether any rows came with it.
+     */
+    data class Parsed(val response: ModuleSearchResponse, val rows: List<Row>, val error: String? = null)
+
+    /**
+     * A search answer, or the extension's refusal of the search.
+     *
+     * A refusal is not an empty search. Qobuz and Beatport answer an
+     * unverified search with `{"error":"VERIFY_REQUIRED"}` and no tracks. Read
+     * as "nothing found", it never reached the Verify advice in
+     * [SflxHost.search], and it was kept as an answer for the next caller. An
+     * error that comes with rows is only a note; the rows are the answer.
+     */
+    fun searchAnswer(text: String): Result<Parsed> {
+        val parsed = parse(text)
+        val error = parsed.error
+        return if (error != null && parsed.rows.isEmpty()) Result.failure(SflxException(error)) else Result.success(parsed)
+    }
 
     fun parse(text: String): Parsed {
         val root = runCatching {
             json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject
         }.getOrNull() ?: return Parsed(ModuleSearchResponse(), emptyList())
-        val tracks = root["tracks"] as? kotlinx.serialization.json.JsonArray ?: return Parsed(ModuleSearchResponse(), emptyList())
+        val error = (root["error"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() }
+        val tracks = root["tracks"] as? kotlinx.serialization.json.JsonArray
+            ?: return Parsed(ModuleSearchResponse(), emptyList(), error)
 
         val mapped = tracks.mapNotNull { element ->
             val track = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
@@ -1082,6 +1104,7 @@ internal object SflxRows {
         return Parsed(
             response = ModuleSearchResponse(tracks = mapped.map { it.result }, total = mapped.size),
             rows = mapped,
+            error = error,
         )
     }
 }

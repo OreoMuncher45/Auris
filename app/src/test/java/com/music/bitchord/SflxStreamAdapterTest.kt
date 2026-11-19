@@ -107,6 +107,9 @@ class SflxStreamAdapterTest {
                 const prepared = options.preparedContext || {};
                 const web = prepared.web_metadata || prepared.host_track || null;
                 if (!web) __calls.push('getTrack');
+                // SoundCloud trusts a prepared track with the right id over its
+                // own lookup, and gives up when that object is not its own.
+                if (prepared.track && prepared.track.id === trackID) __calls.push('trusted preparedContext.track');
                 const id = web && web.provider_id === 'amazon' ? web.id : trackID;
                 const mode = globalThis.__mode;
                 const path = mode === 'encrypted' ? outputPath.replace(/\.[^.]+$/, '.m4a') : outputPath;
@@ -150,6 +153,15 @@ class SflxStreamAdapterTest {
               }
               const searched = JSON.parse(await module.exports.searchTracks('telekinesis', 5, { settings: {} }));
               out.push({ case: 'search', answer: { ids: searched.tracks.map(t => t.id) }, calls: [], restored: true });
+              // One fixed instant for both sides, so an hour that turns
+              // between the two reads cannot fail the comparison.
+              const RealDate = Date;
+              const fixed = new RealDate(2026, 10, 19, 14, 37, 0);
+              globalThis.Date = class extends RealDate { constructor() { super(fixed.getTime()); } };
+              const time = gobackend.getLocalTime();
+              globalThis.Date = RealDate;
+              out.push({ case: 'local time', answer: { time, hour: fixed.getHours(), minute: fixed.getMinutes(),
+                         offset: fixed.getTimezoneOffset() }, calls: [], restored: true });
               console.log(JSON.stringify(out));
             })();
         """
@@ -172,6 +184,29 @@ class SflxStreamAdapterTest {
         assertFalse(own.calls().contains("checkAvailability"))
         assertFalse("the row is handed over as host_track", own.calls().contains("getTrack"))
         assertEquals("https://cdn.example/OWN", own.answer().text("streamUrl"))
+    }
+
+    @Test
+    fun `the host's own row is not passed off as the extension's prepared track`() {
+        // SoundCloud 1.0.15 failed every stream: it took this row from
+        // `preparedContext.track`, found none of its own fields in it and gave
+        // up. The row goes in as `host_track` only.
+        val own = case("own row")
+        assertFalse(own.calls().contains("trusted preparedContext.track"))
+        assertFalse("host_track is still there", own.calls().contains("getTrack"))
+    }
+
+    @Test
+    fun `the local time is the device's clock in the reference host's shape`() {
+        // Spotify Web, YouTube Music and Jellyfin read it for their home-feed
+        // greeting and time zone. It used to answer with only an error.
+        val answer = case("local time").answer()
+        val time = answer.getValue("time").jsonObject
+        assertFalse(time.containsKey("error"))
+        assertEquals(answer.number("hour"), time.number("hour"))
+        assertEquals(answer.number("minute"), time.number("minute"))
+        assertEquals("Local", time.text("timezone"))
+        assertEquals(answer.number("offset"), time.number("offsetMinutes"))
     }
 
     @Test
