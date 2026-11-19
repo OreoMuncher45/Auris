@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -520,6 +523,10 @@ internal fun PlaybackQualityLabel(
     // the measurement behind it, one tap away rather than in a dialog
     // somewhere else.
     var details by remember { mutableStateOf(false) }
+    // On Android the answer is the app's anchored menu, hung off the badge
+    // and dark like the player; desktop, with no host, keeps its popup.
+    val menuHost = LocalMenuHost.current
+    val origin = rememberMenuButtonOrigin()
     Box(modifier = modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
         LosslessOrStats(
             isLoading = isLoading,
@@ -532,7 +539,26 @@ internal fun PlaybackQualityLabel(
             // what a finger can hit. See [SCRUBBER_LABEL_SLOT].
             modifier = Modifier
                 .fillMaxHeight()
-                .clickable(enabled = nerdStats != null) { details = true }
+                .menuOriginOf(origin)
+                .clickable(enabled = nerdStats != null) {
+                    if (menuHost != null) {
+                        menuHost.open(origin.boundsInWindow(), dark = true) { close ->
+                            // Live: the numbers settle while the card is up.
+                            // Gone (the track changed under it), the card goes
+                            // too, rather than leaving an empty menu up — the
+                            // same rule the popup's `measured != null` keeps.
+                            val live by NerdStats.current.collectAsStateWithLifecycle()
+                            val stats = live
+                            if (stats != null) {
+                                QualityDetailsCard(stats = stats, framed = false)
+                            } else {
+                                LaunchedEffect(Unit) { close() }
+                            }
+                        }
+                    } else {
+                        details = true
+                    }
+                }
                 .padding(horizontal = QUALITY_BADGE_TAP_PADDING),
         )
         val measured = nerdStats

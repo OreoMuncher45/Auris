@@ -34,7 +34,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.music.bitchord.FrostedSortMenu
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
@@ -244,19 +243,10 @@ class MenuOpenCostProbe {
         }
     }
 
+    /** The track sort, which was FrostedSortMenu before UI 12's stage 3. */
     @Test
-    fun frostedSortMenu() = measure("FrostedSortMenu") { open, close ->
-        val haze = androidx.compose.runtime.remember { HazeState() }
-        Box(Modifier.fillMaxSize().hazeSource(haze))
-        if (open) {
-            FrostedSortMenu(
-                hazeState = haze,
-                selected = SongSort.DEFAULT,
-                onSelect = {},
-                onFlipDateDirection = {},
-                onDismiss = close,
-            )
-        }
+    fun songSortMenu() = measure("Song sort (MenuHost, SongSortMenu)") { open, _ ->
+        hostedMenu(open) { close -> com.music.bitchord.SongSortMenu(browseId = "probe", onChosen = close) }
     }
 
     @Test
@@ -287,4 +277,36 @@ class MenuOpenCostProbe {
         }
     }
 
+
+    /** The same four choices as [dropdownMenu], on the shared menu through the host. */
+    @Test
+    fun choiceMenu() = measure("Choices (MenuHost, 4 MenuChoiceRow)") { open, _ ->
+        hostedMenu(open) { close ->
+            listOf("Title A-Z", "Title Z-A", "Date added", "Date modified").forEachIndexed { i, label ->
+                com.music.bitchord.ui.components.menu.MenuChoiceRow(
+                    label = label,
+                    selected = i == 0,
+                    ink = Color.White,
+                    accent = Color.Red,
+                    selectedDescription = null,
+                    onClick = close,
+                )
+            }
+        }
+    }
+
+    /** A page with the root's menu host over it, opening [content] while [open]. */
+    @Composable
+    private fun hostedMenu(
+        open: Boolean,
+        content: @Composable androidx.compose.foundation.layout.ColumnScope.(close: () -> Unit) -> Unit,
+    ) {
+        val host = androidx.compose.runtime.remember { com.music.bitchord.ui.components.menu.MenuHostState() }
+        androidx.compose.runtime.LaunchedEffect(open) {
+            if (open) host.open(Rect(950f, 150f, 1060f, 260f), content = content) else host.close()
+        }
+        Box(Modifier.fillMaxSize()) {
+            com.music.bitchord.ui.components.menu.MenuHostOverlay(host)
+        }
+    }
 }

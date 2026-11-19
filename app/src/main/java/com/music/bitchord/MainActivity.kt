@@ -1,5 +1,8 @@
 package com.music.bitchord
 
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.Manifest
 import android.app.Activity
@@ -193,7 +196,7 @@ import com.music.bitchord.ui.components.SingSheet
 import com.music.bitchord.ui.components.cancelArtworkFlight
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.ui.components.AccountProfileSelector
+import com.music.bitchord.ui.components.AccountMenu
 import com.music.bitchord.ui.components.SpotifyImportAlert
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
@@ -267,7 +270,16 @@ import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.MenuOrigin
+import androidx.compose.ui.text.font.FontWeight
+import com.music.bitchord.ui.components.menu.MenuTokens
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menu.MenuChoiceRow
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.LocalMenuHost
+import com.music.bitchord.ui.components.menu.MenuHostOverlay
+import com.music.bitchord.ui.components.menu.MenuHostState
 import com.music.bitchord.ui.components.menu.MenuHeader
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
@@ -524,7 +536,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
+                // The one anchored menu any screen can ask for — the shared
+                // ones included, which can't call the Android menu directly.
+                // Drawn last among the root's overlays (see RootOverlays).
+                val menuHost = remember { MenuHostState() }
                 CompositionLocalProvider(
+                    LocalMenuHost provides menuHost,
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     // The engine's own defaults (see [GlassEffectConfig]) with
@@ -4523,31 +4540,21 @@ internal fun BitChordApp(
                             // the one thing a playlist or album card carries: a
                             // title.
                             if (sheets.libraryShowAll != null && detail == null) {
-                                Box {
-                                    IconButton(onClick = { sheets.librarySortMenuOpen = true }) {
-                                        Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_library),
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = sheets.librarySortMenuOpen,
-                                        onDismissRequest = { sheets.librarySortMenuOpen = false },
-                                    ) {
-                                        LibrarySort.entries.forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.localizedLabel()) },
-                                                trailingIcon = if (option == librarySort) {
-                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                } else null,
-                                                onClick = {
-                                                    AppSettings.setLibrarySort(option)
-                                                    sheets.librarySortMenuOpen = false
-                                                },
-                                            )
+                                val menuHost = LocalMenuHost.current
+                                val origin = rememberMenuButtonOrigin()
+                                IconButton(
+                                    onClick = {
+                                        menuHost?.open(origin.boundsInWindow()) { close ->
+                                            LibrarySortMenu(onChosen = close)
                                         }
-                                    }
+                                    },
+                                    modifier = Modifier.menuOriginOf(origin),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Sort,
+                                        contentDescription = stringResource(R.string.sort_library),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
                             }
                             // Left of the account photo, and only on an album or
@@ -4556,11 +4563,17 @@ internal fun BitChordApp(
                             // carry this same control themselves (see
                             // `LocalSearchField`).
                             if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
-                                // The menu itself is [FrostedSortMenu], composed
-                                // with the app's other frosted overlays further
-                                // down — in the main hierarchy, where the haze
-                                // can see the content it blurs.
-                                IconButton(onClick = { sheets.songSortMenuOpen = true }) {
+                                val menuHost = LocalMenuHost.current
+                                val origin = rememberMenuButtonOrigin()
+                                val browseId = detail.browseId
+                                IconButton(
+                                    onClick = {
+                                        menuHost?.open(origin.boundsInWindow()) { close ->
+                                            SongSortMenu(browseId = browseId, onChosen = close)
+                                        }
+                                    },
+                                    modifier = Modifier.menuOriginOf(origin),
+                                ) {
                                     Icon(
                                         Icons.Rounded.Sort,
                                         contentDescription = stringResource(R.string.sort_songs),
@@ -4603,6 +4616,7 @@ internal fun BitChordApp(
                                 onClick = {
                                     if (signedInState.value) {
                                         viewModel.loadChannels()
+                                        sheets.accountMenuAnchor = MenuOrigin.consume()
                                         sheets.showAccountSelector = true
                                     } else nav.showSettings = true
                                 },
@@ -5239,6 +5253,7 @@ private fun RootPage(
             },
             onSwitchChannel = {
                 viewModel.loadChannels()
+                sheets.accountMenuAnchor = MenuOrigin.consume()
                 sheets.showAccountSelector = true
             },
             onSignOut = { viewModel.signOut() },
@@ -7068,40 +7083,17 @@ private fun RootOverlays(
         )
     }
 
-    if (sheets.songSortMenuOpen) {
-        BackHandler { sheets.songSortMenuOpen = false }
-        FrostedSortMenu(
-            hazeState = hazeState,
-            selected = songSort,
-            onSelect = { option ->
-                detail?.browseId?.let { AppSettings.setDetailSongSort(it, option) }
-                sheets.songSortMenuOpen = false
-            },
-            // Flipping the date direction deliberately leaves the menu up:
-            // closing it here would cut the arrow's rotation animation off
-            // before it played, and the open menu lets the direction flip
-            // read against the list reordering behind the frost.
-            onFlipDateDirection = {
-                detail?.browseId?.let { browseId ->
-                    val next = when (songSort) {
-                        SongSort.DATE_ADDED_DESC -> SongSort.DATE_ADDED_ASC
-                        SongSort.DATE_ADDED_ASC -> SongSort.DATE_ADDED_DESC
-                        else -> SongSort.DATE_ADDED_DESC
-                    }
-                    AppSettings.setDetailSongSort(browseId, next)
-                }
-            },
-            onDismiss = { sheets.songSortMenuOpen = false },
-        )
-    }
-
-    if (sheets.showAccountSelector) {
-        BackHandler { sheets.showAccountSelector = false }
-        AccountProfileSelector(
+    // The account switcher, hung off the account photo (or at the top end,
+    // where that photo is, when opened from Settings).
+    AnchoredItemMenu(
+        item = Unit.takeIf { sheets.showAccountSelector },
+        anchorInWindow = { sheets.accountMenuAnchor },
+        onDismiss = { sheets.showAccountSelector = false },
+    ) {
+        AccountMenu(
             accounts = googleAccounts,
             activeAccountId = activeAccountId,
             activeProfileId = activeProfileId,
-            hazeState = hazeState,
             onSelect = { selected, profile -> viewModel.selectProfile(selected.accountId, profile.profileId) },
             onAddAccount = {
                 sheets.showAccountSelector = false
@@ -7438,6 +7430,9 @@ private fun RootOverlays(
         )
     }
 
+    // Last, so it is over everything above, the player included: the menu
+    // any screen asked LocalMenuHost for.
+    (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
 }
 
 @Composable
@@ -7919,11 +7914,12 @@ internal class RootSheets {
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
     var libraryShowAll by mutableStateOf<HomeShelf?>(null)
     var detailActiveShelf by mutableStateOf<HomeShelf?>(null)
-    var librarySortMenuOpen by mutableStateOf(false)
     var showLyricsSources by mutableStateOf(false)
     var showAppLanguage by mutableStateOf(false)
     var showTranslationLanguage by mutableStateOf(false)
     var showAccountSelector by mutableStateOf(false)
+    /** The account photo the switcher was opened from, in window coordinates; null opens it at the top end. */
+    var accountMenuAnchor: Rect? = null
     var pickingMusicCatalogue by mutableStateOf(false)
     var showListenBrainzLogin by mutableStateOf(false)
     var showLastfmLogin by mutableStateOf(false)
@@ -8013,7 +8009,6 @@ internal class RootSheets {
     // Free-app credit popup: once ever, reopenable from Settings → Support.
     var showSupportPopup by mutableStateOf(false)
     var showAnnouncementDialog by mutableStateOf(false)
-    var songSortMenuOpen by mutableStateOf(false)
 
     /** The track menu: which track it is open on, and how it was opened. */
     class SongMenu {
@@ -8150,124 +8145,105 @@ private fun LibrarySort.localizedLabel(): String = when (this) {
 }
 
 /**
- * The track-list sort menu, styled after the account switcher: a full-screen
- * scrim to catch the dismissal tap, and the options on a frosted panel that
- * blurs the page behind it. Composed here in the main hierarchy rather than
- * as a popup window — which is exactly what lets the haze see the content it
- * is blurring.
+ * The Library "Show all" grid's sort, as the shared menu's choices. Reads the
+ * setting itself, so the check moves the moment a choice is made.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
-internal fun FrostedSortMenu(
-    hazeState: HazeState,
-    selected: SongSort,
-    onSelect: (SongSort) -> Unit,
-    onFlipDateDirection: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val shape = MaterialTheme.shapes.extraLarge
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            // A tap on the page dismisses; nothing on the page was pressed,
-            // so nothing ripples across it.
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.TopEnd,
-    ) {
-        Surface(
-            color = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = shape,
-            modifier = Modifier
-                .padding(top = 56.dp, end = 20.dp)
-                .width(IntrinsicSize.Max)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
-                        )
-                    },
-                )
-                // Swallows taps between rows; it isn't a control itself.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                ),
+private fun LibrarySortMenu(onChosen: () -> Unit) {
+    val current by AppSettings.librarySort.collectAsStateWithLifecycle()
+    val selected = stringResource(R.string.selected)
+    LibrarySort.entries.forEach { option ->
+        MenuChoiceRow(
+            label = option.localizedLabel(),
+            selected = option == current,
+            ink = MaterialTheme.colorScheme.onSurface,
+            accent = MaterialTheme.colorScheme.primary,
+            selectedDescription = selected,
         ) {
-            Column(Modifier.padding(vertical = 8.dp)) {
-                // Date added is one row, Spotify-style: the arrow on it shows
-                // the direction — up for newest first, down for oldest — and
-                // tapping flips it, the rotation animating the flip. Up is
-                // also where a fresh activation lands, newest first being the
-                // point of the feature.
-                val dateActive = selected == SongSort.DATE_ADDED_ASC ||
-                    selected == SongSort.DATE_ADDED_DESC
-                val arrowRotation by animateFloatAsState(
-                    targetValue = if (selected == SongSort.DATE_ADDED_ASC) 180f else 0f,
-                    animationSpec = tween(durationMillis = 200),
-                    label = "dateAddedArrow",
-                )
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable(role = Role.Button) { onFlipDateDirection() }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.sort_date_added_toggle),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (dateActive) {
-                        Icon(
-                            Icons.Rounded.ArrowUpward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.rotate(arrowRotation),
-                        )
-                    }
-                }
-                SongSort.entries
-                    .filter { it != SongSort.DATE_ADDED_ASC && it != SongSort.DATE_ADDED_DESC }
-                    .forEach { option ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 44.dp)
-                                .clickable(role = Role.Button) { onSelect(option) }
-                                .padding(horizontal = 20.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                option.localizedLabel(),
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (option == selected) {
-                                Icon(
-                                    Icons.Rounded.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    }
-            }
+            AppSettings.setLibrarySort(option)
+            onChosen()
         }
     }
+}
+
+/**
+ * A track list's sort, as the shared menu's rows.
+ *
+ * Date added is one row, Spotify-style: the arrow on it shows the direction —
+ * up for newest first, down for oldest — and tapping flips it, the rotation
+ * animating the flip. Flipping leaves the menu up: closing it would cut the
+ * rotation off before it played, and the open menu lets the flip read against
+ * the list reordering behind it. Up is where a fresh activation lands, newest
+ * first being the point of the feature.
+ *
+ * Reads the page's sort itself, so the check and the arrow move the moment a
+ * choice is made.
+ */
+@Composable
+internal fun SongSortMenu(browseId: String, onChosen: () -> Unit) {
+    val sorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
+    val current = sorts[browseId] ?: SongSort.DEFAULT
+    val ink = MaterialTheme.colorScheme.onSurface
+    val accent = MaterialTheme.colorScheme.primary
+    val selectedLabel = stringResource(R.string.selected)
+    val dateActive = current == SongSort.DATE_ADDED_ASC || current == SongSort.DATE_ADDED_DESC
+    // Says which way it runs to a screen reader too, not only with the arrow.
+    val dateState = if (dateActive) current.localizedLabel() else null
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (current == SongSort.DATE_ADDED_ASC) 180f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "dateAddedArrow",
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = LocalMenuInteractive.current, role = Role.Button) {
+                AppSettings.setDetailSongSort(
+                    browseId,
+                    if (current == SongSort.DATE_ADDED_DESC) SongSort.DATE_ADDED_ASC else SongSort.DATE_ADDED_DESC,
+                )
+            }
+            .semantics {
+                selected = dateActive
+                dateState?.let { stateDescription = it }
+            }
+            .heightIn(min = MenuTokens.MenuRowMinHeight)
+            .padding(horizontal = MenuTokens.MenuRowPaddingH, vertical = MenuTokens.MenuRowPaddingV),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.sort_date_added_toggle),
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontWeight = if (dateActive) FontWeight.SemiBold else FontWeight.Normal,
+            ),
+            color = ink,
+            modifier = Modifier.weight(1f),
+        )
+        if (dateActive) {
+            Icon(
+                Icons.Rounded.ArrowUpward,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier
+                    .size(MenuTokens.MenuIcon)
+                    .rotate(arrowRotation),
+            )
+        }
+    }
+    SongSort.entries
+        .filter { it != SongSort.DATE_ADDED_ASC && it != SongSort.DATE_ADDED_DESC }
+        .forEach { option ->
+            MenuChoiceRow(
+                label = option.localizedLabel(),
+                selected = option == current,
+                ink = ink,
+                accent = accent,
+                selectedDescription = selectedLabel,
+            ) {
+                AppSettings.setDetailSongSort(browseId, option)
+                onChosen()
+            }
+        }
 }
 
 @Composable

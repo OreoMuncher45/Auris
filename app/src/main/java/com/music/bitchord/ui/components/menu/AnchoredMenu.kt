@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -140,6 +139,8 @@ fun AnchoredMenu(
      * menu, whose glass and plate are meant to show the artwork.
      */
     frost: Dp? = null,
+    /** Forces dark (true) or light (false) colours; null follows the theme. */
+    dark: Boolean? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceMotion = rememberReduceMenuMotion()
@@ -148,8 +149,8 @@ fun AnchoredMenu(
 
     BackHandler(enabled = expanded, onBack = onDismiss)
 
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val colors = menuColors(dark, reduceDynamicBlur)
+    val isDark = dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)
+    val colors = menuColors(isDark, reduceDynamicBlur)
     // A menu over a page covers the rows behind it — see MenuTokens.PagePlateAlpha.
     val plate = if (frost != null) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
     val shape = RoundedCornerShape(MenuTokens.Radius)
@@ -282,12 +283,6 @@ fun AnchoredMenu(
         }
     }
 }
-
-/**
- * False while the menu around a row is closing. A row that can be activated
- * reads it so that it can't be once its menu has been dismissed.
- */
-internal val LocalMenuInteractive = compositionLocalOf { true }
 
 /** Which side of the button the menu opened on — see [AnchoredMenu]. */
 private class MenuSide {
