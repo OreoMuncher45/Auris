@@ -38,8 +38,11 @@ internal object CencDecryptor {
         skipBlocks: Int = 0,
     ) {
         require(clearSizes.size == encryptedSizes.size) { "subsample table is uneven" }
-        val covered = clearSizes.sum().toLong() + encryptedSizes.sum()
-        require(covered <= length) { "subsamples cover $covered bytes of a $length-byte sample" }
+        require(clearSizes.all { it >= 0 } && encryptedSizes.all { it >= 0 }) { "a negative subsample size" }
+        // The table must account for every byte: a tail it leaves out would be
+        // passed on as clear while still being ciphertext.
+        val covered = clearSizes.sumOf { it.toLong() } + encryptedSizes.sumOf { it.toLong() }
+        require(covered == length.toLong()) { "subsamples cover $covered bytes of a $length-byte sample" }
         when (mode) {
             C.CRYPTO_MODE_AES_CTR -> ctr(data, offset, key, counterBlock(iv), clearSizes, encryptedSizes)
             C.CRYPTO_MODE_AES_CBC -> cbcs(data, offset, key, counterBlock(iv), clearSizes, encryptedSizes, cryptBlocks, skipBlocks)

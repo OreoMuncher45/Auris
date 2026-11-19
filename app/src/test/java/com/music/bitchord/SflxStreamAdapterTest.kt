@@ -53,8 +53,17 @@ class SflxStreamAdapterTest {
                 script.writeText(HARNESS_HEAD + SflxShim.preamble(manifest, "{}", "3.3", cacheDir = "/cache") +
                     "\n" + FAKE_EXTENSION + "\n" + SflxShim.ADAPTER + "\n" + HARNESS_TAIL)
                 val process = ProcessBuilder(node, script.absolutePath).redirectErrorStream(true).start()
-                val output = process.inputStream.bufferedReader().readText()
-                check(process.waitFor(60, TimeUnit.SECONDS) && process.exitValue() == 0) { output }
+                // Read alongside the wait, so a Node that stalls with stdout
+                // open is timed out and killed rather than blocking the run.
+                val output = StringBuilder()
+                val reader = Thread { output.append(process.inputStream.bufferedReader().readText()) }.apply { start() }
+                try {
+                    check(process.waitFor(60, TimeUnit.SECONDS)) { "Node did not finish in 60s" }
+                    reader.join(10_000)
+                    check(process.exitValue() == 0) { output.toString() }
+                } finally {
+                    process.destroyForcibly()
+                }
                 val lines = Json.parseToJsonElement(output.lines().last { it.startsWith("[") }) as JsonArray
                 results = lines.associate { entry ->
                     val case = entry.jsonObject
@@ -86,6 +95,10 @@ class SflxStreamAdapterTest {
                 const id = web && web.provider_id === 'amazon' ? web.id : trackID;
                 const mode = globalThis.__mode;
                 const path = mode === 'encrypted' ? outputPath.replace(/\.[^.]+$/, '.m4a') : outputPath;
+                if (mode === 'segments') {
+                  file.downloadSegments([{ url: 'https://cdn.example/init' }, { url: 'https://cdn.example/1' }], path, {});
+                  return { success: true, decryption_key: 'ffeeddccbbaa99887766554433221100', audio_codec: 'flac' };
+                }
                 const res = file.download('https://cdn.example/' + id, path, { headers: { a: '1' } });
                 if (mode === 'reads-file') { file.getSize(path); __calls.push('read past the capture'); }
                 if (mode === 'silent') return { success: true };
@@ -105,6 +118,7 @@ class SflxStreamAdapterTest {
                 ['silent lossy', 'OWN', row, 'silent', 'opus'],
                 ['encrypted', 'OWN', row, 'encrypted'],
                 ['reads the file', 'OWN', row, 'reads-file'],
+                ['encrypted segments', 'OWN', row, 'segments'],
               ];
               const out = [];
               for (const [name, id, track, mode, tier] of cases) {
@@ -160,6 +174,13 @@ class SflxStreamAdapterTest {
         assertFalse(plain.answer().containsKey("decryption"))
         val encrypted = case("encrypted").answer()
         assertEquals("00112233445566778899aabbccddeeff", encrypted.getValue("decryption").jsonObject.text("key"))
+    }
+
+    @Test
+    fun `an encrypted segmented answer carries its key, so the host can refuse it`() {
+        val segmented = case("encrypted segments").answer()
+        assertTrue(segmented.containsKey("segments"))
+        assertEquals("ffeeddccbbaa99887766554433221100", segmented.getValue("decryption").jsonObject.text("key"))
     }
 
     @Test

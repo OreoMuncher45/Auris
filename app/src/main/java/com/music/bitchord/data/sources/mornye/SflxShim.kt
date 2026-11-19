@@ -1749,19 +1749,22 @@ internal object SflxShim {
                     // file that never arrived, still ends the call here; see
                     // `guarded` below.
                     globalThis.file.download = function (url, path, opts) {
-                        if (captured !== null) throw marker;
+                        if (captured !== null || capturedSegments !== null) throw marker;
                         captured = text(url);
                         capturedPath = text(path) || outputPath;
                         capturedOptions = opts && typeof opts === 'object' ? opts : null;
                         return { success: true, path: capturedPath };
                     };
+                    // The same for a segmented answer: it "succeeds", so a key
+                    // the extension reports for it is heard and the host can
+                    // refuse what it cannot decrypt, instead of the segments
+                    // reaching the player still encrypted.
                     globalThis.file.downloadSegments = function (segments, path, opts) {
-                        if (capturedSegments === null && segments) {
-                            capturedSegments = segments;
-                            capturedPath = text(path) || outputPath;
-                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
-                        }
-                        throw marker;
+                        if (captured !== null || capturedSegments !== null || !segments) throw marker;
+                        capturedSegments = segments;
+                        capturedPath = text(path) || outputPath;
+                        capturedOptions = opts && typeof opts === 'object' ? opts : null;
+                        return { success: true, path: capturedPath };
                     };
                     // What an extension may do to the file once it "has" it:
                     // read it, rewrite it, convert it. There is no file, so
@@ -1773,7 +1776,7 @@ internal object SflxShim {
                         var real = holder[name];
                         guardedFns.push(function () { holder[name] = real; });
                         holder[name] = function () {
-                            if (captured !== null) throw marker;
+                            if (captured !== null || capturedSegments !== null) throw marker;
                             return real.apply(this, arguments);
                         };
                     };
@@ -1873,7 +1876,11 @@ internal object SflxShim {
                         if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
                         if (guessed.bitrate) meta.bitrate = guessed.bitrate;
                         if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
-                        return answered(null, '', { segments: list, headers: headersOf() });
+                        return answered(null, '', {
+                            segments: list,
+                            headers: headersOf(),
+                            decryption: decryptionKey ? { key: decryptionKey } : null
+                        });
                     }
                     if (!captured) {
                         return answered(null, failure || 'the extension did not resolve a stream URL');

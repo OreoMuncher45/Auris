@@ -93,6 +93,20 @@ class SflxSearchMemoTest {
         assertEquals(2, asked.get())
         delay(50)
         assertEquals("the old answer was not kept over the new one", "new script", memo.cached("amazon|stream|x"))
+        assertEquals("the fence went with the flight", 0, memo.fencesHeld())
+    }
+
+    @Test
+    fun `an invalidation after an answer lands leaves no fence behind`() = runBlocking {
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        repeat(200) { round ->
+            val key = "amazon|stream|$round"
+            val answer = async { memo.once(key) { Result.success("answer") } }
+            memo.forgetMatching("amazon|")
+            answer.await()
+        }
+        delay(50)
+        assertEquals(0, memo.fencesHeld())
     }
 
     @Test

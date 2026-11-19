@@ -114,6 +114,23 @@ internal class SflxSearchMemo<V>(
     }
 
     /**
+     * Takes a finished question off the board, and keeps its answer unless an
+     * invalidation fenced it — one step under [storing], so an invalidation
+     * cannot land between the store and the removal and leave a fence behind
+     * that nothing would ever clear.
+     */
+    private fun retire(key: String, flight: CompletableDeferred<Result<V>>, answer: Result<V>?) {
+        synchronized(storing) {
+            val wasFenced = fenced.remove(flight)
+            flights.remove(key, flight)
+            if (!wasFenced) answer?.onSuccess { put(key, it) }
+        }
+    }
+
+    /** For tests: how many fences are being held. */
+    internal fun fencesHeld(): Int = fenced.size
+
+    /**
      * The answer to [key], asked once.
      *
      * The answer is taken from the cache when it is there, from the question
@@ -150,22 +167,19 @@ internal class SflxSearchMemo<V>(
                 ask()
             } catch (error: Throwable) {
                 if (error is CancellationException) {
-                    flights.remove(key, flight)
+                    retire(key, flight, null)
                     flight.completeExceptionally(error)
                     return@launch
                 }
                 Result.failure(SflxException(error.message ?: "the question failed"))
             }
-            synchronized(storing) {
-                if (!fenced.remove(flight)) answer.onSuccess { put(key, it) }
-            }
             // Off the board before anyone hears the answer. Completing first
             // resumes the waiting caller, which may ask again — after a
-            // forget, say — before this line runs, find the finished flight
-            // still there, and be handed its old answer without asking. With
-            // the order this way round, a caller that arrives in between finds
-            // the answer in the cache, or nothing, and asks afresh.
-            flights.remove(key, flight)
+            // forget, say — before the flight is retired, find it still there,
+            // and be handed its old answer without asking. With the order this
+            // way round, a caller that arrives in between finds the answer in
+            // the cache, or nothing, and asks afresh.
+            retire(key, flight, answer)
             flight.complete(answer)
         }
         return flight.await()
