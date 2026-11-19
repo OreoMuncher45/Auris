@@ -85,19 +85,17 @@ class SpotifyTokenSessionTest {
     }
 
     @Test
-    fun aLookupThatReadTheOldSnapshotCannotHandItToTheNewCookie() = runBlocking {
-        // A lookup reads the one reference once, then decides on what it read
-        // with usableFor(cookie, now). Pause it right there: it holds A's
-        // snapshot while the cache moves on to B's.
+    fun anEntryMintedForOneCookieFailsThePredicateForAnother() = runBlocking {
+        // The predicate a lookup decides with, checked directly: an entry
+        // minted for cookie A, once the cache has moved on to B.
         set("access", cachedToken("token-for-A", "cookie-A"))
         val heldByThePausedLookup = get("access")!!
         set("access", cachedToken("token-for-B", "cookie-B"))
         AppSettings.spotifySpdcToken.value = "cookie-B"
 
-        // Resumed with B's cookie, the decision it makes on the snapshot it
-        // holds refuses A's token...
+        // usableFor refuses A's entry for cookie B...
         assertFalse(usable(heldByThePausedLookup, "cookie-B"))
-        // ...and the cache as it now stands answers B with B's.
+        // ...and a lookup that starts after the change is answered with B's.
         assertEquals("token-for-B", SpotifyToken.accessToken())
     }
 
