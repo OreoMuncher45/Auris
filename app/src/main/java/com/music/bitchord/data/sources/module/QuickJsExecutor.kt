@@ -697,9 +697,9 @@ internal object QuickJsExecutor {
                         // The synchronous bridge the Mornye shim rides on used
                         // to be silent, which hid the one fact that matters when
                         // a catalogue answers 200 with nothing in it: how big
-                        // the answer was. Log sizes, never the body, except for
-                        // an Amazon answer with no search template in it — that
-                        // is the refusal itself, and it holds no credentials.
+                        // the answer was. Log sizes, never the body — not even
+                        // an Amazon answer with no search template in it, since
+                        // these logs are shared by users.
                         TrackLog.d(
                             TAG,
                             "  httpSync $method ${redactModuleUrl(url)} req=${body?.length ?: 0}" +
@@ -708,7 +708,8 @@ internal object QuickJsExecutor {
                         if (url.contains("a2z.com") && !result.body.contains("SearchTemplate")) {
                             TrackLog.w(
                                 TAG,
-                                "  amazon answer without a search template: ${result.body.take(400)}",
+                                "  amazon answer without a search template: " +
+                                    "host=${url.toHttpUrlOrNull()?.host ?: "?"} (${result.body.length} chars)",
                             )
                         }
                         JSONObject()
