@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.MenuChoiceRow
+import com.music.bitchord.ui.components.menu.MenuRow
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import com.music.bitchord.ui.components.menuOriginOf
 import android.os.Build
@@ -1728,7 +1731,6 @@ private fun ArtistMetaRow(
         spotifyStats == null && !isAiArtist && onToggleAiArtist == null
     ) return
 
-    var expanded by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1769,73 +1771,55 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        // A DropdownMenu anchors to its parent, so the button and its menu
-        // share a box of their own: in the header's box the menu hung off the
-        // whole header and opened at its start edge, across the page from the ⋮.
-        Box(
+        // The artist's own menu, hung off the ⋮ like every other menu.
+        val menuHost = LocalMenuHost.current
+        val origin = rememberMenuButtonOrigin()
+        val albumsLabel = stringResource(R.string.albums)
+        val singlesLabel = stringResource(R.string.singles_eps)
+        IconButton(
+            onClick = {
+                menuHost?.open(origin.boundsInWindow()) { close ->
+                    val ink = MaterialTheme.colorScheme.onSurface
+                    albumsShelf?.let { shelf ->
+                        MenuRow(icon = null, label = albumsLabel, ink = ink) {
+                            close()
+                            onOpenShelf(shelf)
+                        }
+                    }
+                    singlesShelf?.let { shelf ->
+                        MenuRow(icon = null, label = singlesLabel, ink = ink) {
+                            close()
+                            onOpenShelf(shelf)
+                        }
+                    }
+                    if (onToggleAiArtist != null) {
+                        MenuRow(
+                            icon = Icons.Rounded.AutoAwesome,
+                            label = stringResource(if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai),
+                            ink = ink,
+                        ) {
+                            close()
+                            onToggleAiArtist()
+                        }
+                    }
+                    if (onHideArtist != null) {
+                        MenuRow(icon = Icons.Rounded.VisibilityOff, label = stringResource(R.string.hide_artist), ink = ink) {
+                            close()
+                            onHideArtist()
+                        }
+                    }
+                }
+            },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = ARTIST_CONTENT_GUTTER),
+                .padding(end = ARTIST_CONTENT_GUTTER)
+                .menuOriginOf(origin),
         ) {
-            IconButton(
-                onClick = { expanded = true },
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
-                    tint = palette.onBackgroundVariant,
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                albumsShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.albums)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                singlesShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.singles_eps)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                if (onToggleAiArtist != null) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
-                                ),
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onToggleAiArtist()
-                        },
-                    )
-                }
-                if (onHideArtist != null) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.hide_artist)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onHideArtist()
-                        },
-                    )
-                }
-            }
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.more),
+                tint = palette.onBackgroundVariant,
+            )
         }
     }
 }
@@ -2353,7 +2337,6 @@ private fun ShelfSortRow(
     selected: ShelfSort,
     onSelect: (ShelfSort) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2365,44 +2348,45 @@ private fun ShelfSortRow(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(palette.elevated)
-                    .clickable { expanded = true }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = selected.localizedLabel(),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = palette.onBackground,
-                )
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Rounded.Sort,
-                    contentDescription = stringResource(R.string.sort_music),
-                    tint = palette.onBackgroundVariant,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ShelfSort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.localizedLabel()) },
-                        leadingIcon = {
-                            if (option == selected) {
-                                Icon(Icons.Rounded.Check, contentDescription = null)
+        val menuHost = LocalMenuHost.current
+        val sortOrigin = rememberMenuButtonOrigin()
+        Row(
+            modifier = Modifier
+                .menuOriginOf(sortOrigin)
+                .clip(RoundedCornerShape(50))
+                .background(palette.elevated)
+                .clickable {
+                    menuHost?.open(sortOrigin.boundsInWindow()) { close ->
+                        val selectedLabel = stringResource(R.string.selected)
+                        ShelfSort.entries.forEach { option ->
+                            MenuChoiceRow(
+                                label = option.localizedLabel(),
+                                selected = option == selected,
+                                ink = MaterialTheme.colorScheme.onSurface,
+                                accent = MaterialTheme.colorScheme.primary,
+                                selectedDescription = selectedLabel,
+                            ) {
+                                close()
+                                onSelect(option)
                             }
-                        },
-                        onClick = {
-                            expanded = false
-                            onSelect(option)
-                        },
-                    )
+                        }
+                    }
                 }
-            }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selected.localizedLabel(),
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.onBackground,
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Rounded.Sort,
+                contentDescription = stringResource(R.string.sort_music),
+                tint = palette.onBackgroundVariant,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }
