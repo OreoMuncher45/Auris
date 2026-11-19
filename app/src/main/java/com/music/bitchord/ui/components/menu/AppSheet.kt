@@ -168,13 +168,22 @@ fun <T : Any> AppSheet(
     // does so after this and keeps it.
     val sheetFocus = remember { FocusRequester() }
     val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
-    LaunchedEffect(expanded, keyboard) {
+    LaunchedEffect(expanded) {
         // Into the sheet — onto its handle, the first thing in it — unless
         // something inside already has the focus. In touch mode too: a field
         // behind the sheet would otherwise keep the software keyboard's
         // typing while covered, and only clearing the focus lets the window
         // hand it straight back to that field.
-        if (expanded && !sheet.holdsFocus) sheetFocus.requestFocus()
+        if (expanded && !sheet.holdsFocus && trapFocus()) sheetFocus.requestFocus()
+    }
+    LaunchedEffect(keyboard) {
+        // A keyboard coming into use brings the focus in only to a sheet
+        // nothing covers: under a sheet stacked on it, a dialog or a menu,
+        // the focus stays with the one on top.
+        val covered = !trapFocus() ||
+            dialogs?.requests?.isNotEmpty() == true ||
+            menus?.request != null
+        if (keyboard && expanded && !sheet.holdsFocus && !covered) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)

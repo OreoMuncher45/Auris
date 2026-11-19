@@ -279,6 +279,54 @@ class AppSheetFocusTest {
     }
 
     @Test
+    fun aKeyboardComingIntoUseLeavesTheFocusWithWhatCoversTheSheet() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var onTop by mutableStateOf(true)
+        var fieldFocused = false
+        val field = FocusRequester()
+        val modes = object : InputModeManager {
+            var mode by mutableStateOf(InputMode.Touch)
+            override val inputMode: InputMode get() = mode
+            @ExperimentalComposeUiApi
+            override fun requestInputMode(inputMode: InputMode): Boolean {
+                mode = inputMode
+                return true
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalInputModeManager provides modes) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        AppSheet(item = item, onDismiss = { item = null }, trapFocus = { onTop }) {
+                            Box(Modifier.fillMaxWidth().height(200.dp))
+                        }
+                        // What covers it — a sheet stacked on it — with a
+                        // field the listener is typing in.
+                        BasicTextField(
+                            value = "",
+                            onValueChange = {},
+                            modifier = Modifier
+                                .focusRequester(field)
+                                .onFocusChanged { fieldFocused = it.isFocused },
+                        )
+                    }
+                }
+            }
+        }
+        item = "downloads"
+        compose.waitForIdle()
+        onTop = false
+        compose.runOnIdle { field.requestFocus() }
+        compose.waitForIdle()
+        assertTrue(fieldFocused)
+
+        modes.mode = InputMode.Keyboard
+        compose.waitForIdle()
+        assertTrue("the covered sheet leaves the field the focus", fieldFocused)
+    }
+
+    @Test
     fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
         AppUi.install(AndroidAppUiHost)
         var item by mutableStateOf<String?>(null)
