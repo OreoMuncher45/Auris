@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,5 +74,30 @@ class BorrowedEntriesTest {
     fun `other keys are unaffected`() {
         borrow(alt)
         assertTrue(requestMayFill("abcdefghijk"))
+    }
+
+    @Test
+    fun `a reopen stays on the lent sibling even when another complete one exists`() {
+        val id = "abcdefghijk"
+        val noAtmos = "$id#alt2-noatmos"
+        borrow(alt)
+        // `#alt2` lost a span; `#alt2-noatmos` is still complete. A seek
+        // reopens at a nonzero position: the key factory asks the request
+        // first, and gets `#alt2` back rather than a fresh sibling choice…
+        assertEquals(alt, request.lentFor(id))
+        // …and the hole in it is refused rather than refilled.
+        assertFalse(requestMayFill(alt))
+        // A request that borrowed nothing gets no answer, so the key factory
+        // makes its ordinary choice.
+        assertNull(BorrowedEntries().lentFor(id))
+        assertTrue(requestMayFill(noAtmos))
+    }
+
+    @Test
+    fun `lentFor matches only that video's keys`() {
+        borrow(alt)
+        assertNull(request.lentFor("abcdefghij"))
+        assertNull(request.lentFor("zzzzzzzzzzz"))
+        assertEquals(alt, request.lentFor("abcdefghijk"))
     }
 }

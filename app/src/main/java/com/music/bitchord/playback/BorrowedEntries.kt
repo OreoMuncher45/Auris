@@ -39,6 +39,16 @@ internal class BorrowedEntries {
      */
     fun mayFill(key: String): Boolean = keys.isEmpty() || key !in keys
 
+    /**
+     * The key lent for [videoId], if any — for a per-request set, which holds
+     * a key or two, so the scan is free. The plain key or one of its `#`
+     * siblings.
+     */
+    fun lentFor(videoId: String): String? {
+        if (keys.isEmpty()) return null
+        return keys.firstOrNull { it == videoId || it.startsWith("$videoId#") }
+    }
+
     /** The entry [key] has been removed; it may be filled again. */
     fun forget(key: String) {
         keys.remove(key)

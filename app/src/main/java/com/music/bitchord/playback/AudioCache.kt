@@ -553,8 +553,16 @@ object AudioCache {
             // still held.
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
+                // A request that was lent a sibling keeps reading that one on
+                // every reopen. Media3 rebuilds the key per open but keeps the
+                // extractor, so a seek that picked another complete sibling
+                // (Opus under #alt2, then AAC under #alt2-noatmos) would feed
+                // one container's bytes to the other's parser. A lent key that
+                // has lost bytes is refused upstream, and recovery picks anew.
+                val lent = if (rendition == null) openingRequest.get()?.lentFor(videoId) else null
                 when {
                     rendition != null -> "$videoId#$rendition"
+                    lent != null -> lent
                     SourceResolver.canSubstituteForYouTube() ->
                         "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
                     else -> completeSibling(videoId, videoId) ?: videoId
