@@ -50,6 +50,16 @@ internal class SflxSearchMemo<V>(
 
     private val answers = ConcurrentHashMap<String, Entry<V>>()
     private val flights = ConcurrentHashMap<String, CompletableDeferred<Result<V>>>()
+
+    /**
+     * Questions that were running when their answers were invalidated. Their
+     * callers still hear them — they asked before the change — but the answer
+     * is not kept, because it is the old script's or the old settings'.
+     */
+    private val fenced = ConcurrentHashMap.newKeySet<CompletableDeferred<Result<V>>>()
+
+    /** Held across "is this flight fenced" and the store, and across an invalidation. */
+    private val storing = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** The answer to a question already asked, or null when there is none. */
@@ -72,9 +82,23 @@ internal class SflxSearchMemo<V>(
         answers.remove(key)
     }
 
-    /** Forgets every answer whose key starts with [prefix]. */
+    /**
+     * Forgets every answer whose key starts with [prefix], and the questions
+     * still running under it: a caller that arrives after this asks afresh
+     * rather than joining one of them, and what they answer is not kept.
+     */
     fun forgetMatching(prefix: String) {
-        answers.keys.removeIf { it.startsWith(prefix) }
+        synchronized(storing) {
+            answers.keys.removeIf { it.startsWith(prefix) }
+            flights.entries.removeIf { (key, flight) ->
+                if (key.startsWith(prefix)) {
+                    fenced.add(flight)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     /**
@@ -100,7 +124,9 @@ internal class SflxSearchMemo<V>(
                 }
                 Result.failure(SflxException(error.message ?: "the question failed"))
             }
-            answer.onSuccess { put(key, it) }
+            synchronized(storing) {
+                if (!fenced.remove(flight)) answer.onSuccess { put(key, it) }
+            }
             // Off the board before anyone hears the answer. Completing first
             // resumes the waiting caller, which may ask again — after a
             // forget, say — before this line runs, find the finished flight
