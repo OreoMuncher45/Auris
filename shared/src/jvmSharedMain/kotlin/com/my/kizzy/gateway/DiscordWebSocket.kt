@@ -265,6 +265,13 @@ open class DiscordWebSocket(
                     header("Cache-Control", "no-cache")
                     header("Pragma", "no-cache")
                 }
+                // disconnect() or close() may have run while the handshake was
+                // in flight, with no socket yet to cancel. Drop this one and go
+                // back to the top, which parks or exits.
+                if (pausedLoop || closed) {
+                    session.cancel()
+                    continue
+                }
                 websocket = session
                 connected = true
                 backoff = INITIAL_RECONNECT_DELAY.inWholeMilliseconds
