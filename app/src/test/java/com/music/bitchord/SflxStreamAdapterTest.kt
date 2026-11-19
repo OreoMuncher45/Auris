@@ -1,55 +1,172 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.sources.mornye.SflxManifestParser
 import com.music.bitchord.data.sources.mornye.SflxShim
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.BeforeClass
 import org.junit.Test
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
- * How the adapter turns an extension's `download` into a stream answer.
+ * How the adapter turns an extension's `download` into a stream answer, run.
  *
- * Checked against the adapter text, as the shim's other tests are; the
- * behaviour was also run in a JavaScript engine against an extension shaped
- * like Amazon Music 2.3.19's downloader.
+ * The real preamble and [SflxShim.ADAPTER] are executed in a JavaScript engine
+ * against small extensions shaped like Amazon Music 2.3.19's downloader, and
+ * the answers they return are what is checked. The app's own engine is an
+ * Android library, so this uses Node, which CI runners carry; where it is
+ * missing the tests are skipped rather than failed.
  */
 class SflxStreamAdapterTest {
 
-    private val adapter = SflxShim.ADAPTER
+    companion object {
+        private var results: Map<String, JsonObject> = emptyMap()
+
+        @BeforeClass
+        @JvmStatic
+        fun run() {
+            val node = listOf("node", "/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node")
+                .firstOrNull { runCatching { ProcessBuilder(it, "--version").start().waitFor(10, TimeUnit.SECONDS) }.getOrDefault(false) }
+                ?: return
+            val manifest = SflxManifestParser.parse(
+                """
+                {"id":"amazon","name":"amazon","displayName":"Amazon Music","version":"2.3.19",
+                 "type":["metadata_provider","download_provider"],
+                 "qualityOptions":[{"id":"best","label":"FLAC Best Available","kind":"lossless"},
+                                   {"id":"opus","label":"Opus 320kbps","kind":"lossy"}]}
+                """.trimIndent(),
+            )
+            val dir = kotlin.io.path.createTempDirectory("sflx-adapter").toFile()
+            try {
+                val script = File(dir, "run.cjs")
+                script.writeText(HARNESS_HEAD + SflxShim.preamble(manifest, "{}", "3.3", cacheDir = "/cache") +
+                    "\n" + FAKE_EXTENSION + "\n" + SflxShim.ADAPTER + "\n" + HARNESS_TAIL)
+                val process = ProcessBuilder(node, script.absolutePath).redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText()
+                check(process.waitFor(60, TimeUnit.SECONDS) && process.exitValue() == 0) { output }
+                val lines = Json.parseToJsonElement(output.lines().last { it.startsWith("[") }) as JsonArray
+                results = lines.associate { entry ->
+                    val case = entry.jsonObject
+                    case.getValue("case").jsonPrimitive.content to case
+                }
+            } finally {
+                dir.deleteRecursively()
+            }
+        }
+
+        private const val HARNESS_HEAD = """
+            globalThis.__spine = new Proxy({}, { get: () => () => null });
+            globalThis.__calls = [];
+        """
+
+        // Amazon's control flow, cut down: checkAvailability searches and
+        // swaps in a different id; download prefers the prepared row's id,
+        // renames the path when the file is encrypted, and returns the key.
+        private const val FAKE_EXTENSION = """
+            registerExtension({
+              checkAvailability(isrc, name, artist, options) {
+                __calls.push('checkAvailability');
+                return { available: true, track_id: 'SEARCHED', prepared_context: { web_metadata: options.track || null } };
+              },
+              download(trackID, quality, outputPath, onProgress, options) {
+                const prepared = options.preparedContext || {};
+                const web = prepared.web_metadata || prepared.host_track || null;
+                if (!web) __calls.push('getTrack');
+                const id = web && web.provider_id === 'amazon' ? web.id : trackID;
+                const mode = globalThis.__mode;
+                const path = mode === 'encrypted' ? outputPath.replace(/\.[^.]+$/, '.m4a') : outputPath;
+                const res = file.download('https://cdn.example/' + id, path, { headers: { a: '1' } });
+                if (mode === 'reads-file') { file.getSize(path); __calls.push('read past the capture'); }
+                if (mode === 'silent') return { success: true };
+                return { success: true, decryption_key: mode === 'encrypted' ? '00112233445566778899aabbccddeeff' : '',
+                         audio_codec: 'flac', bit_depth: 24, sample_rate: 96000 };
+              },
+            });
+        """
+
+        private const val HARNESS_TAIL = """
+            (async () => {
+              const row = { id: 'OWN', provider_id: 'amazon' };
+              const cases = [
+                ['own row', 'OWN', row, 'plain'],
+                ['foreign row', 'OTHER', row, 'plain'],
+                ['silent lossless', 'OWN', row, 'silent'],
+                ['silent lossy', 'OWN', row, 'silent', 'opus'],
+                ['encrypted', 'OWN', row, 'encrypted'],
+                ['reads the file', 'OWN', row, 'reads-file'],
+              ];
+              const out = [];
+              for (const [name, id, track, mode, tier] of cases) {
+                __calls.length = 0; globalThis.__mode = mode;
+                const answer = JSON.parse(await module.exports.getTrackStreamUrl(id, tier || 'best', JSON.stringify({ settings: {}, track })));
+                out.push({ case: name, answer, calls: __calls.slice(),
+                           restored: JSON.stringify(file.getSize()).indexOf('does not expose') >= 0 });
+              }
+              console.log(JSON.stringify(out));
+            })();
+        """
+    }
+
+    private fun case(name: String): JsonObject {
+        assumeTrue("Node is not on this machine", results.isNotEmpty())
+        return results.getValue(name)
+    }
+
+    private fun JsonObject.answer() = getValue("answer").jsonObject
+    private fun JsonObject.track() = answer().getValue("track").jsonObject
+    private fun JsonObject.calls() = getValue("calls").jsonArray.map { it.jsonPrimitive.content }
+    private fun JsonObject.text(name: String) = getValue(name).jsonPrimitive.content
+    private fun JsonObject.number(name: String) = getValue(name).jsonPrimitive.int
 
     @Test
-    fun `a track from the extension's own search is downloaded without an availability check`() {
-        // The reference host's "Flow A". Asking checkAvailability first cost
-        // Amazon a SongLink lookup and a full catalogue search per stream, and
-        // its answer swapped the ASIN it searched for with the row's.
-        assertTrue(adapter.contains("var ownRow = row && text(firstOf(row.id, row.track_id, row.trackId, row.song_id)) === playableId;"))
-        assertTrue(adapter.contains("options.preparedContext = { track: row, host_track: row };"))
-        assertTrue(adapter.contains("} else if (typeof extension.checkAvailability === 'function') {"))
+    fun `a track from the extension's own search skips the availability check`() {
+        val own = case("own row")
+        assertFalse(own.calls().contains("checkAvailability"))
+        assertFalse("the row is handed over as host_track", own.calls().contains("getTrack"))
+        assertEquals("https://cdn.example/OWN", own.answer().text("streamUrl"))
     }
 
     @Test
-    fun `the placeholder path is the reference host's flac, and is not read back as evidence`() {
-        // An .m4a placeholder made every Amazon FLAC answer read as MP4, and
-        // hid the rename Amazon makes when the container really is MP4.
-        assertTrue(adapter.contains("safeId + '.flac';"))
-        assertFalse(adapter.contains("safeId + '.m4a';"))
-        assertTrue(adapter.contains("audioHints(namedByExtension ? capturedPath : '', capturedOptions, context)"))
+    fun `a track from elsewhere keeps the availability check`() {
+        assertTrue(case("foreign row").calls().contains("checkAvailability"))
     }
 
     @Test
-    fun `the download finishes so its key and codec are heard, but never touches a file`() {
-        // Amazon's result carries the per-track decryption key; the capture
-        // used to abort before the extension could return it.
-        assertTrue(adapter.contains("return { success: true, path: capturedPath };"))
-        assertTrue(adapter.contains("if (captured !== null) throw marker;"))
-        assertTrue(adapter.contains("['getSize', 'readBytes', 'writeBytes', 'transformPatternedBlocks', 'delete',"))
-        assertTrue(adapter.contains("['getInfo', 'convert', 'execute'].forEach(function (name) { guard(globalThis.ffmpeg, name); });"))
-        assertTrue(adapter.contains("guardedFns.forEach(function (restore) { restore(); });"))
-        assertTrue(adapter.contains("decryption: decryptionKey ? { key: decryptionKey } : null"))
+    fun `an answer that names nothing is reported as its tier's declared kind`() {
+        val lossless = case("silent lossless").track()
+        assertEquals("LOSSLESS", lossless.text("audioQuality"))
+        assertFalse("the offered placeholder path is not evidence", lossless.containsKey("mimeType"))
+        val lossy = case("silent lossy").track()
+        assertEquals("opus", lossy.text("audioQuality"))
     }
 
     @Test
-    fun `an answer that names no container is reported as the kind its tier declares`() {
-        assertTrue(adapter.contains("if (!guessed.mimeType && kindOfTier(quality) === 'lossless') {"))
-        assertTrue(adapter.contains("function kindOfTier(tier) {"))
+    fun `the finished download states the codec, and an encrypted one its key`() {
+        val plain = case("own row")
+        assertEquals("audio/flac", plain.track().text("mimeType"))
+        assertEquals(24, plain.track().number("bitDepth"))
+        assertEquals(96000, plain.track().number("sampleRate"))
+        assertFalse(plain.answer().containsKey("decryption"))
+        val encrypted = case("encrypted").answer()
+        assertEquals("00112233445566778899aabbccddeeff", encrypted.getValue("decryption").jsonObject.text("key"))
+    }
+
+    @Test
+    fun `file work after the capture ends the call with the URL taken, and the stand-ins are restored`() {
+        val reads = case("reads the file")
+        assertFalse(reads.calls().contains("read past the capture"))
+        assertEquals("https://cdn.example/OWN", reads.answer().text("streamUrl"))
+        results.values.forEach { assertTrue("${it.text("case")}: file API restored", it.getValue("restored").jsonPrimitive.boolean) }
     }
 }
