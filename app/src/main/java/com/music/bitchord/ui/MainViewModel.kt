@@ -2351,6 +2351,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             YtMusicRepository.homeRecentlyPlayed().onSuccess { shelf ->
                 // A full load that started meanwhile fetches Recents itself.
                 if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                // Checked again on arrival: the home may have become Spotify's meanwhile.
+                if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return@onSuccess
                 shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
             }
         }
