@@ -2552,8 +2552,16 @@ internal fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
+    // Whether the Search page itself is on screen, rather than a page opened
+    // over the Search tab (a release from the results, Settings). The bar's
+    // search form — the field, held unfolded, its own back — belongs to the
+    // page: kept up over the pages opened from it, the bar never folded on
+    // them and back from one of them left Search altogether.
+    val onSearchPage = nav.selectedTab == TAB_SEARCH &&
+        rootPageKey(nav, sheets, podcastUi.showContinueListening, detail) == "$TAB_KEY$TAB_SEARCH"
     val navSearchState = NavSearchState(
-        visualActive = searchVisualActive,
+        visualActive = searchVisualActive && onSearchPage,
+        onSearchPage = onSearchPage,
         keyboardActive = searchKeyboardActive,
         query = query,
         textValue = searchTextValue,

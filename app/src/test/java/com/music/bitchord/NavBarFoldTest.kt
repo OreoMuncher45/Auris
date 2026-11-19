@@ -17,24 +17,31 @@ class NavBarFoldTest {
 
     @Test
     fun `a scrolled page folds the bar`() {
-        assertTrue(navBarFolded(isInline = true, inSearch = false, onSearchTab = false))
+        assertTrue(navBarFolded(isInline = true, inSearch = false, onSearchPage = false))
     }
 
     @Test
     fun `an unscrolled page keeps it open`() {
-        assertFalse(navBarFolded(isInline = false, inSearch = false, onSearchTab = false))
+        assertFalse(navBarFolded(isInline = false, inSearch = false, onSearchPage = false))
     }
 
     @Test
     fun `tapping search on the folded bar unfolds it`() {
-        assertFalse(navBarFolded(isInline = true, inSearch = true, onSearchTab = true))
+        assertFalse(navBarFolded(isInline = true, inSearch = true, onSearchPage = true))
         // The field alone is enough; the tab selection lands in the same frame
         // but the fold must not depend on which of the two is seen first.
-        assertFalse(navBarFolded(isInline = true, inSearch = true, onSearchTab = false))
+        assertFalse(navBarFolded(isInline = true, inSearch = true, onSearchPage = false))
     }
 
     @Test
     fun `the search page stays open even with results under it`() {
-        assertFalse(navBarFolded(isInline = true, inSearch = false, onSearchTab = true))
+        assertFalse(navBarFolded(isInline = true, inSearch = false, onSearchPage = true))
+    }
+
+    @Test
+    fun `a page opened over the Search tab folds like any other`() {
+        // An album from the results, or Settings: the Search tab is still
+        // selected, but neither the field nor the Search page is up.
+        assertTrue(navBarFolded(isInline = true, inSearch = false, onSearchPage = false))
     }
 }
