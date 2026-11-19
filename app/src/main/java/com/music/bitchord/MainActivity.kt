@@ -1,5 +1,7 @@
 package com.music.bitchord
 
+import com.music.bitchord.ui.components.AppConfirmation
+import com.music.bitchord.ui.components.menu.LocalConfirmation
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -284,6 +286,9 @@ import com.music.bitchord.ui.components.menu.MenuHostState
 import com.music.bitchord.ui.components.menu.LocalSheetHost
 import com.music.bitchord.ui.components.menu.SheetHostOverlay
 import com.music.bitchord.ui.components.menu.SheetHostState
+import com.music.bitchord.ui.components.menu.DialogHostOverlay
+import com.music.bitchord.ui.components.menu.DialogHostState
+import com.music.bitchord.ui.components.menu.LocalDialogHost
 import com.music.bitchord.ui.components.menu.MenuHeader
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
@@ -547,9 +552,13 @@ class MainActivity : AppCompatActivity() {
                 // The one in-place sheet a screen not on top of everything
                 // asks for (Settings): drawn by the root, under the menus.
                 val sheetHost = remember { SheetHostState() }
+                // And the one dialog: drawn by the root over everything.
+                val dialogHost = remember { DialogHostState() }
                 CompositionLocalProvider(
                     LocalMenuHost provides menuHost,
                     LocalSheetHost provides sheetHost,
+                    LocalDialogHost provides dialogHost,
+                    LocalConfirmation provides AppConfirmation,
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     // The engine's own defaults (see [GlassEffectConfig]) with
@@ -7428,6 +7437,9 @@ private fun RootOverlays(
     // player included, and a menu opened from the sheet over the sheet.
     LocalSheetHost.current?.let { SheetHostOverlay(it) }
     (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
+    // Last of all: a dialog asked for from anywhere — a sheet, a menu's
+    // action, Settings — over everything, frosting the page with this haze.
+    LocalDialogHost.current?.let { DialogHostOverlay(it, hazeState) }
 }
 
 @Composable

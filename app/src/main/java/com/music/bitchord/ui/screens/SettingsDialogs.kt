@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.ConfirmationAlert
 import androidx.compose.runtime.LaunchedEffect
 import com.music.bitchord.ui.components.MenuOrigin
 import com.music.bitchord.ui.components.menu.LocalMenuHost
@@ -122,25 +123,17 @@ internal fun SettingsDialogs(
 
     // Everything in the Cached songs folder goes with it, so say so first.
     if (sheets.confirmClearSongCache) {
-        AlertDialog(
-            onDismissRequest = { sheets.confirmClearSongCache = false },
-            title = { Text(stringResource(R.string.clear_song_cache_title)) },
-            text = { Text(stringResource(R.string.clear_song_cache_warning)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    sheets.confirmClearSongCache = false
-                    AudioCache.clear {
-                        Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text(stringResource(R.string.clear))
+        ConfirmationAlert(
+            title = stringResource(R.string.clear_song_cache_title),
+            description = stringResource(R.string.clear_song_cache_warning),
+            confirmLabel = stringResource(R.string.clear),
+            onConfirm = {
+                sheets.confirmClearSongCache = false
+                AudioCache.clear {
+                    Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.confirmClearSongCache = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.confirmClearSongCache = false },
         )
     }
 
@@ -148,100 +141,62 @@ internal fun SettingsDialogs(
     // thing being confirmed is that this device's own history is about to be
     // thrown away, and that is true whichever file gets picked.
     if (sheets.confirmImport) {
-        AlertDialog(
-            onDismissRequest = { sheets.confirmImport = false },
-            title = { Text(stringResource(R.string.import_backup_title)) },
-            text = {
-                Text(stringResource(R.string.import_backup_warning))
+        ConfirmationAlert(
+            title = stringResource(R.string.import_backup_title),
+            description = stringResource(R.string.import_backup_warning),
+            confirmLabel = stringResource(R.string.choose_file),
+            onConfirm = {
+                sheets.confirmImport = false
+                importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    sheets.confirmImport = false
-                    importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
-                }) {
-                    Text(stringResource(R.string.choose_file))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { sheets.confirmImport = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.confirmImport = false },
         )
     }
 
     if (sheets.showPerformanceWarning) {
-        AlertDialog(
-            onDismissRequest = { sheets.showPerformanceWarning = false },
-            title = { Text(stringResource(R.string.high_performance_before_enabling)) },
-            text = { Text(stringResource(R.string.high_performance_battery_warning)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showPerformanceWarning = false
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
-                        }
-                        val settingsIntent = intent.takeIf {
-                            it.resolveActivity(context.packageManager) != null
-                        } ?: Intent(Settings.ACTION_SETTINGS)
-                        batterySettingsLauncher.launch(settingsIntent)
-                    },
-                ) {
-                    Text(stringResource(R.string.open_battery_settings))
+        ConfirmationAlert(
+            title = stringResource(R.string.high_performance_before_enabling),
+            description = stringResource(R.string.high_performance_battery_warning),
+            confirmLabel = stringResource(R.string.open_battery_settings),
+            onConfirm = {
+                sheets.showPerformanceWarning = false
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
                 }
+                val settingsIntent = intent.takeIf {
+                    it.resolveActivity(context.packageManager) != null
+                } ?: Intent(Settings.ACTION_SETTINGS)
+                batterySettingsLauncher.launch(settingsIntent)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showPerformanceWarning = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.showPerformanceWarning = false },
         )
     }
 
     if (sheets.showPerformanceConfirmation) {
-        AlertDialog(
-            onDismissRequest = { sheets.showPerformanceConfirmation = false },
-            title = { Text(stringResource(R.string.enable_high_performance_title)) },
-            text = { Text(stringResource(R.string.enable_high_performance_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showPerformanceConfirmation = false
-                        AppSettings.setHighPerformanceMode(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.enable_high_performance_title),
+            description = stringResource(R.string.enable_high_performance_confirmation),
+            confirmLabel = stringResource(R.string.enable),
+            dismissLabel = stringResource(R.string.not_yet),
+            onConfirm = {
+                sheets.showPerformanceConfirmation = false
+                AppSettings.setHighPerformanceMode(true)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showPerformanceConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
+            onDismiss = { sheets.showPerformanceConfirmation = false },
         )
     }
 
     if (sheets.showSeamlessUpgradeConfirmation) {
-        AlertDialog(
-            onDismissRequest = { sheets.showSeamlessUpgradeConfirmation = false },
-            title = { Text(stringResource(R.string.enable_seamless_upgrades_title)) },
-            text = { Text(stringResource(R.string.enable_seamless_upgrades_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showSeamlessUpgradeConfirmation = false
-                        AppSettings.setSeamlessQualityUpgrade(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.enable_seamless_upgrades_title),
+            description = stringResource(R.string.enable_seamless_upgrades_confirmation),
+            confirmLabel = stringResource(R.string.enable),
+            dismissLabel = stringResource(R.string.not_yet),
+            onConfirm = {
+                sheets.showSeamlessUpgradeConfirmation = false
+                AppSettings.setSeamlessQualityUpgrade(true)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showSeamlessUpgradeConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
+            onDismiss = { sheets.showSeamlessUpgradeConfirmation = false },
         )
     }
 }

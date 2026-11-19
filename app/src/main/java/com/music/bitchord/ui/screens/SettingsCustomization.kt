@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.HostedSheetDialog
 import com.music.bitchord.ui.components.menu.HostedSheet
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -595,7 +596,7 @@ private fun ColorPickerDialog(
         )
     }
     val recents by AppSettings.recentPlayerColors.collectAsStateWithLifecycle()
-    AlertDialog(
+    HostedSheetDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

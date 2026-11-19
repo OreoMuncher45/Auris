@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.util.AppRelaunch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.ColumnScope
@@ -310,25 +311,15 @@ internal fun PlaybackSettings(
     }
 
     if (showUnsupportedAtmosWarning) {
-        AlertDialog(
-            onDismissRequest = { showUnsupportedAtmosWarning = false },
-            title = { Text(stringResource(R.string.unsupported_dolby_atmos)) },
-            text = { Text(stringResource(R.string.unsupported_dolby_atmos_warning)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        AppSettings.setUnsupportedDolbyAtmos(true)
-                        showUnsupportedAtmosWarning = false
-                    },
-                ) {
-                    Text(stringResource(R.string.unsupported_dolby_atmos_enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.unsupported_dolby_atmos),
+            description = stringResource(R.string.unsupported_dolby_atmos_warning),
+            confirmLabel = stringResource(R.string.unsupported_dolby_atmos_enable),
+            onConfirm = {
+                AppSettings.setUnsupportedDolbyAtmos(true)
+                showUnsupportedAtmosWarning = false
             },
-            dismissButton = {
-                TextButton(onClick = { showUnsupportedAtmosWarning = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { showUnsupportedAtmosWarning = false },
         )
     }
 }

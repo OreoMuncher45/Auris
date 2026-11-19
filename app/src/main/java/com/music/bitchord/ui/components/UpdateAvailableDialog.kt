@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -91,174 +92,135 @@ fun UpdateAvailableDialog(
     onOpenReleasePage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val state by AppUpdateChecker.download.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(ALERT_CORNER)
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SCRIM_COLOR)
-            // Tapping the scrim reads the same as Remind Me Later — nothing
-            // about this update is mandatory, so backing out of it should be as
-            // easy as getting into it. Mid-download it only closes the sheet;
-            // the download keeps going and the top-bar icon reopens this.
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
             modifier = Modifier
-                .width(ALERT_WIDTH)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
-                        )
-                    },
-                )
-                // Swallows the tap before it reaches the scrim behind, so
-                // touching the card itself never dismisses it.
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = {},
-                ),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 19.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = stringResource(R.string.software_update),
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.W600,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    text = when (state) {
-                        is AppUpdateChecker.DownloadState.Downloading ->
-                            stringResource(R.string.update_downloading_body, version)
-                        is AppUpdateChecker.DownloadState.Ready ->
-                            stringResource(R.string.update_ready_body, version)
-                        is AppUpdateChecker.DownloadState.Failed ->
-                            stringResource(R.string.update_failed_body, version)
-                        else ->
-                            stringResource(R.string.update_available_body, version)
-                    },
-                    modifier = Modifier.padding(top = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
-                        lineHeight = 17.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
+            Text(
+                text = stringResource(R.string.software_update),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.W600,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = when (state) {
+                    is AppUpdateChecker.DownloadState.Downloading ->
+                        stringResource(R.string.update_downloading_body, version)
+                    is AppUpdateChecker.DownloadState.Ready ->
+                        stringResource(R.string.update_ready_body, version)
+                    is AppUpdateChecker.DownloadState.Failed ->
+                        stringResource(R.string.update_failed_body, version)
+                    else ->
+                        stringResource(R.string.update_available_body, version)
+                },
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
 
-                // The download's progress, drawn as a thin fill across a
-                // hairline track — same weight as [AlertRule], so it reads as
-                // part of the card rather than a widget bolted onto it.
-                val downloading = state as? AppUpdateChecker.DownloadState.Downloading
-                if (downloading != null || state is AppUpdateChecker.DownloadState.Failed) {
-                    Box(
-                        Modifier
-                            .padding(top = 12.dp)
-                            .fillMaxWidth()
-                            .height(DOWNLOAD_ROW_HEIGHT)
-                            .clip(RoundedCornerShape(DOWNLOAD_ROW_HEIGHT / 2))
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
-                    ) {
-                        if (downloading != null && downloading.fraction > 0f) {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth(downloading.fraction)
-                                    .height(DOWNLOAD_ROW_HEIGHT)
-                                    .clip(RoundedCornerShape(DOWNLOAD_ROW_HEIGHT / 2))
-                                    .background(MaterialTheme.colorScheme.primary),
-                            )
-                        }
+            // The download's progress, drawn as a thin fill across a
+            // hairline track — same weight as [AlertRule], so it reads as
+            // part of the card rather than a widget bolted onto it.
+            val downloading = state as? AppUpdateChecker.DownloadState.Downloading
+            if (downloading != null || state is AppUpdateChecker.DownloadState.Failed) {
+                Box(
+                    Modifier
+                        .padding(top = 12.dp)
+                        .fillMaxWidth()
+                        .height(DOWNLOAD_ROW_HEIGHT)
+                        .clip(RoundedCornerShape(DOWNLOAD_ROW_HEIGHT / 2))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+                ) {
+                    if (downloading != null && downloading.fraction > 0f) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(downloading.fraction)
+                                .height(DOWNLOAD_ROW_HEIGHT)
+                                .clip(RoundedCornerShape(DOWNLOAD_ROW_HEIGHT / 2))
+                                .background(MaterialTheme.colorScheme.primary),
+                        )
                     }
                 }
-                if (state is AppUpdateChecker.DownloadState.Failed) {
-                    Text(
-                        text = (state as AppUpdateChecker.DownloadState.Failed).message,
-                        modifier = Modifier.padding(top = 6.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                    )
-                }
+            }
+            if (state is AppUpdateChecker.DownloadState.Failed) {
+                Text(
+                    text = (state as AppUpdateChecker.DownloadState.Failed).message,
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
-                // The release's own notes, rendered as Markdown rather than
-                // dumped as raw text — GitHub release bodies lean on headings,
-                // bullet lists and bold for the changelog, and those are the
-                // whole point of reading this before installing.
-                if (!notes.isNullOrBlank()) {
-                    AlertRule(modifier = Modifier.padding(top = 12.dp))
-                    Text(
-                        text = stringResource(R.string.whats_new),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.W600,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        textAlign = TextAlign.Start,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .heightIn(max = NOTES_MAX_HEIGHT)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        // RichText's Material3 Text leans on LocalContentColor,
-                        // which nothing here provides — this card is a plain
-                        // Column.background(...), not a Surface, so without
-                        // this the notes render at LocalContentColor's black
-                        // default regardless of theme.
-                        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                            RichText(style = RichTextStyle.Default) {
-                                Markdown(notes)
-                            }
+            // The release's own notes, rendered as Markdown rather than
+            // dumped as raw text — GitHub release bodies lean on headings,
+            // bullet lists and bold for the changelog, and those are the
+            // whole point of reading this before installing.
+            if (!notes.isNullOrBlank()) {
+                AlertRule(modifier = Modifier.padding(top = 12.dp))
+                Text(
+                    text = stringResource(R.string.whats_new),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.W600,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Start,
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .heightIn(max = NOTES_MAX_HEIGHT)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    // RichText's Material3 Text leans on LocalContentColor,
+                    // which nothing here provides — this card is a plain
+                    // Column.background(...), not a Surface, so without
+                    // this the notes render at LocalContentColor's black
+                    // default regardless of theme.
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                        RichText(style = RichTextStyle.Default) {
+                            Markdown(notes)
                         }
                     }
                 }
             }
+        }
 
-            AlertRule()
-            when (state) {
-                is AppUpdateChecker.DownloadState.Downloading -> {
-                    AlertAction(label = stringResource(R.string.cancel), emphasised = false, onClick = onCancelDownload)
-                }
-                is AppUpdateChecker.DownloadState.Ready -> {
-                    AlertAction(label = stringResource(R.string.install_now), emphasised = true, onClick = onInstall)
-                    AlertRule()
-                    AlertAction(label = stringResource(R.string.later), emphasised = false, onClick = onDismiss)
-                }
-                is AppUpdateChecker.DownloadState.Failed -> {
-                    AlertAction(label = stringResource(R.string.try_again), emphasised = true, onClick = onDownload)
-                    AlertRule()
-                    AlertAction(label = stringResource(R.string.open_releases_page), emphasised = false, onClick = onOpenReleasePage)
-                }
-                else -> {
-                    AlertAction(label = stringResource(R.string.download_now), emphasised = true, onClick = onDownload)
-                    AlertRule()
-                    AlertAction(label = stringResource(R.string.remind_me_later), emphasised = false, onClick = onDismiss)
-                }
+        AlertRule()
+        when (state) {
+            is AppUpdateChecker.DownloadState.Downloading -> {
+                AlertAction(label = stringResource(R.string.cancel), emphasised = false, onClick = onCancelDownload)
+            }
+            is AppUpdateChecker.DownloadState.Ready -> {
+                AlertAction(label = stringResource(R.string.install_now), emphasised = true, onClick = onInstall)
+                AlertRule()
+                AlertAction(label = stringResource(R.string.later), emphasised = false, onClick = onDismiss)
+            }
+            is AppUpdateChecker.DownloadState.Failed -> {
+                AlertAction(label = stringResource(R.string.try_again), emphasised = true, onClick = onDownload)
+                AlertRule()
+                AlertAction(label = stringResource(R.string.open_releases_page), emphasised = false, onClick = onOpenReleasePage)
+            }
+            else -> {
+                AlertAction(label = stringResource(R.string.download_now), emphasised = true, onClick = onDownload)
+                AlertRule()
+                AlertAction(label = stringResource(R.string.remind_me_later), emphasised = false, onClick = onDismiss)
             }
         }
     }
@@ -293,7 +255,8 @@ internal fun AlertAction(
                 if (pressed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f) else Color.Transparent,
             )
             .clickable(
-                enabled = enabled,
+                // A dialog on its way out stops answering — see DialogHostOverlay.
+                enabled = enabled && LocalMenuInteractive.current,
                 indication = null,
                 interactionSource = interactionSource,
                 onClick = onClick,

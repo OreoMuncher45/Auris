@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menu.LocalConfirmation
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
@@ -862,7 +863,20 @@ fun SignInBanner(
             }
         }
     }
-    if (showWarning && onDismiss != null) {
+    val confirmation = LocalConfirmation.current
+    if (showWarning && onDismiss != null && confirmation != null) {
+        // The app's own confirmation card, where the app provides one.
+        confirmation.Confirm(
+            title = stringResource(Res.string.sign_in_dismiss_title),
+            message = stringResource(Res.string.sign_in_dismiss_message),
+            confirmLabel = stringResource(Res.string.dismiss),
+            onConfirm = {
+                showWarning = false
+                onDismiss()
+            },
+            onDismiss = { showWarning = false },
+        )
+    } else if (showWarning && onDismiss != null) {
         AlertDialog(
             onDismissRequest = { showWarning = false },
             title = { Text(stringResource(Res.string.sign_in_dismiss_title)) },

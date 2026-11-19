@@ -1,5 +1,17 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Modifier
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -89,5 +101,46 @@ fun HostedSheet(
             onClosed = { currentOnDismiss() },
         ) { close -> currentContent(this, close) }
         onDispose { host.withdraw(request) }
+    }
+}
+
+/**
+ * What was a Material AlertDialog carrying a screen's worth — a list, a form,
+ * a store to browse — laid out in the app's sheet instead: the approved plan
+ * keeps dialogs for a confirmation or a name, and anything bigger is a sheet.
+ * Takes AlertDialog's own slots, so a dialog becomes one by its name alone:
+ * the title, the body (which scrolls inside the sheet), and the actions at
+ * the end of the last line.
+ */
+@Composable
+fun HostedSheetDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)? = null,
+) {
+    HostedSheet(onDismiss = onDismissRequest) { _ ->
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = MenuTokens.SheetRowPaddingH)
+                .padding(bottom = 12.dp),
+        ) {
+            ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.weight(1f, fill = false)) {
+                ProvideTextStyle(MaterialTheme.typography.bodyMedium) { text() }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                dismissButton?.invoke()
+                confirmButton()
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menu.HostedSheetDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -87,7 +88,7 @@ fun SupportPopup(
     onDismiss: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    AlertDialog(
+    HostedSheetDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.support_popup_title)) },
         text = {

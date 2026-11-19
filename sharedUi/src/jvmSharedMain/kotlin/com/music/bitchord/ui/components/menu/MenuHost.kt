@@ -38,3 +38,21 @@ interface MenuHost {
 }
 
 val LocalMenuHost = staticCompositionLocalOf<MenuHost?> { null }
+
+/**
+ * The app's confirmation dialog, for a screen shared with desktop: the same
+ * frosted card every other confirmation in the app is, drawn by the app. Null
+ * where none is provided (desktop), and the screen keeps its own dialog.
+ */
+interface ConfirmationPresenter {
+    @Composable
+    fun Confirm(
+        title: String,
+        message: String,
+        confirmLabel: String,
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit,
+    )
+}
+
+val LocalConfirmation = staticCompositionLocalOf<ConfirmationPresenter?> { null }
