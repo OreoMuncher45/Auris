@@ -2350,11 +2350,15 @@ private fun BitChordApp(
         val loaded = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
         // An episode menu opened outside its show (Continue Listening, Home)
         // finds the last opened show's feed here, so that feed and its history
-        // are only used when the anchor is one of its episodes.
-        val inFeed = anchor == null || loaded.any { it.videoId == anchor.videoId }
-        val feed = if (inFeed) loaded else emptyList()
+        // are only used when the anchor is one of that show's episodes: listed
+        // in its feed, or played from it.
         val showId = nav.itunesPodcastId
-        val played = if (inFeed) showId?.let { viewModel.playedEpisodes(it) }.orEmpty() else emptyList()
+        val sameShow = anchor == null ||
+            loaded.any { it.videoId == anchor.videoId } ||
+            (showId != null && com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes()
+                .any { it.optString("url") == anchor.videoId && it.optString("collectionId") == showId })
+        val feed = if (sameShow) loaded else emptyList()
+        val played = if (sameShow) showId?.let { viewModel.playedEpisodes(it) }.orEmpty() else emptyList()
         val seed = if (anchor != null) listOf(anchor) + played else played
         val picked = com.music.bitchord.data.podcast.PodcastSmartDownload.select(feed, seed)
         if (picked.isEmpty()) return
