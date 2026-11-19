@@ -542,10 +542,18 @@ internal fun PlaybackQualityLabel(
                 .menuOriginOf(origin)
                 .clickable(enabled = nerdStats != null) {
                     if (menuHost != null) {
-                        menuHost.open(origin.boundsInWindow(), dark = true) {
+                        menuHost.open(origin.boundsInWindow(), dark = true) { close ->
                             // Live: the numbers settle while the card is up.
+                            // Gone (the track changed under it), the card goes
+                            // too, rather than leaving an empty menu up — the
+                            // same rule the popup's `measured != null` keeps.
                             val live by NerdStats.current.collectAsStateWithLifecycle()
-                            live?.let { QualityDetailsCard(stats = it, framed = false) }
+                            val stats = live
+                            if (stats != null) {
+                                QualityDetailsCard(stats = stats, framed = false)
+                            } else {
+                                LaunchedEffect(Unit) { close() }
+                            }
                         }
                     } else {
                         details = true
