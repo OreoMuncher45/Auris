@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.runtime.DisposableEffect
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,6 +50,7 @@ class MenuHostTest {
 
     private var chosen = 0
     private var rowY: Float? = null
+    private var rowGone = false
 
     @Before
     fun setUp() {
@@ -78,6 +80,7 @@ class MenuHostTest {
                 chosen++
                 close()
             }
+            DisposableEffect(Unit) { onDispose { rowGone = true } }
         }
         compose.waitForIdle()
     }
@@ -112,8 +115,10 @@ class MenuHostTest {
         Snapshot.sendApplyNotifications()
         compose.mainClock.advanceTimeByFrame()
         compose.waitForIdle()
-        // Up for its exit, and not jumped to the top end now that the
-        // request it hung from is gone.
+        // Up for its exit — the row still composed, so its last position is
+        // a live one — and not jumped to the top end now that the request it
+        // hung from is gone.
+        assertTrue("the row is still there for the exit", !rowGone)
         assertEquals(open!!, rowY!!, 1f)
 
         compose.mainClock.autoAdvance = true

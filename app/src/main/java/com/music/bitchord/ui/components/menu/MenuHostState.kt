@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -62,8 +63,12 @@ fun MenuHostOverlay(state: MenuHostState) {
         // The menu caps its height to the room around the button and leaves
         // the scroll to its content; a requester hands over rows, not a
         // scrolling list, so the host brings the scroll for all of them.
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            shown.content(this, state::close)
+        // Keyed on the request: one replacing another starts at its own top,
+        // not wherever the last one was scrolled to.
+        key(shown) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                shown.content(this, state::close)
+            }
         }
     }
 }
