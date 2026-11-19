@@ -229,6 +229,31 @@ class SflxPackageTest {
     }
 
     @Test
+    fun tagsThatAreNotAListDoNotFailTheStore() {
+        val registry = """
+            { "extensions": [
+              { "id": "a", "name": "a", "version": "1", "download_url": "https://example/a.sflx",
+                "sha256": "abc", "tags": null },
+              { "id": "b", "name": "b", "version": "1", "download_url": "https://example/b.sflx",
+                "sha256": "def", "tags": "lossless" }
+            ] }
+        """.trimIndent()
+
+        val entries = SflxRegistry.parse(registry)
+
+        assertEquals(listOf("a", "b"), entries.map { it.id })
+        assertTrue(entries.all { it.tags.isEmpty() })
+    }
+
+    @Test
+    fun anExtensionsFieldThatIsNotAListIsARegistryError() {
+        for (registry in listOf("{}", """{ "extensions": null }""", """{ "extensions": {} }""")) {
+            val error = runCatching { SflxRegistry.parse(registry) }.exceptionOrNull()
+            assertTrue("$registry -> $error", error is SflxException)
+        }
+    }
+
+    @Test
     fun anEntryIsNotFilteredByTheHostsVersion() {
         // The publisher states the oldest *Mornye* that can run its package.
         // This app is a different host on a different version line, so that
