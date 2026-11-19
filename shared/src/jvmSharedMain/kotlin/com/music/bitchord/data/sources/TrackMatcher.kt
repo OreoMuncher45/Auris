@@ -144,7 +144,8 @@ object TrackMatcher {
      */
     fun bestOrSameArtist(candidates: List<Song>, target: Target): Song? {
         best(candidates, target)?.let { return it }
-        val wantedNoVocal = parseTitle(target.title, target.artist).versions intersect NOVOCAL_TAKES
+        val wantedNoVocal = (parseTitle(target.title, target.artist).versions + albumVersionMarkers(target.album)) intersect
+            NOVOCAL_TAKES
         return candidates.firstOrNull {
             sharesArtist(target.artist, it.artist) && sameTitle(it, target) &&
                 noVocalTakes(it) == wantedNoVocal &&
