@@ -707,9 +707,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             } else if (tailsRunning.add(trackId)) {
                 fastExecutor.execute {
                     try {
-                        // Queued before the player asked for the codec back,
-                        // perhaps: a decode started now would take it away.
-                        if (stopped || decoderHeld) return@execute
+                        if (stopped) return@execute
                         // A whole-track answer may have landed while this sat in
                         // the queue, and it covers the ending by definition.
                         if (trackId in wholeResults) return@execute
@@ -850,8 +848,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // started while the task ahead of it was being measured. Every
                 // task behind that one turns into this return, which drains the
                 // backlog without needing to reach into the executor's queue.
-                // The same for a player that has asked for the codec back.
-                if (stopped || decoderHeld) return@execute
+                if (stopped) return@execute
                 if (headOnly) {
                     // Marked before it is published, so a reader on the playback
                     // thread can never see a provisional result that is not
