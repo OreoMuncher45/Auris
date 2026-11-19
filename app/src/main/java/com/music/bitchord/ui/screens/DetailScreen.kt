@@ -1769,66 +1769,72 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        IconButton(
-            onClick = { expanded = true },
+        // A DropdownMenu anchors to its parent, so the button and its menu
+        // share a box of their own: in the header's box the menu hung off the
+        // whole header and opened at its start edge, across the page from the ⋮.
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = ARTIST_CONTENT_GUTTER),
         ) {
-            Icon(
-                imageVector = Icons.Rounded.MoreVert,
-                contentDescription = stringResource(R.string.more),
-                tint = palette.onBackgroundVariant,
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            albumsShelf?.let { shelf ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.albums)) },
-                    onClick = {
-                        expanded = false
-                        onOpenShelf(shelf)
-                    },
+            IconButton(
+                onClick = { expanded = true },
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = palette.onBackgroundVariant,
                 )
             }
-            singlesShelf?.let { shelf ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.singles_eps)) },
-                    onClick = {
-                        expanded = false
-                        onOpenShelf(shelf)
-                    },
-                )
-            }
-            if (onToggleAiArtist != null) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            stringResource(
-                                if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
-                            ),
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
-                    },
-                    onClick = {
-                        expanded = false
-                        onToggleAiArtist()
-                    },
-                )
-            }
-            if (onHideArtist != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.hide_artist)) },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
-                    },
-                    onClick = {
-                        expanded = false
-                        onHideArtist()
-                    },
-                )
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                albumsShelf?.let { shelf ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.albums)) },
+                        onClick = {
+                            expanded = false
+                            onOpenShelf(shelf)
+                        },
+                    )
+                }
+                singlesShelf?.let { shelf ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.singles_eps)) },
+                        onClick = {
+                            expanded = false
+                            onOpenShelf(shelf)
+                        },
+                    )
+                }
+                if (onToggleAiArtist != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
+                                ),
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
+                        },
+                        onClick = {
+                            expanded = false
+                            onToggleAiArtist()
+                        },
+                    )
+                }
+                if (onHideArtist != null) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.hide_artist)) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
+                        },
+                        onClick = {
+                            expanded = false
+                            onHideArtist()
+                        },
+                    )
+                }
             }
         }
     }
