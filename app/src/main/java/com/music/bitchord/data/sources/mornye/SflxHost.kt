@@ -65,6 +65,8 @@ class SflxHost(
      * extension any files, which is what a test harness gets.
      */
     private val filesDirectory: File? = null,
+    /** The client their downloads go through; a test brings one that trusts its own server. */
+    private val filesClient: okhttp3.OkHttpClient? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
@@ -470,6 +472,11 @@ class SflxHost(
         raw: String,
     ): ModuleStreamResponse {
         val extensionId = installed.id
+        // A file the extension wrote is the whole answer: there is no URL or
+        // segment list beside it, so it is read before the check for those.
+        SflxAnswer.localFile(raw)?.let { path ->
+            return localAnswer(installed, trackId, path, raw)
+        }
         val url = SflxAnswer.streamUrl(raw)
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
@@ -493,9 +500,6 @@ class SflxHost(
         // claim, not a measurement — the fields come from the file the
         // extension was about to write, which this host never sees — and
         // it is treated as one everywhere downstream.
-        SflxAnswer.localFile(raw)?.let { path ->
-            return localAnswer(installed, trackId, path, raw)
-        }
         val playable = if (url != null) {
             url
         } else {
@@ -556,10 +560,10 @@ class SflxHost(
         val root = filesDirectory ?: return null
         if (!installed.manifest.permissions.file) return null
         return files.getOrPut(installed.id) {
-            SflxFiles(
-                root = File(root, installed.id),
-                allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
-            )
+            val allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() }
+            filesClient?.let { client ->
+                SflxFiles(File(root, installed.id), allowedHosts, SflxFiles.client(client))
+            } ?: SflxFiles(File(root, installed.id), allowedHosts)
         }
     }
 
@@ -844,6 +848,8 @@ class SflxHost(
             // A reinstall of a running extension has to be a different object
             // in the sandbox, or the old script keeps answering.
             unload(installed.id)
+            // Its folder's network list is the new manifest's, not the old one.
+            files.remove(installed.id)
             installed
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
 
