@@ -185,23 +185,34 @@ class UsbAudioDevice private constructor(private val context: Context) {
     /** Cached device info from the last successful openDevice() call. */
     private var cachedDeviceInfo: UsbAudioDeviceInfo? = null
 
-    fun openDevice(device: UsbDevice): UsbAudioDeviceInfo? {
+    /**
+     * @param forceReopen opens a fresh connection even when one is cached,
+     *   for a session that needs the DAC set up again (a new track format).
+     */
+    fun openDevice(device: UsbDevice, forceReopen: Boolean = false): UsbAudioDeviceInfo? {
         // Return cached info if already open with valid connection
         val cached = cachedDeviceInfo
-        if (cached != null && connection != null) {
+        if (!forceReopen && cached != null && connection != null) {
             Log.i(TAG, "Device already open, reusing fd=${cached.fd}")
             return cached
         }
-        // Close any stale connection before opening new. The claims are taken
-        // again below, so the kernel driver is not handed the DAC in between.
-        closeDevice(returnToAndroid = false)
+        // A different DAC than the one this app holds: give the old one back
+        // to Android through its own connection before taking the new one.
+        val held = currentDevice
+        if (held != null && held.deviceName != device.deviceName) closeDevice(returnToAndroid = true)
         lastOpenError = null
         val conn = usbManager.openDevice(device)
         if (conn == null) {
             Log.e(TAG, "Failed to open device ${device.productName}")
             lastOpenError = "Android refused to open the device"
+            // The old connection is still open: use it to hand the DAC back.
+            closeDevice(returnToAndroid = true)
             return null
         }
+        // Only now close the old connection, before claiming on the new one.
+        // The claims are taken again below, so the kernel driver is not
+        // handed the DAC in between.
+        closeDevice(returnToAndroid = false)
         // The playback AS interface is the one owning an isochronous OUT
         // endpoint in some alt setting (capture interfaces only have IN).
         playbackInterfaceId = (0 until device.interfaceCount)
