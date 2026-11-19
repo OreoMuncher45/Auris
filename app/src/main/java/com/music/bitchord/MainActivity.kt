@@ -1676,10 +1676,12 @@ private fun BitChordApp(
          play(songs, index)
          val pos = song?.let { com.music.bitchord.data.settings.MediaProgress.positionMs(it.videoId) } ?: 0L
          if (song != null && pos > 0L && !com.music.bitchord.data.settings.MediaProgress.isListened(song.videoId)) {
-             val target = index
              scope.launch {
                  delay(1200)
-                 controller?.seekTo(target, pos)
+                 // Only if this episode is still the one playing: another item
+                 // may have started in the meantime.
+                 val c = controller ?: return@launch
+                 if (c.currentMediaItem?.mediaId == song.videoId) c.seekTo(c.currentMediaItemIndex, pos)
              }
          }
      }
