@@ -117,7 +117,7 @@ data class SflxManifest(
 data class SflxPermissions(
     /**
      * Hosts the extension may call. Matched exactly, or by a leading `*.`
-     * wildcard for a subdomain.
+     * wildcard for a subdomain. A bare `*` grants any host.
      */
     val networkHosts: List<String>,
     /** Whether it may keep its own key/value state between runs. */
@@ -135,6 +135,8 @@ data class SflxPermissions(
             val allowed = pattern.lowercase().trim()
             when {
                 allowed.isEmpty() -> false
+                // A bare `*` grants any host.
+                allowed == "*" -> true
                 allowed.startsWith("*.") -> target.endsWith(allowed.substring(1))
                 else -> target == allowed
             }

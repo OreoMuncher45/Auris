@@ -845,8 +845,8 @@ internal object QuickJsExecutor {
      *
      * `*.` is a subdomain wildcard and nothing else — `*.spotify.com` matches
      * `api.spotify.com` and `open.spotify.com` but not `spotify.com` itself,
-     * and not `notspotify.com`. That is the manifest format's own rule; see
-     * [SflxPermissions.allowsHost].
+     * and not `notspotify.com`. A bare `*` means any host. That is the
+     * manifest format's own rule; see [SflxPermissions.allowsHost].
      */
     internal fun mayReach(url: String, allowedHosts: List<String>?): Boolean {
         if (allowedHosts == null) return true
@@ -855,6 +855,10 @@ internal object QuickJsExecutor {
             val allowed = pattern.trim().lowercase(Locale.ROOT)
             when {
                 allowed.isEmpty() -> false
+                // A bare `*` is the manifest's grant of any host. Jellyfin
+                // declares it, because its server is wherever the listener
+                // runs one. It is shown at install like any other grant.
+                allowed == "*" -> true
                 // `*.example.com` is a subdomain wildcard: it must leave the dot
                 // in place, or `evilexample.com` would match it.
                 allowed.startsWith("*.") -> host.endsWith(allowed.substring(1))
