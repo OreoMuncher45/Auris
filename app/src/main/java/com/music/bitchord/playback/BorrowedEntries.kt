@@ -63,6 +63,20 @@ internal class BorrowedEntries {
         return keys.keys.firstOrNull { it == videoId || it.startsWith("$videoId#") }
     }
 
+    /**
+     * For a per-request set only: the key each video's first open chose,
+     * lent or not, which every later open of the request keeps — see the key
+     * factory in [AudioCache]. Separate from the lent keys, because an own key
+     * may still be refilled from its own upstream.
+     */
+    private val pinned = ConcurrentHashMap<String, String>()
+
+    fun pin(videoId: String, key: String) {
+        pinned.putIfAbsent(videoId, key)
+    }
+
+    fun pinnedFor(videoId: String): String? = if (pinned.isEmpty()) null else pinned[videoId]
+
     /** The entry [key] has been removed; it may be filled again. */
     fun forget(key: String) {
         keys.remove(key)
