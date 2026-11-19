@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.runtime.DisposableEffect
 import android.app.Application
 import androidx.compose.foundation.layout.Box
@@ -134,6 +137,25 @@ class MenuHostTest {
         compose.waitForIdle()
         compose.onNodeWithTag(OTHER).assertExists()
         compose.onNodeWithTag(ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun aMenuReplacingAScrolledOneStartsAtItsOwnTop() {
+        fun rows(prefix: String) = host.open(button) { close ->
+            repeat(40) { i ->
+                MenuRow(icon = null, label = "$prefix $i", ink = Color.White, modifier = Modifier.testTag("$prefix$i")) { close() }
+            }
+        }
+        rows("a")
+        compose.waitForIdle()
+        // Scrolled well down the first menu: its top row is out of view.
+        compose.onNodeWithTag("a20").performScrollTo()
+        compose.waitForIdle()
+        compose.onNodeWithTag("a0").assertIsNotDisplayed()
+
+        rows("b")
+        compose.waitForIdle()
+        compose.onNodeWithTag("b0").assertIsDisplayed()
     }
 
     private companion object {
