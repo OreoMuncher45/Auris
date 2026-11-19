@@ -12,12 +12,21 @@ import kotlin.test.assertNull
  */
 class TrackMatcherSameArtistFallbackTest {
 
-    private fun song(title: String, artist: String, durationText: String? = null, id: String = title) = Song(
+    private fun song(
+        title: String,
+        artist: String,
+        durationText: String? = null,
+        id: String = title,
+        albumName: String? = null,
+        isExplicit: Boolean? = null,
+    ) = Song(
         videoId = id,
         title = title,
         artist = artist,
         thumbnailUrl = null,
         durationText = durationText,
+        albumName = albumName,
+        isExplicit = isExplicit,
     )
 
     private val target = TrackMatcher.Target("Morning Light", "River Lane", durationSec = 200)
@@ -61,5 +70,43 @@ class TrackMatcherSameArtistFallbackTest {
         val rows = listOf(song("Morning Light", "Someone Else", "9:59"))
 
         assertNull(TrackMatcher.bestOrSameArtist(rows, target))
+    }
+
+    @Test
+    fun anInstrumentalIsNotPlayedForTheVocal() {
+        val rows = listOf(song("Morning Light (Instrumental)", "River Lane", "9:59"))
+
+        assertNull(TrackMatcher.bestOrSameArtist(rows, target))
+    }
+
+    @Test
+    fun aRowFromAnInstrumentalAlbumIsNotPlayedForTheVocal() {
+        val rows = listOf(song("Morning Light", "River Lane", "9:59", albumName = "Morning Light (Instrumental Edition)"))
+
+        assertNull(TrackMatcher.bestOrSameArtist(rows, target))
+    }
+
+    @Test
+    fun anInstrumentalRequestStillFallsBackToTheInstrumental() {
+        val instrumental = TrackMatcher.Target("Morning Light (Instrumental)", "River Lane", durationSec = 200)
+        val rows = listOf(song("Morning Light (Instrumental)", "River Lane", "9:59"))
+
+        assertEquals("Morning Light (Instrumental)", TrackMatcher.bestOrSameArtist(rows, instrumental)?.title)
+    }
+
+    @Test
+    fun theExplicitEditionIsNotPlayedForACleanRequest() {
+        val clean = target.copy(isExplicit = false)
+        val rows = listOf(song("Morning Light", "River Lane", "9:59", isExplicit = true))
+
+        assertNull(TrackMatcher.bestOrSameArtist(rows, clean))
+    }
+
+    @Test
+    fun anUnstatedEditionStillFallsBack() {
+        val clean = target.copy(isExplicit = false)
+        val rows = listOf(song("Morning Light", "River Lane", "9:59"))
+
+        assertEquals("Morning Light", TrackMatcher.bestOrSameArtist(rows, clean)?.title)
     }
 }
