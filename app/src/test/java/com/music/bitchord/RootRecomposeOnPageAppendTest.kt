@@ -19,6 +19,7 @@ import androidx.compose.runtime.tooling.ObservableComposition
 import androidx.compose.runtime.tooling.observe
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.test.core.app.ApplicationProvider
@@ -33,6 +34,9 @@ import com.music.bitchord.data.listentogether.PartyPlayback
 import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedCollection
+import com.music.bitchord.download.SavedSongMetadata
 import com.music.bitchord.playback.PlaybackService
 import com.music.bitchord.ui.AndroidAppUiHost
 import com.music.bitchord.ui.AppUi
@@ -41,7 +45,11 @@ import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
 import com.music.bitchord.ui.player.AndroidPlayerHost
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.theme.BitChordTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.After
@@ -66,6 +74,13 @@ import org.robolectric.annotation.Config
  * - slot: the [RootPage] slot the detail screen sits in;
  * - detail: [com.music.bitchord.ui.screens.DetailScreen]'s own scope;
  * - total: every scope.
+ *
+ * Ticket v4-09: a batch download saving its files must not recompose the root
+ * either. The same probe, with the files saved through `Downloads` the way the
+ * download service saves them, one frame apart, while each page that answers
+ * to them is open: Quick Picks offline, the Library's On Device shelf, the
+ * Downloads page. Each must still see every save. Also counted:
+ * - quickPicks / library: runs of those pages' own composables.
  */
 @OptIn(ExperimentalComposeRuntimeApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -80,6 +95,7 @@ class RootRecomposeOnPageAppendTest {
         PlayerPlatform.install(AndroidPlayerHost(app))
         AppUi.install(AndroidAppUiHost)
         AppSettings.init(app, AuthStore(app))
+        Downloads.init(app)
         // No player service in a unit test: the controller simply never connects.
         Shadows.shadowOf(app).declareComponentUnbindable(ComponentName(app, PlaybackService::class.java))
     }
@@ -98,11 +114,25 @@ class RootRecomposeOnPageAppendTest {
          */
         var rereads = 0
 
+        /**
+         * Runs by the composable function whose body ran, as `FileKt.function`.
+         * A function opens its own restart group, so the frame that called
+         * into the runtime is the function itself, whatever its scope's
+         * restart lambda is compiled to.
+         */
+        val runsByFunction = HashMap<String, Int>()
+
         override fun onBeginComposition(composition: ObservableComposition) {}
         override fun onScopeEnter(scope: RecomposeScope) {
             if (root == null && host != null && stack.lastOrNull() === host) root = scope
             stack += scope
-            if (enteredToRun()) runs[scope] = (runs[scope] ?: 0) + 1 else rereads++
+            if (enteredToRun()) {
+                runs[scope] = (runs[scope] ?: 0) + 1
+                val function = callerOfComposer()
+                runsByFunction[function] = (runsByFunction[function] ?: 0) + 1
+            } else {
+                rereads++
+            }
         }
         override fun onReadInScope(scope: RecomposeScope, value: Any) {}
         override fun onScopeExit(scope: RecomposeScope) { stack.removeAt(stack.lastIndex) }
@@ -122,6 +152,22 @@ class RootRecomposeOnPageAppendTest {
             return runs.entries.sumOf { (scope, n) -> if (name.matches(blockOf(scope))) n else 0 }
         }
 
+        /** Times the body of the composable [function] in [fileClass] ran. */
+        fun runsOf(fileClass: String, function: String): Int = runsByFunction["$fileClass.$function"] ?: 0
+
+        fun clear() {
+            runs.clear()
+            runsByFunction.clear()
+            rereads = 0
+        }
+
+        private fun callerOfComposer(): String = walker.walk { frames ->
+            frames.filter { !it.className.startsWith(RUNTIME) && !it.className.startsWith(TEST) }
+                .findFirst()
+                .map { it.className + "." + it.methodName.substringBefore('-') }
+                .orElse("")
+        }
+
         private fun blockOf(scope: RecomposeScope): String = runCatching {
             scope.javaClass.getDeclaredField("block").apply { isAccessible = true }.get(scope)?.javaClass?.name
         }.getOrNull().orEmpty()
@@ -138,6 +184,8 @@ class RootRecomposeOnPageAppendTest {
 
         private companion object {
             const val COMPOSER = "androidx.compose.runtime.ComposerImpl"
+            const val RUNTIME = "androidx.compose.runtime."
+            val TEST: String = RootRecomposeOnPageAppendTest::class.java.name
             val walker: StackWalker = StackWalker.getInstance()
         }
     }
@@ -176,7 +224,14 @@ class RootRecomposeOnPageAppendTest {
             .apply { isAccessible = true }
             .get(this) as MutableStateFlow<List<DetailPage>>
 
-    private data class Counts(val root: Int, val slot: Int, val detail: Int, val total: Int)
+    private data class Counts(
+        val root: Int,
+        val slot: Int,
+        val detail: Int,
+        val total: Int,
+        val quickPicks: Int = 0,
+        val library: Int = 0,
+    )
 
     /** A playlist of [songs] as the only page on the detail stack. */
     private fun MainViewModel.open(songs: List<Song>) {
@@ -193,6 +248,64 @@ class RootRecomposeOnPageAppendTest {
         partyFlow.value = ListenTogether.State()
     }
 
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> downloadsFlow(name: String): MutableStateFlow<T> =
+        Downloads::class.java.getDeclaredField(name)
+            .apply { isAccessible = true }
+            .get(Downloads) as MutableStateFlow<T>
+
+    private val savedFlow get() = downloadsFlow<Map<String, String>>("_saved")
+    private val savedMetadataFlow get() = downloadsFlow<Map<String, SavedSongMetadata>>("_savedMetadata")
+    private val collectionsFlow get() = downloadsFlow<Map<String, SavedCollection>>("_collections")
+
+    @After fun clearDownloads() {
+        savedFlow.value = emptyMap()
+        savedMetadataFlow.value = emptyMap()
+        collectionsFlow.value = emptyMap()
+        // The verified listing is memoised per generation; drop it, or the
+        // next test starts from this one's.
+        Downloads::class.java.getDeclaredField("allSongsCache").apply { isAccessible = true }
+            .get(Downloads).let { (it as java.util.concurrent.atomic.AtomicReference<*>).set(null) }
+        AppSettings.setOfflineMode(false)
+    }
+
+    /**
+     * One file of a batch download landing, recorded the way the download
+     * service records it: through `Downloads.remember`, which writes the
+     * record, moves the listing generation and patches the memoised listing.
+     * The file is real, because the Downloads page verifies each record on
+     * reload and forgets one whose file is gone.
+     */
+    private fun save(i: Int) {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val file = java.io.File(app.filesDir, "d$i.m4a").apply { writeBytes(ByteArray(16)) }
+        val song = Song(videoId = "d$i", title = "Downloaded $i", artist = "Artist", thumbnailUrl = null)
+        Downloads::class.java.getDeclaredMethod(
+            "remember",
+            Song::class.java,
+            Song::class.java,
+            android.net.Uri::class.java,
+            String::class.java,
+            String::class.java,
+        ).apply { isAccessible = true }
+            .invoke(Downloads, song, song, android.net.Uri.fromFile(file), null, null)
+    }
+
+    /** A playlist downloaded whole, its [SAVES] tracks not yet on the disk. */
+    private fun recordBatch() {
+        collectionsFlow.value = mapOf(
+            BATCH_ID to SavedCollection(
+                id = BATCH_ID,
+                title = "A downloaded playlist",
+                playlist = true,
+                videoIds = (1..SAVES).map { "d$it" },
+            ),
+        )
+    }
+
+    /** One file that is already on the disk, so every page has a row to start from. */
+    private fun seedOneSave() = save(0)
+
     /**
      * Sets the app up with [setUp], then runs each of [publishes] a frame
      * apart and counts what recomposed.
@@ -201,6 +314,9 @@ class RootRecomposeOnPageAppendTest {
         name: String,
         setUp: (MainViewModel) -> Unit,
         publishes: List<(MainViewModel) -> Unit>,
+        nav: RootNav = RootNav(),
+        sheets: RootSheets = RootSheets(),
+        probe: String = "v4-08",
     ): Counts {
         val counter = Counter()
         var recomposer: Recomposer? = null
@@ -221,6 +337,8 @@ class RootRecomposeOnPageAppendTest {
                         windowHeight = 891.dp,
                         appBackdrop = backdrop,
                         viewModel = viewModel,
+                        nav = nav,
+                        sheets = sheets,
                     )
                 }
             }
@@ -247,8 +365,7 @@ class RootRecomposeOnPageAppendTest {
         compose.waitForIdle()
         val root = checkNotNull(counter.root) { "root scope not found" }
 
-        counter.runs.clear()
-        counter.rereads = 0
+        counter.clear()
         publishes.forEach { publish ->
             publish(viewModel)
             compose.mainClock.advanceTimeByFrame()
@@ -262,11 +379,14 @@ class RootRecomposeOnPageAppendTest {
             slot = counter.countOf("com.music.bitchord.MainActivityKt", "RootPage"),
             detail = counter.countOf("com.music.bitchord.ui.screens.DetailScreenKt", "DetailScreen"),
             total = counter.total,
+            quickPicks = counter.runsOf("com.music.bitchord.ui.screens.QuickPicksScreenKt", "QuickPicksScreen"),
+            library = counter.runsOf("com.music.bitchord.ui.screens.LibraryScreenKt", "LibraryScreen"),
         )
         val n = publishes.size.toDouble()
         println(
-            "PROBE v4-08 $name publishes=${publishes.size} root=${counts.root} slot=${counts.slot} " +
-                "detail=${counts.detail} total=${counts.total} rereads=${counter.rereads} " +
+            "PROBE $probe $name publishes=${publishes.size} root=${counts.root} slot=${counts.slot} " +
+                "detail=${counts.detail} quickPicks=${counts.quickPicks} library=${counts.library} " +
+                "total=${counts.total} rereads=${counter.rereads} " +
                 "perPublish(root=${counts.root / n}, detail=${counts.detail / n}, total=${counts.total / n})",
         )
         reg.dispose()
@@ -341,7 +461,97 @@ class RootRecomposeOnPageAppendTest {
         assertEquals("root recomposes on a party heartbeat", 0, counts.root)
     }
 
+    // ---- Ticket v4-09: a batch download saving its files ----
+
+    private val saves get() = (1..SAVES).map { i -> { _: MainViewModel -> save(i) } }
+
+    /**
+     * Offline, on the Quick Picks page: the page is the device's library, so
+     * it must gain a row for every file saved, and the root must not move.
+     */
+    @Test fun `saving files offline updates Quick Picks, not the root`() {
+        val sheets = RootSheets().apply { showQuickPicks = true }
+        val counts = measure(
+            "save-quickpicks",
+            setUp = {
+                seedOneSave()
+                AppSettings.setOfflineMode(true)
+                val deadline = System.currentTimeMillis() + 5_000
+                while (!AppSettings.effectiveOffline.value && System.currentTimeMillis() < deadline) {
+                    compose.mainClock.advanceTimeByFrame()
+                    Thread.sleep(5)
+                }
+                check(AppSettings.effectiveOffline.value) { "never went offline" }
+            },
+            publishes = saves,
+            sheets = sheets,
+            probe = "v4-09",
+        )
+        assertTrue("Quick Picks sees every save (${counts.quickPicks})", counts.quickPicks >= SAVES)
+        assertTrue(
+            "the newest save is on the page",
+            compose.onAllNodesWithText("Downloaded $SAVES").fetchSemanticsNodes().isNotEmpty(),
+        )
+        assertEquals("root recomposes on a saved file", 0, counts.root)
+    }
+
+    /**
+     * On the Library tab, with a playlist downloading whole: its card on the
+     * On Device shelf counts the tracks on the disk, so the Library must see
+     * every save, and the root must not move.
+     */
+    @Test fun `saving a batch download's files updates the Library, not the root`() {
+        val nav = RootNav().apply { selectedTab = TAB_LIBRARY }
+        val counts = measure(
+            "save-library",
+            setUp = {
+                recordBatch()
+                save(1)
+            },
+            publishes = saves.drop(1),
+            nav = nav,
+            probe = "v4-09",
+        )
+        assertTrue("the Library sees every save (${counts.library})", counts.library >= SAVES - 1)
+        assertEquals("root recomposes on a saved file", 0, counts.root)
+    }
+
+    /**
+     * The Downloads page open: it is a snapshot of the folder, retaken on
+     * every save, and must be retaken for each one. The root must not move.
+     */
+    @Test fun `saving files reloads the open Downloads page, not the root`() {
+        val published = ArrayList<List<DetailPage>>()
+        val watcher = CoroutineScope(Dispatchers.Unconfined)
+        val counts = try {
+            measure(
+                "save-local-page",
+                setUp = { vm ->
+                    seedOneSave()
+                    vm.detailStackFlow().value = listOf(
+                        page(Downloads.snapshotSongs()).copy(browseId = "local:downloads", title = "Downloads"),
+                    )
+                    val flow = vm.detailStackFlow()
+                    watcher.launch { flow.collect { published += it } }
+                },
+                publishes = saves,
+                probe = "v4-09",
+            )
+        } finally {
+            watcher.cancel()
+        }
+        val snapshots = published.mapNotNull { stack ->
+            (stack.lastOrNull()?.takeIf { it.browseId == "local:downloads" }?.songs as? UiState.Success)?.data?.size
+        }.toSet()
+        for (k in 1..SAVES) {
+            assertTrue("the Downloads page was retaken after save $k (saw $snapshots)", (k + 1) in snapshots)
+        }
+        assertEquals("root recomposes on a saved file", 0, counts.root)
+    }
+
     private companion object {
+        const val SAVES = 8
+        const val BATCH_ID = "PLbatch"
         const val HEARTBEATS = 9
         const val PAGES = 5
         const val MATCHES = 10

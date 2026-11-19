@@ -713,13 +713,16 @@ internal fun BitChordApp(
     windowHeight: Dp,
     appBackdrop: LayerBackdrop,
     viewModel: MainViewModel = viewModel(),
+    // Parameters only so the recomposition probe can open a page; the app
+    // always takes the defaults.
+    nav: RootNav = rememberSaveable(saver = RootNav.Saver) { RootNav() },
+    sheets: RootSheets = remember { RootSheets() },
 ) {
     val context = LocalContext.current
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
     val podcastsEnabledState = AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val podcastsEnabled by podcastsEnabledState
-    val nav = rememberSaveable(saver = RootNav.Saver) { RootNav() }
     /**
      * Whether the player's sheet is up. The player is always a full-screen
      * take-over raised over the page, on every window size — the library
@@ -770,7 +773,6 @@ internal fun BitChordApp(
             PlayerDeepLink.handled()
         }
     }
-    val sheets = remember { RootSheets() }
     val audiobookQueryState = rememberSaveable { mutableStateOf("") }
     var audiobookQuery by audiobookQueryState
 
@@ -1091,7 +1093,12 @@ internal fun BitChordApp(
     // on it — and now that the page groups by artist and album, a stale list is
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
-    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    //
+    // Held as a State and never read here: a batch download saves a file every
+    // second or two, and a read in this body re-ran the whole root for each
+    // one. Everything that answers to it reads it where it is drawn, or
+    // through a derived state that changes only when its own answer does.
+    val savedDownloadsState = Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrlState = AppSettings.webdavUrl.collectAsStateWithLifecycle()
@@ -1106,8 +1113,18 @@ internal fun BitChordApp(
     // shelf. Read off both records: the collection record is what says a
     // release was downloaded whole, and what is on disk is what says it still
     // has anything left to open.
-    val downloadedReleases = remember(savedCollections, savedDownloads) {
-        Downloads.savedReleases()
+    //
+    // Derived, and read by the Library page itself: a saved file that is not
+    // in any of them changes nothing on the shelf, and one that is changes the
+    // shelf and not the root.
+    val downloadedReleasesState = remember {
+        derivedStateOf {
+            // Both records, read for their changes; savedReleases reads them
+            // off the store itself.
+            savedCollectionsState.value
+            savedDownloadsState.value
+            Downloads.savedReleases()
+        }
     }
     // Playlists imported without (or instead of) a YouTube Music account live
     // in the app's own store, and sit on the same shelf as the downloaded ones.
@@ -1153,18 +1170,23 @@ internal fun BitChordApp(
     val downloadIdFor: (String?) -> String? = { id ->
         id?.let { Downloads.recordIdOf(it) ?: it }?.takeIf { it in savedCollections }
     }
-    LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
-        val openPage = detailStackState.value.lastOrNull() ?: return@LaunchedEffect
-        val open = openPage.browseId
-        // A downloaded playlist's page is a snapshot of the same folder and goes
-        // stale for the same reasons — and it is the one page a delete can empty
-        // out entirely, which is worth saying rather than leaving rows behind
-        // that play nothing.
-        if (openPage.songs !is UiState.Loading &&
-            (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null ||
-                com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(open) != null)
-        ) {
-            viewModel.reloadLocalDetail(open)
+    // Collected rather than keyed on the record, so a save retakes the page
+    // without recomposing the root. Still once per change of the record, and
+    // once when the open page or the collections change, as when it was keyed.
+    LaunchedEffect(savedCollections, detail?.browseId) {
+        snapshotFlow { savedDownloadsState.value }.collect {
+            val openPage = detailStackState.value.lastOrNull() ?: return@collect
+            val open = openPage.browseId
+            // A downloaded playlist's page is a snapshot of the same folder and goes
+            // stale for the same reasons — and it is the one page a delete can empty
+            // out entirely, which is worth saying rather than leaving rows behind
+            // that play nothing.
+            if (openPage.songs !is UiState.Loading &&
+                (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null ||
+                    com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(open) != null)
+            ) {
+                viewModel.reloadLocalDetail(open)
+            }
         }
     }
     LaunchedEffect(localMusicFolderUri, filterNonMusicAudio) {
@@ -2341,15 +2363,23 @@ internal fun BitChordApp(
      * shows: the row is what fits on a screen, the page is the set.
      */
     val homeQuickPicksItems by viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
-    val quickPicksSongs: List<Song> = remember(homeQuickPicksItems, offlineActive, savedDownloads) {
-        if (offlineActive) {
-            Downloads.snapshotSongs()
-                .filter { it.videoId.isNotBlank() }
-                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
-        } else {
-            // The set behind the arrow, kept whole whether the row is on the
-            // page or not: hiding the row on Home says nothing about the set.
-            homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
+    //
+    // Derived and read by the page, not here: offline it is retaken for every
+    // file a download saves, and that is the Quick Picks page's business, not
+    // the root's.
+    val quickPicksSongsState = remember(homeQuickPicksItems, offlineActive) {
+        derivedStateOf {
+            if (offlineActive) {
+                // Read for its changes: the songs come off the store itself.
+                savedDownloadsState.value
+                Downloads.snapshotSongs()
+                    .filter { it.videoId.isNotBlank() }
+                    .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+            } else {
+                // The set behind the arrow, kept whole whether the row is on the
+                // page or not: hiding the row on Home says nothing about the set.
+                homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
+            }
         }
     }
 
@@ -2361,7 +2391,7 @@ internal fun BitChordApp(
      * a preview.
      */
     val playQuickPicks: (Boolean) -> Unit = { shuffled ->
-        val songs = quickPicksSongs
+        val songs = quickPicksSongsState.value
         if (songs.isNotEmpty()) {
             playRequestGeneration++
             activeRadioSeed = null
@@ -3464,6 +3494,11 @@ internal fun BitChordApp(
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
             val fromPlayer = sheets.songMenu.fromPlayer
+            // Whether the record says this track's file is on the device: the
+            // menu answers to its own track's save, not to every save.
+            val onDisk by remember(song.videoId) {
+                derivedStateOf { song.videoId in savedDownloadsState.value }
+            }
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -3783,7 +3818,7 @@ internal fun BitChordApp(
                             // download finished — arrives without it. The
                             // record is what says the file is on the device,
                             // and it is pruned when the file goes away.
-                            song.localUri != null || song.videoId in savedDownloads
+                            song.localUri != null || onDisk
                         )
                 ) {
                     {
@@ -4035,13 +4070,13 @@ internal fun BitChordApp(
             replay = replay,
             pageActions = pageActions,
             detailListStates = detailListStates,
-            downloadedReleases = downloadedReleases,
+            downloadedReleasesState = downloadedReleasesState,
             flowTile = flowTile,
             folderItems = folderItems,
             homeFlowLeading = homeFlowLeading,
             listPadding = listPadding,
             localPlaylistItems = localPlaylistItems,
-            quickPicksSongs = quickPicksSongs,
+            quickPicksSongsState = quickPicksSongsState,
             radioSeeds = radioSeeds,
             replayCards = replayCards,
             songSort = songSort,
@@ -5144,7 +5179,7 @@ private fun RootPage(
         )
     } else if (key == "quick_picks") {
         QuickPicksScreen(
-            songs = inputs.quickPicksSongs,
+            songs = inputs.quickPicksSongsState.value,
             offline = offlineActive,
             onPlay = { song ->
                 val source = QueueSource(inputs.quickPicksLabel, PlaybackSourceType.HOME)
@@ -6135,7 +6170,7 @@ private fun RootPage(
             links = libraryLinks(),
             // Each list remembered against what it is built from, so an
             // unchanged Library is handed the same instances and can skip.
-            deviceItems = libraryDeviceItems(inputs.downloadedReleases).let { downloaded ->
+            deviceItems = libraryDeviceItems(inputs.downloadedReleasesState.value).let { downloaded ->
                 remember(downloaded, inputs.localPlaylistItems) { downloaded + inputs.localPlaylistItems }
             },
             podcastShelves = remember(podcastsEnabled, podcastLikedShelf, podcastLaterShelf) {
@@ -6246,13 +6281,13 @@ private data class PageInputs(
     val replay: com.music.bitchord.ui.replay.ReplayState,
     val pageActions: PageActions,
     val detailListStates: DetailListStates,
-    val downloadedReleases: List<com.music.bitchord.download.SavedCollection>,
+    val downloadedReleasesState: androidx.compose.runtime.State<List<com.music.bitchord.download.SavedCollection>>,
     val flowTile: ShelfItem?,
     val folderItems: List<ShelfItem>,
     val homeFlowLeading: ShelfItem?,
     val listPadding: PaddingValues,
     val localPlaylistItems: List<ShelfItem>,
-    val quickPicksSongs: List<Song>,
+    val quickPicksSongsState: androidx.compose.runtime.State<List<Song>>,
     val radioSeeds: List<ShelfItem>,
     val replayCards: List<com.music.bitchord.ui.replay.ReplayHeroCard>,
     val songSort: SongSort,
@@ -8315,7 +8350,7 @@ private const val PAGE_FADE_MS = 200
 private const val TAB_HOME = 0
 private const val TAB_PODCASTS = 1
 private const val TAB_RADIO = 2
-private const val TAB_LIBRARY = 3
+internal const val TAB_LIBRARY = 3
 private const val TAB_SEARCH = 4
 
 /**
