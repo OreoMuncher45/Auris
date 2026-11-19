@@ -2830,9 +2830,17 @@ private fun BitChordApp(
     // so a menu opened before the lookup above resolves would otherwise be
     // stuck without album/artist rows even after the ids come in. Keep it in
     // sync while it's showing this track.
+    // Only the missing ids are filled in: the held row may be a different
+    // entry of the same track (its own setVideoId), and replacing it would
+    // point the menu's actions at the playing entry instead.
     LaunchedEffect(playerSong) {
-        if (playerSong != null && sheets.songMenu.song?.videoId == playerSong.videoId) {
-            sheets.songMenu.song = playerSong
+        if (playerSong == null) return@LaunchedEffect
+        sheets.songMenu.song?.takeIf { it.videoId == playerSong.videoId }?.let { held ->
+            sheets.songMenu.song = held.copy(
+                artistId = held.artistId ?: playerSong.artistId,
+                albumId = held.albumId ?: playerSong.albumId,
+                albumName = held.albumName ?: playerSong.albumName,
+            )
         }
     }
 
