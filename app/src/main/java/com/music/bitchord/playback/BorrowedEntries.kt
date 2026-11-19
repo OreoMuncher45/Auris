@@ -10,17 +10,19 @@ import java.util.concurrent.ConcurrentHashMap
  * The entry was complete when it was lent, but nothing pins it: the evictor
  * can drop its unread tail mid-play. CacheDataSource would then fill the hole
  * from the borrowing request's own upstream, which can resolve something else,
- * and write it into the middle of the borrowed file. Refusing the fetch ends
- * the read instead; recovery discards the entry and the next open picks a key
- * afresh.
+ * and write it into the middle of the borrowed file — or hand those bytes to a
+ * reader already part-way through the borrowed rendition. Refusing the fetch
+ * ends the read instead; recovery discards the entry and the next open picks a
+ * key afresh.
  *
- * The mark is process-wide and outlives the borrow on purpose. Which request is
- * still reading an entry is not visible from here, and a settings change can
- * make the same key a later request's *own* — un-marking it then would strip
- * the protection from the reader still holding the borrow. So the mark only
- * goes when the entry does: [forget] on discard, or once the entry holds no
- * bytes at all, when there is no file left to put a seam in. The cost of
- * keeping it too long is one recoverable refusal and a re-download.
+ * Used at two scopes. [AudioCache] keeps one for the whole process, which
+ * protects the *file*: its mark goes only when [AudioCache.discard] removes the
+ * entry, never because a later lookup named the key as its own or because the
+ * entry emptied — which request is still reading cannot be seen from there.
+ * Each playback request keeps another for its own lifetime, which protects the
+ * *stream*: that request never refills a key it was lent, even once the file
+ * mark has gone. Keeping a mark too long costs one recoverable refusal and a
+ * re-download.
  */
 internal class BorrowedEntries {
 
@@ -32,19 +34,12 @@ internal class BorrowedEntries {
     }
 
     /**
-     * Whether an upstream fetch may write into [key]. [holdsBytes] is asked
-     * only for a lent key, so an ordinary fetch costs one set lookup.
+     * Whether an upstream fetch may write into [key]. The emptiness check
+     * keeps an ordinary fetch, with nothing lent, to a field read.
      */
-    inline fun mayFill(key: String, holdsBytes: (String) -> Boolean): Boolean {
-        if (!isLent(key)) return true
-        if (holdsBytes(key)) return false
-        forget(key)
-        return true
-    }
+    fun mayFill(key: String): Boolean = keys.isEmpty() || key !in keys
 
-    fun isLent(key: String): Boolean = keys.isNotEmpty() && key in keys
-
-    /** The entry [key] is gone or being thrown away; it may be filled again. */
+    /** The entry [key] has been removed; it may be filled again. */
     fun forget(key: String) {
         keys.remove(key)
     }

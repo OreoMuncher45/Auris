@@ -6,51 +6,71 @@ import org.junit.Test
 
 /**
  * A cache entry lent whole to a request that would have resolved a different
- * rendition must never be refilled from that request's upstream.
+ * rendition must never be refilled from that request's upstream, for as long
+ * as that request lives.
  */
 class BorrowedEntriesTest {
 
     private val alt = "abcdefghijk#alt2"
 
+    /** The process-wide marks (the file) and one playback request's own (the stream). */
+    private val file = BorrowedEntries()
+    private val request = BorrowedEntries()
+
+    /** What the two guards in AudioCache together allow. */
+    private fun requestMayFill(key: String) = file.mayFill(key) && request.mayFill(key)
+
+    private fun borrow(key: String) {
+        file.lend(key)
+        request.lend(key)
+    }
+
     @Test
     fun `an entry nobody borrowed may be filled`() {
-        assertTrue(BorrowedEntries().mayFill(alt) { true })
+        assertTrue(requestMayFill(alt))
     }
 
     @Test
     fun `a borrowed entry that lost its tail is not refilled`() {
-        val borrowed = BorrowedEntries().apply { lend(alt) }
-        assertFalse(borrowed.mayFill(alt) { true })
+        borrow(alt)
+        assertFalse(requestMayFill(alt))
     }
 
     @Test
-    fun `a settings change that makes the key a request's own keeps the borrower protected`() {
-        val borrowed = BorrowedEntries().apply { lend(alt) }
-        // A source is ranked above YouTube again: the next key lookup names
-        // `#alt2` as its own entry. The earlier borrower is still reading it,
-        // and a span is evicted under it.
-        val ownKeyNow = alt
-        assertFalse(borrowed.mayFill(ownKeyNow) { true })
+    fun `a settings change that makes the key another request's own keeps the borrower protected`() {
+        borrow(alt)
+        // A source is ranked above YouTube again: a later lookup names `#alt2`
+        // as its own entry. That lends nothing, and takes nothing back.
+        val later = BorrowedEntries()
+        assertFalse("the file stays read-only", file.mayFill(alt) && later.mayFill(alt))
+        assertFalse("the borrower stays read-only", requestMayFill(alt))
     }
 
     @Test
-    fun `once the entry is empty there is no file to seam, and it may be filled`() {
-        val borrowed = BorrowedEntries().apply { lend(alt) }
-        assertTrue(borrowed.mayFill(alt) { false })
-        // And the mark is gone, so later fills do not ask again.
-        assertTrue(borrowed.mayFill(alt) { error("not asked for an unlent key") })
+    fun `a borrower whose last span was evicted is still not refilled`() {
+        borrow(alt)
+        // Every span evicted: the file is empty, but this request has already
+        // read part of the borrowed rendition.
+        assertFalse(requestMayFill(alt))
     }
 
     @Test
-    fun `a discarded entry may be filled again`() {
-        val borrowed = BorrowedEntries().apply { lend(alt) }
-        borrowed.forget(alt)
-        assertTrue(borrowed.mayFill(alt) { true })
+    fun `a borrower whose entry was discarded is still not refilled`() {
+        borrow(alt)
+        file.forget(alt)
+        assertFalse(requestMayFill(alt))
     }
 
     @Test
-    fun `an unlent key never reads the cache`() {
-        val borrowed = BorrowedEntries().apply { lend(alt) }
-        assertTrue(borrowed.mayFill("abcdefghijk") { error("cache read for an unlent key") })
+    fun `a new request may fill a discarded entry again`() {
+        borrow(alt)
+        file.forget(alt)
+        assertTrue(file.mayFill(alt) && BorrowedEntries().mayFill(alt))
+    }
+
+    @Test
+    fun `other keys are unaffected`() {
+        borrow(alt)
+        assertTrue(requestMayFill("abcdefghijk"))
     }
 }
