@@ -854,22 +854,26 @@ class SflxHost(
     /** Reinstalls from a package held in memory, digest-checked when one is given. */
     fun install(bytes: ByteArray, expectedSha256: String?, sourceUrl: String): Result<InstalledSflx> =
         runCatching {
-            val installed = synchronized(lifecycle) { store.install(bytes, expectedSha256, sourceUrl) }
-            // A reinstall of a running extension has to be a different object
-            // in the sandbox, or the old script keeps answering.
-            unload(installed.id)
-            // Its folder's network list is the new manifest's, not the old one.
-            files.remove(installed.id)
-            installed
+            synchronized(lifecycle) {
+                val installed = store.install(bytes, expectedSha256, sourceUrl)
+                // A reinstall of a running extension has to be a different object
+                // in the sandbox, or the old script keeps answering.
+                unload(installed.id)
+                // Its folder's network list is the new manifest's, not the old one.
+                files.remove(installed.id)
+                installed
+            }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
 
-    fun remove(id: String): Boolean {
-        val removed = synchronized(lifecycle) { store.remove(id) }
+    fun remove(id: String): Boolean = synchronized(lifecycle) {
+        // All of it under the lock: a reinstall between deleting the package
+        // and clearing its folder would otherwise lose the new folder.
+        val removed = store.remove(id)
         if (removed) {
             unload(id)
             clearFiles(id)
         }
-        return removed
+        removed
     }
 
     /** The listener's own answers for [id]'s settings block, as JSON text. */
