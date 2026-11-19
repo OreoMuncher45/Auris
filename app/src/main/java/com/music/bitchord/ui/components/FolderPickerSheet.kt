@@ -41,13 +41,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.LaunchedEffect
 import com.music.bitchord.R
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -178,92 +176,6 @@ private fun FolderRow(folder: LocalPlaylist, selected: Boolean, onClick: () -> U
             tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp),
         )
-    }
-}
-
-/**
- * The rename panel of a folder of the listener's own — the same form as the
- * account's playlist rename, without the account behind it.
- */
-@Composable
-internal fun RenameLocalCollectionForm(
-    title: String,
-    onBack: () -> Unit,
-    onRename: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var name by remember { mutableStateOf(title) }
-    val focusRequester = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-
-    val submit: () -> Unit = {
-        if (name.isNotBlank() && name != title) {
-            focusManager.clearFocus()
-            onRename(name)
-        }
-    }
-
-    Column(
-        modifier
-            .fillMaxWidth()
-            .imePadding(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = stringResource(R.string.back),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-            Text(
-                text = stringResource(R.string.rename_folder),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 22.dp, vertical = 16.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onBackground,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focusRequester),
-            )
-        }
-        Button(
-            onClick = submit,
-            enabled = name.isNotBlank() && name != title,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 22.dp),
-        ) {
-            Text(stringResource(R.string.save_name))
-        }
-        Spacer(Modifier.height(28.dp))
     }
 }
 

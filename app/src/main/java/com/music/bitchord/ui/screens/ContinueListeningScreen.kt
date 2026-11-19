@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -177,7 +179,14 @@ private fun ContinueEpisodeRow(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(onClick = onMore) {
+        val origin = rememberMenuButtonOrigin()
+        IconButton(
+            onClick = {
+                origin.record()
+                onMore()
+            },
+            modifier = Modifier.menuOriginOf(origin),
+        ) {
             Icon(
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = stringResource(R.string.episode_options),

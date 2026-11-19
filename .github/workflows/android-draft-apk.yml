@@ -298,6 +298,12 @@ jobs:
           grep -q "versionCode = $vc" app/build.gradle.kts
           grep -q "versionName = \"$v\"" app/build.gradle.kts
 
+      # Run the same gates as a local check on x86_64 too. Robolectric's
+      # Conscrypt dependency has no Linux ARM build, so framework integration
+      # tests (including resolved local-HLS playback) cannot run on an ARM host.
+      - name: Test Android and player UI
+        run: ./gradlew :app:testDevDebugUnitTest :sharedUi:jvmTest
+
       # The dev flavour, release build type: R8, no debuggable runtime, signed.
       # The ABI splits give one APK per architecture plus a universal one.
       - name: Build the APKs

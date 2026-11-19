@@ -112,31 +112,64 @@ internal fun computeNowPlayingPalette(art: List<Int>): NowPlayingPalette {
 }
 
 private class Accent(val oklch: Oklch, val weight: Float)
+private class ChromaticBucket(val bucket: Bucket, val oklch: Oklch, val weight: Float)
 
 /**
  * The colour the automatic ink should follow: the second colour the sleeve is
  * really made of, not the one that owns it.
  *
- * Colours are ranked by how much of the cover they take up against how vivid
- * they are. The leader is the primary colour — the one the backdrop already
- * carries — and the next-ranked colour far enough away in hue is the
- * secondary. A sleeve with a single chromatic colour returns that colour so
- * the ink still comes from the record; a grey sleeve returns null.
+ * Colours are ranked by how much of the cover their *hue family* takes up
+ * against how vivid they are. The leader is the primary colour — the one the
+ * backdrop already carries — and the next-ranked family far enough away in hue
+ * is the secondary. A sleeve with a single chromatic colour returns that
+ * colour so the ink still comes from the record; a grey sleeve returns null.
+ *
+ * The family share matters. Applying the 4% minimum to each RGB555 bucket made
+ * an ordinary photographic sleeve neutral: its reds and blues were spread over
+ * hundreds of adjacent bins, none of which owned 4% by itself. The hue was
+ * visibly there, but the extractor threw every piece away before adding them.
  */
 private fun secondaryAccent(buckets: List<Bucket>, total: Int): Oklch? {
-    val accents = buckets.mapNotNull { bucket ->
+    val remaining = buckets.mapNotNull { bucket ->
         val oklch = Oklch.fromArgb(bucket.color.toArgb())
-        val share = bucket.count.toFloat() / total
         if (
-            share < MIN_SECONDARY_SHARE ||
             oklch.chroma < MIN_ACCENT_CHROMA ||
             oklch.l < MIN_ACCENT_L ||
             oklch.l > MAX_ACCENT_L
         ) {
             return@mapNotNull null
         }
-        Accent(oklch, oklch.chroma * share)
-    }.sortedByDescending { it.weight }
+        ChromaticBucket(bucket, oklch, oklch.chroma * bucket.count.toFloat() / total)
+    }.toMutableList()
+    val accents = mutableListOf<Accent>()
+
+    // Seed each family at its strongest colour, then gather the neighbouring
+    // hues. This has no hard hue-bin boundary: a red at 359° and a red at 1°
+    // still belong to the same cover colour.
+    while (remaining.isNotEmpty()) {
+        val seed = remaining.maxBy { it.weight }
+        val family = remaining.filter {
+            hueGap(it.oklch.hue, seed.oklch.hue) < SECONDARY_MIN_HUE_GAP
+        }
+        remaining.removeAll(family.toSet())
+        val count = family.sumOf { it.bucket.count }
+        val share = count.toFloat() / total
+        if (share < MIN_SECONDARY_SHARE) continue
+
+        // Average the original RGB samples, not the quantised bin centres or
+        // hue angles. That keeps the representative on the sleeve and avoids
+        // the 0°/360° average becoming cyan.
+        val combined = Bucket()
+        family.forEach { part ->
+            combined.count += part.bucket.count
+            combined.red += part.bucket.red
+            combined.green += part.bucket.green
+            combined.blue += part.bucket.blue
+        }
+        val colour = Oklch.fromArgb(combined.color.toArgb())
+        accents += Accent(colour, colour.chroma * share)
+    }
+    accents.sortByDescending { it.weight }
 
     val primary = accents.firstOrNull() ?: return null
     val secondary = accents.firstOrNull {

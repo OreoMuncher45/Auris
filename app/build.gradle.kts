@@ -233,14 +233,35 @@ android {
             isIncludeAndroidResources = true
 
             all {
+                // LIVE_TESTS changes whether the Genius network test runs.
+                // Track it as a task input so Gradle cannot reuse a cached
+                // result when the environment changes.
+                it.inputs.property("liveTests", System.getenv("LIVE_TESTS") ?: "")
+
                 // Conscrypt, which Robolectric loads by JNI during sandbox
                 // setup, publishes no linux-aarch64 build, so on this host the
                 // interaction tests die with UnsatisfiedLinkError before
                 // reaching an assertion. CI is x86_64 and runs them for real.
                 if (System.getProperty("os.arch") in setOf("aarch64", "arm64")) {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
-                    it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.data.HomeFeedCacheTest")
+                    it.filter.excludeTestsMatching("com.music.bitchord.data.canvas.SpotifyTokenSessionTest")
+                    // These playback/menu tests are Robolectric too. macOS on
+                    // arm has a Conscrypt build and runs them; Linux on arm does not.
+                    if (System.getProperty("os.name").startsWith("Linux")) {
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredMenuTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredItemMenuTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.SeenWhenOnScreenTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MenuOpenCostProbe")
+                        it.filter.excludeTestsMatching("com.music.bitchord.SettingsOverDetailTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.SearchFoldOverPageTest")
+                    }
                 }
+                // MenuOpenCostProbe runs only with MENU_PROBE=1, and Gradle
+                // doesn't track the environment: without this, a run that
+                // skipped it stays up to date when the flag is turned on.
+                it.inputs.property("menuProbe", System.getenv("MENU_PROBE") ?: "")
             }
 
             // Unit tests run against a stub android.jar whose methods throw

@@ -13,7 +13,13 @@ import com.music.bitchord.ui.SearchSource
 
 @Immutable
 data class NavSearchState(
+    /** The search form is up: the field shown, the bar held unfolded. */
     val visualActive: Boolean = false,
+    /**
+     * The Search page itself is on screen, not a page opened over the Search
+     * tab. Only there does the bar stay unfolded whatever the scroll says.
+     */
+    val onSearchPage: Boolean = false,
     val keyboardActive: Boolean = false,
     val query: String = "",
     /**
