@@ -26,9 +26,11 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.music.bitchord.data.model.Song
@@ -48,24 +50,35 @@ class PlayerPanelRotationTest {
     @get:Rule
     val compose = createComposeRule()
 
+    /**
+     * The window is read only in layout, as a real rotation reaches the panel:
+     * nothing recomposes, so the player can only follow through the panel's
+     * own layout — and it must, without a recomposition of its own.
+     */
     @Test
     fun playerFollowsTheWindowAfterRotation() {
         var window by mutableStateOf(IntSize(PORTRAIT_W, PORTRAIT_H))
         var player = IntSize.Zero
+        var compositions = 0
         // Fully open, with no pill to grow from: the panel is the whole window.
         val dock = PlayerDock().apply {
             sheetTravel = 1000f
             sheetOffset = { 0f }
         }
+        val song = Song(videoId = "v", title = "t", artist = "a", thumbnailUrl = null)
+        val haze = HazeState()
         compose.setContent {
-            val size = with(LocalDensity.current) {
-                Modifier.size(window.width.toDp(), window.height.toDp())
-            }
-            Box(size) {
+            Box(
+                Modifier.layout { measurable, _ ->
+                    val size = window
+                    val placeable = measurable.measure(Constraints.fixed(size.width, size.height))
+                    layout(size.width, size.height) { placeable.place(0, 0) }
+                },
+            ) {
                 PlayerPanel(
                     dock = dock,
                     motion = null,
-                    song = Song(videoId = "v", title = "t", artist = "a", thumbnailUrl = null),
+                    song = song,
                     isPlaying = false,
                     isLoading = false,
                     controlsLocked = false,
@@ -75,15 +88,17 @@ class PlayerPanelRotationTest {
                     onPrevious = {},
                     scrimAlpha = 0f,
                     material = PanelPillMaterial.Solid,
-                    hazeState = HazeState(),
+                    hazeState = haze,
                     onLaidOut = {},
                 ) {
+                    SideEffect { compositions++ }
                     Box(Modifier.fillMaxSize().onSizeChanged { player = it })
                 }
             }
         }
         compose.waitForIdle()
         assertEquals(IntSize(PORTRAIT_W, PORTRAIT_H), player)
+        val settled = compositions
 
         window = IntSize(PORTRAIT_H, PORTRAIT_W)
         compose.waitForIdle()
@@ -92,6 +107,7 @@ class PlayerPanelRotationTest {
         window = IntSize(PORTRAIT_W, PORTRAIT_H)
         compose.waitForIdle()
         assertEquals(IntSize(PORTRAIT_W, PORTRAIT_H), player)
+        assertEquals(settled, compositions)
     }
 
     /**
