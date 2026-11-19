@@ -1598,6 +1598,7 @@ internal object SflxShim {
                             if (extra.headers) payload.headers = extra.headers;
                             if (extra.segments) payload.segments = extra.segments;
                             if (extra.decryption) payload.decryption = extra.decryption;
+                            if (extra.unfinished) payload.unfinished = true;
                         }
                         return JSON.stringify(payload);
                     };
@@ -1823,6 +1824,11 @@ internal object SflxShim {
                     // or an encrypted file), so that case is still read.
                     var namedByExtension = capturedPath && capturedPath !== outputPath;
                     var guessed = audioHints(namedByExtension ? capturedPath : '', capturedOptions, context);
+                    // The audio was taken but the extension never got to say
+                    // what it would have done with it — it was stopped at file
+                    // work after the "download". A key it would have reported
+                    // then was never heard, so the host checks the file itself.
+                    var unfinished = (captured !== null || capturedSegments !== null) && finished === null;
                     // Where the answer names no container at all, the tier it
                     // answered is the claim: the manifest declares what kind
                     // each of its tiers is, and a lossless tier's answer is
@@ -1879,7 +1885,8 @@ internal object SflxShim {
                         return answered(null, '', {
                             segments: list,
                             headers: headersOf(),
-                            decryption: decryptionKey ? { key: decryptionKey } : null
+                            decryption: decryptionKey ? { key: decryptionKey } : null,
+                            unfinished: unfinished
                         });
                     }
                     if (!captured) {
@@ -1898,7 +1905,8 @@ internal object SflxShim {
                     if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
                     return answered(captured, '', {
                         headers: headersOf(),
-                        decryption: decryptionKey ? { key: decryptionKey } : null
+                        decryption: decryptionKey ? { key: decryptionKey } : null,
+                        unfinished: unfinished
                     });
                 },
 

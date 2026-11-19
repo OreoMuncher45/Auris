@@ -19,18 +19,22 @@ import java.util.Locale
  * encrypted bytes: a track cached yesterday needs yesterday's key. A download
  * is decrypted when it lands and needs none.
  *
- * Bounded, least recently *used* first out: playing a cached track looks its
- * key up and so keeps it, and a key is only dropped after thousands of other
- * encrypted answers have been resolved or played since — by which point the
- * audio cache, which is bounded too, has long dropped that track's bytes.
- * Sixteen bytes a key, so the cap costs little.
+ * Bounded, least recently *used* first out — but a key used within the last
+ * [KEEP_MS] is never dropped, however many others arrive: a track cached and
+ * paused, or played last week, still has its bytes in the audio cache and
+ * still needs its key. Above the cap only keys idle that long go, by which
+ * point the bounded audio cache has dropped what they opened.
  */
 object CencKeys {
 
     private const val MAX_KEYS = 4096
+    private const val KEEP_MS = 30L * 24 * 60 * 60 * 1000
+
+    private class Entry(val key: ByteArray, var usedAt: Long)
 
     /** Access-ordered: the eldest entry is the one least recently used. */
-    private val keys = LinkedHashMap<String, ByteArray>(16, 0.75f, true)
+    private val keys = LinkedHashMap<String, Entry>(16, 0.75f, true)
+    @Volatile internal var clock: () -> Long = System::currentTimeMillis
     @Volatile private var file: File? = null
     /** Whether memory holds something the file does not, so the next write is owed. */
     private var dirty = false
@@ -45,9 +49,12 @@ object CencKeys {
             runCatching {
                 if (store.exists()) store.readLines().forEach { line ->
                     val parts = line.trim().split(' ')
-                    if (parts.size == 2) {
+                    if (parts.size == 2 || parts.size == 3) {
                         val key = fromHex(parts[1])
-                        if (key != null && key.size == 16 && fromHex(parts[0])?.size == 16) keys.putIfAbsent(parts[0], key)
+                        val usedAt = parts.getOrNull(2)?.toLongOrNull() ?: clock()
+                        if (key != null && key.size == 16 && fromHex(parts[0])?.size == 16) {
+                            keys.putIfAbsent(parts[0], Entry(key, usedAt))
+                        }
                     }
                 }
             }
@@ -56,18 +63,37 @@ object CencKeys {
     }
 
     /** The key for [kid], or null. */
-    fun keyFor(kid: ByteArray): ByteArray? = synchronized(keys) { keys[hex(kid)]?.copyOf() }
+    fun keyFor(kid: ByteArray): ByteArray? = synchronized(keys) {
+        keys[hex(kid)]?.let { entry ->
+            entry.usedAt = clock()
+            entry.key.copyOf()
+        }
+    }
 
     /** Keeps [key] for [kid], both 16 bytes. */
     fun register(kid: ByteArray, key: ByteArray) {
         require(kid.size == 16 && key.size == 16) { "a key id and a key are 16 bytes each" }
         synchronized(keys) {
             val id = hex(kid)
-            if (keys[id]?.contentEquals(key) == true && !dirty) return
-            keys[id] = key.copyOf()
-            while (keys.size > MAX_KEYS) keys.remove(keys.keys.first())
+            val now = clock()
+            val known = keys[id]
+            if (known != null && known.key.contentEquals(key) && !dirty) {
+                known.usedAt = now
+                return
+            }
+            keys[id] = Entry(key.copyOf(), now)
+            evict(now)
             dirty = true
             persist()
+        }
+    }
+
+    /** Drops the least recently used keys above the cap, but only ones idle for [KEEP_MS]. */
+    private fun evict(now: Long) {
+        if (keys.size <= MAX_KEYS) return
+        val iterator = keys.entries.iterator()
+        while (keys.size > MAX_KEYS && iterator.hasNext()) {
+            if (now - iterator.next().value.usedAt >= KEEP_MS) iterator.remove()
         }
     }
 
@@ -81,7 +107,7 @@ object CencKeys {
         val written = runCatching {
             store.parentFile?.mkdirs()
             val temp = File(store.path + ".tmp")
-            temp.writeText(keys.entries.joinToString("") { (k, v) -> "$k ${hex(v)}\n" })
+            temp.writeText(keys.entries.joinToString("") { (k, v) -> "$k ${hex(v.key)} ${v.usedAt}\n" })
             java.nio.file.Files.move(
                 temp.toPath(), store.toPath(),
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
@@ -95,6 +121,7 @@ object CencKeys {
         keys.clear()
         file = null
         dirty = false
+        clock = System::currentTimeMillis
     }
 
     /**

@@ -503,8 +503,34 @@ class SflxHost(
                 cencKid = SflxAnswer.decryptionKey(raw)?.let { key ->
                     if (url == null) throw SflxException("an encrypted segmented answer cannot be decrypted yet")
                     encryptedKid(extensionId, url, headers, key)
+                } ?: run {
+                    if (SflxAnswer.unfinished(raw)) refuseIfEncrypted(url, segments, headers)
+                    null
                 },
             )
+        }
+    }
+
+    /**
+     * An answer whose extension was stopped before it could hand over a key:
+     * its file is checked, and refused if it is encrypted, rather than played
+     * as noise. A check that cannot be made — a network error, a format that
+     * is not MP4 — lets the answer through, as it always did.
+     */
+    private fun refuseIfEncrypted(
+        url: String?,
+        segments: List<com.music.bitchord.data.sources.module.ModuleStreamSegment>,
+        headers: Map<String, String>,
+    ) {
+        val first = segments.firstOrNull()
+        val (target, requestHeaders) = when {
+            url != null -> url to headers
+            first != null -> first.url to (headers + first.headers.orEmpty())
+            else -> return
+        }
+        val head = runCatching { CencProbe.head(target, requestHeaders) }.getOrNull()
+        if (head is CencHead.Result.Encrypted) {
+            throw SflxException("this source's audio is encrypted, and it did not hand over the key")
         }
     }
 

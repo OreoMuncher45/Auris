@@ -68,8 +68,12 @@ class CencReviewCasesTest {
     fun `a partial header answer must start at byte zero`() {
         assertTrue(CencProbe.startsAtZero("bytes 0-1048575/9000000"))
         assertTrue(CencProbe.startsAtZero("bytes 0-8999/9000"))
+        assertTrue(CencProbe.startsAtZero("bytes 0-99/*"))
         assertFalse(CencProbe.startsAtZero("bytes 4096-1048575/9000000"))
         assertFalse(CencProbe.startsAtZero(""))
+        assertFalse("no complete length", CencProbe.startsAtZero("bytes 0-99/"))
+        assertFalse("ends past the length", CencProbe.startsAtZero("bytes 0-99/50"))
+        assertFalse("trailing junk", CencProbe.startsAtZero("bytes 0-99/100 extra"))
     }
 
     @Test
@@ -139,6 +143,81 @@ class CencReviewCasesTest {
             assertArrayEquals(key, CencKeys.keyFor(kept))
         } finally {
             CencKeys.clear()
+        }
+    }
+
+    @Test
+    fun `a key used within a month is kept past the cap, an idle one is not`() {
+        CencKeys.clear()
+        try {
+            var now = 1_000_000_000_000L
+            CencKeys.clock = { now }
+            val idle = ByteArray(16) { 0x11 }
+            val paused = ByteArray(16) { 0x22 }
+            CencKeys.register(idle, key)
+            CencKeys.register(paused, key)
+            now += 40L * 24 * 60 * 60 * 1000
+            CencKeys.keyFor(paused) // played from the cache last week
+            now += 7L * 24 * 60 * 60 * 1000
+            for (i in 0 until 4096) {
+                CencKeys.register(ByteArray(16).also { java.nio.ByteBuffer.wrap(it).putInt(i + 1) }, key)
+            }
+            assertArrayEquals("a key used within the month survives the cap", key, CencKeys.keyFor(paused))
+            assertEquals("a key idle for over a month goes", null, CencKeys.keyFor(idle))
+        } finally {
+            CencKeys.clear()
+        }
+    }
+
+    @Test
+    fun `a saved flac from a source with an unknown length is seekable`() {
+        // The fixture with its dfLa STREAMINFO total zeroed: "unknown".
+        val bytes = resource("sine-cenc.mp4").readBytes()
+        val dfla = indexOf(bytes, "dfLa")
+        // dfLa: type (4), version/flags (4), block header (4), STREAMINFO;
+        // the total is the low nibble of body byte 13 and bytes 14-17.
+        val total = dfla + 4 + 4 + 4 + 13
+        bytes[total] = (bytes[total].toInt() and 0xF0).toByte()
+        for (i in 1..4) bytes[total + i] = 0
+        val unknown = File.createTempFile("unknown-length", ".mp4").apply { writeBytes(bytes) }
+        val saved = File.createTempFile("saved", ".flac")
+        try {
+            saved.outputStream().use { CencFlacFile.write(unknown, it) { if (it.contentEquals(kid)) key else null } }
+            val extractor = androidx.media3.extractor.flac.FlacExtractor()
+            var seekMap: androidx.media3.extractor.SeekMap? = null
+            extractor.init(object : androidx.media3.extractor.ExtractorOutput {
+                override fun track(id: Int, type: Int) = androidx.media3.extractor.DiscardingTrackOutput()
+                override fun endTracks() = Unit
+                override fun seekMap(map: androidx.media3.extractor.SeekMap) { seekMap = map }
+            })
+            val all = saved.readBytes()
+            var position = 0
+            val reader = object : androidx.media3.common.DataReader {
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    if (position >= all.size) return C.RESULT_END_OF_INPUT
+                    val n = minOf(length, all.size - position)
+                    System.arraycopy(all, position, buffer, offset, n)
+                    position += n
+                    return n
+                }
+            }
+            var input = androidx.media3.extractor.DefaultExtractorInput(reader, 0, all.size.toLong())
+            val holder = androidx.media3.extractor.PositionHolder()
+            while (seekMap == null) {
+                when (extractor.read(input, holder)) {
+                    androidx.media3.extractor.Extractor.RESULT_END_OF_INPUT -> break
+                    androidx.media3.extractor.Extractor.RESULT_SEEK -> {
+                        position = holder.position.toInt()
+                        input = androidx.media3.extractor.DefaultExtractorInput(reader, holder.position, all.size.toLong())
+                    }
+                }
+            }
+            val map = requireNotNull(seekMap) { "no seek map" }
+            assertTrue("the saved file can be seeked", map.isSeekable)
+            assertEquals(1_200_000L, map.durationUs)
+        } finally {
+            unknown.delete()
+            saved.delete()
         }
     }
 
