@@ -804,10 +804,6 @@ internal fun BitChordApp(
     // following radio items carry radioName in their MediaItem extras.
     var activeRadioSeed by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // The modal player owns light status glyphs and its own contrast scrim.
-    // Every other surface follows the theme; Replay's page and stories remain
-    // dark artwork either way.
-    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !nav.showReplay && nav.replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     // Time to full display is the home page with shelves on it, not the
@@ -1054,6 +1050,15 @@ internal fun BitChordApp(
     val detailStackIds by remember(detailStackState) {
         derivedStateOf(structuralEqualityPolicy()) { detailStackState.value.map { it.browseId } }
     }
+    // The modal player owns light status glyphs and its own contrast scrim.
+    // Every other surface follows the theme; Replay's page and stories remain
+    // dark artwork either way. Replay's page only while it is the page on
+    // screen: a release pushed over it follows the theme like any other.
+    val replayOnScreen = rootPageKey(
+        nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size,
+    ) == "replay"
+    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !replayOnScreen && nav.replayStory == null)
+
     // Read when a page is opened, never in composition: see [RootNav.replayDepth].
     // Off the view model's flow rather than [detailStackState]: that one is
     // collected a frame behind, and an opener that clears the stack and then
