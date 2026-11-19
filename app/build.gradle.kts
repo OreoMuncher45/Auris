@@ -246,8 +246,18 @@ android {
                     it.filter.excludeTestsMatching("com.music.bitchord.ui.apple.*InteractionTest")
                     it.filter.excludeTestsMatching("com.music.bitchord.data.HomeFeedCacheTest")
                     it.filter.excludeTestsMatching("com.music.bitchord.data.canvas.SpotifyTokenSessionTest")
-                    it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
+                    // These playback/menu tests are Robolectric too. macOS on
+                    // arm has a Conscrypt build and runs them; Linux on arm does not.
+                    if (System.getProperty("os.name").startsWith("Linux")) {
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.ResolvedLocalPlaylistDataSourceTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredMenuTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MenuOpenCostProbe")
+                    }
                 }
+                // MenuOpenCostProbe runs only with MENU_PROBE=1, and Gradle
+                // doesn't track the environment: without this, a run that
+                // skipped it stays up to date when the flag is turned on.
+                it.inputs.property("menuProbe", System.getenv("MENU_PROBE") ?: "")
             }
 
             // Unit tests run against a stub android.jar whose methods throw
