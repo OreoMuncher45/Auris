@@ -221,7 +221,7 @@ internal object SpotifyOps {
                 markChecked()
                 return@runCatching null
             }
-            val merged = bundled + found
+            val merged = table + found
             table = merged
             writeCache(merged)
             markChecked()
