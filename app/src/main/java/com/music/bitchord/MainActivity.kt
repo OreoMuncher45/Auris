@@ -267,7 +267,16 @@ import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.MenuOrigin
+import androidx.compose.ui.text.font.FontWeight
+import com.music.bitchord.ui.components.menu.MenuTokens
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menu.MenuChoiceRow
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.LocalMenuHost
+import com.music.bitchord.ui.components.menu.MenuHostOverlay
+import com.music.bitchord.ui.components.menu.MenuHostState
 import com.music.bitchord.ui.components.menu.MenuHeader
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
@@ -524,7 +533,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
+                // The one anchored menu any screen can ask for — the shared
+                // ones included, which can't call the Android menu directly.
+                // Drawn last among the root's overlays (see RootOverlays).
+                val menuHost = remember { MenuHostState() }
                 CompositionLocalProvider(
+                    LocalMenuHost provides menuHost,
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     // The engine's own defaults (see [GlassEffectConfig]) with
@@ -7438,6 +7452,9 @@ private fun RootOverlays(
         )
     }
 
+    // Last, so it is over everything above, the player included: the menu
+    // any screen asked LocalMenuHost for.
+    (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
 }
 
 @Composable
