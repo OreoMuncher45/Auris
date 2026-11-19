@@ -176,10 +176,17 @@ class CencReviewCasesTest {
         try {
             var now = 1_000_000_000_000L
             CencKeys.clock = { now }
-            CencKeys.init(dir)
             val recent = ByteArray(16) { 0x33 }
-            CencKeys.register(recent, key)
-            for (i in 0 until 4095) CencKeys.register(ByteArray(16).also { java.nio.ByteBuffer.wrap(it).putInt(i + 1) }, key)
+            // A full store, seeded in the format persist writes, every key at day 0.
+            val keyHex = CencKeys.hex(key)
+            File(dir, "cenc-keys.txt").writeText(buildString {
+                append("${CencKeys.hex(recent)} $keyHex $now\n")
+                for (i in 0 until 4095) {
+                    val other = ByteArray(16).also { java.nio.ByteBuffer.wrap(it).putInt(i + 1) }
+                    append("${CencKeys.hex(other)} $keyHex $now\n")
+                }
+            })
+            CencKeys.init(dir)
             now += 40L * 24 * 60 * 60 * 1000
             CencKeys.keyFor(recent) // played from the cache
             // Restart a day later.
