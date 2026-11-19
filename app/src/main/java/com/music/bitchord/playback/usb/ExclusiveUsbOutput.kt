@@ -24,6 +24,9 @@ import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Direct USB session around the decent-player usbdevfs driver (MIT), ported
@@ -43,7 +46,12 @@ class ExclusiveUsbOutput(
     context: Context,
 ) {
     private val appContext = context.applicationContext
-    private val lock = Any()
+    /**
+     * Guards the session. A lock rather than a monitor so the writer thread
+     * can stop waiting for it: teardown joins the writer while holding it,
+     * and a writer blocked here for a volume update would never finish.
+     */
+    private val lock = ReentrantLock()
 
     @Volatile private var wanted = false
     @Volatile private var active = false
@@ -124,6 +132,8 @@ class ExclusiveUsbOutput(
 
     private val sessionBlockedDevices = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var currentDeviceKey: String? = null
+    /** The physical device the session was opened on; two DACs of one model share [currentDeviceKey]. */
+    @Volatile private var currentDevicePath: String? = null
     @Volatile private var sessionSummary: String = ""
 
     private val audioManager: AudioManager? =
@@ -145,7 +155,7 @@ class ExclusiveUsbOutput(
     }
 
     fun setWanted(enabled: Boolean) {
-        synchronized(lock) {
+        lock.withLock {
             if (wanted == enabled) {
                 if (enabled) {
                     ensureVolumeObserverLocked()
@@ -191,7 +201,7 @@ class ExclusiveUsbOutput(
      * listener's knob says. Switching back takes effect at the next start.
      */
     fun setForceSoftwareVolume(value: Boolean) {
-        synchronized(lock) {
+        lock.withLock {
             if (forceSoftwareVolume == value) return
             forceSoftwareVolume = value
             if (value && active && hardwareVolume) {
@@ -289,7 +299,7 @@ class ExclusiveUsbOutput(
         if (reported > 0 && reported != expected) {
             val reason = "DAC clock is ${reported}Hz after pause, track needs ${expected}Hz"
             Log.w(TAG, "Exclusive USB resume rejected: $reason")
-            synchronized(lock) {
+            lock.withLock {
                 if (active) failLocked(reason)
             }
             return
@@ -377,7 +387,7 @@ class ExclusiveUsbOutput(
             sourceBits > 0 -> sourceBits
             else -> 16
         }
-        synchronized(lock) {
+        lock.withLock {
             if (!wanted) return false
             return runCatching {
                 configureLocked(
@@ -495,7 +505,7 @@ class ExclusiveUsbOutput(
         if (!active) return false
         if (running.isAlive) return false
         if (!running.start()) return false
-        synchronized(lock) {
+        lock.withLock {
             paused = false
             mediaTimeBaseFrames = running.framesWritten
         }
@@ -522,7 +532,7 @@ class ExclusiveUsbOutput(
             paused = false
             pcmLock.notifyAll()
         }
-        synchronized(lock) {
+        lock.withLock {
             // The listener's level carries over to the next track. Resetting
             // it to full here is what used to make every track boundary jump
             // to maximum volume.
@@ -535,13 +545,13 @@ class ExclusiveUsbOutput(
     }
 
     fun reset() {
-        synchronized(lock) {
+        lock.withLock {
             teardownLocked(closeDevice = true)
         }
     }
 
     fun release() {
-        synchronized(lock) {
+        lock.withLock {
             wanted = false
             teardownLocked(closeDevice = true)
         }
@@ -564,7 +574,7 @@ class ExclusiveUsbOutput(
      */
     fun setListenerLevel(level: Float) {
         val normalized = level.coerceIn(0f, 1f)
-        synchronized(lock) {
+        lock.withLock {
             if (listenerLevel == normalized && !volumeDirty) return
             listenerLevel = normalized
             volumeDirty = true
@@ -597,6 +607,7 @@ class ExclusiveUsbOutput(
         if (reuse != null &&
             reuse.isAlive &&
             currentDeviceKey == deviceKey &&
+            currentDevicePath == usbDevice.deviceName &&
             configuredRateHz == sampleRate &&
             configuredChannelCount == channelCount &&
             active &&
@@ -627,10 +638,14 @@ class ExclusiveUsbOutput(
         }
 
         stopStreamLocked()
-        usbAudio.closeDevice()
         connection = null
         currentDeviceKey = deviceKey
-        val info = usbAudio.openDevice(usbDevice)
+        currentDevicePath = usbDevice.deviceName
+        // A fresh open replaces the held connection only once it succeeds, so
+        // the DAC stays off Android's driver between tracks and a failed
+        // reopen can still hand it back. Any failure below closes through
+        // failLocked, which hands it back.
+        val info = usbAudio.openDevice(usbDevice, forceReopen = true)
             ?: return failLocked("openDevice failed" + (usbAudio.lastOpenError?.let { ": $it" } ?: ""))
         // Fills clockSourceRateMap, which lets setSampleRate() prefer the
         // crystal whose GET_RANGE actually covers the track rate.
@@ -1014,9 +1029,26 @@ class ExclusiveUsbOutput(
      * Called from the writer thread: the transfer to the DAC is slow enough
      * to be heard as a hiccup on the audio thread.
      */
+    /**
+     * Runs [block] under [lock] on the writer thread, or not at all once the
+     * writer is told to stop. The thread stopping it may hold [lock] while it
+     * joins the writer.
+     */
+    private inline fun withLockUnlessStopping(block: () -> Unit) {
+        while (!writerStop) {
+            if (!lock.tryLock(WRITER_LOCK_POLL_MS, TimeUnit.MILLISECONDS)) continue
+            try {
+                if (!writerStop) block()
+            } finally {
+                lock.unlock()
+            }
+            return
+        }
+    }
+
     private fun maybeApplyVolume() {
         if (!volumeDirty) return
-        synchronized(lock) {
+        withLockUnlessStopping {
             if (!volumeDirty) return
             volumeDirty = false
             applyVolumeLocked()
@@ -1037,7 +1069,7 @@ class ExclusiveUsbOutput(
         val now = SystemClock.elapsedRealtime()
         if (now - lastDacLevelCheckMs < DAC_LEVEL_CHECK_INTERVAL_MS) return
         lastDacLevelCheckMs = now
-        synchronized(lock) { applyVolumeLocked() }
+        withLockUnlessStopping { applyVolumeLocked() }
     }
 
     /**
@@ -1138,6 +1170,7 @@ class ExclusiveUsbOutput(
         const val DAC_LEVEL_CHECK_INTERVAL_MS = 2_000L
         const val CLOCK_SETTLE_TRIES = 10
         const val CLOCK_SETTLE_STEP_MS = 20L
+        const val WRITER_LOCK_POLL_MS = 5L
         const val RAW_PCM16 = 2
         const val RAW_PCM24 = 0x15
         const val RAW_PCM32 = 0x16
