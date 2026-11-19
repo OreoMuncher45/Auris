@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ManageAccounts
 import androidx.compose.material.icons.rounded.Person
@@ -42,6 +44,7 @@ import com.music.bitchord.R
 import com.music.bitchord.auth.GoogleAccountSession
 import com.music.bitchord.auth.YouTubeProfile
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.screens.localizedLabel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -59,6 +62,8 @@ fun AccountProfileSelector(
     onAddAccount: () -> Unit,
     onRemoveAccount: (GoogleAccountSession) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Opens the Spotify / YouTube Music catalogue picker. */
+    onMusicCatalogue: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -67,7 +72,13 @@ fun AccountProfileSelector(
     val shape = MaterialTheme.shapes.extraLarge
     Column(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            .clickable(onClick = onDismiss),
+            // A tap on the page dismisses; nothing on the page was pressed,
+            // so nothing ripples across it.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
@@ -88,7 +99,12 @@ fun AccountProfileSelector(
                         )
                     },
                 )
-                .clickable(onClick = {}),
+                // Swallows taps between rows; it isn't a control itself.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         ) {
             LazyColumn {
                 item { Text(stringResource(R.string.switch_account), style = MaterialTheme.typography.titleLarge,
@@ -108,7 +124,18 @@ fun AccountProfileSelector(
                 }
                 }
                 item { SelectorAction(Icons.Rounded.Add, stringResource(R.string.add_account), onAddAccount) }
-                item { SelectorAction(Icons.Rounded.ManageAccounts, stringResource(R.string.manage_accounts)) { managing = !managing } }
+                item { SelectorAction(Icons.Rounded.ManageAccounts, stringResource(R.string.manage_accounts), { managing = !managing }) }
+                // A second way to the catalogue switch, one tap from every tab:
+                // the switch itself is the first card in Settings.
+                item {
+                    val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
+                    SelectorAction(
+                        icon = Icons.Rounded.Album,
+                        label = stringResource(R.string.music_catalogue),
+                        value = homeProvider.localizedLabel(),
+                        onClick = onMusicCatalogue,
+                    )
+                }
                 item { SelectorAction(Icons.Rounded.Settings, stringResource(R.string.settings), onOpenSettings) }
             }
         }
@@ -133,9 +160,19 @@ fun AccountProfileSelector(
     }
 }
 
-@Composable private fun SelectorAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+@Composable private fun SelectorAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    value: String? = null,
+) {
+    val description = if (value != null) "$label, $value" else label
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(role = Role.Button, onClick = onClick)
-        .semantics { contentDescription = label }.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null); Spacer(Modifier.width(16.dp)); Text(label)
+        .semantics { contentDescription = description }.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null); Spacer(Modifier.width(16.dp)); Text(label, Modifier.weight(1f))
+        if (value != null) {
+            Spacer(Modifier.width(12.dp))
+            Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
     }
 }

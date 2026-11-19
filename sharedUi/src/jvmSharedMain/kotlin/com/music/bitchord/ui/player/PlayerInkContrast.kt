@@ -172,7 +172,14 @@ internal fun resolveInk(
     surface: InkSurface,
     alphas: NowPlayingAlphas = NowPlayingAlphas(),
 ): InkResolution {
-    val lights = generateSequence(accent.lightL) { it + L_STEP }.takeWhile { it <= 1f + 1e-4f }
+    // Capped short of white, not at white. Gamut mapping gives up chroma as
+    // lightness rises, and at OKLCH L=1 there is none left to give: the
+    // resolver could settle on a colourless pixel, so "Use artwork" drew a
+    // white transport on a coloured screen. Below this ceiling a hue still
+    // survives, and if nothing in the band holds, the backdrop wash below
+    // buys the contrast instead of the ink's colour.
+    val lights = generateSequence(accent.lightL) { it + L_STEP }
+        .takeWhile { it <= LIGHT_INK_CEILING + 1e-4f }
         .map { accent.at(it).toArgb() }.toList()
     val darks = generateSequence(accent.darkL) { it - L_STEP }.takeWhile { it >= -1e-4f }
         .map { accent.at(it).toArgb() }.toList()
@@ -223,6 +230,9 @@ private fun abs(value: Float) = if (value < 0f) -value else value
 
 /** One lightness step: about a just-noticeable difference in OKLCH. */
 private const val L_STEP = 0.02f
+
+/** How light the ink may go: far enough to read, short of losing the hue. */
+internal const val LIGHT_INK_CEILING = 0.95f
 
 /** Bisections of the wash: 0.65 / 2^10, well under a percent. */
 private const val WASH_BISECTIONS = 10

@@ -74,4 +74,14 @@ class SflxStreamUrlSchemeTest {
 
         assertTrue(url, url.startsWith("file://") && url.endsWith(file.name))
     }
+
+    @Test
+    fun aFileSegmentIsRefused() {
+        try {
+            answer("""{"segments":[{"url":"https://cdn.example/1.m4s"},{"url":"file:///data/data/app/shared_prefs/x.xml"}]}""")
+            fail("a file segment was accepted")
+        } catch (e: SflxException) {
+            assertEquals("the extension answered with a non-network segment URL", e.message)
+        }
+    }
 }

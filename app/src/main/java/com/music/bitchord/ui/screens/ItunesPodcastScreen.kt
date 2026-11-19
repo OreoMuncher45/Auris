@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -231,7 +233,14 @@ fun ItunesPodcastScreen(
                                 // The episode's own menu — the heart that was
                                 // here only ever meant "keep this", and kept
                                 // nothing else about the episode.
-                                IconButton(onClick = { onEpisodeMenu(song) }) {
+                                val origin = rememberMenuButtonOrigin()
+                                IconButton(
+                                    onClick = {
+                                        origin.record()
+                                        onEpisodeMenu(song)
+                                    },
+                                    modifier = Modifier.menuOriginOf(origin),
+                                ) {
                                     Icon(
                                         imageVector = Icons.Rounded.MoreVert,
                                         contentDescription = stringResource(R.string.episode_options),

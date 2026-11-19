@@ -7,6 +7,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.songOrNull
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -187,31 +188,32 @@ object SpotifyImporter {
         // stored. "I KNOW ? Travis Scott" finds nothing; "I KNOW ?" finds the
         // recording. A row that found no counterpart was greyed out and
         // unplayable, and the reason was a query one word too long.
-        val queries = TrackMatcher.queries(target)
-        val query = queries.firstOrNull()
-            ?: listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" ")
+        val queries = TrackMatcher.queries(target).ifEmpty {
+            listOf(listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" "))
+        }
         // YouTube first, and only when it is switched on. Its search is the
         // widest catalogue and the best matcher input, but a listener who
         // turned YouTube off did so because they do not want its streams —
         // and asking it anyway is how a Spotify search came back with ten
         // tracks and "0 playable".
         if (SourceRegistry.youtubeEnabled()) {
-            val result = YtMusicRepository.search(query, SearchFilter.SONGS)
-            result.onFailure { error ->
-                Log.w(TAG, "YouTube could not be asked for '${track.title}': ${error.message}")
+            for (query in queries) {
+                val result = YtMusicRepository.search(query, SearchFilter.SONGS)
+                result.onFailure { error ->
+                    Log.w(TAG, "YouTube could not be asked for '${track.title}': ${error.message}")
+                }
+                val candidates = result.getOrNull()
+                    ?.mapNotNull { row -> row.songOrNull() }
+                    .orEmpty()
+                // Only a candidate the matcher accepts. This used to fall back to
+                // the search engine's first row, which is how an album page came
+                // back with the right titles under entirely different artists: a
+                // track none of the sources held was silently replaced by whatever
+                // YouTube returned first. A miss is a `spotify:` row now — the
+                // page keeps Spotify's own credit, and the player resolves the
+                // recording by name when it is actually played.
+                TrackMatcher.best(candidates, target)?.let { return it }
             }
-            val candidates = result.getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            // Only a candidate the matcher accepts. This used to fall back to
-            // the search engine's first row, which is how an album page came
-            // back with the right titles under entirely different artists: a
-            // track none of the sources held was silently replaced by whatever
-            // YouTube returned first. A miss is a `spotify:` row now — the
-            // page keeps Spotify's own credit, and the player resolves the
-            // recording by name when it is actually played.
-            TrackMatcher.best(candidates, target)?.let { return it }
         }
         // Then the sources themselves. Their rows already carry their own ids
         // (see [MusicSource.search]), so a hit here is directly playable and

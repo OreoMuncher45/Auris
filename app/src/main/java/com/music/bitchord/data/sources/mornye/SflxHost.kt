@@ -483,13 +483,18 @@ class SflxHost(
         // is checked against its folder there. A URL is only ever a network
         // one: a file:// here could name any of this app's private files, and
         // the downloader would copy it out.
-        if (url != null && !url.startsWith("https://", ignoreCase = true) &&
-            !url.startsWith("http://", ignoreCase = true)
-        ) {
+        fun network(link: String) =
+            link.startsWith("https://", ignoreCase = true) || link.startsWith("http://", ignoreCase = true)
+        if (url != null && !network(url)) {
             throw SflxException("the extension answered with a non-network URL")
         }
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
+        // The same rule for every part of a segmented answer: each one goes into
+        // the playlist the player reads.
+        if (segments.any { it.url.isNotBlank() && !network(it.url) }) {
+            throw SflxException("the extension answered with a non-network segment URL")
+        }
         if (url == null && segments.isEmpty()) {
             val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
             throw SflxException(why)
@@ -870,6 +875,8 @@ class SflxHost(
                 unload(installed.id)
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
+                // And its signed-session client is built from the new manifest.
+                sessions.remove(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
@@ -881,6 +888,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
+            sessions.remove(id)
         }
         removed
     }
@@ -1254,11 +1262,12 @@ internal object SflxQuality {
             else -> return options.firstOrNull { it.id.equals(tier, ignoreCase = true) }?.id ?: tier
         }
 
-        // The fallback ladder, as Mornye defines it: a spatial request may take
-        // a lossless copy, a lossy request may take one, a lossless request may
-        // not be answered with lossy audio.
+        // A spatial request may take the lossless master below it. A lossy
+        // request may not climb the other way: Medium/High are a data ceiling,
+        // not an invitation to fetch the largest hi-res file the extension has.
         val allowed = when (target) {
-            "spatial", "lossy" -> listOf(target, "lossless")
+            "spatial" -> listOf("spatial", "lossless")
+            "lossy" -> listOf("lossy")
             else -> listOf("lossless")
         }
         for (kind in allowed) {
@@ -1283,16 +1292,16 @@ internal object SflxQuality {
                 // Mornye does with the same manifest.
                 kind == "spatial" -> candidates.firstOrNull { isAtmos(it) }
                 // Within a tier: best first, except a LOW request (the smallest
-                // copy the extension has), and except the lossless rung used as
-                // a fallback for a lossy request — "HIGH" means "not the top
-                // one", so the honest answer is the smaller lossless copy.
+                // lossy copy the extension has).
                 kind == "lossy" && tier.uppercase(Locale.ROOT) == "LOW" -> candidates.last()
-                kind == "lossless" && target == "lossy" -> candidates.last()
                 else -> candidates.first()
             }
             if (pick != null) return pick.id
         }
-        return options.first().id
+        // No compatible published tier. Return the request unchanged rather
+        // than silently substituting the first (usually largest) option;
+        // [fallbacks] refuses a lossy request with no lossy answer at all.
+        return tier
     }
 
     /**
@@ -1330,7 +1339,16 @@ internal object SflxQuality {
         val allowed = when (requestedKind) {
             "spatial" -> listOf("lossless", "lossy")
             "lossless" -> listOf("lossless", "lossy")
+            // A lossy ceiling never falls *up* to FLAC. Qobuz publishes only
+            // lossless options, so this is what stops a Medium request being
+            // answered with its largest HI_RES_LOSSLESS file.
+            "lossy" -> listOf("lossy")
+            // An unknown extension-specific id keeps the old flexible walk;
+            // the response checks below still enforce the request's ceiling.
             else -> listOf("lossy", "lossless")
+        }
+        if (requested.equals("HIGH", ignoreCase = true) || requested.equals("LOW", ignoreCase = true)) {
+            if (options.none { it.kind == "lossy" }) return emptyList()
         }
         val ordered = ArrayList<String>()
         ordered += requested

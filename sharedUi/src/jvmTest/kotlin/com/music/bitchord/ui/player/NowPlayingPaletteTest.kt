@@ -74,6 +74,40 @@ class NowPlayingPaletteTest {
     }
 
     @Test
+    fun fragmentedPhotographicColoursStillCarryTheInk() {
+        // Twenty-five adjacent RGB555 bins per hue, 40 samples each. Every
+        // individual bin owns only 2%, so the old per-bin threshold rejected
+        // all of them even though each visible hue owns half the sleeve.
+        fun rgb555(red: Int, green: Int, blue: Int): Int {
+            fun channel(value: Int) = value * 8 + 4
+            return (0xFF shl 24) or
+                (channel(red) shl 16) or (channel(green) shl 8) or channel(blue)
+        }
+        val reds = (0 until 5).flatMap { green ->
+            (0 until 5).map { blue -> List(40) { rgb555(31, green, blue) } }
+        }.flatten()
+        val cyans = (0 until 5).flatMap { red ->
+            (0 until 5).map { green -> List(40) { rgb555(red, 31, 31) } }
+        }.flatten()
+
+        val palette = computeNowPlayingPalette(reds + cyans)
+
+        assertTrue("a real hue must not collapse to neutral", palette.accent.chroma > 0.04f)
+        val ink = palette.fg
+        assertTrue(
+            "the secondary cyan family should survive quantisation: $ink",
+            ink.blue > ink.red && ink.green > ink.red,
+        )
+    }
+
+    @Test
+    fun aRareColourOnANeutralSleeveStaysRare() {
+        val pixels = List(980) { argb(0xFF808080) } + List(20) { argb(0xFFE53935) }
+        val palette = computeNowPlayingPalette(pixels)
+        assertTrue(palette.accent.chroma < 0.001f)
+    }
+
+    @Test
     fun neutralSleevesChooseLegibleNeutralInk() {
         val white = fg("all white")
         val black = fg("all black")

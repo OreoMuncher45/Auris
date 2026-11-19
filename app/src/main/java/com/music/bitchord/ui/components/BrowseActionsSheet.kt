@@ -1,18 +1,9 @@
 package com.music.bitchord.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
@@ -23,34 +14,23 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SwapVert
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.model.BrowseType
-import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
-import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.icons.BitChordIcons
-import java.util.Locale
 
 /**
  * The album or playlist a long-press is acting on.
@@ -205,58 +185,27 @@ fun BrowseActionsSheet(
      */
     onDeleteDownload: (() -> Unit)? = null,
     /**
-     * [SongActionsPresentation.Menu] draws only the rows, compact, for the
-     * popup a held card lifts into — [HeldContextMenu] shows the card itself,
-     * so the header here would only say the same thing twice.
+     * Asks for a new name — the rename rows' job. A text field and its
+     * keyboard have no place on a menu floating over the page, so the menu
+     * hands the heading, the name as it stands, and what to do with the new
+     * one to whoever keeps the app's text dialog.
      */
-    presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
-    /**
-     * Rename in the popup: a text field and its keyboard have no place on a
-     * menu floating over the page, so the popup hands the job to the sheet,
-     * which then opens straight on the form via [startRenaming].
-     */
-    onRenameInSheet: (() -> Unit)? = null,
-    startRenaming: Boolean = false,
+    onAskForName: (heading: String, current: String, save: (String) -> Unit) -> Unit = { _, _, _ -> },
 ) {
-    val menu = presentation == SongActionsPresentation.Menu
-    var renaming by remember { mutableStateOf(startRenaming) }
     var confirmingDelete by remember { mutableStateOf(false) }
     var confirmingLocalDelete by remember { mutableStateOf(false) }
     var confirmingDeleteDownload by remember { mutableStateOf(false) }
 
     val playlist = target.playlist
-    if (renaming && playlist != null && onRename != null) {
-        RenamePlaylistForm(
-            playlist = playlist,
-            onBack = { renaming = false },
-            onRename = onRename,
-            modifier = modifier,
-        )
-        return
-    }
-    // A folder's own name, edited in place — the same form, without the
-    // account's playlist behind it.
-    if (renaming && localCollection != null) {
-        RenameLocalCollectionForm(
-            title = localCollection.title,
-            onBack = { renaming = false },
-            onRename = localCollection.onRename,
-            modifier = modifier,
-        )
-        return
-    }
+    val renamePlaylistHeading = stringResource(R.string.rename_playlist)
+    val renameFolderHeading = stringResource(R.string.rename_folder)
 
-    CompositionLocalProvider(LocalActionRowStyle provides if (menu) ActionRowStyle.Menu else ActionRowStyle.Sheet) {
+    CompositionLocalProvider(LocalActionRowStyle provides ActionRowStyle.Menu) {
         Column(
             modifier
                 .fillMaxWidth()
-                .then(if (menu) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                .verticalScroll(rememberScrollState()),
         ) {
-            if (!menu) {
-                BrowseSheetHeader(target)
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-            }
-
             onPlay?.let { ActionRow(Icons.Rounded.PlayArrow, stringResource(R.string.play), onClick = it) }
             onShuffle?.let { ActionRow(BitChordIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
             ActionRow(
@@ -334,13 +283,9 @@ fun BrowseActionsSheet(
                     onClick = it,
                 )
             }
-            if (onRename != null) {
+            if (onRename != null && playlist != null) {
                 ActionRow(Icons.Rounded.Edit, stringResource(R.string.rename)) {
-                    if (menu && onRenameInSheet != null) {
-                        onRenameInSheet()
-                    } else {
-                        renaming = true
-                    }
+                    onAskForName(renamePlaylistHeading, playlist.title, onRename)
                 }
             }
             // A folder's two rows, in the account's own order: rename, then
@@ -349,11 +294,7 @@ fun BrowseActionsSheet(
             // the same row again.
             localCollection?.let { local ->
                 ActionRow(Icons.Rounded.Edit, stringResource(R.string.rename_folder)) {
-                    if (menu && onRenameInSheet != null) {
-                        onRenameInSheet()
-                    } else {
-                        renaming = true
-                    }
+                    onAskForName(renameFolderHeading, local.title, local.onRename)
                 }
                 if (confirmingLocalDelete) {
                     ActionRow(
@@ -397,72 +338,8 @@ fun BrowseActionsSheet(
                     }
                 }
             }
-            if (!menu) Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-/** Which release the sheet is about: the same row the shelf card was. */
-@Composable
-private fun BrowseSheetHeader(target: BrowseTarget) {
-    val shape = if (target.type == BrowseType.ARTIST) CircleShape else RoundedCornerShape(8.dp)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = target.thumbnailUrl.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(shape)
-                .thumbnailBorder(shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = target.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                // A card frequently has no subtitle at all, and the kind of
-                // thing it is beats a blank line under the title. A card of
-                // unknown kind has neither, and gets the track count instead —
-                // which by then is the one thing actually known about it.
-                text = target.subtitle.ifBlank {
-                    target.type.localizedNoun().replaceFirstChar { it.uppercase(Locale.getDefault()) }.ifBlank {
-                        target.songs.size.takeIf { it > 0 }
-                            ?.let { pluralStringResource(R.plurals.song_count_plural, it, it) }
-                            .orEmpty()
-                    }
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * What to call the thing the sheet is about, in a sentence. [BrowseType.OTHER]
- * is a home card nobody has identified yet — "Open" without a noun is still a
- * true label for it, and guessing "album" would not be.
- */
-@Composable
-private fun BrowseType.localizedNoun(): String = when (this) {
-    BrowseType.ALBUM -> stringResource(R.string.album)
-    BrowseType.PLAYLIST -> stringResource(R.string.playlist)
-    BrowseType.ARTIST -> stringResource(R.string.artist)
-    BrowseType.PODCAST -> stringResource(R.string.podcasts)
-    BrowseType.OTHER -> ""
 }
 
 @Composable

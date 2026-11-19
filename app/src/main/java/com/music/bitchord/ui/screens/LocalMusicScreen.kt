@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -1251,6 +1253,7 @@ private fun DrillDownHeader(
             }
             Spacer(Modifier.weight(1f))
             onMore?.let { more ->
+                val origin = rememberMenuButtonOrigin()
                 // Hangs into the gutter the way the back arrow opposite it
                 // does (that one through the row's 6dp start), so the two
                 // glyphs sit the same distance from their edges.
@@ -1258,8 +1261,12 @@ private fun DrillDownHeader(
                     modifier = Modifier
                         .hangIntoGutter(PAGE_GUTTER - 6.dp)
                         .size(44.dp)
+                        .menuOriginOf(origin)
                         .clip(CircleShape)
-                        .clickable(onClick = more),
+                        .clickable {
+                            origin.record()
+                            more()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.Rounded.MoreHoriz, stringResource(R.string.more), tint = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -300,7 +300,17 @@ class AddonSource(
                 // falls back down the lossless ladder rather than to a lossy
                 // file, so a track with no spatial master still has one worth
                 // keeping.
-                if (!request.wantsLossless) return@withContext stream
+                if (!request.wantsLossless) {
+                    if (format.isLossless == true || format.isDolbyAtmos) {
+                        TrackLog.d(
+                            TAG,
+                            "${config.displayName}: $tier answered ${format.summary}, " +
+                                "over this lossy request — passing",
+                        )
+                        continue
+                    }
+                    return@withContext stream
+                }
                 if (format.isDolbyAtmos || format.isLossless == true || format.statesNothingLossy) {
                     return@withContext stream
                 }

@@ -150,6 +150,9 @@
     <string name="home_provider_spotify_subtitle">Spotify\'s own home and catalogue. Signed in, Flow also takes from what you play there.</string>
     <string name="home_provider_youtube_subtitle">YouTube Music\'s own home and catalogue, and its feed for Flow.</string>
     <string name="home_provider_restart">Auris will restart to apply this.</string>
+    <string name="music_catalogue">Music catalogue</string>
+    <string name="music_catalogue_row">Spotify or YouTube Music</string>
+    <string name="music_catalogue_row_subtitle">Where Home and Search come from</string>
     <string name="account_scrobbling">Account &amp; scrobbling</string>
     <string name="rich_presence">Rich presence</string>
     <string name="scrobbling">Scrobbling</string>
@@ -1419,6 +1422,10 @@
     <string name="delete_folder_confirmation">Delete “%1$s”? Tap again to confirm.</string>
     <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
     <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
+    <string name="unsupported_dolby_atmos">Dolby Atmos for unsupported devices</string>
+    <string name="unsupported_dolby_atmos_subtitle">Uses CPU decoding on devices without hardware Dolby support. This will drain your battery.</string>
+    <string name="unsupported_dolby_atmos_warning">This uses software decoding for Dolby Atmos because your device has no hardware Dolby decoder. It will drain your battery, especially during long playback. Keep it off to save battery.</string>
+    <string name="unsupported_dolby_atmos_enable">Enable</string>
     <string name="podcast_episodes_loading">Loading episodes…</string>
     <string name="podcast_episodes_empty">No episodes in this feed.</string>
     <string name="download_all_episodes">Download every episode</string>

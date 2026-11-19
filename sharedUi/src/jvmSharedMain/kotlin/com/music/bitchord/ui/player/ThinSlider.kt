@@ -217,13 +217,19 @@ fun ThinSlider(
                         dragging = true
                         onValueChange(atDown)
                     }
+                    // One long-press clock for the whole hold, counted from the
+                    // press, so events that arrive while it is held do not
+                    // restart it.
+                    val holdDeadline = down.uptimeMillis + viewConfiguration.longPressTimeoutMillis
+                    var lastUptime = down.uptimeMillis
+                    val slop = viewConfiguration.touchSlop
                     var released = false
                     while (!released) {
                         // Waiting on the long-press clock only until the
                         // gesture has declared itself. A hold that never moves
                         // produces no events, so the timeout is the long-press.
                         val event = if (canOpenPanel && !panelOpened && !scrubbing) {
-                            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { awaitPointerEvent() }
+                            withTimeoutOrNull((holdDeadline - lastUptime).coerceAtLeast(0L)) { awaitPointerEvent() }
                         } else {
                             awaitPointerEvent()
                         }
@@ -233,6 +239,7 @@ fun ThinSlider(
                             continue
                         }
                         val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
+                        lastUptime = pointer.uptimeMillis
                         if (!pointer.pressed) {
                             pointer.consume()
                             released = true
@@ -246,6 +253,12 @@ fun ThinSlider(
                         }
                         if (pointer.positionChanged()) {
                             if (!scrubbing) {
+                                // A finger that has not left the touch slop is
+                                // still holding, not scrubbing.
+                                if ((pointer.position - down.position).getDistanceSquared() <= slop * slop) {
+                                    pointer.consume()
+                                    continue
+                                }
                                 // Moved before the hold resolved: a scrub after
                                 // all, and the long-press is off.
                                 scrubbing = true

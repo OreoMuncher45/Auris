@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -14,6 +15,7 @@ import android.os.SystemClock
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -112,7 +114,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.SnapshotMutationPolicy
 import androidx.compose.runtime.Stable
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -167,6 +171,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.asSpotifyQueueRow
 import com.music.bitchord.data.model.asSpotifyQueueRows
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
@@ -261,6 +266,10 @@ import com.music.bitchord.ui.components.PodcastEpisodeSheet
 import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.MenuHeader
+import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.ui.components.HeldContextMenu
@@ -684,7 +693,7 @@ private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BitChordApp(
+internal fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
@@ -760,16 +769,21 @@ private fun BitChordApp(
     val audiobookQueryState = rememberSaveable { mutableStateOf("") }
     var audiobookQuery by audiobookQueryState
 
-    /** Holding a row anywhere but the player — the menu without the player's rows. */
+    /**
+     * A track's menu from anywhere but the player — the menu without the
+     * player's rows: lifted out of the list when it was a hold, hung off the
+     * ⋮ when it was a tap.
+     */
     val openSongMenu: (Song) -> Unit = { song ->
         sheets.songMenu.fromPlayer = false
         sheets.songMenu.origin = LongPressOrigin.consume()
+        sheets.songMenu.anchor = MenuOrigin.consume()
         sheets.songMenu.song = song
     }
-    /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
+    /** An album or playlist's menu: the held card's popup, or hung off the ⋯ that was tapped. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
         sheets.browseMenu.origin = LongPressOrigin.consume()
-        sheets.browseMenu.renameInSheet = false
+        sheets.browseMenu.anchor = MenuOrigin.consume()
         sheets.browseMenu.target = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
@@ -791,12 +805,14 @@ private fun BitChordApp(
     // following radio items carry radioName in their MediaItem extras.
     var activeRadioSeed by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // The modal player owns light status glyphs and its own contrast scrim.
-    // Every other surface follows the theme; Replay's page and stories remain
-    // dark artwork either way.
-    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !nav.showReplay && nav.replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
+    // Time to full display is the home page with shelves on it, not the
+    // skeleton: reported once, on the first frame with shelves on it — last
+    // launch's cached page when there is one, the fresh feed otherwise — so
+    // `Fully drawn` in logcat (and Macrobenchmark's TTFD) is the number a
+    // listener waits for. A no-op on every later frame.
+    ReportDrawnWhen { homeState is UiState.Success }
     // The podcast pages that sit over the feed — see [PodcastUiState].
     val podcastUi = remember { PodcastUiState() }
     // Podcasts switched off while their page is open: the tab is gone, so the
@@ -963,7 +979,9 @@ private fun BitChordApp(
     } else {
         null
     }
-    val homeWithFlowState = remember(homeState, flowTile, offlineActive, offlinePicksTitle) {
+    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    // Keyed on the downloads too: offline, the shelf is read from them.
+    val homeWithFlowState = remember(homeState, flowTile, offlineActive, offlinePicksTitle, savedDownloads) {
         derivedStateOf {
             // Offline: the home is what is on disk. The feed needs a connection
             // that is not there, so the shelf that matters is the downloads —
@@ -1022,21 +1040,63 @@ private fun BitChordApp(
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
     val detailStackState = viewModel.detailStack.collectAsStateWithLifecycle()
-    val detailStack by detailStackState
-    val detail = detailStack.lastOrNull()
+    // The open page as the root sees it: changes only when something the root
+    // reads off it does (see [DetailHeadPolicy]). Every page of a playlist that
+    // arrives, and every row a Spotify page matches, publishes a new
+    // [DetailPage]; read directly here, each one recomposed this whole
+    // composable. Only [RootPage], which reads [detailStackState] itself,
+    // needs those. Its songs can therefore lag here: read them, and anything
+    // else outside the policy, off [detailStackState].
+    val detail = remember(detailStackState) {
+        derivedStateOf(DetailHeadPolicy) { detailStackState.value.lastOrNull() }
+    }.value
+    val detailStackIds by remember(detailStackState) {
+        derivedStateOf(structuralEqualityPolicy()) { detailStackState.value.map { it.browseId } }
+    }
+    // The modal player owns light status glyphs and its own contrast scrim.
+    // Every other surface follows the theme; Replay's page and stories remain
+    // dark artwork either way. Replay's page only while it is the page on
+    // screen: a release pushed over it follows the theme like any other.
+    val replayOnScreen = rootPageKey(
+        nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size,
+    ) == "replay"
+    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !replayOnScreen && nav.replayStory == null)
+
+    // Read when a page is opened, never in composition: see [RootNav.replayDepth].
+    // Off the view model's flow rather than [detailStackState]: that one is
+    // collected a frame behind, and an opener that clears the stack and then
+    // opens Replay in the same handler would record the old depth.
+    remember(viewModel, nav, sheets) {
+        val depth = { viewModel.detailStack.value.size }
+        nav.stackDepth = depth
+        sheets.stackDepth = depth
+    }
     val likeStatusesState = viewModel.likeStatuses.collectAsStateWithLifecycle()
     val likeStatuses by likeStatusesState
 
-    // Settings has no tab of its own — it sits on top of whatever tab was
-    // selected. A pushed album/artist page (from the player, search, etc.)
-    // should surface above it rather than being hidden behind it.
-    LaunchedEffect(detail) { if (detail != null) nav.showSettings = false }
-    LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
-    LaunchedEffect(nav.showSettings) {
-        if (!nav.showSettings) {
-            nav.showAccountScrobbling = false
-            sheets.showSpotify = false
+    // Settings has no tab of its own — it sits on top of whatever page was
+    // open. A page pushed over it (from the player, a link, Spotify's page)
+    // surfaces above it rather than being hidden behind it, so a push closes
+    // Settings and what it opened.
+    //
+    // A push, not a publish: the open page is republished as a new
+    // [DetailPage] every time its next tracks, like statuses, downloads or
+    // matched rows land, and keyed on the page this closed Settings on each
+    // of those — the moment after it opened, or halfway through its slide.
+    // Pushing is the one thing that makes the stack deeper. Read in a
+    // snapshotFlow, so the root does not recompose for it either.
+    LaunchedEffect(Unit) {
+        var depth = detailStackState.value.size
+        snapshotFlow { detailStackState.value.size }.collect { size ->
+            if (size > depth && nav.showSettings) nav.closeSettings(sheets)
+            depth = size
         }
+    }
+    LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
+    // Every other way Settings closes (a tab, sign-in, an invite, a context
+    // link) sets the one flag; its pages go with it.
+    LaunchedEffect(nav.showSettings) {
+        if (!nav.showSettings) nav.closeSettings(sheets)
     }
 
     // The Downloads page is a snapshot of the folder, taken when it was opened.
@@ -1044,7 +1104,6 @@ private fun BitChordApp(
     // on it — and now that the page groups by artist and album, a stale list is
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
-    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrlState = AppSettings.webdavUrl.collectAsStateWithLifecycle()
@@ -1107,7 +1166,7 @@ private fun BitChordApp(
         id?.let { Downloads.recordIdOf(it) ?: it }?.takeIf { it in savedCollections }
     }
     LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
-        val openPage = detail ?: return@LaunchedEffect
+        val openPage = detailStackState.value.lastOrNull() ?: return@LaunchedEffect
         val open = openPage.browseId
         // A downloaded playlist's page is a snapshot of the same folder and goes
         // stale for the same reasons — and it is the one page a delete can empty
@@ -1315,8 +1374,8 @@ private fun BitChordApp(
     val detailListState = detail?.browseId?.let { browseId ->
         detailListStates.forPage(browseId)
     } ?: remember { LazyListState() }
-    LaunchedEffect(detailStack.map { it.browseId }) {
-        detailListStates.keepOnly(detailStack.mapTo(HashSet()) { it.browseId })
+    LaunchedEffect(detailStackIds) {
+        detailListStates.keepOnly(detailStackIds.toHashSet())
     }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
@@ -1855,7 +1914,11 @@ private fun BitChordApp(
                 .filterNot { it.fromAutoplay }
                 .map { it.mediaId }
             scope.launch {
-                val seed = song.copy(
+                // A pending or missing Spotify row becomes the canonical
+                // Spotify queue row before it enters the player. The radio
+                // seed is resolved separately, but the queued song still needs
+                // the id the playback resolver knows how to open.
+                val seed = song.asSpotifyQueueRow().copy(
                     radioName = song.title,
                     playbackSource = song.title,
                     playbackSourceType = PlaybackSourceType.SHARED_LINK,
@@ -1890,7 +1953,7 @@ private fun BitChordApp(
                 activeController.beginRadioQueue()
                 val currentIndex = activeController.currentMediaItemIndex
                 val currentItem = activeController.currentMediaItem
-                if (currentIndex >= 0 && currentItem?.mediaId == song.videoId) {
+                if (currentIndex >= 0 && currentItem?.mediaId == seed.videoId) {
                     // Keep the current MediaItem itself untouched. Replacing it,
                     // even with the same song, reparses the source at position
                     // zero and audibly stops/restarts the track.
@@ -1899,7 +1962,7 @@ private fun BitChordApp(
                     }
                     if (currentIndex > 0) activeController.removeMediaItems(0, currentIndex)
                     activeController.addMediaItems(1, related.map { it.toMediaItem() })
-                    activeRadioSeed = song.videoId to song.title
+                    activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
                     activeController.playSongs(listOf(seed) + related, 0)
@@ -2349,11 +2412,15 @@ private fun BitChordApp(
         val loaded = (itunesEpisodes as? UiState.Success)?.data.orEmpty()
         // An episode menu opened outside its show (Continue Listening, Home)
         // finds the last opened show's feed here, so that feed and its history
-        // are only used when the anchor is one of its episodes.
-        val inFeed = anchor == null || loaded.any { it.videoId == anchor.videoId }
-        val feed = if (inFeed) loaded else emptyList()
+        // are only used when the anchor is one of that show's episodes: listed
+        // in its feed, or played from it.
         val showId = nav.itunesPodcastId
-        val played = if (inFeed) showId?.let { viewModel.playedEpisodes(it) }.orEmpty() else emptyList()
+        val sameShow = anchor == null ||
+            loaded.any { it.videoId == anchor.videoId } ||
+            (showId != null && com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes()
+                .any { it.optString("url") == anchor.videoId && it.optString("collectionId") == showId })
+        val feed = if (sameShow) loaded else emptyList()
+        val played = if (sameShow) showId?.let { viewModel.playedEpisodes(it) }.orEmpty() else emptyList()
         val seed = if (anchor != null) listOf(anchor) + played else played
         val picked = com.music.bitchord.data.podcast.PodcastSmartDownload.select(feed, seed)
         if (picked.isEmpty()) return
@@ -2504,9 +2571,23 @@ private fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
+    // Whether the Search page itself is on screen, rather than a page opened
+    // over the Search tab (a release from the results, Settings). The bar's
+    // search form — the field, held unfolded, its own back — belongs to the
+    // page: kept up over the pages opened from it, the bar never folded on
+    // them and back from one of them left Search altogether.
+    val onSearchPage = nav.selectedTab == TAB_SEARCH &&
+        rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size) == "$TAB_KEY$TAB_SEARCH"
+    // Typing belongs to the Search page too: a page opened over it while the
+    // keyboard was up ends that, and coming back finds the results with the
+    // keyboard down. Gated above for the frame before this runs.
+    LaunchedEffect(onSearchPage) {
+        if (!onSearchPage) searchKeyboardActive = false
+    }
     val navSearchState = NavSearchState(
-        visualActive = searchVisualActive,
-        keyboardActive = searchKeyboardActive,
+        visualActive = searchVisualActive && onSearchPage,
+        onSearchPage = onSearchPage,
+        keyboardActive = searchKeyboardActive && onSearchPage,
         query = query,
         textValue = searchTextValue,
         onTextValueChange = {
@@ -2543,6 +2624,8 @@ private fun BitChordApp(
             nav.settingsSubScreen = null
             sheets.showHistory = false
             sheets.showFlow = false
+            sheets.showSpotify = false
+            sheets.spotifyFromSettings = false
             sheets.libraryShowAll = null
             nav.selectedTab = TAB_SEARCH
             searchVisualActive = true
@@ -2581,6 +2664,7 @@ private fun BitChordApp(
             }
             else -> item.browseId?.let { id ->
             if (id == SPOTIFY_BROWSE_ID) {
+                sheets.spotifyFromSettings = false
                 sheets.showSpotify = true
                 return@let
             }
@@ -2764,10 +2848,18 @@ private fun BitChordApp(
     // short page doesn't sit above a large fixed empty band — the reservation
     // is exactly the bars, no more.
     val floatingBarsHeight = remember { mutableIntStateOf(0) }
-    val listPadding = PaddingValues(
-        top = topBarContentPadding(),
-        bottom = with(LocalDensity.current) { (floatingBarsHeight.intValue / density).dp } + 16.dp,
-    )
+    // One instance, with the bars' height read when the padding is asked for
+    // (in a list's measure, mostly) rather than here. Read here, it put the
+    // root in every frame of a fold, a search morph or the mini player coming
+    // in: the bars' height changes on each of them, and every frame it did
+    // recomposed this whole composable for a padding only layout uses.
+    val listTopPadding = topBarContentPadding()
+    val listDensity = LocalDensity.current
+    val listPadding: PaddingValues = remember(listTopPadding, listDensity, floatingBarsHeight) {
+        BarsContentPadding(top = listTopPadding) {
+            with(listDensity) { floatingBarsHeight.intValue.toDp() } + 16.dp
+        }
+    }
 
     // What colour the page currently under the bars is. The fades either end
     // of the screen are flat colour wherever their blur has least to say, so
@@ -3282,6 +3374,12 @@ private fun BitChordApp(
 
         val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == nav.selectedTab }.coerceAtLeast(0)
 
+        // Which page is on screen, as one name. The root's page switcher
+        // shows this, and the back handlers below that belong to a page ask
+        // it rather than their own flag: a page's flag stays set while
+        // another page is open over it, and back must close the one on top.
+        val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size)
+
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         // Replay's three layers unwind in the order they were opened. Ahead of
@@ -3289,7 +3387,7 @@ private fun BitChordApp(
         BackHandler(enabled = nav.showReplayShare) { nav.showReplayShare = false }
         BackHandler(enabled = nav.replayStory != null && !nav.showReplayShare) { nav.replayStory = null }
         BackHandler(
-            enabled = nav.showReplay && nav.replayStory == null && !nav.showReplayShare,
+            enabled = pageKey == "replay" && nav.replayStory == null && !nav.showReplayShare,
         ) {
             if (nav.settingsSubScreen == "replay") {
                 // Dismiss Replay overlay and return to SettingsSheet beneath.
@@ -3299,20 +3397,17 @@ private fun BitChordApp(
                 nav.showReplay = false
             }
         }
-        BackHandler(
-            enabled = detail != null && !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether &&
-                !nav.showEqualizer && !nav.showReplay,
-        ) { viewModel.closeDetail() }
+        BackHandler(enabled = detail != null && pageKey == detail.browseId) { viewModel.closeDetail() }
         BackHandler(enabled = selectedMoodGenreState.value != null && detail == null && !nav.showSettings && !nav.showReplay) {
             viewModel.closeMoodGenre()
         }
         BackHandler(enabled = sheets.showDiscord) {
             sheets.showDiscord = false
         }
-        BackHandler(enabled = sheets.showSpotify && detail == null) {
+        BackHandler(enabled = pageKey == "spotify") {
             sheets.showSpotify = false
         }
-        BackHandler(enabled = nav.showAccountScrobbling && !sheets.showDiscord && !sheets.showSpotify) {
+        BackHandler(enabled = pageKey == "account_scrobbling") {
             nav.showAccountScrobbling = false
             if (nav.settingsSubScreen == "account_scrobbling") nav.settingsSubScreen = null
         }
@@ -3334,31 +3429,34 @@ private fun BitChordApp(
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = sheets.openAudiobook != null) {
+        BackHandler(enabled = pageKey == "audiobook") {
             sheets.openAudiobook = null
         }
-        BackHandler(enabled = nav.showAudiobooks) {
+        BackHandler(enabled = pageKey == "audiobooks") {
             nav.showAudiobooks = false
         }
-        BackHandler(enabled = nav.itunesPodcastId != null) {
+        BackHandler(enabled = pageKey == "itunespodcast") {
             nav.itunesPodcastId = null
         }
         // Not while a detail page is open over Genres: that page's own back
         // closes first, as with the Library grid below.
-        BackHandler(enabled = nav.showGenres && detail == null) {
+        BackHandler(enabled = pageKey == "genres") {
             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
-        BackHandler(enabled = nav.showSettings && !sheets.showSpotify && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay) {
+        BackHandler(enabled = pageKey == "settings") {
             // Back closes the open category first, then Settings; it does not
             // throw away both at once.
             if (nav.settingsCategory != null) {
                 nav.settingsCategory = null
             } else {
-                nav.showSettings = false
+                nav.closeSettings(sheets)
                 // Only when Settings was the whole of what was on screen.
-                // Opened over Replay or over a release page, closing it reveals
-                // that again rather than throwing both away.
-                if (detail == null && !nav.showReplay) nav.selectedTab = TAB_HOME
+                // Opened over Replay, a release page, History or any other
+                // page, closing it reveals that again rather than throwing
+                // both away.
+                if (rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size).startsWith(TAB_KEY)) {
+                    nav.selectedTab = TAB_HOME
+                }
             }
         }
         BackHandler(
@@ -3376,15 +3474,21 @@ private fun BitChordApp(
         BackHandler(enabled = sheets.discordDialog != null) { sheets.discordDialog = null }
         BackHandler(enabled = sheets.editingSource != null) { sheets.editingSource = null }
         BackHandler(enabled = sheets.editingPartyServer) { sheets.editingPartyServer = false }
-        BackHandler(enabled = sheets.showHistory) { sheets.showHistory = false }
-        BackHandler(enabled = sheets.showFlow) { sheets.showFlow = false }
-        BackHandler(enabled = sheets.showQuickPicks) { sheets.showQuickPicks = false }
-        BackHandler(enabled = podcastUi.showContinueListening) { podcastUi.showContinueListening = false }
+        // These pages can have Settings opened over them, and they are
+        // registered after its handler, so each one answers back only while
+        // it is the page on screen: otherwise back closed the page hidden
+        // under Settings and left Settings up.
+        BackHandler(enabled = pageKey == "history") { sheets.showHistory = false }
+        BackHandler(enabled = pageKey == "flow") { sheets.showFlow = false }
+        BackHandler(enabled = pageKey == "quick_picks") { sheets.showQuickPicks = false }
+        BackHandler(enabled = pageKey == "continue_listening") { podcastUi.showContinueListening = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
-        BackHandler(enabled = sheets.libraryShowAll != null && detail == null) { sheets.libraryShowAll = null }
-        BackHandler(enabled = sheets.detailActiveShelf != null) { sheets.detailActiveShelf = null }
+        BackHandler(enabled = pageKey == "library_show_all") { sheets.libraryShowAll = null }
+        BackHandler(enabled = sheets.detailActiveShelf != null && pageKey == detail?.browseId) {
+            sheets.detailActiveShelf = null
+        }
 
         // The Classipod shell replaces tabs, bars and player sheets wholesale:
         // same viewModel, same controller, same stores — only the chrome
@@ -4029,9 +4133,8 @@ private fun BitChordApp(
                         if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
-                // Which page is on screen, as one name. The transition runs
-                // on the difference between two of these.
-                val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
+                // [pageKey] is which page is on screen, as one name. The
+                // transition runs on the difference between two of these.
                 // A page change moves the content the glass samples. The
                 // clock tells every glass surface to hold its capture for the
                 // length of the slide rather than re-record it per frame —
@@ -4156,8 +4259,7 @@ private fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !nav.showSettings &&
-                    !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay
+                    !isLocalDetail && pageKey == detail.browseId
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
                 } else {
@@ -4201,30 +4303,36 @@ private fun BitChordApp(
                 )
 
                 FrostedTopBar(
-                    title = when {
-                        sheets.showSpotify && detail == null -> stringResource(R.string.spotify)
-                        sheets.showDiscord -> "Discord"
-                        sheets.showHistory -> stringResource(R.string.history)
-                        sheets.showFlow -> stringResource(R.string.flow)
-                        sheets.showQuickPicks -> quickPicksLabel
-                        podcastUi.showContinueListening -> stringResource(R.string.continue_listening)
-                        sheets.libraryShowAll != null && detail == null -> sheets.libraryShowAll?.title.orEmpty()
-                        nav.showAccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        nav.showSources -> stringResource(R.string.sources)
-                        nav.showListenTogether -> stringResource(R.string.listen_together)
-                        nav.showEqualizer -> stringResource(R.string.equalizer)
-                        nav.showSettings -> nav.settingsCategory
+                    // The title and the back button follow [pageKey], the page
+                    // actually on screen, rather than a precedence of their
+                    // own: with two of them, Settings opened over History
+                    // came up titled "History", and its back closed History.
+                    title = when (pageKey) {
+                        "spotify" -> stringResource(R.string.spotify)
+                        "discord" -> "Discord"
+                        "history" -> stringResource(R.string.history)
+                        "flow" -> stringResource(R.string.flow)
+                        "quick_picks" -> quickPicksLabel
+                        "continue_listening" -> stringResource(R.string.continue_listening)
+                        "library_show_all" -> sheets.libraryShowAll?.title.orEmpty()
+                        "account_scrobbling" -> stringResource(R.string.account_scrobbling)
+                        "sources" -> stringResource(R.string.sources)
+                        "listen_together" -> stringResource(R.string.listen_together)
+                        "equalizer" -> stringResource(R.string.equalizer)
+                        "settings" -> nav.settingsCategory
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
                             ?: stringResource(R.string.settings)
-                        nav.showGenres && detail == null -> stringResource(R.string.explore)
-                        sheets.openAudiobook != null -> sheets.openAudiobook?.title.orEmpty()
-                        nav.showAudiobooks -> stringResource(R.string.audiobooks)
-                        nav.showReplay -> stringResource(R.string.replay)
+                        "genres" -> stringResource(R.string.explore)
+                        "audiobook" -> sheets.openAudiobook?.title.orEmpty()
+                        "audiobooks" -> stringResource(R.string.audiobooks)
+                        "replay" -> stringResource(R.string.replay)
+                        else -> when {
                         detail != null && sheets.detailActiveShelf != null -> sheets.detailActiveShelf?.title.orEmpty()
-                        detail != null -> detail.title
+                        detail != null && pageKey == detail.browseId -> detail.title
                         selectedMoodGenreState.value != null -> selectedMoodGenreState.value?.title.orEmpty()
                         else -> tabs[selectedTabIndex].label
+                        }
                     },
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
@@ -4244,52 +4352,60 @@ private fun BitChordApp(
                             selectedMoodGenreState.value != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
-                        nav.showReplay -> replayScrolled
+                        pageKey == "replay" -> replayScrolled
                         detail != null -> detailScrolled
                         else -> scrolled || nav.selectedTab == TAB_SEARCH
                     },
                     refreshing = currentFeed != null && currentFeed in refreshing,
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
-                    onBack = when {
-                        sheets.showSpotify && detail == null -> ({ sheets.showSpotify = false })
-                        sheets.showDiscord -> ({ sheets.showDiscord = false })
-                        sheets.showHistory -> ({ sheets.showHistory = false })
-                        sheets.showFlow -> ({ sheets.showFlow = false })
-                        sheets.showQuickPicks -> ({ sheets.showQuickPicks = false })
-                        podcastUi.showContinueListening -> ({ podcastUi.showContinueListening = false })
-                        sheets.libraryShowAll != null && detail == null -> ({ sheets.libraryShowAll = null })
-                        nav.showAccountScrobbling -> ({
+                    onBack = when (pageKey) {
+                        "spotify" -> ({ sheets.showSpotify = false })
+                        "discord" -> ({ sheets.showDiscord = false })
+                        "history" -> ({ sheets.showHistory = false })
+                        "flow" -> ({ sheets.showFlow = false })
+                        "quick_picks" -> ({ sheets.showQuickPicks = false })
+                        "continue_listening" -> ({ podcastUi.showContinueListening = false })
+                        "library_show_all" -> ({ sheets.libraryShowAll = null })
+                        "account_scrobbling" -> ({
                             nav.showAccountScrobbling = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showSources -> ({
+                        "sources" -> ({
                             nav.showSources = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showListenTogether -> ({
+                        "listen_together" -> ({
                             nav.showListenTogether = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showEqualizer -> ({
+                        "equalizer" -> ({
                             nav.showEqualizer = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showSettings && nav.settingsCategory != null -> ({
-                            nav.settingsCategory = null
-                        })
-                        sheets.openAudiobook != null -> ({ sheets.openAudiobook = null })
-                        nav.showAudiobooks -> ({ nav.showAudiobooks = false })
-                        nav.itunesPodcastId != null -> ({ nav.itunesPodcastId = null })
-                        nav.showGenres && detail == null -> ({
+                        "settings" -> if (nav.settingsCategory != null) {
+                            { nav.settingsCategory = null }
+                        } else {
+                            { nav.closeSettings(sheets) }
+                        }
+                        "audiobook" -> ({ sheets.openAudiobook = null })
+                        "audiobooks" -> ({ nav.showAudiobooks = false })
+                        "itunespodcast" -> ({ nav.itunesPodcastId = null })
+                        "genres" -> ({
                             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
                         })
-                        nav.settingsSubScreen != null -> ({ nav.settingsSubScreen = null })
-                        nav.showSettings -> ({ nav.showSettings = false })
-                        nav.showReplay -> ({ nav.showReplay = false })
-                        sheets.detailActiveShelf != null -> ({ sheets.detailActiveShelf = null })
-                        detail != null -> ({ viewModel.closeDetail(); Unit })
-                        selectedMoodGenreState.value != null -> ({ viewModel.closeMoodGenre(); Unit })
-                        else -> null
+                        "replay" -> ({
+                            if (nav.settingsSubScreen == "replay") nav.settingsSubScreen = null
+                            nav.showReplay = false
+                        })
+                        else -> when {
+                            detail != null && pageKey == detail.browseId -> if (sheets.detailActiveShelf != null) {
+                                { sheets.detailActiveShelf = null }
+                            } else {
+                                { viewModel.closeDetail(); Unit }
+                            }
+                            selectedMoodGenreState.value != null -> ({ viewModel.closeMoodGenre(); Unit })
+                            else -> null
+                        }
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
                     // Only on the Search tab itself, not on anything pushed over it.
@@ -4572,6 +4688,8 @@ private fun BitChordApp(
                     sheets.showHistory = false
                     sheets.showFlow = false
                     sheets.libraryShowAll = null
+                    sheets.showQuickPicks = false
+                    podcastUi.showContinueListening = false
 
                     if (tab == TAB_SEARCH) {
                         if (useFoldingNav) {
@@ -4740,7 +4858,7 @@ private fun BitChordApp(
                     onNext = { controller?.seekToNextMediaItem() },
                     onPrevious = { controller?.seekToPrevious() },
                     menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
-                    menuAnchor = sheets.playerMenuAnchor,
+                    menuAnchor = { sheets.playerMenuAnchor },
                     onDismissMenu = { sheets.songMenu.song = null },
                     songMenuBody = songMenuBody,
                     nowPlaying = nowPlaying,
@@ -5063,7 +5181,7 @@ private fun RootPage(
                     Toast.LENGTH_SHORT,
                 ).show()
             },
-            onMore = { episode -> podcastUi.episodeMenu = episode },
+            onMore = { episode -> podcastUi.openEpisodeMenu(episode) },
             listState = scroll.continueListening,
             contentPadding = listPadding,
         )
@@ -5155,7 +5273,10 @@ private fun RootPage(
             onOpenListenBrainzLogin = { sheets.showListenBrainzLogin = true },
             onOpenLastfmLogin = { sheets.showLastfmLogin = true },
             onOpenDiscord = { sheets.showDiscord = true },
-            onOpenSpotify = { sheets.showSpotify = true },
+            onOpenSpotify = {
+                sheets.spotifyFromSettings = true
+                sheets.showSpotify = true
+            },
             contentPadding = listPadding,
         )
     } else if (key == "sources") {
@@ -5334,7 +5455,7 @@ private fun RootPage(
             onDownload = { song ->
                 Downloads.enqueue(context, song, "Podcast")
             },
-            onEpisodeMenu = { song -> podcastUi.episodeMenu = song },
+            onEpisodeMenu = { song -> podcastUi.openEpisodeMenu(song) },
             onSmartDownload = { pageActions.smartDownloadPodcast(null) },
         )
     } else if (key == "settings") {
@@ -5538,8 +5659,10 @@ private fun RootPage(
             // is where a whole release is asked for — and the tracks
             // arrive stamped with the album they came off, which is what
             // the download record groups them under.
+            // Through openBrowseMenu, so the menu hangs off the ⋯ that
+            // recorded itself and no earlier hold is reused.
             onMore = { songs ->
-                sheets.browseMenu.target = BrowseTarget(
+                pageActions.openBrowseMenu(BrowseTarget(
                     browseId = page.browseId,
                     title = page.title,
                     subtitle = page.subtitle,
@@ -5548,7 +5671,7 @@ private fun RootPage(
                     songs = songs.map(withAlbum),
                     fromCard = false,
                     downloadId = pageActions.downloadIdFor(page.browseId),
-                )
+                ))
             },
             onArtistClick = { id, name ->
                 viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
@@ -5692,12 +5815,12 @@ private fun RootPage(
             onOwnShelfItemLongPress = { item ->
                 val url = item.videoId
                 if (url != null && url.startsWith("http")) {
-                    podcastUi.episodeMenu = Song(
+                    podcastUi.openEpisodeMenu(Song(
                         videoId = url,
                         title = item.title,
                         artist = item.subtitle,
                         thumbnailUrl = item.thumbnailUrl,
-                    )
+                    ))
                 }
             },
             onShowClick = { item ->
@@ -6035,6 +6158,41 @@ private fun RootPage(
 }
 
 /**
+ * The pages' content padding: [top] for the frosted bar, and room for the
+ * floating bars below, read from [bottom] each time it is asked for, so a
+ * change in the bars' height reaches the layouts that use it without
+ * recomposing whoever holds this. Horizontal padding is none.
+ */
+@Stable
+private class BarsContentPadding(
+    private val top: Dp,
+    private val bottom: () -> Dp,
+) : PaddingValues {
+    override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateTopPadding(): Dp = top
+    override fun calculateBottomPadding(): Dp = bottom()
+}
+
+/**
+ * When two tops of the detail stack are the same page to the app root: the
+ * same page, with the same title, type and artwork. Those, and whether a page
+ * is open at all, are all [BitChordApp] reads off it. The songs, the
+ * continuation and the suggestions change with every page that arrives, and
+ * only the page itself draws them.
+ */
+private object DetailHeadPolicy : SnapshotMutationPolicy<DetailPage?> {
+    override fun equivalent(a: DetailPage?, b: DetailPage?): Boolean =
+        a === b || (
+            a != null && b != null &&
+                a.browseId == b.browseId &&
+                a.title == b.title &&
+                a.type == b.type &&
+                a.thumbnailUrl == b.thumbnailUrl
+            )
+}
+
+/**
  * One [LazyListState] per detail page on the navigation stack — see where
  * [BitChordApp] makes it for why one state cannot be shared.
  *
@@ -6261,24 +6419,19 @@ private fun RootOverlays(
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
     // ---- Album / playlist detail ----
-    // ---- Long-press track actions ----
-    // One body for both presentations of the track menu: the sheet the ⋮
-    // and the player open, and the popup a held row lifts into. Every
-    // callback below is the same in either; only the frame differs.
-    // The sheet is for the menus opened from a row — a held row's own
-    // popup is the held item lifting into, and the ⋮ on a row is this.
-    // The player's own three-dot menu is not here: it hangs off the
-    // button, in the sheet's window, so it is drawn with the player.
-    sheets.songMenu.song?.takeIf { sheets.songMenu.origin == null && !sheets.songMenu.fromPlayer }?.let { song ->
-        ModalBottomSheet(
-            onDismissRequest = { sheets.songMenu.song = null },
-            // The sheet paints itself in the track's own colours, corners
-            // and drag handle included — see SongActionsSheet.
-            containerColor = Color.Transparent,
-            dragHandle = null,
-        ) {
-            songMenuBody(song, SongActionsPresentation.Sheet)
-        }
+    // ---- Track actions ----
+    // One body for every frame of the track menu: hung off the ⋮ that was
+    // tapped, and the popup a held row lifts into. Every callback below is
+    // the same in either; only the frame differs. The player's own
+    // three-dot menu is not here: it hangs off the button, in the player's
+    // window, so it is drawn with the player.
+    AnchoredItemMenu(
+        item = sheets.songMenu.song?.takeIf { sheets.songMenu.origin == null && !sheets.songMenu.fromPlayer },
+        anchorInWindow = { sheets.songMenu.anchor },
+        onDismiss = { sheets.songMenu.song = null },
+    ) { song ->
+        MenuHeader(title = song.title, subtitle = song.artist)
+        songMenuBody(song, SongActionsPresentation.Menu)
     }
     // Drawn over everything, tab bar and mini player included, and kept
     // composed through its own exit — so it is not gated on songMenu.song.
@@ -6309,6 +6462,31 @@ private fun RootOverlays(
     LaunchedEffect(sheets.songMenu.song == null) {
         if (sheets.songMenu.song == null) sheets.songMenu.origin = null
     }
+    // A playlist or folder being renamed, handed over by its menu: the
+    // frosted card every text prompt in the app uses.
+    sheets.rename?.let { request ->
+        var name by remember(request) { mutableStateOf(request.current) }
+        val close = { sheets.rename = null }
+        val newName = name.trim()
+        val changed = newName.isNotEmpty() && newName != request.current
+        BackHandler(onBack = close)
+        com.music.bitchord.ui.components.TextValueAlert(
+            hazeState = hazeState,
+            title = request.heading,
+            message = "",
+            placeholder = request.current,
+            value = name,
+            onValueChange = { name = it },
+            onSave = {
+                if (changed) {
+                    close()
+                    request.save(newName)
+                }
+            },
+            onDismiss = close,
+            saveEnabled = changed,
+        )
+    }
     // Flow save asks for a name instead of stamping "Flow — Flow".
     if (sheets.showFlowSave) {
         com.music.bitchord.ui.screens.FlowSaveDialog(
@@ -6325,44 +6503,45 @@ private fun RootOverlays(
     // What can be done to an episode. Not the track menu: an episode has
     // no rating, no playlist and no source, so the rows that would mean
     // nothing there are not here.
-    podcastUi.episodeMenu?.let { episode ->
-        val dismiss = { podcastUi.episodeMenu = null }
-        ModalBottomSheet(
-            onDismissRequest = dismiss,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            PodcastEpisodeSheet(
-                episode = episode,
-                isLiked = viewModel.isEpisodeLiked(episode.videoId),
-                isLater = viewModel.isEpisodeLater(episode.videoId),
-                isInContinueListening = viewModel.isEpisodeInContinueListening(episode.videoId),
-                onDownload = {
-                    dismiss()
-                    Downloads.enqueue(context, episode, "Podcast")
-                },
-                onSmartDownload = {
-                    dismiss()
-                    smartDownloadPodcast(episode)
-                },
-                onToggleLike = {
-                    dismiss()
-                    viewModel.toggleEpisodeLiked(episode)
-                },
-                onToggleLater = {
-                    dismiss()
-                    viewModel.toggleEpisodeLater(episode)
-                },
-                onRemoveFromContinueListening = {
-                    dismiss()
-                    viewModel.removeRecentEpisode(episode.videoId)
-                    Toast.makeText(
-                        context,
-                        R.string.continue_listening_removed,
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                },
-            )
-        }
+    val dismissEpisodeMenu = { podcastUi.episodeMenu = null }
+    AnchoredItemMenu(
+        item = podcastUi.episodeMenu,
+        anchorInWindow = { podcastUi.episodeMenuAnchor },
+        onDismiss = dismissEpisodeMenu,
+    ) { episode ->
+        val dismiss = dismissEpisodeMenu
+        MenuHeader(title = episode.title, subtitle = episode.artist)
+        PodcastEpisodeSheet(
+            episode = episode,
+            isLiked = viewModel.isEpisodeLiked(episode.videoId),
+            isLater = viewModel.isEpisodeLater(episode.videoId),
+            isInContinueListening = viewModel.isEpisodeInContinueListening(episode.videoId),
+            onDownload = {
+                dismiss()
+                Downloads.enqueue(context, episode, "Podcast")
+            },
+            onSmartDownload = {
+                dismiss()
+                smartDownloadPodcast(episode)
+            },
+            onToggleLike = {
+                dismiss()
+                viewModel.toggleEpisodeLiked(episode)
+            },
+            onToggleLater = {
+                dismiss()
+                viewModel.toggleEpisodeLater(episode)
+            },
+            onRemoveFromContinueListening = {
+                dismiss()
+                viewModel.removeRecentEpisode(episode.videoId)
+                Toast.makeText(
+                    context,
+                    R.string.continue_listening_removed,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+        )
     }
 
     // ---- Download manager ----
@@ -6548,7 +6727,7 @@ private fun RootOverlays(
     // overflow. What a track's long-press menu is to one song, this is to
     // the whole release — the queue rows above all.
     // One body for the sheet and the popup alike — see songMenuBody.
-    val browseMenuBody: @Composable (BrowseTarget, SongActionsPresentation) -> Unit = { target, presentation ->
+    val browseMenuBody: @Composable (BrowseTarget) -> Unit = { target ->
         // Every row here closes the menu first: the tracks may still have to
         // be fetched, and leaving the sheet up over a request nothing on it
         // reports on reads as a tap that didn't land.
@@ -6591,7 +6770,6 @@ private fun RootOverlays(
         BrowseActionsSheet(
             // The live answer, not the one the target was built with.
             target = target.copy(playlist = playlist),
-            presentation = presentation,
             localCollection = localFolder?.let { folder ->
                 com.music.bitchord.ui.components.LocalCollectionActions(
                     title = folder.title,
@@ -6608,11 +6786,12 @@ private fun RootOverlays(
                     },
                 )
             },
-            onRenameInSheet = {
-                sheets.browseMenu.renameInSheet = true
-                sheets.browseMenu.origin = null
+            // Typing is a dialog's job: the menu closes and hands the name
+            // over to the one the root keeps for it.
+            onAskForName = { heading, current, save ->
+                sheets.browseMenu.target = null
+                sheets.rename = RootSheets.RenameRequest(heading, current, save)
             },
-            startRenaming = sheets.browseMenu.renameInSheet,
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
             onPlay = act { songs -> tracks.play(songs, 0) }.takeIf { target.fromCard },
@@ -6748,13 +6927,13 @@ private fun RootOverlays(
             },
         )
     }
-    sheets.browseMenu.target?.takeIf { sheets.browseMenu.origin == null }?.let { target ->
-        ModalBottomSheet(
-            onDismissRequest = { sheets.browseMenu.target = null },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            browseMenuBody(target, SongActionsPresentation.Sheet)
-        }
+    AnchoredItemMenu(
+        item = sheets.browseMenu.target?.takeIf { sheets.browseMenu.origin == null },
+        anchorInWindow = { sheets.browseMenu.anchor },
+        onDismiss = { sheets.browseMenu.target = null },
+    ) { target ->
+        MenuHeader(title = target.title, subtitle = target.subtitle)
+        browseMenuBody(target)
     }
     HeldContextMenu(
         item = sheets.browseMenu.target,
@@ -6776,13 +6955,10 @@ private fun RootOverlays(
             }
         },
     ) { target ->
-        browseMenuBody(target, SongActionsPresentation.Menu)
+        browseMenuBody(target)
     }
     LaunchedEffect(sheets.browseMenu.target == null) {
-        if (sheets.browseMenu.target == null) {
-            sheets.browseMenu.origin = null
-            sheets.browseMenu.renameInSheet = false
-        }
+        if (sheets.browseMenu.target == null) sheets.browseMenu.origin = null
     }
 
     // ---- Reorder playlist ----
@@ -6967,7 +7143,19 @@ private fun RootOverlays(
                 sheets.showAccountSelector = false
                 onOpenSettings()
             },
+            onMusicCatalogue = {
+                sheets.showAccountSelector = false
+                sheets.pickingMusicCatalogue = true
+            },
             onDismiss = { sheets.showAccountSelector = false },
+        )
+    }
+
+    // The catalogue picker the account sheet opens: the same sheet and the
+    // same restart as the card at the top of Settings.
+    if (sheets.pickingMusicCatalogue) {
+        com.music.bitchord.ui.screens.HomeProviderPicker(
+            onDismiss = { sheets.pickingMusicCatalogue = false },
         )
     }
 
@@ -7430,6 +7618,17 @@ private class PodcastUiState {
     var showContinueListening by mutableStateOf(false)
     /** The episode whose menu is open, or null when it is shut. */
     var episodeMenu by mutableStateOf<Song?>(null)
+    /**
+     * Where that menu hangs from, in window coordinates: the ⋮ that opened it,
+     * or the card that was held. A plain field, read while the menu is placed.
+     */
+    var episodeMenuAnchor: Rect? = null
+
+    /** Opens [episode]'s menu off whatever was just tapped or held. */
+    fun openEpisodeMenu(episode: Song) {
+        episodeMenuAnchor = MenuOrigin.consume() ?: LongPressOrigin.consume()?.bounds
+        episodeMenu = episode
+    }
     /** What the page's search is looking for. */
     var continueQuery by mutableStateOf("")
 }
@@ -7439,20 +7638,48 @@ private class PodcastUiState {
  * transition runs on the difference between two of these. Pages that open
  * over the feed win over the tab, in this order; a detail page wins over
  * the pages it can be opened from (the Library grid, Genres).
+ *
+ * The order stands in for the order the pages were opened in, so a page
+ * has to rank above every page it can be opened from. Settings is opened
+ * from the account button, which is on almost every page, so it ranks above
+ * all of them; only the pages opened from Settings rank above it.
  */
 internal fun rootPageKey(
     nav: RootNav,
     sheets: RootSheets,
     showContinueListening: Boolean,
     detail: DetailPage?,
+    /** How many release pages are on the stack; [detail] is the top one. */
+    stackSize: Int = if (detail == null) 0 else 1,
 ): String {
     return when {
-        sheets.showSpotify && detail == null -> "spotify"
+        // The pages Settings opens, over Settings. Spotify is opened from
+        // Account & scrobbling here, and while Settings is up any release
+        // page is under it (a page pushed over Settings closes it, see
+        // [RootNav.closeSettings]), so no `detail == null` test.
+        sheets.showSpotify && sheets.spotifyFromSettings && nav.showSettings -> "spotify"
         sheets.showDiscord -> "discord"
-        sheets.showHistory -> "history"
-        sheets.showFlow -> "flow"
-        sheets.showQuickPicks -> "quick_picks"
-        showContinueListening -> "continue_listening"
+        nav.showAccountScrobbling -> "account_scrobbling"
+        nav.showSources -> "sources"
+        nav.showListenTogether -> "listen_together"
+        nav.showEqualizer -> "equalizer"
+        nav.showReplay && nav.showSettings && nav.settingsSubScreen == "replay" -> "replay"
+        // Above every page the account button is on. The button sets
+        // `showSettings` from all of them, so with one of them winning the
+        // tie the button was live, hit, and changed nothing on screen until
+        // back had closed that page.
+        nav.showSettings -> "settings"
+        // Spotify's page from the Home card: a playlist opened from it
+        // stacks over it, as the Library grid's do below.
+        sheets.showSpotify && detail == null -> "spotify"
+        // `&& detail == null`, as for the grid below: these open only with
+        // no release page on the stack (the player's "playing from" clears
+        // it first), so with both set the release page was pushed later —
+        // over Settings opened on one of them, say — and is the one on top.
+        sheets.showHistory && detail == null -> "history"
+        sheets.showFlow && detail == null -> "flow"
+        sheets.showQuickPicks && detail == null -> "quick_picks"
+        showContinueListening && detail == null -> "continue_listening"
         // `&& detail == null`: a card opened from the grid
         // stacks a detail page over it exactly as one opened
         // from the Library tab does — see
@@ -7460,23 +7687,16 @@ internal fun rootPageKey(
         // give way to the `detail != null` branch below it
         // rather than keep showing the grid underneath.
         sheets.libraryShowAll != null && detail == null -> "library_show_all"
-        nav.showAccountScrobbling -> "account_scrobbling"
-        nav.showSources -> "sources"
-        nav.showListenTogether -> "listen_together"
-        nav.showEqualizer -> "equalizer"
-        // Above Replay, not below it. The top bar's account
-        // button sets `showSettings` from every page including
-        // this one, so with Replay winning the tie the button
-        // was live, hit, and changed nothing on screen.
-        nav.showSettings -> "settings"
         // `&& detail == null` for the same reason as the grid above: a
         // playlist opened from a genre stacks a detail page over Genres,
         // and with both set the detail page is the one on screen.
         nav.showGenres && detail == null -> "genres"
-        sheets.openAudiobook != null -> "audiobook"
-        nav.showAudiobooks -> "audiobooks"
-        nav.itunesPodcastId != null -> "itunespodcast"
-        nav.showReplay -> "replay"
+        // Over the release pages they were opened over, and under any pushed
+        // after them: see [RootNav.replayDepth].
+        sheets.openAudiobook != null && stackSize <= sheets.audiobookDepth -> "audiobook"
+        nav.showAudiobooks && stackSize <= nav.audiobooksDepth -> "audiobooks"
+        nav.itunesPodcastId != null && stackSize <= nav.itunesPodcastDepth -> "itunespodcast"
+        nav.showReplay && stackSize <= nav.replayDepth -> "replay"
         detail != null -> detail.browseId
         else -> "$TAB_KEY${nav.selectedTab}"
     }
@@ -7502,14 +7722,34 @@ internal class RootNav {
     // that slot, so they live on a page now, opened from the radio tab.
     var showGenres by mutableStateOf(false)
     // LibriVox's books: the list, and whichever one is open.
-    var showAudiobooks by mutableStateOf(false)
+    var showAudiobooks: Boolean
+        get() = audiobooksShown
+        set(value) {
+            if (value) audiobooksDepth = stackDepth()
+            audiobooksShown = value
+        }
+    private var audiobooksShown by mutableStateOf(false)
     // An Apple-catalogue podcast opened from the podcasts page (collectionId).
-    var itunesPodcastId by mutableStateOf<String?>(null)
+    var itunesPodcastId: String?
+        get() = itunesPodcast
+        set(value) {
+            if (value != null) itunesPodcastDepth = stackDepth()
+            itunesPodcast = value
+        }
+    private var itunesPodcast by mutableStateOf<String?>(null)
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
     // has to reveal what it was opened from.
-    var showReplay by mutableStateOf(false)
+    var showReplay: Boolean
+        get() = replayShown
+        set(value) {
+            // Every open, not only the first: opened again from the player
+            // menu with an album pushed over it, Replay comes back up on top.
+            if (value) replayDepth = stackDepth()
+            replayShown = value
+        }
+    private var replayShown by mutableStateOf(false)
     // Library cards use the same Replay page as every other entry point, but
     // category cards ask it to start at their matching ranked section.
     var replayLandingPage by mutableStateOf(ReplayStoryPage.INTRO)
@@ -7534,6 +7774,57 @@ internal class RootNav {
     // there is a party.
     var showListenTogetherMembers by mutableStateOf(false)
 
+    /**
+     * How many release pages were on the stack when Replay, the audiobook
+     * list or an Apple podcast was opened. Each of those ranks above release
+     * pages only down to that depth: one pushed after it (from the player,
+     * say) is on top of it, while one it was opened over stays under it. A
+     * flag alone cannot tell the two apart, because Replay can be opened
+     * over an open album. [Int.MAX_VALUE] means "over every page", the rule
+     * these pages had before the depth was kept.
+     */
+    var replayDepth by mutableIntStateOf(Int.MAX_VALUE)
+    var audiobooksDepth by mutableIntStateOf(Int.MAX_VALUE)
+    var itunesPodcastDepth by mutableIntStateOf(Int.MAX_VALUE)
+
+    /**
+     * How deep the release-page stack is now, for the setters above to
+     * record. [BitChordApp] points it at its stack; until then (a restore,
+     * a test) it answers "over every page".
+     */
+    var stackDepth: () -> Int = { Int.MAX_VALUE }
+
+    /**
+     * Closes Settings and every page that was opened from it: the open
+     * category, its sub-pages, and Spotify, Discord or Replay when Settings
+     * opened them.
+     *
+     * One place, because the pages Settings opens rank above the pages
+     * Settings is opened over (see [rootPageKey]): one left set after
+     * Settings itself had gone still covered whatever came up next — a
+     * release page opened from the player stayed hidden under the equalizer
+     * — and a category left set opened the next Settings inside it.
+     */
+    fun closeSettings(sheets: RootSheets) {
+        if (showAccountScrobbling) sheets.showDiscord = false
+        if (sheets.spotifyFromSettings) {
+            sheets.showSpotify = false
+            sheets.spotifyFromSettings = false
+        }
+        if (settingsSubScreen == "replay") {
+            showReplay = false
+            replayStory = null
+            showReplayShare = false
+        }
+        showSettings = false
+        settingsCategory = null
+        settingsSubScreen = null
+        showAccountScrobbling = false
+        showSources = false
+        showListenTogether = false
+        showEqualizer = false
+    }
+
     companion object {
         val Saver: Saver<RootNav, Any> = listSaver(
             save = {
@@ -7556,6 +7847,9 @@ internal class RootNav {
                     it.settingsCategory,
                     it.replaySharePage,
                     it.showListenTogetherMembers,
+                    it.replayDepth,
+                    it.audiobooksDepth,
+                    it.itunesPodcastDepth,
                 )
             },
             restore = { values ->
@@ -7578,6 +7872,13 @@ internal class RootNav {
                     settingsCategory = values[15] as String?
                     replaySharePage = values[16] as ReplayStoryPage?
                     showListenTogetherMembers = values[17] as Boolean
+                    // After the flags: their setters record a depth of
+                    // their own, which the saved one replaces.
+                    // Absent from a list saved before the depths were kept:
+                    // keep what the setters recorded then.
+                    (values.getOrNull(18) as? Int)?.let { replayDepth = it }
+                    (values.getOrNull(19) as? Int)?.let { audiobooksDepth = it }
+                    (values.getOrNull(20) as? Int)?.let { itunesPodcastDepth = it }
                 }
             },
         )
@@ -7610,7 +7911,17 @@ internal class RootSheets {
      * signing in, or picking a channel in YouTube Music's own Accounts list.
      */
     var webSession by mutableStateOf<WebSessionMode?>(null)
-    var openAudiobook by mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null)
+    /** The audiobook whose page is open; see [RootNav.replayDepth] for [audiobookDepth]. */
+    var openAudiobook: com.music.bitchord.data.audiobook.Audiobook?
+        get() = audiobook
+        set(value) {
+            if (value != null) audiobookDepth = stackDepth()
+            audiobook = value
+        }
+    private var audiobook by mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null)
+    var audiobookDepth by mutableIntStateOf(Int.MAX_VALUE)
+    /** As [RootNav.stackDepth]. */
+    var stackDepth: () -> Int = { Int.MAX_VALUE }
     var showSpotifyCanvasAuth by mutableStateOf(false)
     var showSpotifyLogin by mutableStateOf(false)
     // Hosted here rather than inside SourcesScreen so its frosted card has
@@ -7641,6 +7952,7 @@ internal class RootSheets {
     var showAppLanguage by mutableStateOf(false)
     var showTranslationLanguage by mutableStateOf(false)
     var showAccountSelector by mutableStateOf(false)
+    var pickingMusicCatalogue by mutableStateOf(false)
     var showListenBrainzLogin by mutableStateOf(false)
     var showLastfmLogin by mutableStateOf(false)
     var showWebDavEditor by mutableStateOf(false)
@@ -7659,6 +7971,13 @@ internal class RootSheets {
     // to cover the tab bar and mini player, which are drawn after it.
     var showDiscord by mutableStateOf(false)
     var showSpotify by mutableStateOf(false)
+    /**
+     * Whether [showSpotify]'s page was opened from Settings (Account &
+     * scrobbling) rather than from the Home card. Opened from Settings it is
+     * one of Settings' pages, drawn over it and closed with it; from Home it
+     * is a page of the feed, under Settings and under its own playlists.
+     */
+    var spotifyFromSettings by mutableStateOf(false)
     var showDiscordLogin by mutableStateOf(false)
     var discordDialog by mutableStateOf<DiscordDialog?>(null)
     /** The track menu — see [SongMenu]. */
@@ -7683,6 +8002,11 @@ internal class RootSheets {
      * window, and the menu is drawn in that same window — the glass samples
      * the artwork behind it, and a menu in another window would refract a
      * different picture from the one it is sitting on.
+     *
+     * The button reports itself every frame the player moves, so this is only
+     * ever read while the menu is placed (see PlayerPanelHost's menuAnchor),
+     * never in composition: a composition read here recomposed the app root
+     * on each of those frames.
      */
     var playerMenuAnchor by mutableStateOf<androidx.compose.ui.unit.IntRect?>(null)
     // Whether the player's album/artist lookup (below, for the current track)
@@ -7737,10 +8061,16 @@ internal class RootSheets {
         /**
          * The row or card that was held to open the track menu, or null when it
          * was opened any other way. Non-null lifts that item into
-         * [HeldContextMenu]; null keeps the bottom sheet — which is what the ⋮ on
-         * the very same row still opens.
+         * [HeldContextMenu]; null hangs the menu off [anchor] instead — which is
+         * what the ⋮ on the very same row opens.
          */
         var origin by mutableStateOf<HeldItem?>(null)
+        /**
+         * The ⋮ that opened the menu, in window coordinates, or null when
+         * nothing reported one (the menu then opens at the top end). A plain
+         * field: it is read while the menu is placed, never while composed.
+         */
+        var anchor: Rect? = null
     }
 
     /**
@@ -7767,9 +8097,19 @@ internal class RootSheets {
         var target by mutableStateOf<BrowseTarget?>(null)
         /** The card held to open it — see [SongMenu.origin]. */
         var origin by mutableStateOf<HeldItem?>(null)
-        /** Rename asked for from the popup, which hands it on to the sheet's form. */
-        var renameInSheet by mutableStateOf(false)
+        /** The ⋯ tapped to open it — see [SongMenu.anchor]. */
+        var anchor: Rect? = null
     }
+
+    /**
+     * A name being typed — renaming a playlist or a folder — or null when no
+     * one is. Text input is a dialog's job, not a menu's, so the menu closes
+     * and hands the job here.
+     */
+    var rename by mutableStateOf<RenameRequest?>(null)
+
+    /** What [rename] is asking for: the heading, the name as it stands, and what to do with the new one. */
+    class RenameRequest(val heading: String, val current: String, val save: (String) -> Unit)
 
     /** The playlist reorder sheet. */
     class Reorder {
@@ -7849,7 +8189,7 @@ private fun LibrarySort.localizedLabel(): String = when (this) {
  */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
-private fun FrostedSortMenu(
+internal fun FrostedSortMenu(
     hazeState: HazeState,
     selected: SongSort,
     onSelect: (SongSort) -> Unit,
@@ -7862,7 +8202,13 @@ private fun FrostedSortMenu(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            .clickable(onClick = onDismiss),
+            // A tap on the page dismisses; nothing on the page was pressed,
+            // so nothing ripples across it.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
         contentAlignment = Alignment.TopEnd,
     ) {
         Surface(
@@ -7883,7 +8229,12 @@ private fun FrostedSortMenu(
                         )
                     },
                 )
-                .clickable(onClick = {}),
+                // Swallows taps between rows; it isn't a control itself.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 // Date added is one row, Spotify-style: the arrow on it shows

@@ -987,7 +987,7 @@ internal object SflxShim {
                     // second here, so there is nothing to show in between.
                     if (result && result.success && typeof onProgress === 'function') {
                         try { onProgress(result.bytes_processed, result.bytes_processed); }
-                        catch (e) { return { success: false, error: 'progress callback failed: ' + (e && e.message ? e.message : e) }; }
+                        catch (e) { /* progress is advisory: the output is already written */ }
                     }
                     return result;
                 };
@@ -1649,8 +1649,11 @@ internal object SflxShim {
                     // The extension's own diagnosis, when it gave one, is what
                     // the caller needs: "no tracks" and "the search was refused"
                     // are different faults and only the second is fixable.
-                    var failure = rows.length === 0 && result && result.success === false
-                        ? text(firstOf(result.error, result.message, result.error_message))
+                    // An answer with no rows and an error is a refusal even when it
+                    // leaves out `success: false`.
+                    var said = result ? firstOf(result.error, result.message, result.error_message) : null;
+                    var failure = rows.length === 0 && result && (result.success === false || said)
+                        ? text(said)
                         : '';
                     return JSON.stringify({
                         tracks: rows,

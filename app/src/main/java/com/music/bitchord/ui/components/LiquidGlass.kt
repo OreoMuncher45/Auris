@@ -162,7 +162,15 @@ fun Modifier.lightweightLiquidGlass(
  * freeze is enough on its own.
  */
 @Composable
-fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
+fun Modifier.liquidGlass(
+    shape: CornerBasedShape,
+    /**
+     * A blur of the surface's own in place of the house one, for glass that
+     * carries text over text — a menu over a page — and has to frost what is
+     * behind it rather than show it. Null keeps the provider's.
+     */
+    blurRadiusDp: Float? = null,
+): Modifier {
     // The provider's flag is read here in composition and closed over, not
     // read inside the lambda: CompositionLocals belong to composition, and
     // the frozen lambda runs in the draw phase.
@@ -177,6 +185,7 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
         // dead-control failure mode.
         LocalGlassEffectConfig.current,
         shape,
+        blurRadiusDp = blurRadiusDp ?: LocalGlassEffectConfig.current.blurRadius,
         frozen = {
             GlassMotion.sheet.frozen() ||
                 GlassMotion.nav.frozen() ||

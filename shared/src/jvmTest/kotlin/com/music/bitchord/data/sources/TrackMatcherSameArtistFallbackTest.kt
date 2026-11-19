@@ -109,4 +109,12 @@ class TrackMatcherSameArtistFallbackTest {
 
         assertEquals("Morning Light", TrackMatcher.bestOrSameArtist(rows, clean)?.title)
     }
+
+    @Test
+    fun theSameRowFromAnInstrumentalAlbumStillFallsBack() {
+        val fromAlbum = target.copy(album = "Morning Light (Instrumental Edition)")
+        val rows = listOf(song("Morning Light", "River Lane", "9:59", albumName = "Morning Light (Instrumental Edition)"))
+
+        assertEquals("Morning Light", TrackMatcher.bestOrSameArtist(rows, fromAlbum)?.title)
+    }
 }
