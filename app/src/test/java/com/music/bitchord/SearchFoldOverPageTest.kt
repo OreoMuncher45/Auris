@@ -110,6 +110,9 @@ class SearchFoldOverPageTest {
         compose.onAllNodesWithContentDescription(SEARCH).onFirst().performClick()
         frames(30)
         assertEquals("the Search page shows its field", true, searchFieldShown())
+        // Into keyboard mode, as tapping the field does.
+        compose.onAllNodesWithText(SEARCH_HINT).onFirst().performClick()
+        frames(30)
 
         val viewModel = vm!!
         viewModel.stack().value = listOf(

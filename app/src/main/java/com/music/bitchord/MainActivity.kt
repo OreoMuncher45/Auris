@@ -2560,10 +2560,16 @@ internal fun BitChordApp(
     // them and back from one of them left Search altogether.
     val onSearchPage = nav.selectedTab == TAB_SEARCH &&
         rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size) == "$TAB_KEY$TAB_SEARCH"
+    // Typing belongs to the Search page too: a page opened over it while the
+    // keyboard was up ends that, and coming back finds the results with the
+    // keyboard down. Gated above for the frame before this runs.
+    LaunchedEffect(onSearchPage) {
+        if (!onSearchPage) searchKeyboardActive = false
+    }
     val navSearchState = NavSearchState(
         visualActive = searchVisualActive && onSearchPage,
         onSearchPage = onSearchPage,
-        keyboardActive = searchKeyboardActive,
+        keyboardActive = searchKeyboardActive && onSearchPage,
         query = query,
         textValue = searchTextValue,
         onTextValueChange = {
