@@ -187,6 +187,8 @@ class SflxStreamAdapterTest {
     fun `file work after the capture ends the call with the URL taken, and the stand-ins are restored`() {
         val reads = case("reads the file")
         assertFalse(reads.calls().contains("read past the capture"))
+        assertEquals("the host is told to check the file itself", "true", reads.answer().text("unfinished"))
+        assertFalse(case("own row").answer().containsKey("unfinished"))
         assertEquals("https://cdn.example/OWN", reads.answer().text("streamUrl"))
         results.values.forEach { assertTrue("${it.text("case")}: file API restored", it.getValue("restored").jsonPrimitive.boolean) }
     }

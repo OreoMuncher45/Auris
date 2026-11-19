@@ -82,11 +82,18 @@ class SflxSearchMemoTest {
         }
         started.await()
         memo.forgetMatching("amazon|")
-        val after = memo.once("amazon|stream|x") {
-            asked.incrementAndGet()
-            Result.success("new script")
+        // Bounded: a caller that wrongly joined the old flight would wait on
+        // its gate forever, and a regression should fail, not hang.
+        val after = try {
+            kotlinx.coroutines.withTimeout(5_000) {
+                memo.once("amazon|stream|x") {
+                    asked.incrementAndGet()
+                    Result.success("new script")
+                }
+            }
+        } finally {
+            gate.complete(Unit)
         }
-        gate.complete(Unit)
 
         assertEquals("the caller after the change asked afresh", "new script", after.getOrNull())
         assertEquals("the caller before it still hears its answer", "old script", before.await().getOrNull())

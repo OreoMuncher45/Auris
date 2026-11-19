@@ -14,10 +14,19 @@ object CencProbe {
 
     private const val MAX_BYTES = 1 shl 20
     private const val CHUNK = 16 * 1024
-    private val PARTIAL_FROM_ZERO = Regex("""^\s*bytes\s+0-\d+/""", RegexOption.IGNORE_CASE)
+    private val CONTENT_RANGE = Regex("""^\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$""", RegexOption.IGNORE_CASE)
 
-    /** Whether a `Content-Range` describes bytes from the start of the file. */
-    internal fun startsAtZero(contentRange: String): Boolean = PARTIAL_FROM_ZERO.containsMatchIn(contentRange)
+    /**
+     * Whether a `Content-Range` is a well-formed range from the start of the
+     * file: `bytes 0-<last>/<length or *>`, with the last byte inside the length.
+     */
+    internal fun startsAtZero(contentRange: String): Boolean {
+        val match = CONTENT_RANGE.matchEntire(contentRange) ?: return false
+        val (first, last, length) = match.destructured
+        if (first.toLongOrNull() != 0L) return false
+        val end = last.toLongOrNull() ?: return false
+        return length == "*" || (length.toLongOrNull()?.let { end < it } ?: false)
+    }
 
     fun head(url: String, headers: Map<String, String>): CencHead.Result {
         val request = Request.Builder().url(url)
