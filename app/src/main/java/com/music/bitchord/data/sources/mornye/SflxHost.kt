@@ -870,6 +870,8 @@ class SflxHost(
                 unload(installed.id)
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
+                // And its signed-session client is built from the new manifest.
+                sessions.remove(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
@@ -881,6 +883,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
+            sessions.remove(id)
         }
         removed
     }
