@@ -59,6 +59,12 @@ class SflxHost(
      * that was never a real install is a credential nobody asked for.
      */
     private val signedSessionsDirectory: File? = null,
+    /**
+     * Where extensions that ask for files get their private folders —
+     * `<cacheDir>/sflx-files`, one folder per extension id. Null gives no
+     * extension any files, which is what a test harness gets.
+     */
+    private val filesDirectory: File? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
@@ -487,6 +493,9 @@ class SflxHost(
         // claim, not a measurement — the fields come from the file the
         // extension was about to write, which this host never sees — and
         // it is treated as one everywhere downstream.
+        SflxAnswer.localFile(raw)?.let { path ->
+            return localAnswer(installed, trackId, path, raw)
+        }
         val playable = if (url != null) {
             url
         } else {
@@ -514,6 +523,67 @@ class SflxHost(
             track = SflxAnswer.track(raw, trackId),
             cencKid = cencKid,
         )
+    }
+
+    /**
+     * An answer that is a file the extension wrote — downloaded and decrypted
+     * in its own folder. The path is the extension's, so it is resolved by the
+     * same rules its file calls were: a path outside the folder, through a
+     * link, or to anything but a non-empty file is refused.
+     */
+    private fun localAnswer(installed: InstalledSflx, trackId: String, path: String, raw: String): ModuleStreamResponse {
+        val files = filesFor(installed) ?: throw SflxException("this extension has no file access")
+        val file = runCatching { files.resolve(path) }.getOrElse { error ->
+            throw SflxException("the extension's file is not its own: ${error.message}")
+        }
+        if (!file.isFile || file.length() == 0L) throw SflxException("the extension's file is missing or empty")
+        Log.d(TAG, "sflx[${installed.id}] answered with its own file (${file.length()} bytes)")
+        return ModuleStreamResponse(
+            streamUrl = "file://${file.absolutePath}",
+            headers = null,
+            segments = null,
+            track = SflxAnswer.track(raw, trackId),
+            cencKid = null,
+        )
+    }
+
+    /**
+     * The private folder of an extension whose manifest asks for files, or
+     * null. One per extension, made on first use; the network list it may
+     * download from is the manifest's own.
+     */
+    private fun filesFor(installed: InstalledSflx): SflxFiles? {
+        val root = filesDirectory ?: return null
+        if (!installed.manifest.permissions.file) return null
+        return files.getOrPut(installed.id) {
+            SflxFiles(
+                root = File(root, installed.id),
+                allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
+            )
+        }
+    }
+
+    private val files = java.util.concurrent.ConcurrentHashMap<String, SflxFiles>()
+
+    /**
+     * Empties the private folder of [id], and forgets it. Called when the
+     * extension is removed, and for any folder whose extension is no longer
+     * installed.
+     */
+    private fun clearFiles(id: String) {
+        files.remove(id)
+        val root = filesDirectory ?: return
+        if (!SflxStore.isSafeId(id)) return
+        File(root, id).deleteRecursively()
+    }
+
+    /** Folders left behind by extensions that are no longer installed. */
+    fun clearOrphanedFiles() {
+        val root = filesDirectory ?: return
+        val installed = store.list().map { it.id }.toSet()
+        root.listFiles()?.forEach { folder ->
+            if (folder.name !in installed) folder.deleteRecursively()
+        }
     }
 
     /**
@@ -678,7 +748,9 @@ class SflxHost(
                     installed.manifest,
                     settingsFor(installed).toString(),
                     appVersion,
-                    cacheDirectory(installed).absolutePath,
+                    // The folder it writes to, when it has one: the output
+                    // path it is handed must be one its file calls accept.
+                    (filesFor(installed)?.root ?: cacheDirectory(installed)).absolutePath,
                 ),
                 epilogue = SflxShim.ADAPTER,
                 // The manifest's declared hosts, when it declared any. An empty
@@ -691,6 +763,7 @@ class SflxHost(
                 // never streamed.
                 allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
                 sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+                fileCall = filesFor(installed)?.let { folder -> { method, args -> folder.call(method, args) } },
             ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
     }
@@ -740,6 +813,9 @@ class SflxHost(
      */
     fun warmUp() {
         hostScope.launch {
+            // Off the start-up path, like the loads: a folder whose extension
+            // was removed while the app was not running goes here.
+            runCatching { clearOrphanedFiles() }
             store.list().forEach { installed ->
                 if (!enabled(installed)) return@forEach
                 if (!installed.manifest.isDownloadProvider) return@forEach
@@ -773,7 +849,10 @@ class SflxHost(
 
     fun remove(id: String): Boolean {
         val removed = store.remove(id)
-        if (removed) unload(id)
+        if (removed) {
+            unload(id)
+            clearFiles(id)
+        }
         return removed
     }
 
