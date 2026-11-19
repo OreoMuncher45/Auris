@@ -1912,6 +1912,10 @@ class CrossfadeController(
         // a prepared decoder open against a stopped player is worse than arming
         // again when playback resumes.
         if (!out.playWhenReady) return bail()
+        // Bit-perfect turned on after this pair was armed: no blend may start
+        // — see [considerAutoTransition] — so drop the arm and let the track
+        // end plainly, as Settings now says it will.
+        if (AppSettings.bitPerfect.value) return bail()
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -2413,9 +2417,16 @@ class CrossfadeController(
             // moved and the standby is the one to throw away.
             outgoing?.let { out ->
                 out.volume = 1f
-                // Sped up for a blend that never came: walk it back like any stretch.
+                // Sped up for a blend that never came: walk it back like any
+                // stretch — except under Bit-perfect, where a stretch that
+                // outlasts the dropped arm is exactly the alteration the
+                // switch rules out, so it goes straight back.
                 if (outgoingPlaybackRate != 1.0) {
-                    beginEase(out, outgoingPlaybackRate, out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
+                    if (AppSettings.bitPerfect.value) {
+                        out.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+                    } else {
+                        beginEase(out, outgoingPlaybackRate, out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
+                    }
                 }
             }
             incoming?.let(::retire)

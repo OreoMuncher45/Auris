@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -103,6 +104,8 @@ internal object QuickJsExecutor {
         val allowedHosts: List<String>?,
         /** The host's `sessionCall`, or null when signed sessions are not offered. */
         val sessionCall: ((String, String) -> String)?,
+        /** The host's `fileCall`, or null when this module has no files. */
+        val fileCall: ((String, String) -> String)?,
     ) {
         val free = Channel<QuickJs>(Channel.UNLIMITED)
         val lock = Mutex()
@@ -215,6 +218,15 @@ internal object QuickJsExecutor {
          * match `evil-example.com`.
          */
         allowedHosts: List<String>? = null,
+        /**
+         * The extension's private folder, when it has one.
+         *
+         * Called as `__spine.fileCall(method, argsJson)` and answered with
+         * JSON text, like [sessionCall]. Null for this app's own modules and
+         * for an extension whose manifest does not ask for files: such a
+         * module gets no binding at all, rather than one that refuses.
+         */
+        fileCall: ((String, String) -> String)? = null,
     ): Result<Unit> {
         val evicted = synchronized(engineLock) {
             if (pools.containsKey(moduleId)) {
@@ -233,12 +245,12 @@ internal object QuickJsExecutor {
 
         TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
-            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall) }
+            runCatching { newEngine(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall, fileCall) }
                 .onSuccess { qjs ->
                     // The pool starts at one and grows only if two callers ever
                     // want this module at the same moment. A module that is
                     // never contended never pays for a second interpreter.
-                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall)
+                    val pool = Pool(moduleId, jsCode, fetchBase, acceptRegistered, preamble, epilogue, allowedHosts, sessionCall, fileCall)
                     pool.started = 1
                     pool.made += qjs
                     pool.free.trySend(qjs)
@@ -259,12 +271,13 @@ internal object QuickJsExecutor {
         epilogue: String,
         allowedHosts: List<String>?,
         sessionCall: ((String, String) -> String)?,
+        fileCall: ((String, String) -> String)?,
     ): QuickJs {
         val qjs = QuickJs.create(Dispatchers.Default)
         qjs.maxStackSize = 512 * 1024L
         try {
             bindConsole(qjs)
-            bindAsyncFetch(qjs, moduleId, fetchBase, allowedHosts, sessionCall)
+            bindAsyncFetch(qjs, moduleId, fetchBase, allowedHosts, sessionCall, fileCall)
 
             qjs.evaluate<String>(POLYFILLS)
             val cleanCode = preprocessModuleCode(jsCode)
@@ -344,6 +357,7 @@ internal object QuickJsExecutor {
                 pool.epilogue,
                 pool.allowedHosts,
                 pool.sessionCall,
+                pool.fileCall,
             ).also { fresh ->
                 pool.lock.withLock { pool.made += fresh }
             }
@@ -528,6 +542,7 @@ internal object QuickJsExecutor {
         fetchBase: String,
         allowedHosts: List<String>?,
         sessionCall: ((String, String) -> String)? = null,
+        fileCall: ((String, String) -> String)? = null,
     ) {
         qjs.define("__spine") {
             asyncFunction("fetch", object : AsyncFunctionBinding<String> {
@@ -626,6 +641,26 @@ internal object QuickJsExecutor {
                                     .put("success", false)
                                     .put("ok", false)
                                     .put("error", it.message ?: "session call failed")
+                                    .toString()
+                            }
+                    }
+                })
+            }
+            // ── Files ────────────────────────────────────────────────────
+            // The extension's own folder, and only that; see SflxFiles. Bound
+            // only when the host gave one, so a module without file access
+            // has no function to call.
+            if (fileCall != null) {
+                function("fileCall", object : FunctionBinding<String> {
+                    override fun invoke(args: Array<Any?>): String {
+                        val method = args.getOrNull(0)?.toString().orEmpty()
+                        val payload = args.getOrNull(1)?.toString().orEmpty().ifBlank { "[]" }
+                        return runCatching { fileCall(method, payload) }
+                            .getOrElse {
+                                TrackLog.w(TAG, "  ✗ fileCall($method) failed: ${it.message}")
+                                JSONObject()
+                                    .put("success", false)
+                                    .put("error", it.message ?: "file call failed")
                                     .toString()
                             }
                     }
@@ -810,16 +845,20 @@ internal object QuickJsExecutor {
      *
      * `*.` is a subdomain wildcard and nothing else — `*.spotify.com` matches
      * `api.spotify.com` and `open.spotify.com` but not `spotify.com` itself,
-     * and not `notspotify.com`. That is the manifest format's own rule; see
-     * [SflxPermissions.allowsHost].
+     * and not `notspotify.com`. A bare `*` means any host. That is the
+     * manifest format's own rule; see [SflxPermissions.allowsHost].
      */
-    private fun mayReach(url: String, allowedHosts: List<String>?): Boolean {
+    internal fun mayReach(url: String, allowedHosts: List<String>?): Boolean {
         if (allowedHosts == null) return true
         val host = url.toHttpUrlOrNull()?.host?.lowercase(Locale.ROOT) ?: return false
         return allowedHosts.any { pattern ->
             val allowed = pattern.trim().lowercase(Locale.ROOT)
             when {
                 allowed.isEmpty() -> false
+                // A bare `*` is the manifest's grant of any host. Jellyfin
+                // declares it, because its server is wherever the listener
+                // runs one. It is shown at install like any other grant.
+                allowed == "*" -> true
                 // `*.example.com` is a subdomain wildcard: it must leave the dot
                 // in place, or `evilexample.com` would match it.
                 allowed.startsWith("*.") -> host.endsWith(allowed.substring(1))
@@ -842,9 +881,9 @@ internal object QuickJsExecutor {
         }
     }
 
-    private data class FetchResult(val code: Int, val body: String, val headers: JSONObject)
+    internal data class FetchResult(val code: Int, val body: String, val headers: JSONObject)
 
-    private fun fetchUrlSync(
+    internal fun fetchUrlSync(
         url: String,
         method: String,
         headersJson: String,
@@ -853,12 +892,14 @@ internal object QuickJsExecutor {
         val builder = Request.Builder().url(url)
 
         var hasUserAgent = false
+        var contentType: String? = null
         try {
             val headersObj = JSONObject(headersJson)
             for (key in headersObj.keys()) {
                 val value = headersObj.optString(key, "")
                 builder.header(key, value)
                 if (key.equals("user-agent", ignoreCase = true)) hasUserAgent = true
+                if (key.equals("content-type", ignoreCase = true)) contentType = value
             }
         } catch (_: Exception) {
         }
@@ -872,8 +913,8 @@ internal object QuickJsExecutor {
         }
 
         when (method.uppercase(Locale.ROOT)) {
-            "POST" -> builder.post((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
-            "PUT" -> builder.put((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
+            "POST" -> builder.post(requestBodyOf(body, contentType))
+            "PUT" -> builder.put(requestBodyOf(body, contentType))
             "DELETE" -> builder.delete()
             "HEAD" -> builder.head()
             else -> builder.get()
@@ -890,6 +931,25 @@ internal object QuickJsExecutor {
             }
             return FetchResult(response.code, responseBody, responseHeaders)
         }
+    }
+
+    /**
+     * A POST or PUT body, sent with the extension's own `Content-Type`.
+     *
+     * OkHttp sends the body's media type as the request's `Content-Type`,
+     * over any header the extension set, so a fixed media type here replaced
+     * every extension's own. And a body made from a String gains
+     * `; charset=utf-8` when its media type names no charset. Spotify's
+     * client-token endpoint answers 400 to `application/json; charset=utf-8`
+     * and 200 to the `application/json` Spotify Web asks for, so every Spotify
+     * Web search failed. The body is built from its bytes, so what goes out is
+     * exactly what the extension asked for. JSON stays the default for an
+     * extension that names no type.
+     */
+    private fun requestBodyOf(body: String?, contentType: String?): okhttp3.RequestBody {
+        val type = contentType?.trim()?.takeIf { it.isNotEmpty() }?.toMediaTypeOrNull()
+            ?: "application/json; charset=utf-8".toMediaType()
+        return (body ?: "").toByteArray(Charsets.UTF_8).toRequestBody(type)
     }
 
     // ── Polyfills ────────────────────────────────────────────────────────
