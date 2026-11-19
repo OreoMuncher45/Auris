@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
+import kotlinx.coroutines.runBlocking
 
 class FlowTest {
 
@@ -209,5 +210,65 @@ class FlowTest {
     @Test
     fun `opening mix is fifty tracks`() {
         assertEquals(50, FlowEngine.INITIAL_TRACKS)
+    }
+
+    // ---- One mix, no repeats, and likes only when asked for ----
+
+    @Test
+    fun `the finished mix holds no track that was just played`() = runBlocking {
+        val played = song("played", "Heard It")
+        val loved = song("loved", "Loved")
+        val fresh = song("fresh", "New")
+        val queue = FlowEngine.buildInitialQueue(
+            seeds = FlowEngine.SeedPool(
+                favorites = listOf(loved),
+                history = listOf(played),
+                quickPicks = listOf(fresh),
+            ),
+            config = FlowConfig(FlowMood.FLOW, FlowTuner()),
+            limit = 10,
+            // The radio hands back what was just played, as a radio does.
+            relatedTracks = { listOf(played) },
+        )
+        assertFalse(queue.any { it.videoId == "played" })
+        assertTrue(queue.any { it.videoId == "loved" })
+        assertTrue(queue.any { it.videoId == "fresh" })
+    }
+
+    @Test
+    fun `the radio is not seeded from likes when the switch is off`() = runBlocking {
+        val liked = song("liked", "Loved")
+        val listening = song("listening", "Playing Elsewhere")
+        val asked = mutableListOf<String>()
+        FlowEngine.buildInitialQueue(
+            seeds = FlowEngine.SeedPool(
+                favorites = listOf(liked),
+                listens = listOf(listening),
+            ),
+            config = FlowConfig(FlowMood.FLOW, FlowTuner().withSimilarLiked(false)),
+            limit = 10,
+            relatedTracks = { seed ->
+                asked += seed.videoId
+                emptyList()
+            },
+        )
+        assertTrue(asked.contains("listening"))
+        assertFalse(asked.contains("liked"))
+    }
+
+    @Test
+    fun `the radio is seeded from likes when the switch is on`() = runBlocking {
+        val liked = song("liked", "Loved")
+        val asked = mutableListOf<String>()
+        FlowEngine.buildInitialQueue(
+            seeds = FlowEngine.SeedPool(favorites = listOf(liked)),
+            config = FlowConfig(FlowMood.FLOW, FlowTuner().withSimilarLiked(true)),
+            limit = 10,
+            relatedTracks = { seed ->
+                asked += seed.videoId
+                emptyList()
+            },
+        )
+        assertTrue(asked.contains("liked"))
     }
 }

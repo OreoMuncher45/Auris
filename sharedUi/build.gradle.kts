@@ -115,3 +115,16 @@ compose.resources {
     packageOfResClass = "com.music.bitchord.sharedui.resources"
     generateResClass = always
 }
+
+/*
+ * The compiled-class checks (no constructor wider than dex can call, no method
+ * over 32,000 bytes) on every compile of this module: both Android build
+ * types and the desktop JVM target. See gradle/class-checks.gradle.kts and
+ * the note in app/build.gradle.kts.
+ */
+extra["classChecks"] = mapOf(
+    "compileDebugKotlinAndroid" to "tmp/kotlin-classes/debug",
+    "compileReleaseKotlinAndroid" to "tmp/kotlin-classes/release",
+    "compileKotlinJvm" to "classes/kotlin/jvm/main",
+)
+apply(from = rootProject.file("gradle/class-checks.gradle.kts"))

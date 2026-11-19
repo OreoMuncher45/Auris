@@ -68,6 +68,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Velocity
@@ -121,12 +122,19 @@ internal fun keepScrollInList(listState: LazyListState) = object : NestedScrollC
  */
 private val QUEUE_ROW_MOTION = tween<IntOffset>(durationMillis = 200, easing = FastOutSlowInEasing)
 
-/** Softens the list where it meets the header and the scrubber. */
-internal fun Modifier.fadingEdges(): Modifier = this
+/**
+ * Softens the list where it meets the header and the scrubber.
+ *
+ * [bottomClear] keeps a strip at the foot of the list entirely clear, with the
+ * fade ending above it — room for controls floated over the list. Read in the
+ * draw phase, so animating it redraws this layer and nothing else.
+ */
+internal fun Modifier.fadingEdges(bottomClear: () -> Dp = { 0.dp }): Modifier = this
     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
     .drawWithContent {
         drawContent()
         val fade = 28.dp.toPx()
+        val clear = bottomClear().toPx().coerceIn(0f, size.height)
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(Color.Transparent, Color.Black),
@@ -135,11 +143,13 @@ internal fun Modifier.fadingEdges(): Modifier = this
             ),
             blendMode = BlendMode.DstIn,
         )
+        // Clamped past its end, so the gradient's transparent tail is what
+        // clears the strip below it — one draw either way.
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(Color.Black, Color.Transparent),
-                startY = size.height - fade,
-                endY = size.height,
+                startY = size.height - clear - fade,
+                endY = size.height - clear,
             ),
             blendMode = BlendMode.DstIn,
         )
@@ -222,6 +232,13 @@ internal fun InlineQueue(
     collapsePlayerOnScroll: Boolean = false,
     onRevealPlayer: () -> Unit = {},
     onHidePlayer: () -> Unit = {},
+    /**
+     * Opens the queue's search, where this platform has one.
+     *
+     * Null hides the row: a platform with no catalogue behind it would only be
+     * able to offer a screen that answers nothing.
+     */
+    onOpenSearch: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -274,6 +291,16 @@ internal fun InlineQueue(
             }
         }
         Spacer(Modifier.height(4.dp))
+        // The way into the search, at the head of the queue where the queue
+        // begins: the listener is looking at what plays next, and this is how
+        // they change it. Hidden while a party's host owns the order — there
+        // is nothing for the guest to add to.
+        if (onOpenSearch != null && !controlsLocked) {
+            QueueSearchBar(
+                onClick = onOpenSearch,
+                modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -753,7 +780,6 @@ private fun InlineQueueRow(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.92f),
-                qualityBadge = true,
             )
             Text(
                 text = song.artist,

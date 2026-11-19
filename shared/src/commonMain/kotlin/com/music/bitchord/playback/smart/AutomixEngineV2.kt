@@ -82,8 +82,80 @@ object AutomixEngineV2 {
      * capped contrast bonus for the rise into it. [lowEnergy] is the
      * low-band curve when the analyzer ran a band split, else the full
      * energy curve — drums read through either, just less cleanly.
+     *
+     * The answer is kept between calls — see [lastRescore] — because the
+     * planner asks for it on every tick and the answer cannot change while
+     * the analysis has not changed.
      */
     fun rescoreEntrance(
+        candidates: List<MixCandidate>,
+        original: Double,
+        lowEnergy: List<EnergySample>,
+        beatInterval: Double,
+        firstBeat: Double,
+        duration: Double,
+    ): EntranceRescore {
+        val cached = lastRescore
+        if (
+            cached != null &&
+            cached.candidates === candidates &&
+            cached.lowEnergy === lowEnergy &&
+            cached.original == original &&
+            cached.beatInterval == beatInterval &&
+            cached.firstBeat == firstBeat &&
+            cached.duration == duration
+        ) {
+            return cached.result
+        }
+        val scored = rescoreEntranceUncached(
+            candidates = candidates,
+            original = original,
+            lowEnergy = lowEnergy,
+            beatInterval = beatInterval,
+            firstBeat = firstBeat,
+            duration = duration,
+        )
+        lastRescore = RescoreEntry(
+            candidates = candidates,
+            lowEnergy = lowEnergy,
+            original = original,
+            beatInterval = beatInterval,
+            firstBeat = firstBeat,
+            duration = duration,
+            result = scored,
+        )
+        return scored
+    }
+
+    /**
+     * The last rescore, and the inputs it was made from.
+     *
+     * One entry, replaced whole, so a reader never sees half of one answer
+     * and half of another.
+     */
+    private class RescoreEntry(
+        val candidates: List<MixCandidate>,
+        val lowEnergy: List<EnergySample>,
+        val original: Double,
+        val beatInterval: Double,
+        val firstBeat: Double,
+        val duration: Double,
+        val result: EntranceRescore,
+    )
+
+    /**
+     * The last rescore, kept so the planner's every-tick question is asked of
+     * the work rather than of the work itself.
+     *
+     * The work behind it is not small. The beat grid is built from scratch
+     * every time, and every beat on it is scored against the *whole* low-band
+     * curve — a few hundred beats over a few thousand samples, which is a
+     * million comparisons and a list of boxed numbers, four times a second,
+     * for a pair of tracks whose analysis does not move.
+     */
+    private var lastRescore: RescoreEntry? = null
+
+    private fun rescoreEntranceUncached(
         candidates: List<MixCandidate>,
         original: Double,
         lowEnergy: List<EnergySample>,
@@ -192,7 +264,7 @@ object AutomixEngineV2 {
         maxDelay: Double,
     ): Double {
         if (maxDelay <= 0 || !plannedStart.isFinite()) return 0.0
-        val mask = analysis.vocalActivityMask
+        val mask = smoothVocalMask(analysis.vocalActivityMask)
         val times = analysis.energyCurve.map { it.time }
         if (mask.isEmpty() || mask.size != times.size) return 0.0
 

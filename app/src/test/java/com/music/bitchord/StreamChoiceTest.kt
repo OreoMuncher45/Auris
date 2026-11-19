@@ -5,8 +5,10 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.playback.StreamChoice
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -31,7 +33,10 @@ class StreamChoiceTest {
     fun reset() {
         // Ids used below, cleared both ways round so a failure can't leak into
         // the next test through the shared object.
-        (0..80).forEach { StreamChoice.forget("track-$it") }
+        (0..80).forEach {
+            StreamChoice.forget("track-$it")
+            StreamChoice.endPreparing("track-$it")
+        }
     }
 
     @Test
@@ -91,5 +96,35 @@ class StreamChoiceTest {
         StreamChoice.remember("track-5", stream("aac.saavncdn.com"), substituted = true)
         StreamChoice.forget("track-5")
         assertNull(StreamChoice.of("track-5"))
+    }
+
+    /**
+     * The wait a first open makes for read-ahead's pin — see
+     * [StreamChoice.isAwaitingPreparation]. It has to end on the pin or on the
+     * withdrawal, not only on the timeout, or a source that missed quickly
+     * would still hold the hand-over for the whole window.
+     */
+    @Test
+    fun `a first open waits only while a preparation is running and unpinned`() {
+        StreamChoice.beginPreparing("track-6")
+        assertTrue(StreamChoice.isAwaitingPreparation("track-6"))
+
+        StreamChoice.remember("track-6", stream("aac.saavncdn.com"), substituted = true)
+        assertFalse(
+            "the pin landed, so there is nothing left to wait for",
+            StreamChoice.isAwaitingPreparation("track-6"),
+        )
+
+        StreamChoice.endPreparing("track-6")
+        assertFalse(StreamChoice.isAwaitingPreparation("track-6"))
+    }
+
+    @Test
+    fun `a withdrawn preparation that pinned nothing is not waited on`() {
+        StreamChoice.beginPreparing("track-7")
+        StreamChoice.endPreparing("track-7")
+
+        assertFalse(StreamChoice.isAwaitingPreparation("track-7"))
+        assertNull(StreamChoice.of("track-7"))
     }
 }

@@ -386,6 +386,10 @@ class DirectAudioStreamingRegressionTest {
             advertisedSampleRates = listOf(48000),
             requestedMode = OutputPcmMode.FLOAT_32,
             directSupport = directSupport,
+            // The device's descriptors no longer gate float (they describe the
+            // HAL, not AudioTrack). This dongle's sink is the thing that cannot
+            // open a float track, so that is what the test models.
+            delegateSupportsFloat = false,
             knownSystemMixerRateHz = 48000,
         )
 
@@ -555,6 +559,9 @@ class DirectAudioStreamingRegressionTest {
             advertisedSampleRates = listOf(48000),
             requestedMode = OutputPcmMode.FLOAT_32,
             directSupport = DirectAudioProbe.DirectSupport.NONE,
+            // No float-capable sink behind this dongle; the descriptors alone
+            // are not the gate any more.
+            delegateSupportsFloat = false,
             knownSystemMixerRateHz = 48000,
         )
 

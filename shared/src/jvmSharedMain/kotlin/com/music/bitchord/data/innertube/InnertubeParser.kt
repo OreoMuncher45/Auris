@@ -9,6 +9,7 @@ import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.completeArtistCredits
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.GenAiDisclosure
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
@@ -475,7 +476,7 @@ object InnertubeParser {
      * that carries a videoId. Layout-agnostic, so it survives the differences
      * between playlist, album, library and history pages.
      */
-    fun collectSongsDeep(root: JsonElement): List<Song> {
+    fun collectSongsDeep(root: JsonElement, show: String? = null): List<Song> {
         val out = LinkedHashMap<String, Song>()
         // A release's own rows are credited by its header, not one by one.
         val pageCredit = pageCredit(root)
@@ -486,6 +487,13 @@ object InnertubeParser {
                         parseResponsiveListItem(renderer as? JsonObject, pageCredit)
                             ?.let { out[it.videoId] = it }
                     }
+                    // A podcast page's episodes are a different renderer
+                    // altogether, and they don't name their own show — the
+                    // page header does, once. See [podcastShow].
+                    node["musicMultiRowListItemRenderer"]?.let { renderer ->
+                        parseMultiRowListItem(renderer as? JsonObject, show)
+                            ?.let { out[it.videoId] = it }
+                    }
                     node.values.forEach(::walk)
                 }
                 is JsonArray -> node.forEach(::walk)
@@ -494,6 +502,73 @@ object InnertubeParser {
         }
         walk(root)
         return out.values.toList()
+    }
+
+    /**
+     * The show a podcast page lists episodes for, off its own header — or null
+     * on a page that lists no episodes.
+     *
+     * A show names itself once, at the top of its first response. Its episode
+     * rows never repeat it and a continuation has no header at all, so
+     * whoever pages through a show carries this from the first page to
+     * [collectSongsDeep] on every page after.
+     */
+    fun podcastShow(root: JsonElement): String? {
+        if (collectRenderers(root, "musicMultiRowListItemRenderer").isEmpty()) return null
+        return parseBrowseHeader(root)?.title
+    }
+
+    /** One podcast episode row: a show's episode, credited to the show. */
+    private fun parseMultiRowListItem(renderer: JsonObject?, show: String?): Song? {
+        if (renderer == null) return null
+        val videoId = renderer.o("onTap").o("watchEndpoint").s("videoId")
+            ?: renderer.o("overlay")
+                .o("musicItemThumbnailOverlayRenderer").o("content")
+                .o("musicPlayButtonRenderer").o("playNavigationEndpoint")
+                .o("watchEndpoint").s("videoId")
+            ?: return null
+        val title = renderer.o("title").runs()
+        if (title.isBlank()) return null
+        return Song(
+            videoId = videoId,
+            title = title,
+            artist = renderer.o("secondTitle").runs().takeIf { it.isNotBlank() }
+                ?: show
+                ?: "Unknown artist",
+            thumbnailUrl = renderer.o("thumbnail").o("musicThumbnailRenderer")
+                .o("thumbnail").a("thumbnails").best(),
+            durationText = episodeRuntime(
+                renderer.o("playbackProgress").o("musicPlaybackProgressRenderer")
+                    .o("durationText").runs(),
+            ),
+            isExplicit = false,
+        )
+    }
+
+    /**
+     * A podcast row's runtime, which arrives as words ("42 min") rather than
+     * as the digits a track row carries.
+     */
+    private fun episodeRuntime(text: String): String? {
+        if (text.isBlank()) return null
+        var seconds = 0L
+        EPISODE_RUNTIME.findAll(text).forEach { part ->
+            val count = part.groupValues[1].toLongOrNull() ?: return@forEach
+            seconds += when (part.groupValues[2].lowercase(Locale.ROOT).first()) {
+                'h' -> count * 3_600
+                'm' -> count * 60
+                else -> count
+            }
+        }
+        if (seconds == 0L) return null
+        val hours = seconds / 3_600
+        val minutes = seconds % 3_600 / 60
+        val secs = seconds % 60
+        return if (hours > 0) {
+            String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, secs)
+        } else {
+            String.format(Locale.ROOT, "%d:%02d", minutes, secs)
+        }
     }
 
     /** A playlist page's own tracks, the ones YouTube suggests adding, and the token for the rest. */
@@ -686,6 +761,7 @@ object InnertubeParser {
             // art where a catalogue track has square album cover art.
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer.hasExplicitBadge(),
+            genAi = renderer.detectGenAi(),
         )
     }
 
@@ -729,6 +805,7 @@ object InnertubeParser {
             albumName = credits.albumName,
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
+            genAi = renderer.detectGenAi(),
         )
     }
 
@@ -1429,6 +1506,41 @@ object InnertubeParser {
                 null -> false
             }
         }
+
+    /**
+     * The Gen AI disclosure, where a row or player action carries one.
+     *
+     * YouTube does not publish a stable catalogue field for this yet. The
+     * marker is text on an action or badge — "Made with AI", "Fully Gen AI",
+     * "Partly Gen AI", or the player's longer "altered or fully generated
+     * using AI" — so only those explicit phrases count. Anything less is
+     * NONE, because guessing from a name or genre would label real artists.
+     */
+    private fun JsonElement?.detectGenAi(): GenAiDisclosure {
+        val text = buildString {
+            fun walk(value: JsonElement?) {
+                when (value) {
+                    is JsonPrimitive -> value.contentOrNull?.let { append(' ').append(it) }
+                    is JsonArray -> value.forEach(::walk)
+                    is JsonObject -> value.values.forEach(::walk)
+                    else -> Unit
+                }
+            }
+            walk(this@detectGenAi)
+        }.lowercase(Locale.ROOT)
+
+        return when {
+            "fully gen ai" in text ||
+                "fully generated" in text ||
+                "altered or fully generated using ai" in text -> GenAiDisclosure.FULLY
+            "partly gen ai" in text || "partly generated" in text -> GenAiDisclosure.PARTLY
+            "made with ai" in text || "generated using ai" in text -> GenAiDisclosure.UNKNOWN
+            else -> GenAiDisclosure.NONE
+        }
+    }
+
+    /** Words in a podcast row's runtime: "42 min", "1 hr 5 min". */
+    private val EPISODE_RUNTIME = Regex("(\\d+)\\s*(h|hr|m|min|s|sec)", RegexOption.IGNORE_CASE)
 
     private val DURATION = Regex("""\d+:\d{2}""")
     private val YEAR = Regex("""\d{4}""")

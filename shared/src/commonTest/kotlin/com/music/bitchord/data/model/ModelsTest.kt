@@ -21,6 +21,31 @@ class ModelsTest {
         assertEquals("https://example.test/cover.jpg", "https://example.test/cover.jpg".artworkAt(720))
     }
 
+    @Test
+    fun playerArtworkIsTheSizeOfTheWindowItIsDrawnIn() {
+        // A 360dp phone at 3x: the cover is asked for at the width of the
+        // screen, not at the largest rung on the ladder.
+        assertEquals(1080, playerArtPx(360f, 3f))
+        // The same phone at 2x: less of the cover, and less to decode.
+        assertEquals(720, playerArtPx(360f, 2f))
+    }
+
+    @Test
+    fun playerArtworkIsNeverBiggerThanTheLargestRung() {
+        // A 1440px-wide phone: the ladder's ceiling holds, so nothing is asked
+        // for that the ladder does not serve.
+        assertEquals(PLAYER_ART_PX, playerArtPx(411f, 3.5f))
+        assertEquals(PLAYER_ART_PX, playerArtPx(2000f, 2f))
+    }
+
+    @Test
+    fun playerArtworkIsNeverSmallerThanTheFloor() {
+        // A window too small to show even the floor: the floor holds rather
+        // than the cover arriving as a handful of pixels.
+        assertEquals(MIN_PLAYER_ART_PX, playerArtPx(200f, 1f))
+        assertEquals(MIN_PLAYER_ART_PX, playerArtPx(0f, 3f))
+    }
+
     private fun album(id: String) = ShelfItem(id, "", null, null, id)
     private fun song(id: String) = ShelfItem(id, "", null, id, null)
 

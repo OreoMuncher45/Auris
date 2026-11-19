@@ -143,12 +143,17 @@ class BeatTracker(
             .distinct()
             .sorted()
 
+        // The two heads disagree about the meter about as often as they agree about it, and the
+        // beat head is the one that can be wrong by a whole factor of two. [reconcileMeter] asks
+        // the downbeat head which rate the beat head is really at.
+        val meter = reconcileMeter(beats, downbeats, bpm)
+
         return Grid(
-            beats = beats,
-            downbeats = downbeats,
-            bpm = bpm,
-            beatInterval = 60 / bpm,
-            firstBeat = beats.first(),
+            beats = meter.beats,
+            downbeats = meter.downbeats,
+            bpm = meter.bpm,
+            beatInterval = 60 / meter.bpm,
+            firstBeat = meter.beats.first(),
             beatConfidence = gridConfidence(
                 beats,
                 beatFrames.map { frame -> beatLogits.getOrElse(frame.roundToInt()) { 0f }.toDouble() },
@@ -243,6 +248,23 @@ class BeatTracker(
         }
 
         /**
+         * The value below which [fraction] of [values] lie.
+         *
+         * Used for the spread of a grid's gaps. The median absolute deviation was tried first
+         * and is the wrong measure here: a grid that alternates between a short and a long gap
+         * has *half* its gaps exactly on the median, so the median deviation of it is zero and
+         * the grid scores as if it were a metronome. The upper quartile of the deviations is not
+         * fooled by that, and still ignores the one gap in thirty that is a hole in the grid
+         * rather than a sign of anything.
+         */
+        private fun percentile(values: List<Double>, fraction: Double): Double {
+            if (values.isEmpty()) return 0.0
+            val sorted = values.sorted()
+            val index = ((sorted.size - 1) * fraction.coerceIn(0.0, 1.0)).toInt()
+            return sorted[index]
+        }
+
+        /**
          * Frame indices that are local maxima over [PEAK_WINDOW] and positive, with runs of
          * adjacent peaks collapsed to their mean, then refined to sub-frame resolution.
          *
@@ -310,9 +332,106 @@ class BeatTracker(
         }
 
         /**
+         * A beat grid, checked against the downbeat head that was predicted alongside it.
+         *
+         * The two heads are independent, so a grid can be right about *where* the beats are and
+         * wrong about *how many* there are between them. A 140 BPM track read at 70 has a beat
+         * every two real beats; a 90 BPM track read at 180 has one every half. Either puts every
+         * bar line in the wrong place, and a blend anchored to it lands off the beat.
+         *
+         * The downbeat head says which of the two happened, because it marks the real bar lines
+         * whatever rate the beat head is reporting. The distance between downbeats, measured in
+         * the grid's own beats, is therefore the answer:
+         *
+         *  - **4** — the beat head is at the right rate. Nothing is changed.
+         *  - **2** — the beat head is at *half* the true rate: the downbeats are every other
+         *    reported beat. The tempo doubles and the missing beats are put back between them.
+         *  - **8** — the beat head is at *double* the true rate: the downbeats are eight reported
+         *    intervals apart. The tempo halves and every other reported beat is dropped.
+         *
+         * Nothing else is acted on. A grid whose downbeats land three, five or six beats apart is
+         * not a meter this rule can correct, and is left exactly as it was found — as is a grid
+         * whose corrected tempo would fall outside the plausible range, and one whose reported
+         * tempo was already in the ordinary dance range, where a downbeat every two beats is a
+         * metre of its own rather than a halved grid.
+         */
+        data class Meter(
+            val bpm: Double,
+            val beats: List<Double>,
+            val downbeats: List<Double>,
+            /** Whether the grid was changed. False means it was left alone. */
+            val corrected: Boolean,
+        )
+
+        /** The band a reported tempo has to be outside of before a correction is considered. */
+        private const val ORDINARY_TEMPO_FLOOR = 90.0
+        private const val ORDINARY_TEMPO_CEILING = 180.0
+
+        /** How far the downbeat spacing may sit from an exact multiple and still be believed. */
+        private const val METER_TOLERANCE = 0.12
+
+        fun reconcileMeter(beats: List<Double>, downbeats: List<Double>, bpm: Double): Meter {
+            val unchanged = Meter(bpm, beats, downbeats, corrected = false)
+            if (beats.size < MIN_BEATS || downbeats.size < 2 || bpm <= 0) return unchanged
+            val interval = median(beats.zipWithNext { left, right -> right - left })
+            if (interval <= 0) return unchanged
+            val downbeatGaps = downbeats.zipWithNext { left, right -> right - left }
+            val spacing = median(downbeatGaps) / interval
+            if (spacing <= 0) return unchanged
+
+            // Half the true rate: the reported beats are every other real beat, and the downbeats
+            // — which mark the real bars — sit between them. Only a tempo already below the
+            // ordinary dance range is read this way; at 120 BPM a downbeat every two beats is a
+            // metre of its own rather than a halved grid.
+            if (abs(spacing - 2.0) <= METER_TOLERANCE) {
+                if (bpm > ORDINARY_TEMPO_FLOOR) return unchanged
+                val doubled = bpm * 2
+                if (doubled > MAX_TEMPO) return unchanged
+                val filled = ArrayList<Double>(beats.size * 2)
+                for (index in beats.indices) {
+                    filled += beats[index]
+                    val next = beats.getOrNull(index + 1) ?: continue
+                    filled += (beats[index] + next) / 2
+                }
+                // The downbeats are real bars and were reported by the other head, so they are
+                // kept where they are; they may now be one frame off a beat, which is what the
+                // planner's own snapping is for.
+                return Meter(doubled, filled, downbeats, corrected = true)
+            }
+
+            // Double the true rate: the reported beats include a detection between every pair of
+            // real ones, and the downbeats are eight reported intervals apart. Only a tempo
+            // already above the ordinary dance range is read this way.
+            if (abs(spacing - 8.0) <= METER_TOLERANCE) {
+                if (bpm < ORDINARY_TEMPO_CEILING) return unchanged
+                val halved = bpm / 2
+                if (halved < MIN_TEMPO) return unchanged
+                val kept = beats.filterIndexed { index, _ -> index % 2 == 0 }
+                if (kept.size < MIN_BEATS) return unchanged
+                // The downbeats may have landed on a beat that is now gone, so they are snapped
+                // onto the grid that is left — the same rule the tracker applies to the two heads
+                // in the first place.
+                val snapped = downbeats
+                    .map { time -> kept.minByOrNull { abs(it - time) } ?: kept.first() }
+                    .distinct()
+                    .sorted()
+                return Meter(halved, kept, snapped, corrected = true)
+            }
+
+            return unchanged
+        }
+
+        /**
          * How far the grid can be trusted, 0..1: regularity of the spacing and decisiveness of
          * the peaks. This is the number the whole transition policy gates on, so it is deliberately
          * capped below 1: a model is evidence, not proof.
+         *
+         * Regularity is a *deviation* rather than a count of gaps inside a fixed band. The band
+         * version asked "how many gaps sit within 10% of the median", which is a step function: a
+         * grid whose gaps wander by 12% scored exactly the same as one whose gaps wander by 30%,
+         * and one that wandered by 9% scored the same as a metronome. The deviation version asks
+         * how far from the median the typical gap sits, which is what a listener hears as the
+         * pulse holding together.
          */
         fun gridConfidence(beats: List<Double>, peakLogits: List<Double>): Double {
             if (beats.size < MIN_BEATS) return 0.0
@@ -320,11 +439,16 @@ class BeatTracker(
             val interval = median(gaps)
             if (interval <= 0) return 0.0
 
-            // Fraction of gaps that are one beat rather than a hole in the grid.
-            val regular = gaps.count { abs(it - interval) <= interval * 0.1 }.toDouble() / gaps.size
+            // Median absolute deviation, relative to the interval: half the gaps sit this far from
+            // the median, and a steady pulse keeps it near zero.
+            val deviation = percentile(gaps.map { abs(it - interval) }, 0.75) / interval
+            val regular = (1.0 - deviation / 0.25).coerceIn(0.0, 1.0)
             // Logits are unbounded; a median around 2 is a decisive peak, around 0 is not.
             val strength = 1 / (1 + exp(-(median(peakLogits) - 0.5)))
-            return max(0.0, min(0.95, 0.35 + 0.4 * regular + 0.25 * strength))
+            // Strong peaks on a wandering grid are a model finding *something* on every beat — a
+            // roll, a hi-hat — rather than a pulse, so the two components are weighted to keep
+            // decisiveness alone from carrying a grid over the bar that beat-matching needs.
+            return max(0.0, min(0.95, 0.2 + 0.5 * regular + 0.25 * strength))
         }
     }
 }

@@ -77,8 +77,9 @@ class AdvancedAutomixPlannerTest {
         assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
         assertEquals(1.0, plan.incomingPlaybackRate)
         assertEquals(1.0, plan.outgoingPlaybackRate)
-        assertTrue(plan.fadeSeconds >= 4 * 0.5 * 2, "a filter ride, not a two-bar cut: ${plan.fadeSeconds}s")
-        assertTrue(plan.fadeSeconds <= 8.0, "fallback should stay compact: ${plan.fadeSeconds}s")
+        assertEquals(MIN_TRANSITION_BARS, plan.transitionBars)
+        assertEquals(MIN_TRANSITION_BARS * BEATS_PER_BAR, plan.transitionBeats)
+        assertEquals(4 * 0.5 * MIN_TRANSITION_BARS, plan.fadeSeconds, 1e-6)
     }
 
     @Test
@@ -89,7 +90,7 @@ class AdvancedAutomixPlannerTest {
             val first = plan(current, next, advanced = true)
             val replay = plan(current, next, advanced = true)
             assertEquals(first.filterVariant, replay.filterVariant)
-            assertTrue(first.fadeSeconds <= 8.0)
+            assertEquals(MIN_TRANSITION_BARS, first.transitionBars)
             first.filterVariant
         }.toSet()
         assertEquals(FilterTransitionVariant.entries.toSet(), variants)
@@ -189,6 +190,102 @@ class AdvancedAutomixPlannerTest {
         assertTrue(plan.beatSeconds > 0, "a trusted grid should be passed to the renderer")
         val bars = plan.fadeSeconds / (4 * plan.beatSeconds)
         assertEquals(bars.toInt().toDouble(), bars, 1e-6, "overlap of $bars bars")
+        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
         assertTrue(!plan.phaseLock, "phase correction must not pulse AudioTrack speed while audible")
+    }
+
+    @Test
+    fun theRecommendedRangeRunsFromFourToThirtyTwoBars() {
+        assertEquals(
+            MIN_TRANSITION_BARS,
+            recommendedTransitionBars(
+                tempoFar = true,
+                keyClash = false,
+                vocalConflict = false,
+                keyCompatible = false,
+                phaseLockable = false,
+                calm = false,
+            ),
+        )
+        assertEquals(
+            MAX_TRANSITION_BARS,
+            recommendedTransitionBars(
+                tempoFar = false,
+                keyClash = false,
+                vocalConflict = false,
+                keyCompatible = true,
+                phaseLockable = true,
+                calm = true,
+            ),
+        )
+    }
+
+    @Test
+    fun aCalmCompatiblePairCanRenderTheFullThirtyTwoBars() {
+        val current = track("long-out", 120.0, "C major", vocal = 0.1, duration = 300.0).let {
+            it.copy(
+                energyCurve = it.energyCurve.map { sample ->
+                    if (sample.time >= it.duration - 4.0) sample.copy(energy = 0.1) else sample
+                },
+            )
+        }
+        val next = track("long-in", 120.0, "C major", vocal = 0.1, duration = 300.0).let {
+            it.copy(
+                mixInTime = it.downbeats[37],
+                energyCurve = it.energyCurve.map { sample ->
+                    if (sample.time <= 4.0) sample.copy(energy = 0.1) else sample
+                },
+            )
+        }
+
+        val plan = plan(current, next, advanced = true)
+
+        assertEquals(MAX_TRANSITION_BARS, plan.transitionBars)
+        assertEquals(MAX_TRANSITION_BARS * BEATS_PER_BAR, plan.transitionBeats)
+        assertEquals(MAX_TRANSITION_BARS * BEATS_PER_BAR * 0.5, plan.fadeSeconds, 1e-6)
+    }
+
+    @Test
+    fun octaveEquivalentTempiShareOneMusicalGrid() {
+        val current = track("double-time", 126.0, "C major", vocal = 0.1)
+        val next = track("half-time", 63.0, "C major", vocal = 0.1)
+        val plan = plan(current, next, advanced = true)
+
+        assertEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle)
+        assertEquals(1.0, plan.incomingPlaybackRate)
+        assertTrue(plan.transitionBars in MIN_TRANSITION_BARS..MAX_TRANSITION_BARS)
+        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
+        assertEquals(
+            plan.transitionBars * BEATS_PER_BAR * (60.0 / 126.0),
+            plan.fadeSeconds,
+            1e-6,
+        )
+    }
+
+    @Test
+    fun durationAndRunwayCapsReduceTheRenderedOverlap() {
+        val current = track("short-out", 120.0, "C major", vocal = 0.1, duration = 45.0)
+        val next = track("short-in", 120.0, "C major", vocal = 0.1, duration = 45.0)
+        val plan = plan(current, next, advanced = true)
+
+        assertTrue(plan.transitionBars in MIN_TRANSITION_BARS..MAX_TRANSITION_BARS)
+        assertTrue(plan.transitionBars < MAX_TRANSITION_BARS)
+        assertTrue(plan.transitionStart >= 5.0, "the outgoing track keeps its clearance")
+        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
+        assertEquals(
+            plan.transitionBars * BEATS_PER_BAR * (60.0 / 120.0),
+            plan.fadeSeconds,
+            1e-6,
+        )
+    }
+
+    @Test
+    fun classicModeKeepsItsHistoricalCompactRange() {
+        val current = track("classic-out", 120.0, "C major", vocal = 0.1)
+        val next = track("classic-in", 97.0, "F♯ major", vocal = 0.1)
+        val plan = plan(current, next, advanced = false)
+
+        assertTrue(plan.fadeSeconds <= 12.0)
+        assertTrue(plan.transitionBars in 1..4)
     }
 }

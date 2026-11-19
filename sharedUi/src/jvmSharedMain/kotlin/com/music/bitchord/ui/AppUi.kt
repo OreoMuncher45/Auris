@@ -22,6 +22,11 @@ interface AppUiHost {
 
     fun setHomeRecentsViewType(value: LibraryViewType)
 
+    /** The Library's Playlists shelf as a row of cards or as a list of rows. */
+    val libraryPlaylistsViewType: StateFlow<LibraryViewType>
+
+    fun setLibraryPlaylistsViewType(value: LibraryViewType)
+
     /** Playlist browse ids pinned to the front of the Library's Playlists shelf, in pin order. */
     val pinnedPlaylists: StateFlow<List<String>>
 

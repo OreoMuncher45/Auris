@@ -17,13 +17,17 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.SwipeToDismissBoxState
@@ -68,6 +72,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.runtime.State
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -476,10 +485,19 @@ private fun SongRowContent(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
         label = "song row title",
     )
-    val activeBackground by animateColorAsState(
+    // Held as a State and read in [drawBehind], so the fade in and out of the
+    // highlight redraws the row rather than recomposing it once per frame.
+    val activeBackground = animateColorAsState(
         targetValue = if (isCurrent || selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
         label = "song row background",
     )
+    // Built once per artist line rather than on every pass of the row.
+    val subtitle = remember(song.artist, song.downloadFormat) {
+        listOfNotNull(
+            song.artist.takeIf { it.isNotBlank() },
+            song.downloadFormat,
+        ).joinToString(" · ")
+    }
     // A Spotify track still being matched to a YouTube Music song, or one that
     // has no match: shown, but not something a tap or a menu can act on.
     val matching = song.isMatchPending
@@ -488,7 +506,7 @@ private fun SongRowContent(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (unavailable) 0.45f else 1f)
-            .background(activeBackground)
+            .drawBehind { drawRect(activeBackground.value) }
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onMore ?: onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
@@ -548,10 +566,7 @@ private fun SongRowContent(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = listOfNotNull(
-                    song.artist.takeIf { it.isNotBlank() },
-                    song.downloadFormat,
-                ).joinToString(" · "),
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = subtitleColor,
                 maxLines = 1,
@@ -652,23 +667,36 @@ val PlayingAccent = Color(0xFFFB4A62)
 
 @Composable
 fun SearchPlayingBars(modifier: Modifier = Modifier) {
-    val heights = listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
-        val transition = rememberInfiniteTransition(label = "search playing bar $index")
-        val height by transition.animateFloat(
-            initialValue = minimum,
-            targetValue = 1f - (index * 0.12f),
-            animationSpec = infiniteRepeatable(
-                animation = keyframes {
-                    durationMillis = 520 + index * 130
-                    minimum at 0
-                    1f at (260 + index * 50)
-                    minimum at durationMillis
-                },
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "search bar height $index",
-        )
-        height
+    // Three infinite transitions per visible marker, redrawn at the display's
+    // refresh rate for as long as a list row is on screen. With "reduce
+    // animation" they settle into a fixed shape and stop scheduling frames.
+    //
+    // The heights are read in the draw pass, not in composition. Read here they
+    // recomposed the marker — and sized three boxes again — on every frame of
+    // the animation; read in [drawBehind] a frame costs one redraw of the
+    // marker's own layer and nothing else.
+    val reduceAnimation by com.music.bitchord.ui.player.PlayerSettings.reduceAnimation
+        .collectAsStateWithLifecycle()
+    val heights: List<State<Float>> = if (reduceAnimation) {
+        STILL_BAR_HEIGHTS
+    } else {
+        listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
+            val transition = rememberInfiniteTransition(label = "search playing bar $index")
+            transition.animateFloat(
+                initialValue = minimum,
+                targetValue = 1f - (index * 0.12f),
+                animationSpec = infiniteRepeatable(
+                    animation = keyframes {
+                        durationMillis = 520 + index * 130
+                        minimum at 0
+                        1f at (260 + index * 50)
+                        minimum at durationMillis
+                    },
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "search bar height $index",
+            )
+        }
     }
     // The plate is a fixed square so only the bars move, never the box around them.
     Box(
@@ -678,23 +706,36 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.52f)),
         contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier.height(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            heights.forEach { height ->
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .height(14.dp * height)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color.White),
-                )
-            }
-        }
+        // Three 3dp bars 2dp apart, standing on a shared floor 14dp below the
+        // tallest they reach.
+        Box(
+            Modifier
+                .size(width = PLAYING_BAR_WIDTH * 3 + PLAYING_BAR_GAP * 2, height = 14.dp)
+                .drawBehind {
+                    val bar = PLAYING_BAR_WIDTH.toPx()
+                    val gap = PLAYING_BAR_GAP.toPx()
+                    val corner = CornerRadius(2.dp.toPx())
+                    heights.forEachIndexed { index, height ->
+                        val h = size.height * height.value
+                        drawRoundRect(
+                            color = Color.White,
+                            topLeft = Offset(index * (bar + gap), size.height - h),
+                            size = Size(bar, h),
+                            cornerRadius = corner,
+                        )
+                    }
+                },
+        )
     }
 }
+
+private val PLAYING_BAR_WIDTH = 3.dp
+private val PLAYING_BAR_GAP = 2.dp
+
+/** The marker's settled shape under "reduce animation". */
+private val STILL_BAR_HEIGHTS: List<State<Float>> = listOf(0.78f, 1f, 0.88f).map(::StillHeight)
+
+private class StillHeight(override val value: Float) : State<Float>
 
 /**
  * The mark on a row whose track is already on disk.
@@ -769,9 +810,15 @@ fun PullToRefresh(
     }
 }
 
-/** Slim dismissible-looking prompt shown atop Home while signed out. */
+/** Slim dismissible prompt shown atop Home while signed out. */
 @Composable
-fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
+fun SignInBanner(
+    onSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** When set, an X is shown; tapping it asks first (see the warning dialog). */
+    onDismiss: (() -> Unit)? = null,
+) {
+    var showWarning by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -798,6 +845,33 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.width(12.dp))
         Button(onClick = onSignIn) { Text(stringResource(Res.string.sign_in)) }
+        if (onDismiss != null) {
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = { showWarning = true }) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.dismiss),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (showWarning && onDismiss != null) {
+        AlertDialog(
+            onDismissRequest = { showWarning = false },
+            title = { Text(stringResource(Res.string.sign_in_dismiss_title)) },
+            text = { Text(stringResource(Res.string.sign_in_dismiss_message)) },
+            confirmButton = {
+                TextButton(onClick = { showWarning = false; onDismiss() }) {
+                    Text(stringResource(Res.string.dismiss))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWarning = false }) {
+                    Text(stringResource(Res.string.cancel))
+                }
+            },
+        )
     }
 }
 

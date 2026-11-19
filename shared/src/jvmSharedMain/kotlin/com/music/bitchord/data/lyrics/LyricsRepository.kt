@@ -19,6 +19,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  *  - [LrcRed] — Apple Music TTML filed by ISRC, and the catalogue
  *    [BiniLyrics] itself answers from.
+ *  - [Extension][LyricsSource.EXTENSION] — an installed `.sflx` extension
+ *    that can answer lyrics, asked through the host.
  *  - [BetterLyrics], [PaxSenix] and [BiniLyrics] — Apple Music TTML,
  *    per-syllable, from three independent hosts so one having a bad day
  *    doesn't cost the timing.
@@ -213,9 +215,79 @@ object LyricsRepository {
             LyricsSource.KUGOU -> KuGou.lyrics(title, artist, durationMs, album)
             LyricsSource.MEGALOBIZ -> Megalobiz.lyrics(title, artist)
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
+            LyricsSource.EXTENSION -> extensionProvider?.lyrics(title, artist, album, durationMs)
         }
         return found
     }
+
+    /**
+     * The fetcher that answers for an installed `.sflx` extension.
+     *
+     * Only the host can run an extension, so the host installs a fetcher here
+     * and the repository asks it like any other source. The lines it returns
+     * are the extension's own — Apple's timings, word by word — parsed by
+     * [ExtensionLyrics].
+     */
+    fun interface ExtensionProvider {
+        /** The lines for this track, or null when there are none. */
+        suspend fun lyrics(
+            title: String,
+            artist: String,
+            album: String?,
+            durationMs: Long,
+        ): List<LyricLine>?
+    }
+
+    /**
+     * The fetcher the host installed, if any.
+     *
+     * Null when nothing can answer — no extension installed, or none that
+     * declares itself a lyrics provider — and the source is then a miss
+     * rather than an error, so the lookup carries on with the sources behind
+     * it.
+     */
+    @Volatile
+    var extensionProvider: ExtensionProvider? = null
+
+    /**
+     * The name of the installed extension that answers lyrics, when there is
+     * one.
+     *
+     * "Mornye extension" was a name for a *kind* of thing, shown in the
+     * sources list and beside the lyric line, while the package actually
+     * answering was Apple's — and the listener was told "Mornye extension"
+     * and had no way to tell which package was meant. The host publishes the
+     * package's own name here, and [LyricsSource] shows that.
+     *
+     * Null when nothing is installed, and the source keeps its generic name.
+     */
+    @Volatile
+    var extensionLabel: String? = null
+
+    /**
+     * What the installed extension is waiting for, when it cannot answer yet.
+     *
+     * Apple's package asks the listener for their MusicKit token and answers
+     * every track with nothing until it has one. Nothing here fails: the
+     * lookup treats it as a miss and carries on with the sources behind it,
+     * which is right — but it means the player says "no lyrics found" for a
+     * song Apple has the words to, and nobody is told why. This says it
+     * instead: the setting that is missing, and the extension that wants it.
+     */
+    @Volatile
+    var extensionSetup: ExtensionSetup? = null
+
+    /**
+     * An installed lyrics extension that is not ready to answer.
+     *
+     * @property extensionName the package's own name, e.g. "Apple Music".
+     * @property settingLabel the setting it is waiting for, as its manifest
+     *   labels it, e.g. "Media User Token".
+     */
+    data class ExtensionSetup(
+        val extensionName: String,
+        val settingLabel: String,
+    )
 
     /**
      * Whichever source won, its lines get the same last pass: the answering

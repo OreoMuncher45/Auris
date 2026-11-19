@@ -21,6 +21,19 @@ object LikeState {
     }
 
     /**
+     * Puts a track back to what this session knew before an override that was
+     * never confirmed: [previous] if there was one, or no override at all, so
+     * the library's own answer shows again.
+     */
+    fun restore(videoId: String, previous: LikeStatus?) {
+        _overrides.value = if (previous != null) {
+            _overrides.value + (videoId to previous)
+        } else {
+            _overrides.value - videoId
+        }
+    }
+
+    /**
      * Records a rating read off a track's own menu, but only when the menu
      * actually states one. A missing like button or an absent rating (null)
      * must never overwrite what this session already knows — kept null

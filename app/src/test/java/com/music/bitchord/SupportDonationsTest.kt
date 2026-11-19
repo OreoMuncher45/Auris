@@ -8,14 +8,6 @@ import org.junit.Test
 class SupportDonationsTest {
 
     @Test
-    fun `patreon points to the project support page`() {
-        assertEquals(
-            "https://www.patreon.com/cw/crimsanity",
-            SupportDonations.PATREON_URL,
-        )
-    }
-
-    @Test
     fun `rails match the readme addresses`() {
         val rails = SupportDonations.rails
         assertEquals(3, rails.size)

@@ -1,5 +1,7 @@
 package com.music.bitchord.data.model
 
+import kotlin.math.roundToInt
+
 /** Tier of an item in the playback queue. */
 enum class QueueTier {
     /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
@@ -22,12 +24,23 @@ data class ArtistRef(
 )
 
 /** A playable YouTube Music track. */
-data class Song(
-    val videoId: String,
+/**
+ * How much of a track YouTube says was generated with AI.
+ *
+ * The disclosure is not a normal catalogue field; it arrives as a player
+ * overlay action or a row badge. [UNKNOWN] is kept separate from [NONE] so
+ * callers can tell "said nothing" from "said nothing in particular" without
+ * guessing — strict filtering treats both as not labelled.
+ */
+enum class GenAiDisclosure { NONE, PARTLY, FULLY, UNKNOWN }
+
+data class Song(    val videoId: String,
     val title: String,
     val artist: String,
     val thumbnailUrl: String?,
     val durationText: String? = null,
+    /** Publish date as the feed stated it (podcast episodes / audiobook chapters). */
+    val publishedDate: String? = null,
     /** Browse ids lifted from the row, used by the long-press actions. */
     val artistId: String? = null,
     /**
@@ -49,9 +62,14 @@ data class Song(
     /** A music-video upload rather than the catalogue track. */
     val isVideo: Boolean = false,
     /**
-     * True for a video upload and for its manually selected catalogue match.
-     * The latter remains video-origin so playback policies such as AutoMix do
-     * not mistake a converted video for a normal music track.
+     * True for a video upload, and false for a catalogue track.
+     *
+     * Playback policies use this to decide what they can do with a track:
+     * AutoMix declines a video because there is no beat analysis to plan a
+     * transition from, and a catalogue track has one. A video that has been
+     * converted to its catalogue match is a catalogue track from then on, so
+     * the flag is cleared on the way in — a converted track plays in the mix
+     * like any other music track.
      */
     val isVideoOrigin: Boolean = isVideo,
     /**
@@ -119,6 +137,12 @@ data class Song(
     val playbackSourceType: PlaybackSourceType? = null,
     /** Browse id for an album, playlist, or other source page. */
     val playbackSourceId: String? = null,
+    /**
+     * YouTube's own Gen AI disclosure for this track, where the response said
+     * one. NONE is also the answer for "not stated"; the app never infers it
+     * from an artist name, title or genre.
+     */
+    val genAi: GenAiDisclosure = GenAiDisclosure.NONE,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
@@ -285,7 +309,33 @@ const val NOTIFICATION_ART_PX = 544
  */
 const val PLAYER_ART_PX = 1200
 
-enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
+/**
+ * The smallest copy of the player's artwork worth asking for.
+ *
+ * A window narrower than this would be served a copy bigger than it can show,
+ * which costs bytes and decode time for pixels nobody sees. This is the floor
+ * under that.
+ */
+const val MIN_PLAYER_ART_PX = 640
+
+/**
+ * The player's artwork size in pixels: the width of the window the player is
+ * drawn in, capped at the largest rung on the ladder.
+ *
+ * The sleeve and the banner are the picture edge to edge, so the window's own
+ * width is what the artwork has to cover — and nothing past it is ever on
+ * screen. Asking for the window's size rather than the largest rung is what
+ * stops the player from decoding a cover several times the size of the screen
+ * it is drawn on: a 1200px cover on a 720px-wide phone is 2MB of bitmap for
+ * pixels that are never shown, and it is the decode and the upload of that
+ * bitmap that makes a cover's arrival jank the player.
+ */
+fun playerArtPx(windowWidthDp: Float, density: Float): Int {
+    val px = (windowWidthDp * density).roundToInt()
+    return px.coerceIn(MIN_PLAYER_ART_PX, PLAYER_ART_PX)
+}
+
+enum class BrowseType { ALBUM, ARTIST, PLAYLIST, PODCAST, OTHER }
 
 /** A queue-level origin shown above Now Playing, in the style of Spotify. */
 enum class PlaybackSourceType {
@@ -324,6 +374,8 @@ enum class SearchFilter(val label: String, val params: String?) {
     ALBUMS("Albums", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
     ARTISTS("Artists", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
     PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
+    /** Not a YouTube filter — searched against the Apple podcast catalogue instead. */
+    PODCASTS("Podcasts", null),
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */
@@ -333,6 +385,19 @@ data class ShelfItem(
     val thumbnailUrl: String?,
     val videoId: String?,
     val browseId: String?,
+    /**
+     * The year the release came out, when the catalogue states one.
+     *
+     * Only Spotify's release cards carry it so far; a YouTube card keeps it
+     * null and the shelf sorter falls back to the catalogue's own order.
+     */
+    val year: Int? = null,
+    /**
+     * Where the card sat in the catalogue's own popularity ranking, when it
+     * gave one — smaller is more popular. Null for every card whose order is
+     * not a statement about popularity.
+     */
+    val popularity: Int? = null,
 )
 
 /** The signed-in Google account, as YouTube Music reports it. */
@@ -379,6 +444,39 @@ data class HomeShelf(
     val subtitle: String = "",
     val moreBrowseId: String? = null,
     val moreParams: String? = null,
+)
+
+/**
+ * What a home page says above its shelves.
+ *
+ * A list of shelves is enough for a page of rows, and that is all YouTube's
+ * home has ever needed. Spotify's own home is not that: it opens with a
+ * greeting, a row of chips the page can be narrowed by, and a grid of quick
+ * access tiles before the shelves begin.
+ *
+ * None of that is carried inside a shelf, because none of it is a shelf: the
+ * greeting belongs to the page, the chips belong to the page, and the tiles
+ * are a grid rather than a row. Putting them in a shelf and giving the shelf
+ * an empty title would draw a heading over nothing and make the page's
+ * structure a thing every reader has to decode.
+ */
+data class HomeHeader(
+    /** "Good evening", or whatever the provider says. */
+    val greeting: String? = null,
+    /** The quick-access grid at the top of the page. */
+    val shortcuts: List<ShelfItem> = emptyList(),
+    /** The chips the page can be narrowed by. */
+    val chips: List<HomeChip> = emptyList(),
+    /** The chip in force, or "" for the whole page. */
+    val chip: String = "",
+)
+
+/** One chip on a home page, and the chips that open beside it. */
+data class HomeChip(
+    /** The provider's own id for it, sent back when it is picked. */
+    val id: String,
+    val label: String,
+    val subChips: List<HomeChip> = emptyList(),
 )
 
 /**
@@ -491,7 +589,27 @@ data class DetailPage(
      * fetched with a session; see [SubscriptionState].
      */
     val subscription: SubscriptionState? = null,
+    /**
+     * The token for the next page of this page's tracks, when it has one.
+     *
+     * Kept on the page rather than followed to the end in the background for
+     * the collections that have no last page — see [isEndlessMix]. Those grow
+     * as the listener scrolls instead.
+     */
+    val continuation: String? = null,
+    /** A next page is on the wire for this page. */
+    val loadingMore: Boolean = false,
 )
+
+/**
+ * Whether this browse id belongs to one of YouTube's endless generated mixes.
+ *
+ * The "RD…" families are the mixes: a Super Mix, an artist radio, the watch
+ * queue behind a track. Their continuation never runs dry — there is no last
+ * page to reach — so following it in the background fetches until the app is
+ * killed. They are grown by the listener scrolling instead.
+ */
+fun String.isEndlessMix(): Boolean = startsWith("RD")
 
 /**
  * Whether an album or playlist is in the library, and the id that changes that.

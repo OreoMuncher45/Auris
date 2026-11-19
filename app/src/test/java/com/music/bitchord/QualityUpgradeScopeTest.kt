@@ -79,4 +79,33 @@ class QualityUpgradeScopeTest {
         assertTrue(QualityUpgrade.hasAnsweredFor("other"))
     }
 
+    /**
+     * A reverted item's own open calls `forget`, and the request it must not
+     * take with it is the listener's. Measured on device: "upgrade asked for by
+     * hand" at 41.287, the item's direct-YouTube open at 42.445, and then no
+     * search, no adoption line and no refusal — the request had been erased
+     * 1.2s after it was made.
+     */
+    @Test
+    fun `a rollback keeps the hand-ask it was asked for`() {
+        QualityUpgrade.askByHand(mediaId)
+
+        QualityUpgrade.forget(mediaId, keepHandAsk = true)
+
+        assertTrue(
+            "the item's own open must not cancel the listener's request",
+            QualityUpgrade.isHandAskedForTest(mediaId),
+        )
+    }
+
+    /** Moving off the track is still an end to it. */
+    @Test
+    fun `the queue moving on drops the hand-ask`() {
+        QualityUpgrade.askByHand(mediaId)
+
+        QualityUpgrade.forget(mediaId)
+
+        assertFalse(QualityUpgrade.isHandAskedForTest(mediaId))
+    }
+
 }
