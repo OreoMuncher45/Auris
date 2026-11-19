@@ -5,6 +5,7 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalFocusManager
@@ -110,6 +111,12 @@ fun <T : Any> AppSheet(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.background,
     dragFromContent: Boolean = true,
+    /**
+     * Whether focus is kept inside the sheet while it is up. Read when focus
+     * moves, not when composed. False lets a surface above it — a dialog, a
+     * sheet stacked on this one — take the focus; the host says when.
+     */
+    trapFocus: () -> Boolean = { true },
     content: @Composable ColumnScope.(T) -> Unit,
 ) {
     val expanded = item != null
@@ -146,16 +153,20 @@ fun <T : Any> AppSheet(
     // focus back.
     if (!expanded) SideEffect { focusManager.clearFocus(force = true) }
 
-    // With a keyboard, focus moves into the sheet — as it opens, or as the
-    // keyboard comes into use while it is up — rather than staying on
-    // whatever opened it behind the scrim. Only with a keyboard: in touch
-    // mode focusing the sheet would mean nothing but a focus ring. Never
-    // when the focus is already inside (a form's field the listener is
-    // typing in): content that focuses its own field keeps it.
+    // Focus moves into the sheet as it opens — and again if a keyboard comes
+    // into use while it is up — rather than staying on whatever opened it
+    // behind the scrim. Never when the focus is already inside (a form's
+    // field the listener is typing in): content that focuses its own field
+    // does so after this and keeps it.
     val sheetFocus = remember { FocusRequester() }
     val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     LaunchedEffect(expanded, keyboard) {
-        if (expanded && keyboard && !sheet.holdsFocus) sheetFocus.requestFocus()
+        // Into the sheet — onto its handle, the first thing in it — unless
+        // something inside already has the focus. In touch mode too: a field
+        // behind the sheet would otherwise keep the software keyboard's
+        // typing while covered, and only clearing the focus lets the window
+        // hand it straight back to that field.
+        if (expanded && !sheet.holdsFocus) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)
@@ -307,7 +318,7 @@ fun <T : Any> AppSheet(
                         .focusRequester(sheetFocus)
                         .focusProperties {
                             if (expanded) {
-                                exit = { FocusRequester.Cancel }
+                                exit = { if (trapFocus()) FocusRequester.Cancel else FocusRequester.Default }
                             } else {
                                 enter = { FocusRequester.Cancel }
                             }
@@ -316,10 +327,14 @@ fun <T : Any> AppSheet(
                         .then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
                 ) {
-                    // The grab handle, and the thing that says the sheet can be pulled away.
+                    // The grab handle, and the thing that says the sheet can be
+                    // pulled away. Also where the focus lands as the sheet
+                    // opens: focusable with no indication, so in touch mode it
+                    // shows nothing, and with a keyboard Tab moves on from it.
                     Box(
                         Modifier
                             .align(Alignment.CenterHorizontally)
+                            .focusable()
                             .padding(vertical = MenuTokens.SheetHandlePaddingV)
                             .size(MenuTokens.SheetHandleWidth, MenuTokens.SheetHandleHeight)
                             .clip(CircleShape)

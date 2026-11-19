@@ -138,15 +138,22 @@ class AppSheetFocusTest {
         item = "downloads"
         compose.waitForIdle()
         assertFalse("the sheet took the focus from what is behind it", behindFocused)
-        assertTrue("…and it is inside the sheet", insideFocused)
 
-        // Shift+Tab, the way back out a keyboard would take.
+        // It landed on the sheet's handle; Tab moves on to its control.
+        compose.onRoot().performKeyInput { pressKey(Key.Tab) }
+        compose.waitForIdle()
+        assertTrue("Tab reaches the sheet's own control", insideFocused)
+
+        // Shift+Tab, the way back out a keyboard would take: twice, past the
+        // handle and on towards whatever is behind.
         compose.onNodeWithTag(INSIDE).performKeyInput {
-            withKeyDown(Key.ShiftLeft) { pressKey(Key.Tab) }
+            withKeyDown(Key.ShiftLeft) {
+                pressKey(Key.Tab)
+                pressKey(Key.Tab)
+            }
         }
         compose.waitForIdle()
         assertFalse("Shift+Tab doesn't reach what is behind the sheet", behindFocused)
-        assertTrue("the focus stays in the sheet", insideFocused)
     }
 
     @OptIn(ExperimentalTestApi::class)
@@ -198,19 +205,18 @@ class AppSheetFocusTest {
         compose.runOnIdle { behind.requestFocus() }
         compose.waitForIdle()
         assertTrue("the control behind holds the focus to begin with", behindFocused)
-        // Opened by touch: nothing moves the focus.
+        // Opened by touch: the focus moves onto the sheet, off what is behind.
         item = "downloads"
         compose.waitForIdle()
-        assertFalse("a touch-opened sheet takes nothing", insideFocused)
-        assertTrue("the control behind still holds the focus", behindFocused)
+        assertFalse("the focus left what is behind the sheet", behindFocused)
 
-        // Then a key is pressed.
+        // Then a key is pressed, and Tab, then Enter: the keys a keyboard
+        // would reach the page with.
         modes.mode = InputMode.Keyboard
         compose.waitForIdle()
-        assertFalse("the focus left what is behind the sheet", behindFocused)
-        assertTrue("…for the sheet", insideFocused)
-
-        // Tab, then Enter: the keys a keyboard would reach the page with.
+        compose.onRoot().performKeyInput { pressKey(Key.Tab) }
+        compose.waitForIdle()
+        assertTrue("Tab reaches the sheet's own control", insideFocused)
         compose.onNodeWithTag(INSIDE).performKeyInput {
             pressKey(Key.Tab)
             pressKey(Key.Enter)
@@ -219,6 +225,45 @@ class AppSheetFocusTest {
         assertFalse("Tab doesn't reach what is behind the sheet", behindFocused)
         assertEquals("nothing behind the sheet was activated", 0, behindClicks)
         assertEquals("Enter acted on the sheet's own control", 1, insideClicks)
+    }
+
+    @Test
+    fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var fieldFocused = false
+        val field = FocusRequester()
+        val modes = object : InputModeManager {
+            override val inputMode: InputMode get() = InputMode.Touch
+            @ExperimentalComposeUiApi
+            override fun requestInputMode(inputMode: InputMode): Boolean = false
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalInputModeManager provides modes) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        // A search field behind, with the software keyboard up.
+                        BasicTextField(
+                            value = "",
+                            onValueChange = {},
+                            modifier = Modifier
+                                .focusRequester(field)
+                                .onFocusChanged { fieldFocused = it.isFocused },
+                        )
+                        AppSheet(item = item, onDismiss = { item = null }) {
+                            Box(Modifier.fillMaxWidth().height(200.dp))
+                        }
+                    }
+                }
+            }
+        }
+        compose.runOnIdle { field.requestFocus() }
+        compose.waitForIdle()
+        assertTrue(fieldFocused)
+
+        item = "sheet"
+        compose.waitForIdle()
+        assertFalse("the covered field no longer takes the typing", fieldFocused)
     }
 
     @Test
