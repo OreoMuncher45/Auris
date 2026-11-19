@@ -159,6 +159,22 @@ class MenuHostTest {
     }
 
     @Test
+    fun aRowThatOpensAnotherMenuThenClosesItsOwnLeavesTheNewOneUp() {
+        host.open(button) { close ->
+            MenuRow(icon = null, label = "More", ink = Color.White, modifier = Modifier.testTag(ROW)) {
+                host.open(null) { innerClose ->
+                    MenuRow(icon = null, label = "Other", ink = Color.White, modifier = Modifier.testTag(OTHER)) { innerClose() }
+                }
+                close()
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag(OTHER).assertExists()
+    }
+
+    @Test
     fun aMenuReplacingAScrolledOneStartsAtItsOwnTop() {
         fun rows(prefix: String) = host.open(button) { close ->
             repeat(40) { i ->

@@ -176,13 +176,13 @@ fun <T : Any> AppSheet(
         // hand it straight back to that field.
         if (expanded && !sheet.holdsFocus && trapFocus()) sheetFocus.requestFocus()
     }
-    // A keyboard coming into use — or a dialog or menu over the sheet going
-    // away under one — brings the focus back in, but only to a sheet nothing
-    // covers: under a sheet stacked on it, a dialog or a menu, the focus
-    // stays with the one on top.
-    val covered = dialogs?.requests?.isNotEmpty() == true || menus?.request != null
+    // A keyboard coming into use — or a sheet, dialog or menu over this one
+    // going away under one — brings the focus back in, but only to a sheet
+    // nothing covers: under a sheet stacked on it, a dialog or a menu, the
+    // focus stays with the one on top.
+    val covered = !trapFocus() || dialogs?.requests?.isNotEmpty() == true || menus?.request != null
     LaunchedEffect(keyboard, covered) {
-        if (keyboard && expanded && !sheet.holdsFocus && !covered && trapFocus()) sheetFocus.requestFocus()
+        if (keyboard && expanded && !sheet.holdsFocus && !covered) sheetFocus.requestFocus()
     }
 
     BackHandler(enabled = expanded, onBack = onDismiss)

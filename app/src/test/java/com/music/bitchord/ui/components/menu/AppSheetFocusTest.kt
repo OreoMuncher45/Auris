@@ -375,6 +375,51 @@ class AppSheetFocusTest {
         assertTrue("one Tab from the sheet's handle reaches its control", insideFocused)
     }
 
+    @OptIn(ExperimentalComposeUiApi::class, ExperimentalTestApi::class)
+    @Test
+    fun aSheetStackedOnAnotherClosingGivesItTheFocusBack() {
+        AppUi.install(AndroidAppUiHost)
+        var parent by mutableStateOf<String?>(null)
+        var child by mutableStateOf<String?>(null)
+        var behindFocused = false
+        var insideFocused = false
+        compose.setContent {
+            val modes = LocalInputModeManager.current
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier
+                            .onFocusChanged { behindFocused = it.isFocused }
+                            .focusable(),
+                    )
+                    AppSheet(item = parent, onDismiss = { parent = null }, trapFocus = { child == null }) {
+                        Box(
+                            Modifier
+                                .testTag(INSIDE)
+                                .onFocusChanged { insideFocused = it.isFocused }
+                                .focusable(),
+                        )
+                    }
+                    AppSheet(item = child, onDismiss = { child = null }) {
+                        Box(Modifier.fillMaxWidth().height(120.dp).focusable())
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { modes.requestInputMode(InputMode.Keyboard) }
+        }
+        parent = "colours"
+        compose.waitForIdle()
+        child = "picker"
+        compose.waitForIdle()
+        child = null
+        compose.waitForIdle()
+
+        compose.onRoot().performKeyInput { pressKey(Key.Tab) }
+        compose.waitForIdle()
+        assertFalse("the focus didn't land behind the sheets", behindFocused)
+        assertTrue("one Tab from the parent's handle reaches its control", insideFocused)
+    }
+
     @Test
     fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
         AppUi.install(AndroidAppUiHost)

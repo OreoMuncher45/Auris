@@ -42,6 +42,11 @@ class MenuHostState : MenuHost {
         request = null
     }
 
+    /** Closes [request] if it is still the one up: a row's `close` is its own menu's. */
+    internal fun close(request: Request) {
+        if (this.request === request) this.request = null
+    }
+
     override fun closeIfShowing(content: @Composable ColumnScope.(close: () -> Unit) -> Unit) {
         if (request?.content === content) request = null
     }
@@ -71,7 +76,10 @@ fun MenuHostOverlay(state: MenuHostState) {
         // not wherever the last one was scrolled to.
         key(shown) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                shown.content(this, state::close)
+                // Bound to this request: a row that opened another menu
+                // before closing its own leaves the new one up.
+                val close = remember { { state.close(shown) } }
+                shown.content(this, close)
             }
         }
     }
