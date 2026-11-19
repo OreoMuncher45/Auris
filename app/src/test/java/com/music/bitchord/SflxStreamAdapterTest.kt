@@ -95,6 +95,11 @@ class SflxStreamAdapterTest {
                 const id = web && web.provider_id === 'amazon' ? web.id : trackID;
                 const mode = globalThis.__mode;
                 const path = mode === 'encrypted' ? outputPath.replace(/\.[^.]+$/, '.m4a') : outputPath;
+                if (mode === 'segments-reads-file') {
+                  file.downloadSegments([{ url: 'https://cdn.example/init' }, { url: 'https://cdn.example/1' }], path, {});
+                  file.getSize(path);
+                  __calls.push('read past the capture');
+                }
                 if (mode === 'segments') {
                   file.downloadSegments([{ url: 'https://cdn.example/init' }, { url: 'https://cdn.example/1' }], path, {});
                   return { success: true, decryption_key: 'ffeeddccbbaa99887766554433221100', audio_codec: 'flac' };
@@ -119,6 +124,7 @@ class SflxStreamAdapterTest {
                 ['encrypted', 'OWN', row, 'encrypted'],
                 ['reads the file', 'OWN', row, 'reads-file'],
                 ['encrypted segments', 'OWN', row, 'segments'],
+                ['segments, then reads the file', 'OWN', row, 'segments-reads-file'],
               ];
               const out = [];
               for (const [name, id, track, mode, tier] of cases) {
@@ -181,6 +187,15 @@ class SflxStreamAdapterTest {
         val segmented = case("encrypted segments").answer()
         assertTrue(segmented.containsKey("segments"))
         assertEquals("ffeeddccbbaa99887766554433221100", segmented.getValue("decryption").jsonObject.text("key"))
+    }
+
+    @Test
+    fun `an interrupted segmented capture is marked for the host to check`() {
+        val interrupted = case("segments, then reads the file")
+        assertFalse(interrupted.calls().contains("read past the capture"))
+        assertTrue(interrupted.answer().containsKey("segments"))
+        assertFalse("no key was heard", interrupted.answer().containsKey("decryption"))
+        assertEquals("true", interrupted.answer().text("unfinished"))
     }
 
     @Test

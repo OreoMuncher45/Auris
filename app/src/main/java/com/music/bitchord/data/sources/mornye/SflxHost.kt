@@ -513,9 +513,8 @@ class SflxHost(
 
     /**
      * An answer whose extension was stopped before it could hand over a key:
-     * its file is checked, and refused if it is encrypted, rather than played
-     * as noise. A check that cannot be made — a network error, a format that
-     * is not MP4 — lets the answer through, as it always did.
+     * its file is checked, and refused unless the check shows it is not
+     * encrypted — see [unkeyedVerdict].
      */
     private fun refuseIfEncrypted(
         url: String?,
@@ -528,10 +527,7 @@ class SflxHost(
             first != null -> first.url to (headers + first.headers.orEmpty())
             else -> return
         }
-        val head = runCatching { CencProbe.head(target, requestHeaders) }.getOrNull()
-        if (head is CencHead.Result.Encrypted) {
-            throw SflxException("this source's audio is encrypted, and it did not hand over the key")
-        }
+        unkeyedVerdict(runCatching { CencProbe.head(target, requestHeaders) })?.let { throw SflxException(it) }
     }
 
     /**
@@ -956,6 +952,23 @@ class SflxHost(
                 if (wantsAtmos) "atmos" else "stereo",
                 settingsFingerprint,
             ).joinToString("") { "${it.length}:$it" } + (preparedRow?.let { "${it.length}:$it" } ?: "-")
+        }
+
+        /**
+         * What to do with an answer that may be encrypted and came with no
+         * key, from a check of its opening: null to let it through, or why it
+         * is refused. Only a check that shows the audio is clear — or is not
+         * an MP4 at all, the only container Common Encryption lives in — lets
+         * it through; an encrypted one, or a check that could not finish (a
+         * network error, no `moov` within the probe), is refused rather than
+         * risk handing the player audio it has no key for.
+         */
+        internal fun unkeyedVerdict(head: Result<CencHead.Result>): String? = when (head.getOrNull()) {
+            CencHead.Result.Clear, CencHead.Result.NotMp4 -> null
+            is CencHead.Result.Encrypted -> "this source's audio is encrypted, and it did not hand over the key"
+            CencHead.Result.NeedMore, null ->
+                "this source's audio could not be checked for encryption" +
+                    (head.exceptionOrNull()?.message?.let { " ($it)" } ?: "")
         }
 
         /** The start every stream key of one extension shares, so its answers can be dropped together. */
