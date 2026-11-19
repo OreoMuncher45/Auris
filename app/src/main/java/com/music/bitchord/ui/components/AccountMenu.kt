@@ -149,7 +149,8 @@ private fun ProfileRow(
             .fillMaxWidth()
             .clickable(
                 enabled = LocalMenuInteractive.current,
-                role = Role.RadioButton,
+                // A choice of profile, or in manage mode a sign-out action.
+                role = if (managing) Role.Button else Role.RadioButton,
                 onClick = if (managing) onRemove else onClick,
             )
             .semantics { contentDescription = description }
