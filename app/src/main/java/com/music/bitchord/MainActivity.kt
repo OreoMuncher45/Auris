@@ -963,7 +963,9 @@ private fun BitChordApp(
     } else {
         null
     }
-    val homeWithFlowState = remember(homeState, flowTile, offlineActive, offlinePicksTitle) {
+    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    // Keyed on the downloads too: offline, the shelf is read from them.
+    val homeWithFlowState = remember(homeState, flowTile, offlineActive, offlinePicksTitle, savedDownloads) {
         derivedStateOf {
             // Offline: the home is what is on disk. The feed needs a connection
             // that is not there, so the shelf that matters is the downloads —
@@ -1044,7 +1046,6 @@ private fun BitChordApp(
     // on it — and now that the page groups by artist and album, a stale list is
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
-    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrlState = AppSettings.webdavUrl.collectAsStateWithLifecycle()
