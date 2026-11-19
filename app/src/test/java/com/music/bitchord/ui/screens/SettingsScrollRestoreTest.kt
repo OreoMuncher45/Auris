@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.screens
 
 import android.app.Application
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,6 +42,7 @@ class SettingsScrollRestoreTest {
     val compose = createComposeRule()
 
     private val placed = mutableListOf<Int>()
+    private lateinit var scroll: ScrollState
 
     @Before fun install() {
         val app = ApplicationProvider.getApplicationContext<Application>()
@@ -59,6 +61,7 @@ class SettingsScrollRestoreTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             val state = rememberSettingsScroll(page(), query())
+            scroll = state
             Column(
                 Modifier
                     .height(600.dp)
@@ -102,9 +105,9 @@ class SettingsScrollRestoreTest {
         AppSettings.saveSettingsScrollOffset("index", Int.MAX_VALUE / 2)
         render(page = { "index" })
         frames(30)
-        assertEquals(1, placed.distinct().size)
-        assertEquals(placed.first(), placed.last())
-        assertEquals(true, placed.first() > 0)
+        // The bottom: as far as the page scrolls, placed there from the start.
+        assertEquals(true, scroll.maxValue in 1 until Int.MAX_VALUE / 2)
+        assertEquals(listOf(scroll.maxValue), placed.distinct())
     }
 
     @Test fun `a page opened mid-search starts at the top of the results`() {
