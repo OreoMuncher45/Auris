@@ -121,6 +121,8 @@ object SflxCatalog {
         this.store = store
         this.appVersion = appVersion
         SflxVerify.init(context)
+        // The keys encrypted answers came with, so a cached copy still plays.
+        com.music.bitchord.playback.cenc.CencKeys.init(context.filesDir)
         val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
         this.hostRef = SflxHost(store, appVersion, sessions)
         // The lyrics bridge. A `.sflx` package that declares itself a lyrics

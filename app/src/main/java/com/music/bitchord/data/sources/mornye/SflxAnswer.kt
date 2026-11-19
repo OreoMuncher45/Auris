@@ -69,6 +69,9 @@ internal object SflxAnswer {
     /** The headers the extension built for the audio request. */
     fun headers(raw: String): Map<String, String> = headerMap(field(raw, "headers"))
 
+    /** The content key an encrypted answer came with, as the extension spelled it. */
+    fun decryptionKey(raw: String): String? = text((field(raw, "decryption") as? JsonObject)?.get("key"))
+
     /** The parts of a segmented start, in the order the extension gave them. */
     fun segments(raw: String): List<ModuleStreamSegment> {
         val array = field(raw, "segments") as? JsonArray ?: return emptyList()
