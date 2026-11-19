@@ -249,6 +249,16 @@ class MenuOpenCostProbe {
         hostedMenu(open) { close -> com.music.bitchord.SongSortMenu(browseId = "probe", onChosen = close) }
     }
 
+    /** The same content as [qualitySheet], in the app's in-place sheet. */
+    @Test
+    fun qualityAppSheet() = measure("QualitySheet(AppSheet)") { open, close ->
+        Box(Modifier.fillMaxSize()) {
+            com.music.bitchord.ui.components.menu.AppSheet(item = Unit.takeIf { open }, onDismiss = close) {
+                QualitySheet(target = QualityTarget.WIFI, selected = AudioQuality.HIGH, onSelect = {})
+            }
+        }
+    }
+
     @Test
     fun qualitySheet() = measure("QualitySheet(ModalBottomSheet)") { open, close ->
         if (open) {

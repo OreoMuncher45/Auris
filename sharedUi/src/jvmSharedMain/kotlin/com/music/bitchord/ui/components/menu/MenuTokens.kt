@@ -64,6 +64,17 @@ object MenuTokens {
     val MenuRowPaddingH = 14.dp
     val MenuRowPaddingV = 8.dp
 
+    /** A sheet's top corners: the radius the app's Material sheets were drawn with. */
+    val SheetRadius = 28.dp
+
+    /** The widest a sheet gets, whatever the window: Material's own sheet cap. */
+    val SheetMaxWidth = 640.dp
+
+    /** The grab handle at a sheet's top. */
+    val SheetHandleWidth = 32.dp
+    val SheetHandleHeight = 4.dp
+    val SheetHandlePaddingV = 16.dp
+
     val SheetRowPaddingH = 22.dp
     val SheetRowPaddingV = 15.dp
 }
