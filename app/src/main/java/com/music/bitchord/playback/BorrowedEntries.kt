@@ -26,18 +26,32 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal class BorrowedEntries {
 
-    private val keys: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Each lent key, to the token of the copy that was lent ([NO_TOKEN] when not tracked). */
+    private val keys = ConcurrentHashMap<String, Long>()
 
-    /** [key] has just been lent to a request that is not its own. */
-    fun lend(key: String) {
-        keys.add(key)
+    /**
+     * [key] has just been lent to a request that is not its own. A request's
+     * own set records [token], which stamps the copy it was lent — see
+     * [tokenOf]. The first token recorded for a key stands for the request's
+     * whole life.
+     */
+    fun lend(key: String, token: Long = NO_TOKEN) {
+        keys.putIfAbsent(key, token)
     }
+
+    /**
+     * The token of the copy of [key] this request was lent, or null when it
+     * was not lent one. A copy discarded and refilled by another request
+     * carries a different token (or none), so a borrower can tell its bytes
+     * are no longer the ones it started reading.
+     */
+    fun tokenOf(key: String): Long? = if (keys.isEmpty()) null else keys[key]
 
     /**
      * Whether an upstream fetch may write into [key]. The emptiness check
      * keeps an ordinary fetch, with nothing lent, to a field read.
      */
-    fun mayFill(key: String): Boolean = keys.isEmpty() || key !in keys
+    fun mayFill(key: String): Boolean = keys.isEmpty() || !keys.containsKey(key)
 
     /**
      * The key lent for [videoId], if any — for a per-request set, which holds
@@ -46,11 +60,15 @@ internal class BorrowedEntries {
      */
     fun lentFor(videoId: String): String? {
         if (keys.isEmpty()) return null
-        return keys.firstOrNull { it == videoId || it.startsWith("$videoId#") }
+        return keys.keys.firstOrNull { it == videoId || it.startsWith("$videoId#") }
     }
 
     /** The entry [key] has been removed; it may be filled again. */
     fun forget(key: String) {
         keys.remove(key)
+    }
+
+    companion object {
+        const val NO_TOKEN = 0L
     }
 }
