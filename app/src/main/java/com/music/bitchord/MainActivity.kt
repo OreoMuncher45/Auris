@@ -6562,6 +6562,9 @@ private fun RootOverlays(
     AppSheet(item = playlistPickRequest, onDismiss = dismissPlaylistPick) { request ->
         val target = request.songs
         val dismiss = dismissPlaylistPick
+        // Asked when a form submits, not when it was drawn: a form still on
+        // screen for the sheet's exit must not add or create anything.
+        val stillOpen = { sheets.playlistPick.songs != null || sheets.creatingPlaylist }
         PlaylistPickerSheet(
             playlists = playlists,
             loading = playlistsLoading,
@@ -6569,7 +6572,8 @@ private fun RootOverlays(
             collectionTitle = request.title,
             collectionThumbnailUrl = request.artwork,
             startCreating = target.isEmpty(),
-            onAdd = { picked ->
+            onAdd = onAdd@{ picked ->
+                if (!stillOpen()) return@onAdd
                 when (target.size) {
                     // One track: the ordinary row.
                     1 -> viewModel.addToPlaylists(picked, target.first()) { added, alreadyThere, failed ->
@@ -6604,7 +6608,8 @@ private fun RootOverlays(
                 }
                 dismiss()
             },
-            onCreate = { title, privacy ->
+            onCreate = onCreate@{ title, privacy ->
+                if (!stillOpen()) return@onCreate
                 when (target.size) {
                     1 -> viewModel.createPlaylist(title, privacy, target.first())
                     else -> viewModel.createPlaylistWithVideoIds(
@@ -6636,10 +6641,13 @@ private fun RootOverlays(
     AppSheet(item = folderPickRequest, onDismiss = dismissFolderPick) { request ->
         val target = request.song
         val dismiss = dismissFolderPick
+        // As the playlist picker: a form showing only for the exit does nothing.
+        val stillOpen = { sheets.folderTarget != null || sheets.creatingFolder }
         FolderPickerSheet(
             folders = localPlaylists.filter { it.isFolder },
             startCreating = target == null,
-            onAdd = { picked ->
+            onAdd = onAdd@{ picked ->
+                if (!stillOpen()) return@onAdd
                 target?.let { song ->
                     var added = 0
                     var alreadyThere = 0
@@ -6666,7 +6674,8 @@ private fun RootOverlays(
                 }
                 dismiss()
             },
-            onCreate = { title ->
+            onCreate = onCreate@{ title ->
+                if (!stillOpen()) return@onCreate
                 val folder = com.music.bitchord.data.spotify.LocalPlaylistStore.createFolder(title)
                 target?.let { song ->
                     com.music.bitchord.data.spotify.LocalPlaylistStore.addToFolder(folder.id, song)

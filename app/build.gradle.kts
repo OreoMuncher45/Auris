@@ -254,6 +254,7 @@ android {
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AnchoredItemMenuTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.MenuHostTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AppSheetTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.menu.AppSheetFocusTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.SeenWhenOnScreenTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MenuOpenCostProbe")
                         it.filter.excludeTestsMatching("com.music.bitchord.SettingsOverDetailTest")

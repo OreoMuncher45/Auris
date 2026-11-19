@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.Job
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
@@ -38,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -48,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -91,6 +98,7 @@ import kotlinx.coroutines.launch
  * Every moving value is read while drawing — the slide, the drag and the
  * scrim — so neither the entrance nor a drag recomposes anything.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun <T : Any> AppSheet(
     item: T?,
@@ -108,6 +116,7 @@ fun <T : Any> AppSheet(
         sheet.item = item
         sheet.opening = opening
     }
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(expanded) {
         // Opening or going, nothing else moves the sheet any more.
         sheet.springBack?.cancel()
@@ -127,20 +136,30 @@ fun <T : Any> AppSheet(
     }
     val current = sheet.item ?: return
 
+    // A sheet on its way out keeps nothing focused: the keyboard goes with
+    // it, and a form it carried can't be submitted from it. Cleared once the
+    // composition that closed it is applied, so nothing is left to hand the
+    // focus back.
+    if (!expanded) SideEffect { focusManager.clearFocus(force = true) }
+
     BackHandler(enabled = expanded, onBack = onDismiss)
     val scope = rememberCoroutineScope()
     val closeLabel = stringResource(R.string.close)
+    // The gesture and the list connection below are kept across
+    // compositions; they reach the caller's current dismissal through this.
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
     val settle: (velocity: Float) -> Unit = { velocity ->
         val height = sheet.height
         sheet.springBack?.cancel()
         if (height > 0 && (sheet.drag > height * DISMISS_FRACTION || velocity > DISMISS_VELOCITY)) {
-            onDismiss()
+            currentOnDismiss()
         } else if (sheet.drag > 0f) {
             sheet.springBack = scope.launch {
                 animate(sheet.drag, 0f, animationSpec = tween(200)) { v, _ -> sheet.drag = v }
             }
         }
     }
+    val currentSettle by rememberUpdatedState(settle)
     val pull = remember(dragFromContent) {
         object : NestedScrollConnection {
             // Pushing back up returns the sheet before the list scrolls again.
@@ -164,7 +183,7 @@ fun <T : Any> AppSheet(
 
             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (sheet.drag <= 0f) return Velocity.Zero
-                settle(available.y)
+                currentSettle(available.y)
                 return available
             }
         }
@@ -209,30 +228,20 @@ fun <T : Any> AppSheet(
                 .widthIn(max = MenuTokens.SheetMaxWidth)
                 .fillMaxWidth()
                 .onSizeChanged { sheet.height = it.height }
-                .graphicsLayer {
-                    val p = sheet.progress.value.coerceIn(0f, 1f)
-                    val h = sheet.height
-                    // Unseen until measured, or its first frame would sit
-                    // fully open before the slide knows how far to travel.
-                    alpha = if (h > 0) 1f else 0f
-                    translationY = sheet.drag + (1f - p) * h
-                }
-                // The rounded top is painted rather than clipped: the handle's
-                // strip keeps every row clear of the corners, and an unclipped
-                // panel is hit-tested as the rectangle it is.
-                .background(containerColor, SHAPE)
-                // Taps between rows land on the sheet, not the scrim under it.
-                .pointerInput(Unit) {}
-                .then(if (dragFromContent) Modifier.nestedScroll(pull) else Modifier)
+                // Outside the slide's layer — see the tracking note below. The
+                // sheet only ever moves down from where it rests, so where it
+                // rests is all it can be touched in.
                 .pointerInput(Unit) {
                     val tracker = VelocityTracker()
                     // Tracked from the finger's first touch, not from where
                     // the drag cleared the touch slop: a short flick is only
                     // a few events long, and the ones before the slop are
-                    // what say how fast it was. Positions are the finger's on
-                    // screen — the panel moves with it.
+                    // what say how fast it was. This sits outside the layer
+                    // that slides the panel, so positions and deltas are the
+                    // finger's own, against where the sheet rests — not
+                    // shrunk by the panel moving under the finger.
                     fun track(change: PointerInputChange) =
-                        tracker.addPosition(change.uptimeMillis, change.position + Offset(0f, sheet.drag))
+                        tracker.addPosition(change.uptimeMillis, change.position)
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         tracker.resetTracking()
@@ -250,14 +259,42 @@ fun <T : Any> AppSheet(
                             change.consume()
                             track(change)
                         }
-                        settle(if (ended) tracker.calculateVelocity().y else 0f)
+                        currentSettle(if (ended) tracker.calculateVelocity().y else 0f)
                     }
-                },
+                }
+                .graphicsLayer {
+                    val p = sheet.progress.value.coerceIn(0f, 1f)
+                    val h = sheet.height
+                    // Unseen until measured, or its first frame would sit
+                    // fully open before the slide knows how far to travel.
+                    alpha = if (h > 0) 1f else 0f
+                    translationY = sheet.drag + (1f - p) * h
+                }
+                // The rounded top is painted rather than clipped: the handle's
+                // strip keeps every row clear of the corners, and an unclipped
+                // panel is hit-tested as the rectangle it is.
+                .background(containerColor, SHAPE)
+                // Taps between rows land on the sheet, not the scrim under it.
+                .pointerInput(Unit) {}
+                .then(if (dragFromContent) Modifier.nestedScroll(pull) else Modifier),
         ) {
             CompositionLocalProvider(LocalMenuInteractive provides expanded) {
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        // Drawn in the page's window rather than a dialog's,
+                        // so focus is kept by hand: while the sheet is up,
+                        // nothing behind it can be reached, and while it goes,
+                        // nothing on it can be — not even by the window
+                        // handing its focus back to the first thing it finds.
+                        .focusProperties {
+                            if (expanded) {
+                                exit = { FocusRequester.Cancel }
+                            } else {
+                                enter = { FocusRequester.Cancel }
+                            }
+                        }
+                        .focusGroup()
                         .then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
                 ) {
