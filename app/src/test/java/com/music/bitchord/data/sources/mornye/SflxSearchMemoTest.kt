@@ -96,6 +96,47 @@ class SflxSearchMemoTest {
     }
 
     @Test
+    fun `a caller that straddles an invalidation is neither joined nor kept`() = runBlocking {
+        // Missed the cache, paused, and reached the board after an
+        // invalidation: there was no flight for the invalidation to fence.
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        memo.beforeRegister = {
+            memo.beforeRegister = null
+            memo.forgetMatching("amazon|")
+        }
+
+        val straddler = async {
+            memo.once("amazon|stream|x") {
+                asked.incrementAndGet()
+                started.complete(Unit)
+                gate.await()
+                Result.success("asked before the change")
+            }
+        }
+        started.await()
+        // Bounded: a later caller that wrongly joined the straddler would wait
+        // on its gate forever, and a regression should fail, not hang.
+        val later = try {
+            kotlinx.coroutines.withTimeout(5_000) {
+                memo.once("amazon|stream|x") {
+                    asked.incrementAndGet()
+                    Result.success("asked after the change")
+                }
+            }
+        } finally {
+            gate.complete(Unit)
+        }
+
+        assertEquals("the later caller did not join the straddler", "asked after the change", later.getOrNull())
+        assertEquals("asked before the change", straddler.await().getOrNull())
+        assertEquals(2, asked.get())
+        assertEquals("the straddler's answer was not kept", "asked after the change", memo.cached("amazon|stream|x"))
+    }
+
+    @Test
     fun `an answer is kept for the next caller`() = runBlocking {
         val memo = SflxSearchMemo<String>(ttlMs = 120_000)
         val asked = AtomicInteger(0)
