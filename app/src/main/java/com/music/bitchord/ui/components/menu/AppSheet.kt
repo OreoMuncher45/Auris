@@ -150,8 +150,9 @@ fun <T : Any> AppSheet(
     // A sheet on its way out keeps nothing focused: the keyboard goes with
     // it, and a form it carried can't be submitted from it. Cleared once the
     // composition that closed it is applied, so nothing is left to hand the
-    // focus back.
-    if (!expanded) SideEffect { focusManager.clearFocus(force = true) }
+    // focus back. Only while the focus is its own: the exit recomposes, and
+    // by then a sheet opened in its place may hold a field it mustn't lose.
+    if (!expanded) SideEffect { if (sheet.holdsFocus) focusManager.clearFocus(force = true) }
 
     // Focus moves into the sheet as it opens — and again if a keyboard comes
     // into use while it is up — rather than staying on whatever opened it

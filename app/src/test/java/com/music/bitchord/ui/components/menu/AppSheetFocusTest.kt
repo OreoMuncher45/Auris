@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.input.key.Key
 import org.junit.Assert.assertEquals
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.platform.LocalInputModeManager
@@ -96,6 +97,56 @@ class AppSheetFocusTest {
         compose.runOnIdle { }
         // Still drawn for its exit, and already holding nothing.
         assertFalse("the form lets go of the focus as the sheet goes", focused)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+    }
+
+    @Test
+    fun aSheetGoingLeavesTheFocusOfOneOpenedInItsPlace() {
+        AppUi.install(AndroidAppUiHost)
+        var first by mutableStateOf<String?>(null)
+        var second by mutableStateOf<String?>(null)
+        var firstColor by mutableStateOf(Color.Black)
+        var focused = false
+        val field = FocusRequester()
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    AppSheet(item = first, onDismiss = { first = null }, containerColor = firstColor) {
+                        Box(Modifier.fillMaxWidth().height(200.dp))
+                    }
+                    AppSheet(item = second, onDismiss = { second = null }) {
+                        BasicTextField(
+                            value = "Road trip",
+                            onValueChange = {},
+                            modifier = Modifier
+                                .focusRequester(field)
+                                .onFocusChanged { focused = it.isFocused },
+                        )
+                    }
+                }
+            }
+        }
+        first = "downloads"
+        compose.waitForIdle()
+
+        compose.mainClock.autoAdvance = false
+        // The first goes and a second opens in its place, whose field takes
+        // the focus while the first is still on its way out (220 ms).
+        first = null
+        second = "form"
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeBy(48)
+        compose.runOnIdle { field.requestFocus() }
+        compose.mainClock.advanceTimeBy(16)
+        compose.runOnIdle { assertTrue("the second sheet's field has the focus", focused) }
+
+        // The first, mid-exit, recomposes.
+        firstColor = Color.DarkGray
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeBy(16)
+        compose.runOnIdle { }
+        assertTrue("the going sheet leaves the field the focus", focused)
         compose.mainClock.autoAdvance = true
         compose.waitForIdle()
     }
