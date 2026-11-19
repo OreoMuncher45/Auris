@@ -435,13 +435,15 @@ object AudioCache {
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
         (family + exact).distinct().forEach { key ->
-            borrowedKeys.remove(key)
             if (keepComplete && isComplete(key)) {
                 TrackLog.d(TAG, "kept complete cache entry $key through a network failure", about = about)
                 return@forEach
             }
             runCatching { cache.removeResource(key) }
-                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
+                .onSuccess {
+                    borrowedKeys.forget(key)
+                    TrackLog.d(TAG, "discarded cache entry $key", about = about)
+                }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
         }
     }
@@ -554,8 +556,8 @@ object AudioCache {
                 when {
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: owned(it) }
-                    else -> completeSibling(videoId, videoId) ?: owned(videoId)
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
+                    else -> completeSibling(videoId, videoId) ?: videoId
                 }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -616,33 +618,15 @@ object AudioCache {
             offline = ::isOffline,
             isComplete = ::isComplete,
             isKeptOrigin = ::isKeptOrigin,
-        )?.also(borrowedKeys::add)
+        )?.also(borrowedKeys::lend)
     }
 
     /**
      * Sibling entries handed to a request that would have resolved something
      * else: a plain request reading a JioSaavn AAC copy under `#alt2`, say.
-     *
-     * The entry was complete when it was lent, but nothing pins it — the
-     * evictor can still drop its unread tail mid-play. CacheDataSource would
-     * then fill the hole from *this* request's upstream, which can resolve a
-     * different rendition, and write it into the middle of the borrowed file.
-     * [countedFetches] refuses any upstream fetch into a key listed here, so
-     * a hole ends the read instead; recovery then discards the now-incomplete
-     * entry and the next open picks a key afresh.
+     * See [BorrowedEntries] for why they are read-only and for how long.
      */
-    private val borrowedKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * [key] chosen as the request's own entry, not a borrowed one — so its own
-     * upstream may fill it again. A key lent earlier can become a request's own
-     * after a settings change. The emptiness check keeps the common case (no
-     * borrow this session) to a field read.
-     */
-    private fun owned(key: String): String {
-        if (borrowedKeys.isNotEmpty()) borrowedKeys.remove(key)
-        return key
-    }
+    private val borrowedKeys = BorrowedEntries()
 
     /**
      * The decision behind [completeSibling], with the cache and the network
@@ -1274,7 +1258,7 @@ object AudioCache {
                 // CacheDataSource sets the cache key on the spec it hands
                 // upstream. A borrowed sibling is read-only: see [borrowedKeys].
                 dataSpec.key?.let { key ->
-                    if (key in borrowedKeys) {
+                    if (!borrowedKeys.mayFill(key) { cache.getCachedSpans(it).isNotEmpty() }) {
                         throw IOException("cache entry $key was lent to this request whole and is no longer complete")
                     }
                 }
