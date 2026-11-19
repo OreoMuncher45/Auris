@@ -347,98 +347,41 @@ class SflxHost(
             }
             load(installed).getOrElse { return@withContext Result.failure(it) }
 
-            val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
             val prepared = rowFor(extensionId, trackId)
-            // The extension is asked for the wanted tier, and then for the ones
-            // below it, and the first answer that carries a URL wins.
+            // The same track, asked for twice.
             //
-            // The extension does have a fallback ladder of its own, and it only
-            // walks it when the gateway says *why* it refused — a code like
-            // QUALITY_UNAVAILABLE. A refusal it cannot read (this gateway
-            // answers the Atmos request with a bare 400 and an empty body) is
-            // treated as a fault worth retrying, six times, and then reported —
-            // so a track with no Atmos mix failed to play at all rather than
-            // playing its lossless master, which is the wrong way round.
-            val tiers = SflxQuality.fallbacks(installed.manifest, requested)
-            var attempt: Result<String> = Result.failure(SflxException("the extension returned no stream URL"))
-            var chosenTier = requested
-            for (tier in tiers) {
-                val answer = QuickJsExecutor.callExport(
-                    moduleId = moduleIdOf(extensionId),
-                    functionName = "getTrackStreamUrl",
-                    args = listOf(quote(trackId), quote(tier), context(settingsFor(installed), prepared, wantsAtmos && tier == requested)),
-                )
-                // An answer counts as resolved when it carries a URL *or* the
-                // parts of one. Tidal answers a segmented start with
-                // `streamUrl: null` and the segments beside it, and a reader
-                // that only looked for the URL called that a failure — so the
-                // ladder kept walking down past a perfectly good Atmos mix,
-                // and the parts that were in the same object were never read.
-                if (answer.isSuccess && SflxAnswer.carriesStream(answer.getOrThrow())) {
-                    attempt = answer
-                    chosenTier = tier
-                    break
-                }
-                attempt = answer
-                val why = answer.mapCatching { SflxAnswer.error(it) }
-                    .getOrNull()
-                    .orEmpty()
-                    .ifBlank { answer.exceptionOrNull()?.message.orEmpty() }
-                    .ifBlank { "the extension returned no stream URL" }
-                Log.w(TAG, "sflx[$extensionId] $tier did not resolve '$trackId': $why")
-            }
-            // The extension could not answer at all. If the reason is that its
-            // signed session is not in order, then the raw error is the wrong
-            // thing to hand back: it describes a status code the listener
-            // cannot act on, when there is a button on their screen that
-            // fixes it. The advice replaces it, and every surface that shows
-            // the failure shows the advice.
-            val answered = attempt.mapCatching { raw ->
-                val url = SflxAnswer.streamUrl(raw)
-                val headers = SflxAnswer.headers(raw)
-                val segments = SflxAnswer.segments(raw)
-                if (url == null && segments.isEmpty()) {
-                    val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
-                    throw SflxException(why)
-                }
-                if (chosenTier != requested) {
-                    Log.d(TAG, "sflx[$extensionId] answered $requested with $chosenTier")
-                }
-                // What the extension said about the audio it resolved. It is a
-                // claim, not a measurement — the fields come from the file the
-                // extension was about to write, which this host never sees — and
-                // it is treated as one everywhere downstream.
-                val playable = if (url != null) {
-                    url
-                } else {
-                    // A segmented start is streamed, not assembled first: the
-                    // parts become an HLS playlist and Media3 fetches them as
-                    // it plays. Assembling meant the whole track had to arrive
-                    // inside the substitution's 20s, so a hi-res Tidal track on
-                    // a slow connection never played a note. The same playlist
-                    // is what [ManifestFile] turns back into one file for a
-                    // download, so both paths read the same answer.
-                    val playlist = SflxSegments.playlist(
-                        directory = cacheDirectory(installed),
-                        extensionId = extensionId,
-                        key = trackId,
-                        segments = segments,
-                        durationMs = durationMsOf(prepared),
-                        headers = headers,
-                    ) ?: throw SflxException("the segments could not be written as a playlist")
-                    "file://${playlist.absolutePath}"
-                }
-                ModuleStreamResponse(
-                    streamUrl = playable,
-                    headers = headers.ifEmpty { null },
-                    segments = segments.ifEmpty { null },
-                    track = SflxAnswer.track(raw, trackId),
-                )
+            // Read-ahead preparation, the live resolve (which starts its own
+            // after 1.5s without a prepared pin) and the upgrade walk each
+            // reach this independently, and before this each of them ran the
+            // whole tier ladder below — every `getTrackStreamUrl`, and every
+            // catalogue search an extension like Amazon runs *inside* that
+            // call, where [searches] cannot see it. Seen on a device: three
+            // concurrent AC-4 resolutions of one ASIN, each repeating its 1.5MB
+            // searches. The stream pins only deduplicate after a URL exists.
+            //
+            // So the whole ladder is asked once: a caller arriving while it
+            // runs waits for that one, and a URL it produced is kept for a few
+            // minutes, as [com.music.bitchord.data.sources.module.ModuleManager]
+            // keeps a regular module's. A failure is not kept. The work runs in
+            // the memo's own scope, so a caller that gives up at the 20s
+            // substitution deadline no longer tears down a resolution that
+            // the retry right behind it is about to want.
+            val key = streamKey(extensionId, trackId, quality, wantsAtmos, fingerprintOf(settingsFor(installed)), prepared)
+            val ask = suspend { resolveStream(installed, trackId, quality, wantsAtmos, prepared) }
+            var answered = streams.once(key, ask)
+            // A kept segmented answer points at a playlist in the cache
+            // directory, which the system may clear at any time. A playlist
+            // that is gone is not an answer: forget it and ask again.
+            if (answered.getOrNull()?.let(::playlistGone) == true) {
+                streams.forget(key)
+                answered = streams.once(key, ask)
             }
             // The advice, when the failure was a session that is not in order.
             // Asked of the *answer* rather than of the attempt, because the
             // extension reports its own refusal as a successful call carrying
-            // an error — the host never sees an exception for it.
+            // an error — the host never sees an exception for it. Asked after
+            // the shared call, not inside it, because it describes the session
+            // as it is now.
             answered.exceptionOrNull()?.let { error ->
                 val advice = verificationAdvice(installed.id) ?: return@let
                 Log.w(TAG, "sflx[$extensionId] $advice (${error.message})")
@@ -446,6 +389,117 @@ class SflxHost(
             }
             answered
         }
+
+    private fun playlistGone(answer: ModuleStreamResponse): Boolean {
+        val url = answer.streamUrl ?: return false
+        if (!url.startsWith("file://")) return false
+        return !File(url.removePrefix("file://")).exists()
+    }
+
+    /** The extension's settings as one ordered string; the object itself has no order. */
+    private fun fingerprintOf(settings: JSONObject): String =
+        settings.keys().asSequence().sorted().joinToString(",") { key -> "$key=${settings.opt(key)}" }
+
+    /** The stream answers this host has already given, and the ones in flight. */
+    private val streams = SflxSearchMemo<ModuleStreamResponse>(ttlMs = STREAM_CACHE_TTL_MS)
+
+    /** The tier ladder for one track: the extension's own answer, asked for once by [streamUrl]. */
+    private suspend fun resolveStream(
+        installed: InstalledSflx,
+        trackId: String,
+        quality: String,
+        wantsAtmos: Boolean,
+        prepared: String?,
+    ): Result<ModuleStreamResponse> {
+        val extensionId = installed.id
+        val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
+        // The extension is asked for the wanted tier, and then for the ones
+        // below it, and the first answer that carries a URL wins.
+        //
+        // The extension does have a fallback ladder of its own, and it only
+        // walks it when the gateway says *why* it refused — a code like
+        // QUALITY_UNAVAILABLE. A refusal it cannot read (this gateway
+        // answers the Atmos request with a bare 400 and an empty body) is
+        // treated as a fault worth retrying, six times, and then reported —
+        // so a track with no Atmos mix failed to play at all rather than
+        // playing its lossless master, which is the wrong way round.
+        val tiers = SflxQuality.fallbacks(installed.manifest, requested)
+        var attempt: Result<String> = Result.failure(SflxException("the extension returned no stream URL"))
+        var chosenTier = requested
+        for (tier in tiers) {
+            val answer = QuickJsExecutor.callExport(
+                moduleId = moduleIdOf(extensionId),
+                functionName = "getTrackStreamUrl",
+                args = listOf(quote(trackId), quote(tier), context(settingsFor(installed), prepared, wantsAtmos && tier == requested)),
+            )
+            // An answer counts as resolved when it carries a URL *or* the
+            // parts of one. Tidal answers a segmented start with
+            // `streamUrl: null` and the segments beside it, and a reader
+            // that only looked for the URL called that a failure — so the
+            // ladder kept walking down past a perfectly good Atmos mix,
+            // and the parts that were in the same object were never read.
+            if (answer.isSuccess && SflxAnswer.carriesStream(answer.getOrThrow())) {
+                attempt = answer
+                chosenTier = tier
+                break
+            }
+            attempt = answer
+            val why = answer.mapCatching { SflxAnswer.error(it) }
+                .getOrNull()
+                .orEmpty()
+                .ifBlank { answer.exceptionOrNull()?.message.orEmpty() }
+                .ifBlank { "the extension returned no stream URL" }
+            Log.w(TAG, "sflx[$extensionId] $tier did not resolve '$trackId': $why")
+        }
+        // The extension could not answer at all. If the reason is that its
+        // signed session is not in order, then the raw error is the wrong
+        // thing to hand back: it describes a status code the listener
+        // cannot act on, when there is a button on their screen that
+        // fixes it. The advice replaces it, and every surface that shows
+        // the failure shows the advice.
+        return attempt.mapCatching { raw ->
+            val url = SflxAnswer.streamUrl(raw)
+            val headers = SflxAnswer.headers(raw)
+            val segments = SflxAnswer.segments(raw)
+            if (url == null && segments.isEmpty()) {
+                val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
+                throw SflxException(why)
+            }
+            if (chosenTier != requested) {
+                Log.d(TAG, "sflx[$extensionId] answered $requested with $chosenTier")
+            }
+            // What the extension said about the audio it resolved. It is a
+            // claim, not a measurement — the fields come from the file the
+            // extension was about to write, which this host never sees — and
+            // it is treated as one everywhere downstream.
+            val playable = if (url != null) {
+                url
+            } else {
+                // A segmented start is streamed, not assembled first: the
+                // parts become an HLS playlist and Media3 fetches them as
+                // it plays. Assembling meant the whole track had to arrive
+                // inside the substitution's 20s, so a hi-res Tidal track on
+                // a slow connection never played a note. The same playlist
+                // is what [ManifestFile] turns back into one file for a
+                // download, so both paths read the same answer.
+                val playlist = SflxSegments.playlist(
+                    directory = cacheDirectory(installed),
+                    extensionId = extensionId,
+                    key = trackId,
+                    segments = segments,
+                    durationMs = durationMsOf(prepared),
+                    headers = headers,
+                ) ?: throw SflxException("the segments could not be written as a playlist")
+                "file://${playlist.absolutePath}"
+            }
+            ModuleStreamResponse(
+                streamUrl = playable,
+                headers = headers.ifEmpty { null },
+                segments = segments.ifEmpty { null },
+                track = SflxAnswer.track(raw, trackId),
+            )
+        }
+    }
 
     /**
      * The lyrics one extension answers with, as the JSON it returned.
@@ -594,9 +648,10 @@ class SflxHost(
         forgetSearches(extensionId)
     }
 
-    /** Drops every answer this extension gave. */
+    /** Drops every answer this extension gave, searches and streams alike. */
     private fun forgetSearches(extensionId: String) {
         searches.forgetMatching("$extensionId|")
+        streams.forgetMatching(streamKeyPrefix(extensionId))
     }
 
     /**
@@ -803,6 +858,42 @@ class SflxHost(
          * open is not answered from the past for the rest of the session.
          */
         private const val SEARCH_CACHE_TTL_MS = 120_000L
+
+        /**
+         * How long a resolved stream is kept: the policy a regular module's
+         * stream already has, long enough to cover the preparation, the live
+         * resolve and the upgrade of one track.
+         */
+        private const val STREAM_CACHE_TTL_MS = 5 * 60 * 1000L
+
+        /**
+         * What makes two stream requests the same question: the extension, the
+         * track, the tier and whether Atmos is wanted, the extension's settings,
+         * and the search row handed back as prepared context (it takes part in
+         * the extension's recording-identity check, so a different row is a
+         * different question). Each part is length-prefixed, so no id or row
+         * can be spelled to collide with another's.
+         */
+        internal fun streamKey(
+            extensionId: String,
+            trackId: String,
+            quality: String,
+            wantsAtmos: Boolean,
+            settingsFingerprint: String,
+            preparedRow: String?,
+        ): String {
+            // A missing row is written as a bare "-": every present part starts
+            // with its length, so no real row can be read as "no row".
+            return streamKeyPrefix(extensionId) + listOf(
+                trackId,
+                quality.uppercase(Locale.ROOT),
+                if (wantsAtmos) "atmos" else "stereo",
+                settingsFingerprint,
+            ).joinToString("") { "${it.length}:$it" } + (preparedRow?.let { "${it.length}:$it" } ?: "-")
+        }
+
+        /** The start every stream key of one extension shares, so its answers can be dropped together. */
+        internal fun streamKeyPrefix(extensionId: String): String = "stream|${extensionId.length}:$extensionId"
 
         /** The prefix an extension's source config carries, so it is routed here. */
         const val CONFIG_SCHEME = "sflx://"
