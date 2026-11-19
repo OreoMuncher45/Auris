@@ -855,7 +855,8 @@
 
     <string name="output_precision">输出精度</string>
     <string name="bit_perfect">位完美输出</string>
-    <string name="bit_perfect_subtitle">原样输出解码后的采样：不经过 DSP、响度均衡或交叉淡化。输出路径必须能承载源格式。</string>
+    <string name="bit_perfect_subtitle">原样输出解码后的采样：不经过 DSP、响度均衡、交叉淡化或自动混音。输出路径必须能承载源格式。</string>
+    <string name="transitions_off_bit_perfect">位完美输出开启时不可用。</string>
 
     <string name="personal">个人</string>
 
