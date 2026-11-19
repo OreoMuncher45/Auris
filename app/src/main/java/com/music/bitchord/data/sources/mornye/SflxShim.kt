@@ -1480,14 +1480,24 @@ internal object SflxShim {
             }
 
             // Whether a search row is a recording rather than a collection.
-            var NON_TRACK_TYPES = {
-                artist: true, album: true, playlist: true, station: true, podcast: true,
-                episode: true, show: true, video: true, user: true, profile: true, mix: true
+            //
+            // `item_type` is the contract's own field, and every extension in
+            // the store fills it from the same four words (track, album,
+            // artist, playlist): a row that sets it is a track only when it
+            // says so. The looser `type` and `kind` mean other things in some
+            // packages (SoundCloud's `resolve`), so they only rule a row out
+            // when they name a collection. A row that says nothing is kept.
+            var TRACK_TYPES = { track: true, song: true, recording: true, audio: true };
+            var COLLECTION_TYPES = {
+                artist: true, album: true, playlist: true, station: true, podcast: true, audiobook: true,
+                episode: true, show: true, user: true, profile: true, mix: true, label: true, genre: true
             };
             function isTrackRow(row) {
                 if (!row || typeof row !== 'object') return false;
-                var type = text(firstOf(row.item_type, row.itemType, row.type, row.kind)).toLowerCase();
-                return !type || !NON_TRACK_TYPES[type];
+                var declared = text(firstOf(row.item_type, row.itemType)).toLowerCase();
+                if (declared) return !!TRACK_TYPES[declared];
+                var loose = text(firstOf(row.type, row.kind)).toLowerCase();
+                return !loose || !COLLECTION_TYPES[loose];
             }
 
             function isArray(value) {

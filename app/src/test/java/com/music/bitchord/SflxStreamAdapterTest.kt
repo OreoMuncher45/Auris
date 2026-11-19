@@ -91,6 +91,10 @@ class SflxStreamAdapterTest {
                   { item_type: 'playlist', id: 'PL', name: 'Rap Rotation', provider_id: 'amazon' },
                   { item_type: 'track', id: 'TRK', name: 'TELEKINESIS', artists: 'Travis Scott', duration_ms: 0, provider_id: 'amazon' },
                   { id: 'UNTYPED', name: 'Untyped', artists: 'Someone' },
+                  { item_type: 'audiobook', id: 'BOOK', name: 'A book', artists: 'Someone' },
+                  { item_type: 'song', id: 'SONG', name: 'A song', artists: 'Someone' },
+                  { type: 'resolve', id: 'LOOSE', name: 'Loose type', artists: 'Someone' },
+                  { type: 'album', id: 'LOOSEALB', name: 'Loose album', artists: 'Someone' },
                 ];
               },
               checkAvailability(isrc, name, artist, options) {
@@ -203,7 +207,7 @@ class SflxStreamAdapterTest {
     @Test
     fun `a search keeps the tracks and drops artists, albums and playlists`() {
         val ids = case("search").answer().getValue("ids").jsonArray.map { it.jsonPrimitive.content }
-        assertEquals(listOf("TRK", "UNTYPED"), ids)
+        assertEquals(listOf("TRK", "UNTYPED", "SONG", "LOOSE"), ids)
     }
 
     @Test
