@@ -457,6 +457,36 @@ class AppSheetFocusTest {
     }
 
     @Test
+    fun aTouchOpenedFormSheetDoesNotFocusItsFieldForTheListener() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var fieldFocused = false
+        val modes = object : InputModeManager {
+            override val inputMode: InputMode get() = InputMode.Touch
+            @ExperimentalComposeUiApi
+            override fun requestInputMode(inputMode: InputMode): Boolean = false
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalInputModeManager provides modes) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        AppSheet(item = item, onDismiss = { item = null }) {
+                            BasicTextField(
+                                value = "",
+                                onValueChange = {},
+                                modifier = Modifier.onFocusChanged { fieldFocused = it.isFocused },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item = "new folder"
+        compose.waitForIdle()
+        assertFalse("opening the form doesn't put the keyboard up on its own", fieldFocused)
+    }
+
+    @Test
     fun aTouchOpenedSheetTakesTheFocusOffAFieldBehindIt() {
         AppUi.install(AndroidAppUiHost)
         var item by mutableStateOf<String?>(null)

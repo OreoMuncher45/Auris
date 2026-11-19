@@ -360,7 +360,6 @@ fun <T : Any> AppSheet(
                         // nothing on it can be — not even by the window
                         // handing its focus back to the first thing it finds.
                         .onFocusChanged { sheet.holdsFocus = it.hasFocus }
-                        .focusRequester(sheetFocus)
                         .focusProperties {
                             if (expanded) {
                                 exit = {
@@ -382,9 +381,14 @@ fun <T : Any> AppSheet(
                     // pulled away. Also where the focus lands as the sheet
                     // opens: focusable with no indication, so in touch mode it
                     // shows nothing, and with a keyboard Tab moves on from it.
+                    // Asked for by name, and focusable in touch mode too:
+                    // asking the sheet as a whole lands on its first field
+                    // instead, and puts the keyboard up unasked.
                     Box(
                         Modifier
                             .align(Alignment.CenterHorizontally)
+                            .focusRequester(sheetFocus)
+                            .focusProperties { canFocus = true }
                             .focusable()
                             .padding(vertical = MenuTokens.SheetHandlePaddingV)
                             .size(MenuTokens.SheetHandleWidth, MenuTokens.SheetHandleHeight)
