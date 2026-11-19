@@ -43,7 +43,10 @@ import com.music.bitchord.ui.screens.QualitySheet
 import com.music.bitchord.ui.screens.QualityTarget
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import com.music.bitchord.ui.components.menu.AnchoredItemMenu
 import com.music.bitchord.ui.components.menu.AnchoredMenu
+import com.music.bitchord.ui.components.menu.MenuHeader
+import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.menu.rememberMenuPresence
 import org.junit.Assume
 import org.junit.Rule
@@ -214,11 +217,17 @@ class MenuOpenCostProbe {
         )
     }
 
+    /** The song row's ⋮, which opened a tinted bottom sheet before UI 12's stage 2. */
     @Test
-    fun songActionsSheet() = measure("SongActionsSheet(ModalBottomSheet)") { open, close ->
-        if (open) {
-            ModalBottomSheet(onDismissRequest = close, containerColor = Color.Transparent, dragHandle = null) {
-                songRows(SongActionsPresentation.Sheet, player = false)
+    fun songRowMenu() = measure("Song row ⋮ (AnchoredItemMenu, header + list rows)") { open, close ->
+        Box(Modifier.fillMaxSize()) {
+            AnchoredItemMenu(
+                item = song.takeIf { open },
+                anchorInWindow = { Rect(950f, 600f, 1060f, 710f) },
+                onDismiss = close,
+            ) { item ->
+                MenuHeader(title = item.title, subtitle = item.artist)
+                songRows(SongActionsPresentation.Menu, player = false)
             }
         }
     }

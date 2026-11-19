@@ -5,19 +5,16 @@ import com.music.bitchord.R
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -76,9 +73,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -95,8 +90,10 @@ import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menu.MenuDensity
 import com.music.bitchord.ui.components.menu.MenuDivider
 import com.music.bitchord.ui.components.menu.MenuRow
+import com.music.bitchord.ui.components.menu.MenuTokens
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
@@ -126,11 +123,10 @@ import java.util.Locale
  * has. Starting one might: below API 29 it needs a storage permission that only
  * an Activity can ask for.
  *
- * The sheet is painted in the track's own colours, the same way its album page
- * is — it is opened *from* that artwork, usually with it still on screen behind
- * the scrim, and a slab of flat grey in front of a coloured page reads as
- * something borrowed from another app. The host supplies no container colour
- * and no drag handle; both are drawn here, over the tint.
+ * Only the rows: the surface is the host's — [com.music.bitchord.ui.components.menu.AnchoredMenu]
+ * for a ⋮ or the player's button, [HeldContextMenu] for a hold. The rows bring
+ * their own scroll, so a track with every optional row present scrolls inside
+ * the menu rather than running off the screen.
  */
 @Composable
 fun SongActionsSheet(
@@ -244,36 +240,28 @@ fun SongActionsSheet(
      */
     resolvingLinks: Boolean = false,
     /**
-     * Where the rows are drawn. [SongActionsPresentation.Sheet] is the tinted
-     * bottom sheet with its own track header; [SongActionsPresentation.Menu]
-     * is only the rows, compact and in the theme's own colours, for the
-     * popup a held row lifts into — see [HeldContextMenu], which draws the
-     * held row itself above them; [SongActionsPresentation.Glass] is the same
-     * rows over the app's liquid glass, for the menu that hangs off the
-     * player's three-dot button — see [com.music.bitchord.ui.components.menu.AnchoredMenu].
+     * Whose ink the rows are drawn in. [SongActionsPresentation.Menu] is the
+     * theme's, for a menu floating over a page — a ⋮ in a list, or a held row;
+     * [SongActionsPresentation.Glass] is the artwork's, for the menu that
+     * hangs off the player's three-dot button, whose glass shows the artwork.
      */
-    presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
+    presentation: SongActionsPresentation = SongActionsPresentation.Menu,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
-    val menu = presentation == SongActionsPresentation.Menu
     val glass = presentation == SongActionsPresentation.Glass
-    // Read from the thumbnail the row that opened this sheet was already
-    // showing, not a larger copy of it: the tint is a blur and a handful of
-    // swatches, neither of which a bigger image improves, and going back for
-    // one is what had the sheet opening grey and colouring in afterwards.
+    // A menu over a page stays in the theme's colours: it floats over
+    // whatever the page is, and an accent pitched against one sleeve is not
+    // guaranteed to read against another.
     //
-    // The popup stays neutral instead: it floats over a blurred page rather
-    // than sitting on the sleeve's own ground, and an accent pitched against
-    // that tint is not guaranteed to read against the theme's surface.
-    //
-    // The glass menu does the opposite: it floats over the artwork itself, so
-    // its ink has to be the artwork's ink — the same white-or-near-black the
-    // player draws its own chrome in, or a label would vanish into a bright
-    // sleeve.
-    val palette = if (menu) {
-        neutralMenuPalette()
-    } else {
+    // The player's menu does the opposite: it floats over the artwork itself,
+    // so its ink has to be the artwork's ink — the same white-or-near-black
+    // the player draws its own chrome in, or a label would vanish into a
+    // bright sleeve. Read from the thumbnail already on screen, not a larger
+    // copy: a handful of swatches is all it needs.
+    val palette = if (glass) {
         rememberArtworkPalette(song.thumbnailUrl, artPx = ROW_ART_PX)
+    } else {
+        neutralMenuPalette()
     }
     val liked = likeStatus == LikeStatus.LIKE
     val disliked = likeStatus == LikeStatus.DISLIKE
@@ -512,76 +500,56 @@ fun SongActionsSheet(
         }
     }
 
-    if (menu) {
-        CompositionLocalProvider(LocalActionRowStyle provides ActionRowStyle.Menu) {
-            Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()), content = rows)
-        }
-        return
-    }
-
-    if (glass) {
-        // The glass menu carries the same rows as the sheet, in the same order
-        // and with the same glyphs — it is the same menu, hung off a button
-        // instead of rising from the floor. The ink is the artwork's, because
-        // the glass shows the artwork.
-        CompositionLocalProvider(
-            LocalActionRowStyle provides ActionRowStyle.Glass,
-            LocalGlassMenuInk provides palette.onBackground,
+    // Every surface carries the same rows, in the same order and with the
+    // same glyphs: it is the same menu wherever it hangs.
+    CompositionLocalProvider(
+        LocalActionRowStyle provides ActionRowStyle.Menu,
+        LocalMenuInk provides palette.onBackground,
+    ) {
+        Column(
+            modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
         ) {
-            Column(
-                modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                if (pickingSleepTimer) {
-                    SleepTimerPicker(
-                        palette = palette,
-                        onBack = { pickingSleepTimer = false },
-                        ink = palette.onBackground,
-                        mutedInk = palette.onBackgroundVariant,
-                    )
-                } else {
-                    rows()
-                }
+            if (pickingSleepTimer) {
+                SleepTimerPicker(
+                    palette = palette,
+                    onBack = { pickingSleepTimer = false },
+                    ink = palette.onBackground,
+                    mutedInk = palette.onBackgroundVariant,
+                )
+            } else {
+                rows()
             }
         }
-        return
-    }
-
-    TintedSheet(palette = palette, imageUrl = song.thumbnailUrl, modifier = modifier) {
-        if (pickingSleepTimer) {
-            SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
-            return@TintedSheet
-        }
-
-        SheetTrackHeader(song, subtitleColor = palette.onBackgroundVariant)
-        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
-        rows()
-        Spacer(Modifier.height(24.dp))
     }
 }
 
-/** How [SongActionsSheet] is being presented. */
-enum class SongActionsPresentation { Sheet, Menu, Glass }
+/** Whose ink [SongActionsSheet]'s rows are drawn in — see its `presentation`. */
+enum class SongActionsPresentation { Menu, Glass }
 
-/** Row density and layout, set by whichever surface the rows are drawn on. */
-internal enum class ActionRowStyle { Sheet, Menu, Glass }
+/**
+ * Which surface an [ActionRow] is on: a menu ([MenuRow]), or one of the
+ * sheets that are still sheets — the playlist and folder pickers.
+ */
+internal enum class ActionRowStyle { Sheet, Menu }
 
 internal val LocalActionRowStyle = staticCompositionLocalOf { ActionRowStyle.Sheet }
 
 /**
- * The ink for rows drawn on glass.
+ * The ink for rows drawn in a menu.
  *
- * A glass surface shows whatever is behind it, so the theme's own greys have
- * nothing dependable to sit against: the artwork decides whether a label has
- * to be white or near-black. Null falls back to the theme's foreground.
+ * A menu's glass shows whatever is behind it, so the theme's own greys have
+ * nothing dependable to sit against over artwork: there the artwork decides
+ * whether a label has to be white or near-black. Null is the theme's surface
+ * foreground, which is right over a page.
  */
-internal val LocalGlassMenuInk = staticCompositionLocalOf<Color?> { null }
+internal val LocalMenuInk = staticCompositionLocalOf<Color?> { null }
 
 /**
- * The popup's colours: the theme's own, so the menu reads the same in light and
- * dark whatever the artwork is. Shaped as an [ArtworkPalette] so every row below
- * takes it exactly as it takes a sleeve's.
+ * A menu's colours over a page: the theme's own, so it reads the same in light
+ * and dark whatever the artwork is. Shaped as an [ArtworkPalette] so every row
+ * takes it exactly as it takes a sleeve's in the player's menu.
  */
 @Composable
 private fun neutralMenuPalette(): ArtworkPalette {
@@ -599,98 +567,14 @@ private fun neutralMenuPalette(): ArtworkPalette {
     }
 }
 
-/**
- * The break between groups of rows: a hairline on the sheet, and on the popup
- * the thicker band iOS-style context menus use — a hairline between rows that
- * are only 44dp apart reads as a row border rather than as a new group.
- */
+/** The break between groups of rows — see [MenuDivider]. */
 @Composable
 private fun GroupSeparator(palette: ArtworkPalette) {
-    when (LocalActionRowStyle.current) {
-        // Thin hairline between items in every context menu — the popup used a
-        // thicker band, but a 0.5dp divider separates rows cleanly in all three
-        // surfaces (sheet, popup, glass) without crowding them.
-        ActionRowStyle.Menu -> HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-            thickness = 0.5.dp,
-            color = palette.divider,
-        )
-        ActionRowStyle.Glass -> MenuDivider(palette.divider)
-        ActionRowStyle.Sheet -> HorizontalDivider(
-            modifier = Modifier.padding(vertical = 6.dp),
-            thickness = 0.5.dp,
-            color = palette.divider,
-        )
-    }
+    MenuDivider(
+        color = palette.divider,
+        density = if (LocalActionRowStyle.current == ActionRowStyle.Menu) MenuDensity.Menu else MenuDensity.Sheet,
+    )
 }
-
-/**
- * A bottom sheet wearing the artwork's colours: the tint and its blurred wash
- * behind, the rounded top corners and the drag handle drawn over it.
- *
- * The corners and the handle are this composable's job rather than
- * `ModalBottomSheet`'s because the host has to pass a transparent container for
- * the wash to be visible at all — and a transparent container has nothing left
- * to clip or to hang a handle on.
- *
- * The row list is capped to a fraction of the screen and scrolls internally.
- * Left unbounded, a track with every optional row present — playlist removal,
- * revert, share, the log — runs past the bottom of the screen with no way to
- * reach what's cut off: a plain Column neither scrolls nor shrinks, so the
- * sheet just grows past the window and sits there stuck at full height.
- */
-@Composable
-private fun TintedSheet(
-    palette: ArtworkPalette,
-    imageUrl: String?,
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.85f
-    Box(
-        modifier
-            .fillMaxWidth()
-            .clip(SHEET_SHAPE),
-    ) {
-        ArtworkBackdrop(
-            palette = palette,
-            imageUrl = imageUrl,
-            modifier = Modifier.matchParentSize(),
-            // A sheet is a fraction of the height of a page, so the wash has
-            // to resolve over a much shorter run to read the same way.
-            washFraction = 0.75f,
-            artPx = ROW_ART_PX,
-        )
-        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
-            // Drawn rather than taken from BottomSheetDefaults, whose handle
-            // carries 22dp of padding on each side — half a row's worth of
-            // nothing between the grip and the track it is about. Kept outside
-            // the scrolling rows below so it stays put as a grab target rather
-            // than travelling with the list.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(width = 34.dp, height = 4.dp)
-                        .clip(CircleShape)
-                        .background(palette.onBackground.copy(alpha = 0.35f)),
-                )
-            }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                content = content,
-            )
-        }
-    }
-}
-
-private val SHEET_SHAPE = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
 /**
  * One row carrying the whole life of a download: start it, watch it, cancel it,
@@ -922,9 +806,7 @@ private fun SleepOption(
     accent: Color,
     onClick: () -> Unit,
 ) {
-    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
-    val ink = if (glass) LocalGlassMenuInk.current ?: MaterialTheme.colorScheme.onBackground
-    else MaterialTheme.colorScheme.onBackground
+    val ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -982,15 +864,16 @@ private fun sleepTimerCountdown(): String? {
 }
 
 /**
- * One line of a bottom sheet's menu. Shared with the playlist picker so the
- * two sheets read as the same control rather than as two lists that happen to
- * look alike.
+ * One line of a menu, or of the playlist and folder pickers — the sheets that
+ * are still sheets. Shared so the two read as the same control rather than as
+ * two lists that happen to look alike.
+ *
+ * In a menu it is [MenuRow]; on a sheet, the sheet-density row.
  *
  * [tint] is for rows whose icon carries state — a filled heart on a liked
  * track — and is otherwise the ordinary foreground. [accent] colours the
- * trailing [value], and defaults to the app's own red: a sheet tinted from
- * artwork passes the artwork's accent instead, so the row belongs to the sheet
- * it is drawn on.
+ * trailing [value], and defaults to the app's own red: the player's menu
+ * passes the artwork's accent instead, so the row belongs to what it is drawn on.
  */
 @Composable
 internal fun ActionRow(
@@ -1000,25 +883,15 @@ internal fun ActionRow(
     tint: Color? = null,
     accent: Color = MaterialTheme.colorScheme.primary,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
-    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
-    // The popup sits on a surface rather than the page background, so its
-    // text follows the surface's colour — the two differ in light mode. The
-    // glass menu follows the artwork instead, because the glass shows the
-    // artwork.
-    val foreground = when {
-        glass -> LocalGlassMenuInk.current ?: MaterialTheme.colorScheme.onSurface
-        menu -> MaterialTheme.colorScheme.onSurface
-        else -> MaterialTheme.colorScheme.onBackground
-    }
-    if (glass) {
-        // The anchored menu's own row; see MenuRow.
+    if (LocalActionRowStyle.current == ActionRowStyle.Menu) {
         MenuRow(
             icon = icon,
             label = label,
-            ink = foreground,
+            modifier = modifier,
+            ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface,
             value = value,
             valueColor = accent,
             iconTint = tint,
@@ -1027,43 +900,26 @@ internal fun ActionRow(
         )
         return
     }
+    val foreground = MaterialTheme.colorScheme.onBackground
     val alpha = if (enabled) 1f else 0.4f
-    val iconView: @Composable () -> Unit = {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = MenuTokens.SheetRowPaddingH, vertical = MenuTokens.SheetRowPaddingV),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = (tint ?: foreground).copy(alpha = alpha),
-            modifier = Modifier.size(if (menu) 20.dp else 22.dp),
+            modifier = Modifier.size(MenuTokens.SheetIcon),
         )
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .then(
-                when {
-                    menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                    else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
-                },
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // A context menu reads label-first with the glyph at the far edge;
-        // the sheet and the glass menu keep the glyph leading, like every
-        // other list in the app.
-        if (!menu) {
-            iconView()
-            Spacer(Modifier.width(18.dp))
-        }
+        Spacer(Modifier.width(MenuTokens.IconGap))
         Text(
             text = label,
-            // Context menus sit on glass; semi-bold keeps the label legible
-            // over a busy blurred backdrop.
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = if (menu) FontWeight.SemiBold else FontWeight.Normal,
-            ),
+            style = MaterialTheme.typography.bodyLarge,
             color = foreground.copy(alpha = alpha),
-            maxLines = if (menu) 2 else Int.MAX_VALUE,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
@@ -1076,10 +932,6 @@ internal fun ActionRow(
                 maxLines = 1,
             )
         }
-        if (menu) {
-            Spacer(Modifier.width(14.dp))
-            iconView()
-        }
     }
 }
 
@@ -1091,62 +943,23 @@ internal fun ActionRow(
  */
 @Composable
 private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkPalette) {
-    val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
-    val spinner: @Composable () -> Unit = {
-        CircularProgressIndicator(
-            color = palette.onBackgroundVariant,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(16.dp),
-        )
-    }
-    if (LocalActionRowStyle.current == ActionRowStyle.Glass) {
-        MenuRow(
-            icon = icon,
-            label = label,
-            ink = palette.onBackground,
-            enabled = false,
-            trailing = spinner,
-            onClick = null,
-        )
-        return
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                when {
-                    menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                    else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
-                },
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = palette.onBackground.copy(alpha = 0.4f),
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.width(18.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = palette.onBackground.copy(alpha = 0.4f),
-            modifier = Modifier.weight(1f),
-        )
-        spinner()
-    }
+    MenuRow(
+        icon = icon,
+        label = label,
+        ink = palette.onBackground,
+        enabled = false,
+        trailing = {
+            CircularProgressIndicator(
+                color = palette.onBackgroundVariant,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(16.dp),
+            )
+        },
+        onClick = null,
+    )
 }
 
-/**
- * The track a sheet is about, drawn at its head. Shared by the actions menu
- * and the playlist picker, which is the same track two taps later.
- *
- * [subtitleColor] exists because the two sheets stand on different ground: the
- * picker's is the flat theme background, where the usual dim grey is right,
- * while the actions sheet is tinted from this very artwork and needs the
- * credit brighter to stay off the wash.
- */
+/** The track the playlist picker is adding, drawn at its head. */
 @Composable
 internal fun SheetTrackHeader(
     song: Song,
