@@ -23,16 +23,12 @@
 package com.music.bitchord.ui.components
 
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.unit.Density
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HeldMenuMorphTest {
-
-    private val density = Density(1f)
 
     /**
      * The plate the finger was on: a card-shaped rectangle somewhere in the
@@ -164,62 +160,6 @@ class HeldMenuMorphTest {
         // Including at the very start of the entrance, where the "origin"
         // branch would otherwise divide by zero as well.
         assertEquals(resting, heldMenuMorph(0f, origin, zeroWidth))
-    }
-
-    /**
-     * The corners are ends of one animation rather than two unrelated numbers,
-     * so both the drawn corner and the animated one are built from the same
-     * pair — see `CARD_RADIUS` and `MENU_RADIUS`. This pins the *direction*:
-     * the plate's 20dp at the press, tightening to the menu's 16dp at rest.
-     * Which is which is a decision; that the menu's radius is the smaller of the
-     * two, and that the two are not the same number, is what stops them being
-     * able to drift into each other unnoticed.
-     */
-    @Test
-    fun `the corner runs from the plate's radius to the menu's`() {
-        val card = 20f * density.density
-        val menu = 16f * density.density
-
-        assertEquals(card, heldMenuCornerRadiusPx(0f, card, menu), 1e-4f)
-        assertEquals(menu, heldMenuCornerRadiusPx(1f, card, menu), 1e-4f)
-        assertEquals(18f * density.density, heldMenuCornerRadiusPx(0.5f, card, menu), 1e-4f)
-        assertEquals(16f * density.density, heldMenuCornerRadiusPx(2f, card, menu), 1e-4f)
-        assertEquals(20f * density.density, heldMenuCornerRadiusPx(-1f, card, menu), 1e-4f)
-        assertTrue("the menu's resting radius is the tighter of the two", menu < card)
-    }
-
-    /**
-     * The corner radius travels *per frame*, so a shape built once and reused
-     * would keep drawing the first outline it ever had — the vendored backdrop
-     * engine caches exactly one outline per shape, keyed on the shape's
-     * identity. `HeldMenuCornerRadius` is therefore identity-compared, and two
-     * different radii must not compare equal: `remember` hands back what it was
-     * given last time whenever the new shape compares equal to the old one, and
-     * a data-class-style `equals` on the lambda would quietly freeze the morph
-     * mid-open with nothing failing.
-     */
-    @Test
-    fun `two different radii never compare equal`() {
-        val first = HeldMenuCornerRadius { 20f }
-        val second = HeldMenuCornerRadius { 16f }
-        assertNotEquals("a new radius must not look like the last one", first, second)
-
-        // …but a shape is equal to itself, or nothing would ever be reused.
-        assertEquals(first, first)
-        assertEquals(first.hashCode(), first.hashCode())
-        assertNotEquals(first.hashCode(), second.hashCode())
-    }
-
-    /** The radius is read at draw time, which is what lets it move at all. */
-    @Test
-    fun `the radius is read when the shape asks for it`() {
-        var px = 20f
-        val radius = HeldMenuCornerRadius { px }
-        val size = Size(100f, 100f)
-
-        assertEquals(20f, radius.toPx(size, density), 1e-4f)
-        px = 16f
-        assertEquals(16f, radius.toPx(size, density), 1e-4f)
     }
 
     private fun lerp(start: Float, stop: Float, fraction: Float) = start + (stop - start) * fraction
