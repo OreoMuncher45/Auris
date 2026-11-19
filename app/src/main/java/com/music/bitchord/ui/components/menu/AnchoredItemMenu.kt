@@ -57,6 +57,9 @@ internal fun <T : Any> AnchoredItemMenu(
         onDismiss = onDismiss,
         modifier = Modifier.onPlaced { hostOrigin.value = it.positionInWindow() },
         hostOffsetInWindow = { hostOrigin.value.round() },
+        // Over a page of rows rather than the artwork: frosted, so the rows
+        // behind don't read through the menu's own.
+        frost = MenuTokens.PageFrost,
     ) {
         key(shown.opening) { content(current) }
     }

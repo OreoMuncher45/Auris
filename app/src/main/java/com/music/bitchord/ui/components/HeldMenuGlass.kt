@@ -59,10 +59,12 @@ internal fun Modifier.heldMenuSurface(
     plate: Color,
     hairline: Color,
     reduceDynamicBlur: Boolean,
+    /** A frost of the surface's own — see [Modifier.liquidGlass]. Null keeps the house blur. */
+    blurRadiusDp: Float? = null,
 ): Modifier {
     val glass = heldMenuUsesGlass(reduceDynamicBlur)
     return this
         .clip(shape)
-        .then(if (glass) Modifier.liquidGlass(shape) else Modifier.background(plate, shape))
+        .then(if (glass) Modifier.liquidGlass(shape, blurRadiusDp) else Modifier.background(plate, shape))
         .border(0.5.dp, hairline, shape)
 }
