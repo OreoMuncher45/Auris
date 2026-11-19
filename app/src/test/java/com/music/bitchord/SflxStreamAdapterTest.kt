@@ -107,6 +107,9 @@ class SflxStreamAdapterTest {
                 const prepared = options.preparedContext || {};
                 const web = prepared.web_metadata || prepared.host_track || null;
                 if (!web) __calls.push('getTrack');
+                // SoundCloud trusts a prepared track with the right id over its
+                // own lookup, and gives up when that object is not its own.
+                if (prepared.track && prepared.track.id === trackID) __calls.push('trusted preparedContext.track');
                 const id = web && web.provider_id === 'amazon' ? web.id : trackID;
                 const mode = globalThis.__mode;
                 const path = mode === 'encrypted' ? outputPath.replace(/\.[^.]+$/, '.m4a') : outputPath;
@@ -172,6 +175,16 @@ class SflxStreamAdapterTest {
         assertFalse(own.calls().contains("checkAvailability"))
         assertFalse("the row is handed over as host_track", own.calls().contains("getTrack"))
         assertEquals("https://cdn.example/OWN", own.answer().text("streamUrl"))
+    }
+
+    @Test
+    fun `the host's own row is not passed off as the extension's prepared track`() {
+        // SoundCloud 1.0.15 failed every stream: it took this row from
+        // `preparedContext.track`, found none of its own fields in it and gave
+        // up. The row goes in as `host_track` only.
+        val own = case("own row")
+        assertFalse(own.calls().contains("trusted preparedContext.track"))
+        assertFalse("host_track is still there", own.calls().contains("getTrack"))
     }
 
     @Test
