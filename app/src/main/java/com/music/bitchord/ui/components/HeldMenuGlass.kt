@@ -37,7 +37,14 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 internal fun heldMenuUsesGlass(reduceDynamicBlur: Boolean): Boolean =
-    LocalLiquidGlassEnabled.current && isGlassSupported() && !reduceDynamicBlur
+    heldMenuUsesGlass(LocalLiquidGlassEnabled.current, isGlassAllowed(), reduceDynamicBlur)
+
+/** Pure policy shared by every menu host; kept separate from composition for tests. */
+internal fun heldMenuUsesGlass(
+    liquidGlassEnabled: Boolean,
+    glassAllowed: Boolean,
+    reduceDynamicBlur: Boolean,
+): Boolean = liquidGlassEnabled && glassAllowed && !reduceDynamicBlur
 
 /**
  * The menu's surface for this frame: liquid glass where the app is already
@@ -59,12 +66,12 @@ internal fun Modifier.heldMenuSurface(
     plate: Color,
     hairline: Color,
     reduceDynamicBlur: Boolean,
-    /** A frost of the surface's own — see [Modifier.liquidGlass]. Null keeps the house blur. */
-    blurRadiusDp: Float? = null,
 ): Modifier {
     val glass = heldMenuUsesGlass(reduceDynamicBlur)
     return this
         .clip(shape)
-        .then(if (glass) Modifier.liquidGlass(shape, blurRadiusDp) else Modifier.background(plate, shape))
+        // No per-menu blur override: LocalGlassEffectConfig selects the
+        // configured Liquid intensity or the 16dp, lens-free Frosted style.
+        .then(if (glass) Modifier.liquidGlass(shape) else Modifier.background(plate, shape))
         .border(0.5.dp, hairline, shape)
 }

@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -44,20 +45,17 @@ import com.music.bitchord.R
 import com.music.bitchord.auth.GoogleAccountSession
 import com.music.bitchord.auth.YouTubeProfile
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.menu.MenuTokens
+import com.music.bitchord.ui.components.menu.menuColors
 import com.music.bitchord.ui.screens.localizedLabel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
 
 /** Shared compact selector for every visible YouTube account avatar. */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun AccountProfileSelector(
     accounts: List<GoogleAccountSession>,
     activeAccountId: String?,
     activeProfileId: String?,
-    hazeState: HazeState,
     onSelect: (GoogleAccountSession, YouTubeProfile) -> Unit,
     onAddAccount: () -> Unit,
     onRemoveAccount: (GoogleAccountSession) -> Unit,
@@ -70,6 +68,7 @@ fun AccountProfileSelector(
     var managing by remember { mutableStateOf(false) }
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = MaterialTheme.shapes.extraLarge
+    val colors = menuColors(MaterialTheme.colorScheme.background.luminance() < 0.5f, reduceDynamicBlur)
     Column(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
             // A tap on the page dismisses; nothing on the page was pressed,
@@ -88,16 +87,11 @@ fun AccountProfileSelector(
             modifier = Modifier
                 .padding(top = 56.dp, start = 20.dp, end = 20.dp)
                 .fillMaxWidth()
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
-                        )
-                    },
+                .heldMenuSurface(
+                    shape = shape,
+                    plate = colors.plate.copy(alpha = MenuTokens.PagePlateAlpha),
+                    hairline = colors.hairline,
+                    reduceDynamicBlur = reduceDynamicBlur,
                 )
                 // Swallows taps between rows; it isn't a control itself.
                 .clickable(

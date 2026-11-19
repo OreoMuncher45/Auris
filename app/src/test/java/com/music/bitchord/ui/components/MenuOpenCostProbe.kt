@@ -41,7 +41,6 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.screens.QualitySheet
 import com.music.bitchord.ui.screens.QualityTarget
-import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
 import com.music.bitchord.ui.components.menu.AnchoredMenu
@@ -246,11 +245,9 @@ class MenuOpenCostProbe {
 
     @Test
     fun frostedSortMenu() = measure("FrostedSortMenu") { open, close ->
-        val haze = androidx.compose.runtime.remember { HazeState() }
-        Box(Modifier.fillMaxSize().hazeSource(haze))
+        Box(Modifier.fillMaxSize())
         if (open) {
             FrostedSortMenu(
-                hazeState = haze,
                 selected = SongSort.DEFAULT,
                 onSelect = {},
                 onFlipDateDirection = {},

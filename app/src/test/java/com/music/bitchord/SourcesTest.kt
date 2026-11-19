@@ -101,6 +101,52 @@ class SourcesTest {
         assertTrue(SourceResolver.worthSwapping(atmos, StreamFormat(codec = "aac", kbps = 332)))
     }
 
+    @Test
+    fun `every Dolby delivery spelling is classified without inventing Atmos for TrueHD`() {
+        val atmosAliases = listOf(
+            "ac4", "ac-4", "AC4", "eac3-joc", "eac3_joc", "ec3-joc", "dolby-atmos",
+            "eac3", "eac-3", "ec3", "ec-3", "ac3", "ac-3",
+        )
+        atmosAliases.forEach { alias ->
+            val format = StreamFormat(codec = alias, kbps = 259)
+            assertTrue("$alias should be Dolby", format.isDolby)
+            assertTrue("$alias should be Atmos", format.isDolbyAtmos)
+            assertEquals("$alias summary", "Dolby Atmos", format.summary)
+        }
+
+        listOf("truehd", "true-hd", "mlp").forEach { alias ->
+            val format = StreamFormat(codec = alias)
+            assertTrue(format.isDolby)
+            assertFalse(format.isDolbyAtmos)
+            assertEquals(true, format.isLossless)
+            assertEquals("Dolby TrueHD", format.summary)
+        }
+        val mat = StreamFormat(codec = "mat")
+        assertTrue(mat.isDolby)
+        assertFalse(mat.isDolbyAtmos)
+        assertEquals("Dolby MAT", mat.summary)
+    }
+
+    @Test
+    fun `AC4 quality and Atmos modes outrank a generic MP4 container immediately`() {
+        val source = ModuleSource(SourceConfig(kind = SourceKind.MODULE))
+        val url = "https://cdn.example.com/moonlight.mp4"
+
+        assertEquals("ac4", source.codecOf("audio/mp4", "ac4", url))
+        assertEquals("ac4", source.codecOf("audio/ac4", null, url))
+        assertEquals("ac4", source.codecOf("audio/mp4", null, "https://cdn.example.com/moonlight.ac4"))
+        assertEquals(
+            "eac3-joc",
+            source.codecOf("audio/mp4", "best", url, audioModes = listOf("atmos")),
+        )
+        // A specific contradictory payload still wins over a free-text hint.
+        assertEquals("flac", source.codecOf("audio/flac", "Dolby Atmos", url))
+
+        val ac4 = StreamFormat(codec = "ac4", kbps = 259)
+        assertFalse(SourceResolver.worthSwapping(StreamFormat(codec = "flac"), ac4))
+        assertTrue(SourceResolver.worthSwapping(ac4, StreamFormat(codec = "flac")))
+    }
+
     /**
      * ...and premium only where it is allowed to play. E-AC-3 ships with the
      * vendor image, not with Android, and a module that answers every request

@@ -87,8 +87,6 @@ import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Upgrade
 import com.music.bitchord.data.listentogether.ServerConnectionState
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -130,6 +128,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
@@ -267,13 +266,20 @@ import com.music.bitchord.ui.components.FolderPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menuOriginOf
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.ExpandedAnchoredMenu
 import com.music.bitchord.ui.components.menu.MenuHeader
+import com.music.bitchord.ui.components.menu.MenuRow
+import com.music.bitchord.ui.components.menu.MenuTokens
+import com.music.bitchord.ui.components.menu.menuColors
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.ui.components.HeldContextMenu
 import com.music.bitchord.ui.components.HeldItem
+import com.music.bitchord.ui.components.heldMenuSurface
 import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
@@ -321,7 +327,6 @@ import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.search_hint
 import com.music.bitchord.sharedui.resources.search_library_hint
 import com.music.bitchord.ui.components.TopBarDownloadButton
-import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
@@ -379,8 +384,6 @@ import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -3303,7 +3306,6 @@ internal fun BitChordApp(
         // offers the way back out of a revert rather than the revert again.
         val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
         val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
-        val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
         val refreshingState = viewModel.refreshing.collectAsStateWithLifecycle()
         val refreshing by refreshingState
 
@@ -4523,31 +4525,20 @@ internal fun BitChordApp(
                             // the one thing a playlist or album card carries: a
                             // title.
                             if (sheets.libraryShowAll != null && detail == null) {
-                                Box {
-                                    IconButton(onClick = { sheets.librarySortMenuOpen = true }) {
-                                        Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_library),
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = sheets.librarySortMenuOpen,
-                                        onDismissRequest = { sheets.librarySortMenuOpen = false },
-                                    ) {
-                                        LibrarySort.entries.forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.localizedLabel()) },
-                                                trailingIcon = if (option == librarySort) {
-                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                } else null,
-                                                onClick = {
-                                                    AppSettings.setLibrarySort(option)
-                                                    sheets.librarySortMenuOpen = false
-                                                },
-                                            )
-                                        }
-                                    }
+                                val origin = rememberMenuButtonOrigin()
+                                IconButton(
+                                    onClick = {
+                                        origin.record()
+                                        sheets.librarySortAnchor = MenuOrigin.consume()
+                                        sheets.librarySortMenuOpen = true
+                                    },
+                                    modifier = Modifier.menuOriginOf(origin),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Sort,
+                                        contentDescription = stringResource(R.string.sort_library),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
                             }
                             // Left of the account photo, and only on an album or
@@ -4557,9 +4548,8 @@ internal fun BitChordApp(
                             // `LocalSearchField`).
                             if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
                                 // The menu itself is [FrostedSortMenu], composed
-                                // with the app's other frosted overlays further
-                                // down — in the main hierarchy, where the haze
-                                // can see the content it blurs.
+                                // with the app's other shared-glass overlays in
+                                // the main hierarchy, where it samples the page.
                                 IconButton(onClick = { sheets.songSortMenuOpen = true }) {
                                     Icon(
                                         Icons.Rounded.Sort,
@@ -6388,6 +6378,7 @@ private fun RootOverlays(
     val googleAccounts by viewModel.googleAccounts.collectAsStateWithLifecycle()
     val activeAccountId by viewModel.activeAccountId.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
+    val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
     // ---- Album / playlist detail ----
@@ -7068,10 +7059,32 @@ private fun RootOverlays(
         )
     }
 
+    ExpandedAnchoredMenu(
+        expanded = sheets.librarySortMenuOpen,
+        anchorInWindow = { sheets.librarySortAnchor },
+        onDismiss = { sheets.librarySortMenuOpen = false },
+    ) {
+        LibrarySort.entries.forEach { option ->
+            MenuRow(
+                icon = Icons.Rounded.Check,
+                label = option.localizedLabel(),
+                ink = MaterialTheme.colorScheme.onSurface,
+                iconTint = if (option == librarySort) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    Color.Transparent
+                },
+                onClick = {
+                    AppSettings.setLibrarySort(option)
+                    sheets.librarySortMenuOpen = false
+                },
+            )
+        }
+    }
+
     if (sheets.songSortMenuOpen) {
         BackHandler { sheets.songSortMenuOpen = false }
         FrostedSortMenu(
-            hazeState = hazeState,
             selected = songSort,
             onSelect = { option ->
                 detail?.browseId?.let { AppSettings.setDetailSongSort(it, option) }
@@ -7101,7 +7114,6 @@ private fun RootOverlays(
             accounts = googleAccounts,
             activeAccountId = activeAccountId,
             activeProfileId = activeProfileId,
-            hazeState = hazeState,
             onSelect = { selected, profile -> viewModel.selectProfile(selected.accountId, profile.profileId) },
             onAddAccount = {
                 sheets.showAccountSelector = false
@@ -7920,6 +7932,7 @@ internal class RootSheets {
     var libraryShowAll by mutableStateOf<HomeShelf?>(null)
     var detailActiveShelf by mutableStateOf<HomeShelf?>(null)
     var librarySortMenuOpen by mutableStateOf(false)
+    var librarySortAnchor by mutableStateOf<Rect?>(null)
     var showLyricsSources by mutableStateOf(false)
     var showAppLanguage by mutableStateOf(false)
     var showTranslationLanguage by mutableStateOf(false)
@@ -8150,16 +8163,12 @@ private fun LibrarySort.localizedLabel(): String = when (this) {
 }
 
 /**
- * The track-list sort menu, styled after the account switcher: a full-screen
- * scrim to catch the dismissal tap, and the options on a frosted panel that
- * blurs the page behind it. Composed here in the main hierarchy rather than
- * as a popup window — which is exactly what lets the haze see the content it
- * is blurring.
+ * The track-list sort menu: a full-screen scrim and the shared menu surface.
+ * Composed in the main hierarchy rather than a popup window so its glass
+ * samples the same app backdrop as every other context menu.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 internal fun FrostedSortMenu(
-    hazeState: HazeState,
     selected: SongSort,
     onSelect: (SongSort) -> Unit,
     onFlipDateDirection: () -> Unit,
@@ -8167,6 +8176,7 @@ internal fun FrostedSortMenu(
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = MaterialTheme.shapes.extraLarge
+    val colors = menuColors(MaterialTheme.colorScheme.background.luminance() < 0.5f, reduceDynamicBlur)
     Box(
         Modifier
             .fillMaxSize()
@@ -8187,16 +8197,11 @@ internal fun FrostedSortMenu(
             modifier = Modifier
                 .padding(top = 56.dp, end = 20.dp)
                 .width(IntrinsicSize.Max)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
-                        )
-                    },
+                .heldMenuSurface(
+                    shape = shape,
+                    plate = colors.plate.copy(alpha = MenuTokens.PagePlateAlpha),
+                    hairline = colors.hairline,
+                    reduceDynamicBlur = reduceDynamicBlur,
                 )
                 // Swallows taps between rows; it isn't a control itself.
                 .clickable(

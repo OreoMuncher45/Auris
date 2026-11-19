@@ -380,7 +380,7 @@ class ModuleSource(
 
             val trackMeta = streamResponse.track
             val format = StreamFormat(
-                codec = codecOf(trackMeta?.mimeType, trackMeta?.audioQuality, url),
+                codec = codecOf(trackMeta?.mimeType, trackMeta?.audioQuality, url, trackMeta?.audioModes),
                 kbps = trackMeta?.bitrate ?: kbpsFor(trackMeta?.audioQuality, url),
                 sampleRateHz = trackMeta?.sampleRate?.let {
                     if (it < 1000) (it * 1000).toInt() else it.toInt()
@@ -423,29 +423,46 @@ class ModuleSource(
     /**
      * What is really on the other end of [url], as far as anything says it.
      *
-     * Three sources, and nothing invented between them. The mime type is the
-     * only one stated outright, and most modules don't send it. A quality
-     * label naming a lossless tier is worth taking at its word. Failing both,
-     * the URL's own extension — a guess, but the reliable one in the case that
-     * matters: a server that has quietly walked down its fallback chain hands
-     * back a link with `.128.mp3` in it, and reading that is the whole
-     * difference between noticing and playing it.
+     * MIME, quality, audio modes and the URL extension — with nothing invented
+     * between them. A specific MIME codec wins; generic containers yield to
+     * explicit Dolby quality/mode metadata. A quality label naming a lossless
+     * tier is worth taking at its word. Failing those, the URL's own extension
+     * catches a server that quietly walked down its fallback chain and handed
+     * back a link with `.128.mp3` in it.
      *
-     * Null when none of the three knows, which is left as null rather than
+     * Null when none of the metadata knows, which is left as null rather than
      * guessed at — [kbpsFor] carries what is known about those instead.
      */
-    private fun codecOf(mimeType: String?, quality: String?, url: String): String? {
-        mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
+    internal fun codecOf(
+        mimeType: String?,
+        quality: String?,
+        url: String,
+        audioModes: List<String>? = null,
+    ): String? {
+        val mimeCodec = mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() }
-            ?.let { return it }
-        val qualityText = quality.orEmpty().uppercase(Locale.ROOT)
-        // Tidal's MAX endpoint identifies its Dolby Atmos HLS rendition as
-        // EAC3_JOC. Older module responses expose only "Dolby Atmos", so
-        // preserve its real codec instead of reducing the stream to unknown.
-        if ("ATMOS" in qualityText || "EAC3_JOC" in qualityText || "EC-3" in qualityText) return "eac3-joc"
+        // A Dolby MIME is the most specific claim and needs no quality hint.
+        DolbyAudio.codec(mimeType)?.let { return it }
+
+        val qualityDolby = DolbyAudio.codec(
+            listOfNotNull(quality, audioModes?.joinToString(" ")).joinToString(" "),
+        )
+        val extension = url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
+        val extensionDolby = DolbyAudio.codec(extension)
+        // MP4/M4A are envelopes, not a verdict about their payload. Amazon's
+        // AC-4 answer pairs audioQuality=ac4 (or audioModes=[atmos]) with
+        // audio/mp4; trusting the envelope first made the resolver treat the
+        // immersive mix as ordinary lossy audio and start another upgrade.
+        // A specific contradictory codec such as FLAC still wins over a label.
+        if (mimeCodec == null || mimeCodec in GENERIC_CONTAINERS) {
+            qualityDolby?.let { return it }
+            extensionDolby?.let { return it }
+        }
+        mimeCodec?.let { return it }
+        qualityDolby?.let { return it }
+        extensionDolby?.let { return it }
         if (qualityTier(quality.orEmpty()) == LOSSLESS) return "flac"
-        return url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
-            .takeIf { it in AUDIO_EXTENSIONS }
+        return extension.takeIf { it in AUDIO_EXTENSIONS }
     }
 
     /**
@@ -713,8 +730,11 @@ class ModuleSource(
         /** Below this, a capped connection is better served by the module's own small tier. */
         const val LOW_CEILING_KBPS = 128
 
+        private val GENERIC_CONTAINERS = setOf("mp4", "m4a", "webm", "ogg")
+
         private val AUDIO_EXTENSIONS =
-            setOf("flac", "alac", "wav", "aiff", "mp3", "m4a", "aac", "ogg", "opus", "webm")
+            setOf("flac", "alac", "wav", "aiff", "mp3", "m4a", "aac", "ogg", "opus", "webm") +
+                DolbyAudio.fileExtensions
 
         /** `320kbps` in a label, and the `.128.` a CDN puts in the filename. */
         private val KBPS_LABEL = Regex("""(\d{2,4})\s*kbps""", RegexOption.IGNORE_CASE)

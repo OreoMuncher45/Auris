@@ -57,11 +57,34 @@ internal fun <T : Any> AnchoredItemMenu(
         onDismiss = onDismiss,
         modifier = Modifier.onPlaced { hostOrigin.value = it.positionInWindow() },
         hostOffsetInWindow = { hostOrigin.value.round() },
-        // Over a page of rows rather than the artwork: frosted, so the rows
-        // behind don't read through the menu's own.
-        frost = MenuTokens.PageFrost,
+        // Over a page of rows rather than the artwork. Glass still comes from
+        // the app's shared Liquid/Frosted configuration; only the flat plate
+        // needs extra opacity to keep the rows behind it from reading through.
+        pagePlate = true,
     ) {
         key(shown.opening) { content(current) }
+    }
+}
+
+/**
+ * The same host for an ordinary expanded-state menu (sort and overflow rows).
+ * Compose this in a full-screen host, not in the button's own small layout:
+ * glass must sample the app window, while the anchor is reported in window
+ * coordinates by the button that opened it.
+ */
+@Composable
+internal fun ExpandedAnchoredMenu(
+    expanded: Boolean,
+    anchorInWindow: () -> Rect?,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    AnchoredItemMenu(
+        item = Unit.takeIf { expanded },
+        anchorInWindow = anchorInWindow,
+        onDismiss = onDismiss,
+    ) {
+        content()
     }
 }
 

@@ -1,7 +1,10 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.MenuOrigin
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import com.music.bitchord.ui.components.menuOriginOf
+import com.music.bitchord.ui.components.menu.ExpandedAnchoredMenu
+import com.music.bitchord.ui.components.menu.MenuRow
 import android.os.Build
 import com.music.bitchord.R
 
@@ -53,6 +56,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
@@ -62,14 +66,13 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +100,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -449,6 +453,8 @@ fun DetailScreen(
     val artistIsAi = remember(page.browseId, page.title, aiArtists) {
         AppSettings.isArtistAi(page.browseId, page.title)
     }
+    var artistMenuExpanded by remember(page.browseId) { mutableStateOf(false) }
+    var artistMenuAnchor by remember(page.browseId) { mutableStateOf<Rect?>(null) }
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
     // which case the tracks themselves know who it is.
@@ -558,14 +564,11 @@ fun DetailScreen(
                     ArtistMetaRow(
                         page = page,
                         palette = palette,
-                        albumsShelf = albumsShelf,
-                        singlesShelf = singlesShelf,
                         spotifyStats = spotifyStats,
                         isAiArtist = artistIsAi,
-                        onOpenShelf = onActiveShelfChange,
-                        onHideArtist = onHideArtist,
-                        onToggleAiArtist = {
-                            AppSettings.toggleArtistAi(page.browseId, page.title)
+                        onOpenMenu = {
+                            artistMenuAnchor = MenuOrigin.consume()
+                            artistMenuExpanded = true
                         },
                     )
                 }
@@ -828,6 +831,57 @@ fun DetailScreen(
                 }
             }
             if (isArtist) aboutItem()
+        }
+
+        ExpandedAnchoredMenu(
+            expanded = artistMenuExpanded,
+            anchorInWindow = { artistMenuAnchor },
+            onDismiss = { artistMenuExpanded = false },
+        ) {
+            albumsShelf?.let { shelf ->
+                MenuRow(
+                    icon = Icons.Rounded.Album,
+                    label = stringResource(R.string.albums),
+                    ink = MaterialTheme.colorScheme.onSurface,
+                    onClick = {
+                        artistMenuExpanded = false
+                        onActiveShelfChange(shelf)
+                    },
+                )
+            }
+            singlesShelf?.let { shelf ->
+                MenuRow(
+                    icon = Icons.Rounded.MusicNote,
+                    label = stringResource(R.string.singles_eps),
+                    ink = MaterialTheme.colorScheme.onSurface,
+                    onClick = {
+                        artistMenuExpanded = false
+                        onActiveShelfChange(shelf)
+                    },
+                )
+            }
+            MenuRow(
+                icon = Icons.Rounded.AutoAwesome,
+                label = stringResource(
+                    if (artistIsAi) R.string.remove_ai_mark else R.string.mark_as_ai,
+                ),
+                ink = MaterialTheme.colorScheme.onSurface,
+                onClick = {
+                    artistMenuExpanded = false
+                    AppSettings.toggleArtistAi(page.browseId, page.title)
+                },
+            )
+            onHideArtist?.let { hide ->
+                MenuRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    label = stringResource(R.string.hide_artist),
+                    ink = MaterialTheme.colorScheme.onSurface,
+                    onClick = {
+                        artistMenuExpanded = false
+                        hide()
+                    },
+                )
+            }
         }
 
         // The end of an endless mix: the next page is asked for when the last
@@ -1715,20 +1769,11 @@ private fun ArtistStatsRow(
 private fun ArtistMetaRow(
     page: DetailPage,
     palette: ArtworkPalette,
-    albumsShelf: HomeShelf?,
-    singlesShelf: HomeShelf?,
     spotifyStats: SpotifyArtistStats?,
     isAiArtist: Boolean,
-    onOpenShelf: (HomeShelf) -> Unit,
-    onHideArtist: (() -> Unit)?,
-    onToggleAiArtist: (() -> Unit)?,
+    onOpenMenu: () -> Unit,
 ) {
-    if (page.subscriberCountText == null && page.monthlyListenerCount == null &&
-        albumsShelf == null && singlesShelf == null && onHideArtist == null &&
-        spotifyStats == null && !isAiArtist && onToggleAiArtist == null
-    ) return
-
-    var expanded by remember { mutableStateOf(false) }
+    val origin = rememberMenuButtonOrigin()
     Box(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1769,73 +1814,21 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        // A DropdownMenu anchors to its parent, so the button and its menu
-        // share a box of their own: in the header's box the menu hung off the
-        // whole header and opened at its start edge, across the page from the ⋮.
-        Box(
+        IconButton(
+            onClick = {
+                origin.record()
+                onOpenMenu()
+            },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = ARTIST_CONTENT_GUTTER),
+                .padding(end = ARTIST_CONTENT_GUTTER)
+                .menuOriginOf(origin),
         ) {
-            IconButton(
-                onClick = { expanded = true },
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
-                    tint = palette.onBackgroundVariant,
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                albumsShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.albums)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                singlesShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.singles_eps)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                if (onToggleAiArtist != null) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
-                                ),
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onToggleAiArtist()
-                        },
-                    )
-                }
-                if (onHideArtist != null) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.hide_artist)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onHideArtist()
-                        },
-                    )
-                }
-            }
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.more),
+                tint = palette.onBackgroundVariant,
+            )
         }
     }
 }
@@ -2307,12 +2300,21 @@ private fun ArtistShelfGridPage(
     // order a career is usually read in. Popularity keeps Spotify's own
     // ranking where it gave one, and the catalogue's order everywhere else.
     var sort by rememberSaveable(shelf.title) { mutableStateOf(ShelfSort.RELEASE_DATE) }
+    var sortMenuExpanded by remember(shelf.title) { mutableStateOf(false) }
+    var sortMenuAnchor by remember(shelf.title) { mutableStateOf<Rect?>(null) }
     val items = remember(shelf.items, sort) { shelf.items.sortedForShelf(sort) }
     val keys = rememberShelfKeys(items)
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         Column(Modifier.fillMaxSize()) {
-            ShelfSortRow(palette = palette, selected = sort, onSelect = { sort = it })
+            ShelfSortRow(
+                palette = palette,
+                selected = sort,
+                onOpenMenu = {
+                    sortMenuAnchor = MenuOrigin.consume()
+                    sortMenuExpanded = true
+                },
+            )
             LazyVerticalGrid(
                 columns = GridCells.Fixed(grid.columns),
                 state = gridState,
@@ -2341,6 +2343,28 @@ private fun ArtistShelfGridPage(
                 }
             }
         }
+        ExpandedAnchoredMenu(
+            expanded = sortMenuExpanded,
+            anchorInWindow = { sortMenuAnchor },
+            onDismiss = { sortMenuExpanded = false },
+        ) {
+            ShelfSort.entries.forEach { option ->
+                MenuRow(
+                    icon = Icons.Rounded.Check,
+                    label = option.localizedLabel(),
+                    ink = MaterialTheme.colorScheme.onSurface,
+                    iconTint = if (option == sort) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Transparent
+                    },
+                    onClick = {
+                        sortMenuExpanded = false
+                        sort = option
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -2351,9 +2375,9 @@ private enum class ShelfSort { RELEASE_DATE, CHRONOLOGICAL, TITLE, POPULARITY }
 private fun ShelfSortRow(
     palette: ArtworkPalette,
     selected: ShelfSort,
-    onSelect: (ShelfSort) -> Unit,
+    onOpenMenu: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val origin = rememberMenuButtonOrigin()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2365,44 +2389,30 @@ private fun ShelfSortRow(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(palette.elevated)
-                    .clickable { expanded = true }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = selected.localizedLabel(),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = palette.onBackground,
-                )
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Rounded.Sort,
-                    contentDescription = stringResource(R.string.sort_music),
-                    tint = palette.onBackgroundVariant,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ShelfSort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.localizedLabel()) },
-                        leadingIcon = {
-                            if (option == selected) {
-                                Icon(Icons.Rounded.Check, contentDescription = null)
-                            }
-                        },
-                        onClick = {
-                            expanded = false
-                            onSelect(option)
-                        },
-                    )
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(palette.elevated)
+                .menuOriginOf(origin)
+                .clickable {
+                    origin.record()
+                    onOpenMenu()
                 }
-            }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selected.localizedLabel(),
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.onBackground,
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Rounded.Sort,
+                contentDescription = stringResource(R.string.sort_music),
+                tint = palette.onBackgroundVariant,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

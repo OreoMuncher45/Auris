@@ -1,6 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.MenuOrigin
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
+import com.music.bitchord.ui.components.menu.ExpandedAnchoredMenu
+import com.music.bitchord.ui.components.menu.MenuRow
 import com.music.bitchord.ui.components.menuOriginOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -59,8 +62,6 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,6 +85,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -189,6 +191,8 @@ fun LocalMusicScreen(
     // and albums by name. Not saved across process death: a filter left on a
     // folder that was never reopened is more surprising than one that reset.
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    var sortMenuAnchor by remember { mutableStateOf<Rect?>(null) }
     val sortOrder by if (isDownloads) {
         AppSettings.downloadedMusicSort.collectAsStateWithLifecycle()
     } else {
@@ -256,250 +260,274 @@ fun LocalMusicScreen(
     // right below the bar, so it only needs to clear the bar itself.
     val barHeight = topBarHeight()
 
-    Column(modifier = modifier.fillMaxSize()) {
-        // ── Search ───────────────────────────────────────────────────────────
-        // Above the tabs rather than inside each one, since a query typed on
-        // Songs is just as reasonable to carry over to Artists or Albums.
-        if (selectingDownloads) {
-            DownloadSelectionBar(
-                count = selectedDownloadIds.size,
-                allSelected = remember(sortedSongs, selectedDownloadIds) {
-                    sortedSongs.isNotEmpty() && sortedSongs.all { it.videoId in selectedDownloadIds }
-                },
-                onSelectAll = { selectedDownloadIds = sortedSongs.mapTo(linkedSetOf()) { it.videoId } },
-                onDelete = {
-                    val chosen = songs.filter { it.videoId in selectedDownloadIds }
-                    selectedDownloadIds = emptySet()
-                    selectedAlbumKeys = emptySet()
-                    onDeleteDownloads?.invoke(chosen)
-                },
-                onUpload = onUploadToWebDav?.let { upload ->
-                    {
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ── Search ───────────────────────────────────────────────────────────
+            // Above the tabs rather than inside each one, since a query typed on
+            // Songs is just as reasonable to carry over to Artists or Albums.
+            if (selectingDownloads) {
+                DownloadSelectionBar(
+                    count = selectedDownloadIds.size,
+                    allSelected = remember(sortedSongs, selectedDownloadIds) {
+                        sortedSongs.isNotEmpty() && sortedSongs.all { it.videoId in selectedDownloadIds }
+                    },
+                    onSelectAll = { selectedDownloadIds = sortedSongs.mapTo(linkedSetOf()) { it.videoId } },
+                    onDelete = {
                         val chosen = songs.filter { it.videoId in selectedDownloadIds }
                         selectedDownloadIds = emptySet()
                         selectedAlbumKeys = emptySet()
-                        upload(chosen)
-                    }
+                        onDeleteDownloads?.invoke(chosen)
+                    },
+                    onUpload = onUploadToWebDav?.let { upload ->
+                        {
+                            val chosen = songs.filter { it.videoId in selectedDownloadIds }
+                            selectedDownloadIds = emptySet()
+                            selectedAlbumKeys = emptySet()
+                            upload(chosen)
+                        }
+                    },
+                    onCancel = {
+                        selectedDownloadIds = emptySet()
+                        selectedAlbumKeys = emptySet()
+                    },
+                    modifier = Modifier.padding(
+                        top = barHeight + TopBarContentGap,
+                        start = PAGE_GUTTER,
+                        end = PAGE_GUTTER,
+                        bottom = 4.dp,
+                    ),
+                )
+            } else LocalSearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onSortMenuOpen = {
+                    sortMenuAnchor = MenuOrigin.consume()
+                    sortMenuOpen = true
                 },
-                onCancel = {
-                    selectedDownloadIds = emptySet()
-                    selectedAlbumKeys = emptySet()
+                viewType = viewType,
+                onViewTypeToggle = {
+                    val next = if (viewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
+                    if (isDownloads) AppSettings.setDownloadedMusicViewType(next)
+                    else AppSettings.setLocalMusicViewType(next)
                 },
                 modifier = Modifier.padding(
+                    // The same clearance every other page under the frosted bar
+                    // gets — see topBarContentPadding, which this screen can't use
+                    // directly since its tab row is fixed and only the search field
+                    // above it needs to clear the bar.
                     top = barHeight + TopBarContentGap,
                     start = PAGE_GUTTER,
                     end = PAGE_GUTTER,
                     bottom = 4.dp,
                 ),
             )
-        } else LocalSearchField(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it },
-            sortOrder = sortOrder,
-            onSortOrderChange = {
-                if (isDownloads) AppSettings.setDownloadedMusicSort(it)
-                else AppSettings.setLocalMusicSort(it)
-            },
-            viewType = viewType,
-            onViewTypeToggle = {
-                val next = if (viewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
-                if (isDownloads) AppSettings.setDownloadedMusicViewType(next)
-                else AppSettings.setLocalMusicViewType(next)
-            },
-            modifier = Modifier.padding(
-                // The same clearance every other page under the frosted bar
-                // gets — see topBarContentPadding, which this screen can't use
-                // directly since its tab row is fixed and only the search field
-                // above it needs to clear the bar.
-                top = barHeight + TopBarContentGap,
-                start = PAGE_GUTTER,
-                end = PAGE_GUTTER,
-                bottom = 4.dp,
-            ),
-        )
 
-        // ── Tab row ──────────────────────────────────────────────────────────
-        TabRow(
-            selectedTabIndex = selectedTab,
-            containerColor = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.primary,
-            indicator = { tabPositions ->
-                TabRowDefaults.SecondaryIndicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                    color = MaterialTheme.colorScheme.primary,
+            // ── Tab row ──────────────────────────────────────────────────────────
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = MaterialTheme.colorScheme.background,
+                contentColor = MaterialTheme.colorScheme.primary,
+                indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                },
+            ) {
+                LocalTab(
+                    icon = Icons.Rounded.MusicNote,
+                    label = stringResource(R.string.songs),
+                    selected = selectedTab == LOCAL_TAB_SONGS,
+                    onClick = {
+                        selectedTab = LOCAL_TAB_SONGS
+                        leaveDrillDown()
+                    },
                 )
-            },
-        ) {
-            LocalTab(
-                icon = Icons.Rounded.MusicNote,
-                label = stringResource(R.string.songs),
-                selected = selectedTab == LOCAL_TAB_SONGS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_SONGS
-                    leaveDrillDown()
-                },
-            )
-            LocalTab(
-                icon = Icons.Rounded.Person,
-                label = stringResource(R.string.artists),
-                selected = selectedTab == LOCAL_TAB_ARTISTS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_ARTISTS
-                    leaveDrillDown()
-                },
-            )
-            LocalTab(
-                icon = Icons.Rounded.Album,
-                label = stringResource(R.string.albums),
-                selected = selectedTab == LOCAL_TAB_ALBUMS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_ALBUMS
-                    leaveDrillDown()
-                },
-            )
-        }
+                LocalTab(
+                    icon = Icons.Rounded.Person,
+                    label = stringResource(R.string.artists),
+                    selected = selectedTab == LOCAL_TAB_ARTISTS,
+                    onClick = {
+                        selectedTab = LOCAL_TAB_ARTISTS
+                        leaveDrillDown()
+                    },
+                )
+                LocalTab(
+                    icon = Icons.Rounded.Album,
+                    label = stringResource(R.string.albums),
+                    selected = selectedTab == LOCAL_TAB_ALBUMS,
+                    onClick = {
+                        selectedTab = LOCAL_TAB_ALBUMS
+                        leaveDrillDown()
+                    },
+                )
+            }
 
-        // ── Content ──────────────────────────────────────────────────────────
-        AnimatedContent(
-            targetState = if (inDrillDown) "drill:$drillDownLabel" else "tab:$selectedTab",
-            transitionSpec = {
-                if (targetState.startsWith("drill:")) {
-                    (slideInHorizontally { it } + fadeIn()) togetherWith
-                        (slideOutHorizontally { -it / 3 } + fadeOut())
-                } else {
-                    (slideInHorizontally { -it / 3 } + fadeIn()) togetherWith
-                        (slideOutHorizontally { it } + fadeOut())
-                }
-            },
-            label = "local_music_content",
-            modifier = Modifier.fillMaxSize(),
-        ) { key ->
-            when {
-                // Nothing to tab through. The tab row stays put rather than
-                // being swapped out with the list, so the page still reads as
-                // itself while it says why it's empty.
-                sortedSongs.isEmpty() && emptyMessage != null -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(bodyContentPadding),
-                    ) {
-                        MessageState(message = emptyMessage)
+            // ── Content ──────────────────────────────────────────────────────────
+            AnimatedContent(
+                targetState = if (inDrillDown) "drill:$drillDownLabel" else "tab:$selectedTab",
+                transitionSpec = {
+                    if (targetState.startsWith("drill:")) {
+                        (slideInHorizontally { it } + fadeIn()) togetherWith
+                            (slideOutHorizontally { -it / 3 } + fadeOut())
+                    } else {
+                        (slideInHorizontally { -it / 3 } + fadeIn()) togetherWith
+                            (slideOutHorizontally { it } + fadeOut())
                     }
-                }
-
-                key.startsWith("drill:") -> {
-                    // Drill-down song list for artist / album
-                    DrillDownSongList(
-                        label = drillDownLabel ?: "",
-                        artworkUrl = drillDownArt,
-                        songs = drillDownSongs,
-                        viewType = viewType,
-                        selectedIds = selectedDownloadIds,
-                        currentSong = currentSong,
-                        isPlaying = isPlaying,
-                        onSongClick = { tracks, index ->
-                            val song = tracks[index]
-                            if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
-                        },
-                        onSongLongPress = { song ->
-                            if (isDownloads) selectedDownloadIds = selectedDownloadIds + song.videoId
-                            else onSongLongPress(song)
-                        },
-                        // Downloads redefines the hold as "select", so the ⋮ has to
-                        // carry the actions sheet itself or the page loses it.
-                        onSongMore = onSongLongPress,
-                        onSongSwipe = onSongSwipe,
-                        onShuffle = onShuffle,
-                        onMore = onCollectionLongPress?.let { more ->
-                            { more(drillDownLabel ?: "", drillDownSongs) }
-                        },
-                        onBack = leaveDrillDown,
-                        contentPadding = bodyContentPadding,
-                    )
-                }
-
-                key == "tab:$LOCAL_TAB_SONGS" -> {
-                    val filteredSongs = remember(sortedSongs, searchQuery) {
-                        if (searchQuery.isBlank()) sortedSongs
-                        else sortedSongs.filter { it.matchesSearch(searchQuery) }
-                    }
-                    SongsTab(
-                        songs = filteredSongs,
-                        viewType = viewType,
-                        selectedIds = selectedDownloadIds,
-                        currentSong = currentSong,
-                        isPlaying = isPlaying,
-                        onSongClick = { tracks, index ->
-                            val song = tracks[index]
-                            if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
-                        },
-                        onSongLongPress = { song ->
-                            if (isDownloads) {
-                                selectedDownloadIds = selectedDownloadIds + song.videoId
-                                selectedTab = LOCAL_TAB_SONGS
-                                leaveDrillDown()
-                            } else onSongLongPress(song)
-                        },
-                        // Downloads redefines the hold as "select", so the ⋮ has to
-                        // carry the actions sheet itself or the page loses it.
-                        onSongMore = onSongLongPress,
-                        onSongSwipe = onSongSwipe,
-                        contentPadding = bodyContentPadding,
-                    )
-                }
-
-                key == "tab:$LOCAL_TAB_ARTISTS" -> {
-                    val artists = remember(sortedSongs, searchQuery) {
-                        sortedSongs.groupBy { it.artist }
-                            .entries
-                            .filter { searchQuery.isBlank() || it.key.contains(searchQuery, ignoreCase = true) }
-                            .sortedBy { it.key.lowercase(Locale.ROOT) }
-                    }
-                    ArtistsTab(
-                        artists = artists,
-                        viewType = viewType,
-                        onArtistClick = { artist, artistSongs ->
-                            drillDownLabel = artist
-                            drillDownSongs = artistSongs
-                            drillDownArt = null
-                        },
-                        onArtistLongPress = onCollectionLongPress,
-                        contentPadding = bodyContentPadding,
-                    )
-                }
-
-                else -> {
-                    // LOCAL_TAB_ALBUMS
-                    val albums = remember(sortedSongs, collections, searchQuery) {
-                        albumEntries(sortedSongs, collections).filter {
-                            searchQuery.isBlank() ||
-                                it.title.contains(searchQuery, ignoreCase = true) ||
-                                it.artist.contains(searchQuery, ignoreCase = true)
+                },
+                label = "local_music_content",
+                modifier = Modifier.fillMaxSize(),
+            ) { key ->
+                when {
+                    // Nothing to tab through. The tab row stays put rather than
+                    // being swapped out with the list, so the page still reads as
+                    // itself while it says why it's empty.
+                    sortedSongs.isEmpty() && emptyMessage != null -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(bodyContentPadding),
+                        ) {
+                            MessageState(message = emptyMessage)
                         }
                     }
-                    AlbumsTab(
-                        albums = albums,
-                        viewType = viewType,
-                        selectedKeys = selectedAlbumKeys,
-                        onAlbumClick = { entry ->
-                            if (selectingDownloads) {
-                                toggleAlbumSelection(entry)
-                            } else {
-                                drillDownLabel = entry.title
-                                drillDownSongs = entry.songs
-                                drillDownArt = entry.thumbnailUrl
+
+                    key.startsWith("drill:") -> {
+                        // Drill-down song list for artist / album
+                        DrillDownSongList(
+                            label = drillDownLabel ?: "",
+                            artworkUrl = drillDownArt,
+                            songs = drillDownSongs,
+                            viewType = viewType,
+                            selectedIds = selectedDownloadIds,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onSongClick = { tracks, index ->
+                                val song = tracks[index]
+                                if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
+                            },
+                            onSongLongPress = { song ->
+                                if (isDownloads) selectedDownloadIds = selectedDownloadIds + song.videoId
+                                else onSongLongPress(song)
+                            },
+                            // Downloads redefines the hold as "select", so the ⋮ has to
+                            // carry the actions sheet itself or the page loses it.
+                            onSongMore = onSongLongPress,
+                            onSongSwipe = onSongSwipe,
+                            onShuffle = onShuffle,
+                            onMore = onCollectionLongPress?.let { more ->
+                                { more(drillDownLabel ?: "", drillDownSongs) }
+                            },
+                            onBack = leaveDrillDown,
+                            contentPadding = bodyContentPadding,
+                        )
+                    }
+
+                    key == "tab:$LOCAL_TAB_SONGS" -> {
+                        val filteredSongs = remember(sortedSongs, searchQuery) {
+                            if (searchQuery.isBlank()) sortedSongs
+                            else sortedSongs.filter { it.matchesSearch(searchQuery) }
+                        }
+                        SongsTab(
+                            songs = filteredSongs,
+                            viewType = viewType,
+                            selectedIds = selectedDownloadIds,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onSongClick = { tracks, index ->
+                                val song = tracks[index]
+                                if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
+                            },
+                            onSongLongPress = { song ->
+                                if (isDownloads) {
+                                    selectedDownloadIds = selectedDownloadIds + song.videoId
+                                    selectedTab = LOCAL_TAB_SONGS
+                                    leaveDrillDown()
+                                } else onSongLongPress(song)
+                            },
+                            // Downloads redefines the hold as "select", so the ⋮ has to
+                            // carry the actions sheet itself or the page loses it.
+                            onSongMore = onSongLongPress,
+                            onSongSwipe = onSongSwipe,
+                            contentPadding = bodyContentPadding,
+                        )
+                    }
+
+                    key == "tab:$LOCAL_TAB_ARTISTS" -> {
+                        val artists = remember(sortedSongs, searchQuery) {
+                            sortedSongs.groupBy { it.artist }
+                                .entries
+                                .filter { searchQuery.isBlank() || it.key.contains(searchQuery, ignoreCase = true) }
+                                .sortedBy { it.key.lowercase(Locale.ROOT) }
+                        }
+                        ArtistsTab(
+                            artists = artists,
+                            viewType = viewType,
+                            onArtistClick = { artist, artistSongs ->
+                                drillDownLabel = artist
+                                drillDownSongs = artistSongs
+                                drillDownArt = null
+                            },
+                            onArtistLongPress = onCollectionLongPress,
+                            contentPadding = bodyContentPadding,
+                        )
+                    }
+
+                    else -> {
+                        // LOCAL_TAB_ALBUMS
+                        val albums = remember(sortedSongs, collections, searchQuery) {
+                            albumEntries(sortedSongs, collections).filter {
+                                searchQuery.isBlank() ||
+                                    it.title.contains(searchQuery, ignoreCase = true) ||
+                                    it.artist.contains(searchQuery, ignoreCase = true)
                             }
-                        },
-                        onAlbumLongPress = { entry ->
-                            if (isDownloads) {
-                                selectedDownloadIds = selectedDownloadIds + entry.songs.map { it.videoId }
-                                selectedAlbumKeys = selectedAlbumKeys + entry.key
-                            } else onCollectionLongPress?.invoke(entry.title, entry.songs)
-                        },
-                        contentPadding = bodyContentPadding,
-                    )
+                        }
+                        AlbumsTab(
+                            albums = albums,
+                            viewType = viewType,
+                            selectedKeys = selectedAlbumKeys,
+                            onAlbumClick = { entry ->
+                                if (selectingDownloads) {
+                                    toggleAlbumSelection(entry)
+                                } else {
+                                    drillDownLabel = entry.title
+                                    drillDownSongs = entry.songs
+                                    drillDownArt = entry.thumbnailUrl
+                                }
+                            },
+                            onAlbumLongPress = { entry ->
+                                if (isDownloads) {
+                                    selectedDownloadIds = selectedDownloadIds + entry.songs.map { it.videoId }
+                                    selectedAlbumKeys = selectedAlbumKeys + entry.key
+                                } else onCollectionLongPress?.invoke(entry.title, entry.songs)
+                            },
+                            contentPadding = bodyContentPadding,
+                        )
+                    }
                 }
+            }
+        }
+        ExpandedAnchoredMenu(
+            expanded = sortMenuOpen,
+            anchorInWindow = { sortMenuAnchor },
+            onDismiss = { sortMenuOpen = false },
+        ) {
+            LocalMusicSort.entries.forEach { option ->
+                MenuRow(
+                    icon = Icons.Rounded.Check,
+                    label = option.localizedLabel(),
+                    ink = MaterialTheme.colorScheme.onSurface,
+                    iconTint = if (option == sortOrder) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Transparent
+                    },
+                    onClick = {
+                        if (isDownloads) AppSettings.setDownloadedMusicSort(option)
+                        else AppSettings.setLocalMusicSort(option)
+                        sortMenuOpen = false
+                    },
+                )
             }
         }
     }
@@ -1534,13 +1562,12 @@ private fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = whe
 private fun LocalSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
-    sortOrder: LocalMusicSort,
-    onSortOrderChange: (LocalMusicSort) -> Unit,
+    onSortMenuOpen: () -> Unit,
     viewType: LibraryViewType,
     onViewTypeToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var sortMenuOpen by remember { mutableStateOf(false) }
+    val sortMenuOrigin = rememberMenuButtonOrigin()
     val haptics = rememberHaptics()
     Row(
         modifier = modifier
@@ -1613,46 +1640,23 @@ private fun LocalSearchField(
             )
         }
         Spacer(Modifier.width(2.dp))
-        Box {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable { sortMenuOpen = true },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.Sort,
-                    contentDescription = stringResource(R.string.sort_music),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(19.dp),
-                )
-            }
-            DropdownMenu(
-                expanded = sortMenuOpen,
-                onDismissRequest = { sortMenuOpen = false },
-            ) {
-                LocalMusicSort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.localizedLabel()) },
-                        trailingIcon = if (option == sortOrder) {
-                            {
-                                Icon(
-                                    Icons.Rounded.Check,
-                                    contentDescription = stringResource(R.string.selected),
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            onSortOrderChange(option)
-                            sortMenuOpen = false
-                        },
-                    )
-                }
-            }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .menuOriginOf(sortMenuOrigin)
+                .clip(CircleShape)
+                .clickable {
+                    sortMenuOrigin.record()
+                    onSortMenuOpen()
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Sort,
+                contentDescription = stringResource(R.string.sort_music),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
         }
     }
 }

@@ -227,6 +227,20 @@ class SourcePriorityTest {
         }
     }
 
+    @Test
+    fun `AC4 completes the quality ladder instead of being replaced by FLAC`() {
+        val ac4 = StreamFormat(codec = "ac4", kbps = 259)
+        on(AudioQuality.LOSSLESS) {
+            assertFalse(QualityUpgrade.needsLosslessFollowUp(ac4))
+            assertFalse(SourceResolver.worthSwapping(lossless, playing = ac4))
+            assertFalse(SourceResolver.worthSwapping(lossy, playing = ac4))
+        }
+        on(AudioQuality.DOLBY) {
+            assertFalse(QualityUpgrade.needsLosslessFollowUp(ac4))
+            assertFalse(SourceResolver.worthSwapping(lossless, playing = ac4, explicit = true))
+        }
+    }
+
     /** A device that cannot decode Atmos is not on the immersive rung at all. */
     @Test
     fun `a device without an Atmos decoder keeps the lossless ladder`() {

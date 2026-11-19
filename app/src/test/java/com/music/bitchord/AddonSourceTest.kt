@@ -9,6 +9,7 @@ import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.addon.AddonClient
+import com.music.bitchord.data.sources.addon.AddonStream
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
@@ -708,6 +709,27 @@ class AddonSourceTest {
 
         assertEquals("eac3-joc", stream.format.codec)
         assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    @Test
+    fun `Dolby lossless and carriage metadata do not invent an Atmos row`() {
+        assertFalse(AddonStream(codec = "truehd", quality = "Dolby TrueHD").isDolbyAtmos)
+        assertFalse(AddonStream(codec = "mlp", quality = "Dolby MLP").isDolbyAtmos)
+        assertFalse(AddonStream(codec = "mat", quality = "Dolby MAT").isDolbyAtmos)
+        assertTrue(AddonStream(codec = "ac4", quality = "Dolby AC-4").isDolbyAtmos)
+    }
+
+    @Test
+    fun `AC4 needs no free-text Atmos hint to remain Dolby`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/stream/t1", json("""{"url":"https://cdn/a.mp4","codec":"ac4","mimeType":"audio/mp4"}"""))
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Atmos)!!
+
+        assertEquals("ac4", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+        assertEquals("Dolby Atmos", stream.format.summary)
+        assertEquals(false, stream.format.isLossless)
     }
 
     /**

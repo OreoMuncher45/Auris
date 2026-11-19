@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources.addon
 
+import com.music.bitchord.data.sources.DolbyAudio
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -206,22 +207,10 @@ data class AddonTrack(
      * rather than the best. See [AddonSource.search][com.music.bitchord.data.sources.AddonSource].
      */
     val isDolbyAtmos: Boolean
-        get() = atmos == true || ATMOS_HINT.containsMatchIn(
+        get() = atmos == true || DolbyAudio.isAtmos(
             "$audioQuality ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} $format",
         )
 }
-
-/**
- * The spellings an addon uses for an immersive mix, in any free-text field.
- *
- * Shared by rows and streams because they are answering the same question with
- * the same vocabulary, and a row recognised as Atmos whose stream is not (or
- * the reverse) is the inconsistency that costs a track its immersive mix.
- */
-private val ATMOS_HINT = Regex(
-    """atmos|dolby|joc|eac-?3|ec-?3|ac-?3""",
-    RegexOption.IGNORE_CASE,
-)
 
 // ── Stream ───────────────────────────────────────────────────────────────
 
@@ -401,7 +390,7 @@ data class AddonStream(
 
     /** Whether the addon says this is the immersive mix rather than a stereo one. */
     val isDolbyAtmos: Boolean
-        get() = ATMOS_HINT.containsMatchIn(
+        get() = DolbyAudio.isAtmos(
             "$qualityText ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} " +
                 "${statedCodec.orEmpty()} ${mimeType.orEmpty()}",
         )
