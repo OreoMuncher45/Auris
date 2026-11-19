@@ -1055,8 +1055,11 @@ internal fun BitChordApp(
         derivedStateOf(structuralEqualityPolicy()) { detailStackState.value.map { it.browseId } }
     }
     // Read when a page is opened, never in composition: see [RootNav.replayDepth].
-    remember(detailStackState, nav, sheets) {
-        val depth = { detailStackState.value.size }
+    // Off the view model's flow rather than [detailStackState]: that one is
+    // collected a frame behind, and an opener that clears the stack and then
+    // opens Replay in the same handler would record the old depth.
+    remember(viewModel, nav, sheets) {
+        val depth = { viewModel.detailStack.value.size }
         nav.stackDepth = depth
         sheets.stackDepth = depth
     }
@@ -4295,7 +4298,7 @@ internal fun BitChordApp(
                             selectedMoodGenreState.value != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
-                        nav.showReplay -> replayScrolled
+                        pageKey == "replay" -> replayScrolled
                         detail != null -> detailScrolled
                         else -> scrolled || nav.selectedTab == TAB_SEARCH
                     },
@@ -7649,7 +7652,7 @@ internal class RootNav {
     var showAudiobooks: Boolean
         get() = audiobooksShown
         set(value) {
-            if (value && !audiobooksShown) audiobooksDepth = stackDepth()
+            if (value) audiobooksDepth = stackDepth()
             audiobooksShown = value
         }
     private var audiobooksShown by mutableStateOf(false)
@@ -7657,7 +7660,7 @@ internal class RootNav {
     var itunesPodcastId: String?
         get() = itunesPodcast
         set(value) {
-            if (value != null && value != itunesPodcast) itunesPodcastDepth = stackDepth()
+            if (value != null) itunesPodcastDepth = stackDepth()
             itunesPodcast = value
         }
     private var itunesPodcast by mutableStateOf<String?>(null)
@@ -7668,7 +7671,9 @@ internal class RootNav {
     var showReplay: Boolean
         get() = replayShown
         set(value) {
-            if (value && !replayShown) replayDepth = stackDepth()
+            // Every open, not only the first: opened again from the player
+            // menu with an album pushed over it, Replay comes back up on top.
+            if (value) replayDepth = stackDepth()
             replayShown = value
         }
     private var replayShown by mutableStateOf(false)
@@ -7796,9 +7801,11 @@ internal class RootNav {
                     showListenTogetherMembers = values[17] as Boolean
                     // After the flags: their setters record a depth of
                     // their own, which the saved one replaces.
-                    replayDepth = values[18] as Int
-                    audiobooksDepth = values[19] as Int
-                    itunesPodcastDepth = values[20] as Int
+                    // Absent from a list saved before the depths were kept:
+                    // keep what the setters recorded then.
+                    (values.getOrNull(18) as? Int)?.let { replayDepth = it }
+                    (values.getOrNull(19) as? Int)?.let { audiobooksDepth = it }
+                    (values.getOrNull(20) as? Int)?.let { itunesPodcastDepth = it }
                 }
             },
         )
@@ -7835,7 +7842,7 @@ internal class RootSheets {
     var openAudiobook: com.music.bitchord.data.audiobook.Audiobook?
         get() = audiobook
         set(value) {
-            if (value != null && value != audiobook) audiobookDepth = stackDepth()
+            if (value != null) audiobookDepth = stackDepth()
             audiobook = value
         }
     private var audiobook by mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null)

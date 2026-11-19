@@ -119,4 +119,11 @@ class RootNavSaverTest {
         assertEquals(3, restored.itunesPodcastDepth)
         assertEquals(Int.MAX_VALUE, roundTrip(RootNav()).replayDepth)
     }
+
+    @Test fun `a list saved before the depths were kept still restores`() {
+        val saved = with(RootNav.Saver) { scope.save(RootNav().apply { showReplay = true }) } as List<*>
+        val restored = RootNav.Saver.restore(saved.take(18))!!
+        assertTrue(restored.showReplay)
+        assertEquals(Int.MAX_VALUE, restored.replayDepth)
+    }
 }

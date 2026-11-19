@@ -191,4 +191,15 @@ class RootPageKeyTest {
         assertEquals(1, restored.replayDepth)
         assertEquals("VLplaylist", key(nav = restored, detail = playlist, stackSize = 2))
     }
+
+    @Test fun `Replay opened again over a pushed album comes back on top`() {
+        var depth = 1
+        val nav = RootNav().apply { stackDepth = { depth } }
+        nav.showReplay = true
+        depth = 2
+        assertEquals("VLplaylist", key(nav = nav, detail = playlist, stackSize = 2))
+        // The player menu's Replay, with the album still over it.
+        nav.showReplay = true
+        assertEquals("replay", key(nav = nav, detail = playlist, stackSize = 2))
+    }
 }
