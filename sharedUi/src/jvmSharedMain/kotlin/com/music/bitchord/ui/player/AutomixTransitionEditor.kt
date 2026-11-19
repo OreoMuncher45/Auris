@@ -773,7 +773,9 @@ internal fun AutomixTransitionEditor(
                         // instead is what made the lane snap back to the
                         // beginning every single time it was moved.
                         if (grabbed == Grab.ARRIVING) {
-                            val moved = movedTo(lastX)
+                            // Stopped where the drawing stopped: the cue cannot go
+                            // below the track's beginning.
+                            val moved = movedTo(lastX).coerceAtMost(startedAtCue)
                             if (abs(moved) > 0.02) {
                                 latestOnCue(automixIncomingShift(startedAtShift, moved))
                             }
