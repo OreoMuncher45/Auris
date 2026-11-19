@@ -116,6 +116,7 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.SnapshotMutationPolicy
 import androidx.compose.runtime.Stable
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -2552,9 +2553,23 @@ internal fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
+    // Whether the Search page itself is on screen, rather than a page opened
+    // over the Search tab (a release from the results, Settings). The bar's
+    // search form — the field, held unfolded, its own back — belongs to the
+    // page: kept up over the pages opened from it, the bar never folded on
+    // them and back from one of them left Search altogether.
+    val onSearchPage = nav.selectedTab == TAB_SEARCH &&
+        rootPageKey(nav, sheets, podcastUi.showContinueListening, detail, detailStackIds.size) == "$TAB_KEY$TAB_SEARCH"
+    // Typing belongs to the Search page too: a page opened over it while the
+    // keyboard was up ends that, and coming back finds the results with the
+    // keyboard down. Gated above for the frame before this runs.
+    LaunchedEffect(onSearchPage) {
+        if (!onSearchPage) searchKeyboardActive = false
+    }
     val navSearchState = NavSearchState(
-        visualActive = searchVisualActive,
-        keyboardActive = searchKeyboardActive,
+        visualActive = searchVisualActive && onSearchPage,
+        onSearchPage = onSearchPage,
+        keyboardActive = searchKeyboardActive && onSearchPage,
         query = query,
         textValue = searchTextValue,
         onTextValueChange = {
@@ -2815,10 +2830,18 @@ internal fun BitChordApp(
     // short page doesn't sit above a large fixed empty band — the reservation
     // is exactly the bars, no more.
     val floatingBarsHeight = remember { mutableIntStateOf(0) }
-    val listPadding = PaddingValues(
-        top = topBarContentPadding(),
-        bottom = with(LocalDensity.current) { (floatingBarsHeight.intValue / density).dp } + 16.dp,
-    )
+    // One instance, with the bars' height read when the padding is asked for
+    // (in a list's measure, mostly) rather than here. Read here, it put the
+    // root in every frame of a fold, a search morph or the mini player coming
+    // in: the bars' height changes on each of them, and every frame it did
+    // recomposed this whole composable for a padding only layout uses.
+    val listTopPadding = topBarContentPadding()
+    val listDensity = LocalDensity.current
+    val listPadding: PaddingValues = remember(listTopPadding, listDensity, floatingBarsHeight) {
+        BarsContentPadding(top = listTopPadding) {
+            with(listDensity) { floatingBarsHeight.intValue.toDp() } + 16.dp
+        }
+    }
 
     // What colour the page currently under the bars is. The fades either end
     // of the screen are flat colour wherever their blur has least to say, so
@@ -6104,6 +6127,23 @@ private fun RootPage(
             },
         )
     }
+}
+
+/**
+ * The pages' content padding: [top] for the frosted bar, and room for the
+ * floating bars below, read from [bottom] each time it is asked for, so a
+ * change in the bars' height reaches the layouts that use it without
+ * recomposing whoever holds this. Horizontal padding is none.
+ */
+@Stable
+private class BarsContentPadding(
+    private val top: Dp,
+    private val bottom: () -> Dp,
+) : PaddingValues {
+    override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateTopPadding(): Dp = top
+    override fun calculateBottomPadding(): Dp = bottom()
 }
 
 /**

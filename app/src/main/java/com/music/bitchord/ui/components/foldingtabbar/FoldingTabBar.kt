@@ -55,12 +55,14 @@ private val BarSurfaceExpandSpring = SpringEasing(zeta = 0.74f)
  * The scroll connection decides this everywhere except search, which has no
  * folded form: the field is drawn only at fold 0, so a bar left folded by a
  * scroll would swallow the screen the search icon just opened. The search page
- * is therefore held open while either its field is showing ([inSearch]) or its
- * tab is selected ([onSearchTab]) — the latter covering a page opened without
- * the field, straight to results.
+ * is therefore held open while either its field is showing ([inSearch]) or the
+ * Search page itself is on screen ([onSearchPage]) — the latter covering a page
+ * opened without the field, straight to results. A page opened over the Search
+ * tab (a release from the results, Settings) is not the Search page, and folds
+ * like any other.
  */
-internal fun navBarFolded(isInline: Boolean, inSearch: Boolean, onSearchTab: Boolean): Boolean =
-    isInline && !inSearch && !onSearchTab
+internal fun navBarFolded(isInline: Boolean, inSearch: Boolean, onSearchPage: Boolean): Boolean =
+    isInline && !inSearch && !onSearchPage
 
 /**
  * The bottom bar as one layout folded by one number: the tab group shrinks onto the
@@ -85,6 +87,11 @@ fun FoldingTabBar(
     modifier: Modifier = Modifier,
     accessory: (@Composable (Modifier, isInline: Boolean) -> Unit)? = null,
     searchMode: Boolean = false,
+    /**
+     * The Search page itself is on screen. Not merely the Search tab
+     * selected: a page opened over the tab folds like any other page.
+     */
+    searchPageShown: Boolean = false,
     searchBarContent: (@Composable (Modifier) -> Unit)? = null,
     content: FloatingTabBarScope.() -> Unit,
 ) {
@@ -96,8 +103,7 @@ fun FoldingTabBar(
     // than a resting state to minimise. The scroll state is ignored rather
     // than reset: leaving it alone means closing search returns the bar to
     // the fold the page underneath is actually at.
-    val onSearchTab = scope.tabs.lastOrNull()?.key == selectedTabKey
-    val folded = navBarFolded(isInline, inSearch, onSearchTab)
+    val folded = navBarFolded(isInline, inSearch, searchPageShown)
 
     val fold = remember { Animatable(if (folded) 1f else 0f) }
     LaunchedEffect(folded) {
@@ -138,6 +144,12 @@ fun FoldingTabBar(
     val surfaceBackdrop = rememberLayerBackdrop()
     val searchGlassShown by remember {
         derivedStateOf { fold.value > 0f || search.value > 0f }
+    }
+    // Whether the search field is on its way in or out at all. Read straight
+    // off [search] below, the bar's content recomposed on every frame of the
+    // search morph; this flips twice per morph.
+    val searchFieldComposed by remember {
+        derivedStateOf { search.value > 0f }
     }
     val foldedOrSearching = folded || inSearch
     val noTap = remember { MutableInteractionSource() }
@@ -254,7 +266,7 @@ fun FoldingTabBar(
                     .graphicsLayer { alpha = (search.value * (1f - fold.value)).coerceIn(0f, 1f) }
                     .then(if (!inSearch || folded) Modifier.clearAndSetSemantics {} else Modifier)
             ) {
-                if (inSearch || search.value > 0f) {
+                if (inSearch || searchFieldComposed) {
                     searchBarContent?.invoke(Modifier.fillMaxSize())
                 }
             }
