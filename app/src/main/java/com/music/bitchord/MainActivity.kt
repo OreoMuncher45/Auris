@@ -277,6 +277,7 @@ import com.music.bitchord.ui.components.menuOriginOf
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import com.music.bitchord.ui.components.menu.MenuChoiceRow
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
+import com.music.bitchord.ui.components.menu.AppSheet
 import com.music.bitchord.ui.components.menu.LocalMenuHost
 import com.music.bitchord.ui.components.menu.MenuHostOverlay
 import com.music.bitchord.ui.components.menu.MenuHostState
@@ -4874,26 +4875,19 @@ internal fun BitChordApp(
         }
 
         // ---- Share the Replay ----
-        if (nav.showReplayShare) {
-            replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
-                ModalBottomSheet(
-                    onDismissRequest = { nav.showReplayShare = false },
-                    // Straight to full height. The sheet is a picture and two
-                    // buttons, and half-open it showed the picture with both
-                    // buttons below the fold — a sheet whose only two controls
-                    // need a drag to reach.
-                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                    containerColor = MaterialTheme.colorScheme.background,
-                ) {
-                    ReplayShareSheet(
-                        summary = summary,
-                        holder = accountState.value?.name.orEmpty(),
-                        memberSince = replay.memberSince,
-                        page = nav.replaySharePage,
-                        onDismiss = { nav.showReplayShare = false },
-                    )
-                }
-            }
+        // Opens at its own height, which is the picture and its two buttons:
+        // there is no half-open stop to leave the buttons below the fold.
+        AppSheet(
+            item = replay.summary?.takeUnless { it.isEmpty }?.takeIf { nav.showReplayShare },
+            onDismiss = { nav.showReplayShare = false },
+        ) { summary ->
+            ReplayShareSheet(
+                summary = summary,
+                holder = accountState.value?.name.orEmpty(),
+                memberSince = replay.memberSince,
+                page = nav.replaySharePage,
+                onDismiss = { nav.showReplayShare = false },
+            )
         }
 
         } // end else: everything above is one shell or the other; everything
@@ -6536,92 +6530,93 @@ private fun RootOverlays(
     // it is what marks the batch seen, and marking it on the way *out*
     // rather than on the way in is deliberate: it is the outcome the user is
     // signing off on, and while the sheet is up there may not be one yet.
-    if (sheets.showDownloadManager) {
-        val closeDownloadManager = {
-            sheets.showDownloadManager = false
-            DownloadSession.markSeen()
-        }
-        BackHandler(onBack = closeDownloadManager)
-        ModalBottomSheet(
-            onDismissRequest = closeDownloadManager,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            DownloadManagerSheet(onDismiss = closeDownloadManager)
-        }
+    val closeDownloadManager = {
+        sheets.showDownloadManager = false
+        DownloadSession.markSeen()
+    }
+    AppSheet(item = Unit.takeIf { sheets.showDownloadManager }, onDismiss = closeDownloadManager) {
+        DownloadManagerSheet(onDismiss = closeDownloadManager)
     }
 
     // ---- Add to playlist / new playlist ----
     // One sheet for both, because they are one decision: the list of
     // playlists with a way to make another. `creatingPlaylist` opens it
     // straight onto the form, which is what the Library tile means.
-    if (sheets.playlistPick.songs != null || sheets.creatingPlaylist) {
-        val target = sheets.playlistPick.songs.orEmpty()
-        val dismiss = {
-            sheets.playlistPick.songs = null
-            sheets.playlistPick.title = null
-            sheets.playlistPick.artwork = null
-            sheets.creatingPlaylist = false
-        }
-        ModalBottomSheet(
-            onDismissRequest = dismiss,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            PlaylistPickerSheet(
-                playlists = playlists,
-                loading = playlistsLoading,
-                tracks = target,
-                collectionTitle = sheets.playlistPick.title,
-                collectionThumbnailUrl = sheets.playlistPick.artwork,
-                startCreating = target.isEmpty(),
-                onAdd = { picked ->
-                    when (target.size) {
-                        // One track: the ordinary row.
-                        1 -> viewModel.addToPlaylists(picked, target.first()) { added, alreadyThere, failed ->
-                            // One line for the whole batch, saying the
-                            // outcome that matters most: what went in, else
-                            // that it was all there already, else that it
-                            // didn't work.
-                            showQueueNotice(
-                                when {
-                                    added > 1 -> context.resources.getQuantityString(
-                                        R.plurals.added_to_playlists_notice, added, added,
-                                    )
-                                    added == 1 -> context.getString(R.string.song_added_to_playlist)
-                                    alreadyThere > 0 && failed == 0 ->
-                                        context.getString(R.string.song_already_in_playlist)
-                                    else -> context.getString(R.string.failed)
-                                },
-                            )
-                        }
-                        // A whole release: every track of it, filed.
-                        else -> viewModel.addSongsToPlaylists(picked, target) { added, tracks, _, failed ->
-                            showQueueNotice(
-                                when {
-                                    added > 0 && tracks > 0 -> context.resources.getQuantityString(
-                                        R.plurals.added_tracks_to_playlists_notice, tracks, tracks, added,
-                                    )
-                                    failed > 0 -> context.getString(R.string.failed)
-                                    else -> context.getString(R.string.song_already_in_playlist)
-                                },
-                            )
-                        }
-                    }
-                    dismiss()
-                },
-                onCreate = { title, privacy ->
-                    when (target.size) {
-                        1 -> viewModel.createPlaylist(title, privacy, target.first())
-                        else -> viewModel.createPlaylistWithVideoIds(
-                            title,
-                            privacy,
-                            target.mapNotNull { it.videoId },
-                            target,
+    // Kept by the sheet through its exit, so the tracks and the release's
+    // name don't drop out from under it as it slides away.
+    val playlistPickRequest = if (sheets.playlistPick.songs != null || sheets.creatingPlaylist) {
+        PlaylistPickRequest(
+            songs = sheets.playlistPick.songs.orEmpty(),
+            title = sheets.playlistPick.title,
+            artwork = sheets.playlistPick.artwork,
+        )
+    } else {
+        null
+    }
+    val dismissPlaylistPick = {
+        sheets.playlistPick.songs = null
+        sheets.playlistPick.title = null
+        sheets.playlistPick.artwork = null
+        sheets.creatingPlaylist = false
+    }
+    AppSheet(item = playlistPickRequest, onDismiss = dismissPlaylistPick) { request ->
+        val target = request.songs
+        val dismiss = dismissPlaylistPick
+        PlaylistPickerSheet(
+            playlists = playlists,
+            loading = playlistsLoading,
+            tracks = target,
+            collectionTitle = request.title,
+            collectionThumbnailUrl = request.artwork,
+            startCreating = target.isEmpty(),
+            onAdd = { picked ->
+                when (target.size) {
+                    // One track: the ordinary row.
+                    1 -> viewModel.addToPlaylists(picked, target.first()) { added, alreadyThere, failed ->
+                        // One line for the whole batch, saying the
+                        // outcome that matters most: what went in, else
+                        // that it was all there already, else that it
+                        // didn't work.
+                        showQueueNotice(
+                            when {
+                                added > 1 -> context.resources.getQuantityString(
+                                    R.plurals.added_to_playlists_notice, added, added,
+                                )
+                                added == 1 -> context.getString(R.string.song_added_to_playlist)
+                                alreadyThere > 0 && failed == 0 ->
+                                    context.getString(R.string.song_already_in_playlist)
+                                else -> context.getString(R.string.failed)
+                            },
                         )
                     }
-                    dismiss()
-                },
-            )
-        }
+                    // A whole release: every track of it, filed.
+                    else -> viewModel.addSongsToPlaylists(picked, target) { added, tracks, _, failed ->
+                        showQueueNotice(
+                            when {
+                                added > 0 && tracks > 0 -> context.resources.getQuantityString(
+                                    R.plurals.added_tracks_to_playlists_notice, tracks, tracks, added,
+                                )
+                                failed > 0 -> context.getString(R.string.failed)
+                                else -> context.getString(R.string.song_already_in_playlist)
+                            },
+                        )
+                    }
+                }
+                dismiss()
+            },
+            onCreate = { title, privacy ->
+                when (target.size) {
+                    1 -> viewModel.createPlaylist(title, privacy, target.first())
+                    else -> viewModel.createPlaylistWithVideoIds(
+                        title,
+                        privacy,
+                        target.mapNotNull { it.videoId },
+                        target,
+                    )
+                }
+                dismiss()
+            },
+        )
     }
 
     // ---- Add to folder / new folder ----
@@ -6629,56 +6624,57 @@ private fun RootOverlays(
     // list of folders and a way to make another are one decision.
     // `creatingFolder` opens it straight onto the form, which is what the
     // Library bar's "+" tile means.
-    if (sheets.folderTarget != null || sheets.creatingFolder) {
-        val target = sheets.folderTarget
-        val dismiss = {
-            sheets.folderTarget = null
-            sheets.creatingFolder = false
-        }
-        ModalBottomSheet(
-            onDismissRequest = dismiss,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            FolderPickerSheet(
-                folders = localPlaylists.filter { it.isFolder },
-                startCreating = target == null,
-                onAdd = { picked ->
-                    target?.let { song ->
-                        var added = 0
-                        var alreadyThere = 0
-                        var firstName = ""
-                        picked.forEach { folder ->
-                            if (com.music.bitchord.data.spotify.LocalPlaylistStore.addToFolder(folder.id, song)) {
-                                added++
-                                if (firstName.isEmpty()) firstName = folder.title
-                            } else {
-                                alreadyThere++
-                            }
+    val folderPickRequest = if (sheets.folderTarget != null || sheets.creatingFolder) {
+        FolderPickRequest(sheets.folderTarget)
+    } else {
+        null
+    }
+    val dismissFolderPick = {
+        sheets.folderTarget = null
+        sheets.creatingFolder = false
+    }
+    AppSheet(item = folderPickRequest, onDismiss = dismissFolderPick) { request ->
+        val target = request.song
+        val dismiss = dismissFolderPick
+        FolderPickerSheet(
+            folders = localPlaylists.filter { it.isFolder },
+            startCreating = target == null,
+            onAdd = { picked ->
+                target?.let { song ->
+                    var added = 0
+                    var alreadyThere = 0
+                    var firstName = ""
+                    picked.forEach { folder ->
+                        if (com.music.bitchord.data.spotify.LocalPlaylistStore.addToFolder(folder.id, song)) {
+                            added++
+                            if (firstName.isEmpty()) firstName = folder.title
+                        } else {
+                            alreadyThere++
                         }
-                        showQueueNotice(
-                            when {
-                                added > 1 -> context.getString(R.string.track_added_to_folders, added)
-                                added == 1 -> context.getString(
-                                    R.string.track_added_to_folder,
-                                    firstName,
-                                )
-                                alreadyThere > 0 -> context.getString(R.string.track_already_in_folder)
-                                else -> context.getString(R.string.failed)
-                            },
-                        )
                     }
-                    dismiss()
-                },
-                onCreate = { title ->
-                    val folder = com.music.bitchord.data.spotify.LocalPlaylistStore.createFolder(title)
-                    target?.let { song ->
-                        com.music.bitchord.data.spotify.LocalPlaylistStore.addToFolder(folder.id, song)
-                    }
-                    showQueueNotice(context.getString(R.string.folder_created))
-                    dismiss()
-                },
-            )
-        }
+                    showQueueNotice(
+                        when {
+                            added > 1 -> context.getString(R.string.track_added_to_folders, added)
+                            added == 1 -> context.getString(
+                                R.string.track_added_to_folder,
+                                firstName,
+                            )
+                            alreadyThere > 0 -> context.getString(R.string.track_already_in_folder)
+                            else -> context.getString(R.string.failed)
+                        },
+                    )
+                }
+                dismiss()
+            },
+            onCreate = { title ->
+                val folder = com.music.bitchord.data.spotify.LocalPlaylistStore.createFolder(title)
+                target?.let { song ->
+                    com.music.bitchord.data.spotify.LocalPlaylistStore.addToFolder(folder.id, song)
+                }
+                showQueueNotice(context.getString(R.string.folder_created))
+                dismiss()
+            },
+        )
     }
 
     if (sheets.showSpotifyImportDialog) {
@@ -6949,43 +6945,30 @@ private fun RootOverlays(
     }
 
     // ---- Reorder playlist ----
-    // Full height, and the list never hands its leftover scroll to the
-    // sheet: every vertical drag inside it is meant for a row or the list,
-    // and one that pulled the sheet down instead would throw the new order
-    // away. (Material3 1.3 has no sheetGesturesEnabled; the row drags
-    // consume their own events, so the list's overscroll is the only path.)
-    sheets.reorder.playlist?.let { target ->
-        val close = { sheets.reorder.playlist = null }
-        val keepSheetStill = remember {
-            object : NestedScrollConnection {
-                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
-                override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
-            }
-        }
-        ModalBottomSheet(
-            onDismissRequest = close,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            ReorderPlaylistSheet(
-                modifier = Modifier.nestedScroll(keepSheetStill),
-                playlist = target,
-                entries = sheets.reorder.entries,
-                saving = sheets.reorder.saving,
-                onClose = close,
-                onSave = { reordered ->
-                    val original = (sheets.reorder.entries as? UiState.Success)?.data.orEmpty()
-                    sheets.reorder.saving = true
-                    viewModel.reorderPlaylist(target, original, reordered) { saved ->
-                        sheets.reorder.saving = false
-                        showQueueNotice(
-                            context.getString(if (saved) R.string.playlist_reordered else R.string.reorder_failed),
-                        )
-                        if (saved && sheets.reorder.playlist == target) sheets.reorder.playlist = null
-                    }
-                },
-            )
-        }
+    // The list never hands its leftover scroll to the sheet: every vertical
+    // drag inside it is meant for a row or the list, and one that pulled the
+    // sheet down instead would throw the new order away. The sheet still
+    // goes by its handle, a flick on its body, Back, or the scrim.
+    val closeReorder = { sheets.reorder.playlist = null }
+    AppSheet(item = sheets.reorder.playlist, onDismiss = closeReorder, dragFromContent = false) { target ->
+        val close = closeReorder
+        ReorderPlaylistSheet(
+            playlist = target,
+            entries = sheets.reorder.entries,
+            saving = sheets.reorder.saving,
+            onClose = close,
+            onSave = { reordered ->
+                val original = (sheets.reorder.entries as? UiState.Success)?.data.orEmpty()
+                sheets.reorder.saving = true
+                viewModel.reorderPlaylist(target, original, reordered) { saved ->
+                    sheets.reorder.saving = false
+                    showQueueNotice(
+                        context.getString(if (saved) R.string.playlist_reordered else R.string.reorder_failed),
+                    )
+                    if (saved && sheets.reorder.playlist == target) sheets.reorder.playlist = null
+                }
+            },
+        )
     }
 
     // ---- Google sign-in (full screen WebView) ----
@@ -7242,14 +7225,8 @@ private fun RootOverlays(
     // Opened from the player's ⋯ menu or the lyrics panel's mic button.
     // A plain bottom sheet: the slider writes AppSettings.singLevel
     // live, so the mix follows the finger with no apply step.
-    if (sheets.showSing) {
-        BackHandler { sheets.showSing = false }
-        ModalBottomSheet(
-            onDismissRequest = { sheets.showSing = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            SingSheet(onDismiss = { sheets.showSing = false })
-        }
+    AppSheet(item = Unit.takeIf { sheets.showSing }, onDismiss = { sheets.showSing = false }) {
+        SingSheet(onDismiss = { sheets.showSing = false })
     }
 
     if (sheets.showSmbEditor) {
@@ -7872,6 +7849,12 @@ internal class RootNav {
  * flags that are restored after process death stay `rememberSaveable` in
  * [BitChordApp].
  */
+/** What the playlist picker was opened with, kept through its exit — see [RootSheets.PlaylistPick]. */
+private data class PlaylistPickRequest(val songs: List<Song>, val title: String?, val artwork: String?)
+
+/** What the folder picker was opened with: a track to file, or null for a new folder. */
+private data class FolderPickRequest(val song: Song?)
+
 internal class RootSheets {
     /**
      * What the in-app browser is open for, or null while it is closed —
