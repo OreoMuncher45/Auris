@@ -691,7 +691,7 @@ private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BitChordApp(
+internal fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
@@ -1045,16 +1045,29 @@ private fun BitChordApp(
     val likeStatusesState = viewModel.likeStatuses.collectAsStateWithLifecycle()
     val likeStatuses by likeStatusesState
 
-    // Settings has no tab of its own — it sits on top of whatever tab was
-    // selected. A pushed album/artist page (from the player, search, etc.)
-    // should surface above it rather than being hidden behind it.
-    LaunchedEffect(detail) { if (detail != null) nav.showSettings = false }
-    LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
-    LaunchedEffect(nav.showSettings) {
-        if (!nav.showSettings) {
-            nav.showAccountScrobbling = false
-            sheets.showSpotify = false
+    // Settings has no tab of its own — it sits on top of whatever page was
+    // open. A page pushed over it (from the player, a link, Spotify's page)
+    // surfaces above it rather than being hidden behind it, so a push closes
+    // Settings and what it opened.
+    //
+    // A push, not a publish: the open page is republished as a new
+    // [DetailPage] every time its next tracks, like statuses, downloads or
+    // matched rows land, and keyed on the page this closed Settings on each
+    // of those — the moment after it opened, or halfway through its slide.
+    // Pushing is the one thing that makes the stack deeper. Read in a
+    // snapshotFlow, so the root does not recompose for it either.
+    LaunchedEffect(Unit) {
+        var depth = detailStackState.value.size
+        snapshotFlow { detailStackState.value.size }.collect { size ->
+            if (size > depth && nav.showSettings) nav.closeSettings(sheets)
+            depth = size
         }
+    }
+    LaunchedEffect(detail?.browseId) { sheets.detailActiveShelf = null }
+    // Every other way Settings closes (a tab, sign-in, an invite, a context
+    // link) sets the one flag; its pages go with it.
+    LaunchedEffect(nav.showSettings) {
+        if (!nav.showSettings) nav.closeSettings(sheets)
     }
 
     // The Downloads page is a snapshot of the folder, taken when it was opened.
@@ -2552,6 +2565,8 @@ private fun BitChordApp(
             nav.settingsSubScreen = null
             sheets.showHistory = false
             sheets.showFlow = false
+            sheets.showSpotify = false
+            sheets.spotifyFromSettings = false
             sheets.libraryShowAll = null
             nav.selectedTab = TAB_SEARCH
             searchVisualActive = true
@@ -2590,6 +2605,7 @@ private fun BitChordApp(
             }
             else -> item.browseId?.let { id ->
             if (id == SPOTIFY_BROWSE_ID) {
+                sheets.spotifyFromSettings = false
                 sheets.showSpotify = true
                 return@let
             }
@@ -3283,6 +3299,12 @@ private fun BitChordApp(
 
         val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == nav.selectedTab }.coerceAtLeast(0)
 
+        // Which page is on screen, as one name. The root's page switcher
+        // shows this, and the back handlers below that belong to a page ask
+        // it rather than their own flag: a page's flag stays set while
+        // another page is open over it, and back must close the one on top.
+        val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
+
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         // Replay's three layers unwind in the order they were opened. Ahead of
@@ -3290,7 +3312,7 @@ private fun BitChordApp(
         BackHandler(enabled = nav.showReplayShare) { nav.showReplayShare = false }
         BackHandler(enabled = nav.replayStory != null && !nav.showReplayShare) { nav.replayStory = null }
         BackHandler(
-            enabled = nav.showReplay && nav.replayStory == null && !nav.showReplayShare,
+            enabled = pageKey == "replay" && nav.replayStory == null && !nav.showReplayShare,
         ) {
             if (nav.settingsSubScreen == "replay") {
                 // Dismiss Replay overlay and return to SettingsSheet beneath.
@@ -3300,20 +3322,17 @@ private fun BitChordApp(
                 nav.showReplay = false
             }
         }
-        BackHandler(
-            enabled = detail != null && !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether &&
-                !nav.showEqualizer && !nav.showReplay,
-        ) { viewModel.closeDetail() }
+        BackHandler(enabled = detail != null && pageKey == detail.browseId) { viewModel.closeDetail() }
         BackHandler(enabled = selectedMoodGenreState.value != null && detail == null && !nav.showSettings && !nav.showReplay) {
             viewModel.closeMoodGenre()
         }
         BackHandler(enabled = sheets.showDiscord) {
             sheets.showDiscord = false
         }
-        BackHandler(enabled = sheets.showSpotify && detail == null) {
+        BackHandler(enabled = pageKey == "spotify") {
             sheets.showSpotify = false
         }
-        BackHandler(enabled = nav.showAccountScrobbling && !sheets.showDiscord && !sheets.showSpotify) {
+        BackHandler(enabled = pageKey == "account_scrobbling") {
             nav.showAccountScrobbling = false
             if (nav.settingsSubScreen == "account_scrobbling") nav.settingsSubScreen = null
         }
@@ -3335,31 +3354,34 @@ private fun BitChordApp(
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = sheets.openAudiobook != null) {
+        BackHandler(enabled = pageKey == "audiobook") {
             sheets.openAudiobook = null
         }
-        BackHandler(enabled = nav.showAudiobooks) {
+        BackHandler(enabled = pageKey == "audiobooks") {
             nav.showAudiobooks = false
         }
-        BackHandler(enabled = nav.itunesPodcastId != null) {
+        BackHandler(enabled = pageKey == "itunespodcast") {
             nav.itunesPodcastId = null
         }
         // Not while a detail page is open over Genres: that page's own back
         // closes first, as with the Library grid below.
-        BackHandler(enabled = nav.showGenres && detail == null) {
+        BackHandler(enabled = pageKey == "genres") {
             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
         }
-        BackHandler(enabled = nav.showSettings && !sheets.showSpotify && !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay) {
+        BackHandler(enabled = pageKey == "settings") {
             // Back closes the open category first, then Settings; it does not
             // throw away both at once.
             if (nav.settingsCategory != null) {
                 nav.settingsCategory = null
             } else {
-                nav.showSettings = false
+                nav.closeSettings(sheets)
                 // Only when Settings was the whole of what was on screen.
-                // Opened over Replay or over a release page, closing it reveals
-                // that again rather than throwing both away.
-                if (detail == null && !nav.showReplay) nav.selectedTab = TAB_HOME
+                // Opened over Replay, a release page, History or any other
+                // page, closing it reveals that again rather than throwing
+                // both away.
+                if (rootPageKey(nav, sheets, podcastUi.showContinueListening, detail).startsWith(TAB_KEY)) {
+                    nav.selectedTab = TAB_HOME
+                }
             }
         }
         BackHandler(
@@ -3377,15 +3399,21 @@ private fun BitChordApp(
         BackHandler(enabled = sheets.discordDialog != null) { sheets.discordDialog = null }
         BackHandler(enabled = sheets.editingSource != null) { sheets.editingSource = null }
         BackHandler(enabled = sheets.editingPartyServer) { sheets.editingPartyServer = false }
-        BackHandler(enabled = sheets.showHistory) { sheets.showHistory = false }
-        BackHandler(enabled = sheets.showFlow) { sheets.showFlow = false }
-        BackHandler(enabled = sheets.showQuickPicks) { sheets.showQuickPicks = false }
-        BackHandler(enabled = podcastUi.showContinueListening) { podcastUi.showContinueListening = false }
+        // These pages can have Settings opened over them, and they are
+        // registered after its handler, so each one answers back only while
+        // it is the page on screen: otherwise back closed the page hidden
+        // under Settings and left Settings up.
+        BackHandler(enabled = pageKey == "history") { sheets.showHistory = false }
+        BackHandler(enabled = pageKey == "flow") { sheets.showFlow = false }
+        BackHandler(enabled = pageKey == "quick_picks") { sheets.showQuickPicks = false }
+        BackHandler(enabled = pageKey == "continue_listening") { podcastUi.showContinueListening = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
-        BackHandler(enabled = sheets.libraryShowAll != null && detail == null) { sheets.libraryShowAll = null }
-        BackHandler(enabled = sheets.detailActiveShelf != null) { sheets.detailActiveShelf = null }
+        BackHandler(enabled = pageKey == "library_show_all") { sheets.libraryShowAll = null }
+        BackHandler(enabled = sheets.detailActiveShelf != null && pageKey == detail?.browseId) {
+            sheets.detailActiveShelf = null
+        }
 
         // The Classipod shell replaces tabs, bars and player sheets wholesale:
         // same viewModel, same controller, same stores — only the chrome
@@ -4030,9 +4058,8 @@ private fun BitChordApp(
                         if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
-                // Which page is on screen, as one name. The transition runs
-                // on the difference between two of these.
-                val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
+                // [pageKey] is which page is on screen, as one name. The
+                // transition runs on the difference between two of these.
                 // A page change moves the content the glass samples. The
                 // clock tells every glass surface to hold its capture for the
                 // length of the slide rather than re-record it per frame —
@@ -4157,8 +4184,7 @@ private fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !nav.showSettings &&
-                    !nav.showAccountScrobbling && !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay
+                    !isLocalDetail && pageKey == detail.browseId
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
                 } else {
@@ -4202,30 +4228,36 @@ private fun BitChordApp(
                 )
 
                 FrostedTopBar(
-                    title = when {
-                        sheets.showSpotify && detail == null -> stringResource(R.string.spotify)
-                        sheets.showDiscord -> "Discord"
-                        sheets.showHistory -> stringResource(R.string.history)
-                        sheets.showFlow -> stringResource(R.string.flow)
-                        sheets.showQuickPicks -> quickPicksLabel
-                        podcastUi.showContinueListening -> stringResource(R.string.continue_listening)
-                        sheets.libraryShowAll != null && detail == null -> sheets.libraryShowAll?.title.orEmpty()
-                        nav.showAccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        nav.showSources -> stringResource(R.string.sources)
-                        nav.showListenTogether -> stringResource(R.string.listen_together)
-                        nav.showEqualizer -> stringResource(R.string.equalizer)
-                        nav.showSettings -> nav.settingsCategory
+                    // The title and the back button follow [pageKey], the page
+                    // actually on screen, rather than a precedence of their
+                    // own: with two of them, Settings opened over History
+                    // came up titled "History", and its back closed History.
+                    title = when (pageKey) {
+                        "spotify" -> stringResource(R.string.spotify)
+                        "discord" -> "Discord"
+                        "history" -> stringResource(R.string.history)
+                        "flow" -> stringResource(R.string.flow)
+                        "quick_picks" -> quickPicksLabel
+                        "continue_listening" -> stringResource(R.string.continue_listening)
+                        "library_show_all" -> sheets.libraryShowAll?.title.orEmpty()
+                        "account_scrobbling" -> stringResource(R.string.account_scrobbling)
+                        "sources" -> stringResource(R.string.sources)
+                        "listen_together" -> stringResource(R.string.listen_together)
+                        "equalizer" -> stringResource(R.string.equalizer)
+                        "settings" -> nav.settingsCategory
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
                             ?: stringResource(R.string.settings)
-                        nav.showGenres && detail == null -> stringResource(R.string.explore)
-                        sheets.openAudiobook != null -> sheets.openAudiobook?.title.orEmpty()
-                        nav.showAudiobooks -> stringResource(R.string.audiobooks)
-                        nav.showReplay -> stringResource(R.string.replay)
+                        "genres" -> stringResource(R.string.explore)
+                        "audiobook" -> sheets.openAudiobook?.title.orEmpty()
+                        "audiobooks" -> stringResource(R.string.audiobooks)
+                        "replay" -> stringResource(R.string.replay)
+                        else -> when {
                         detail != null && sheets.detailActiveShelf != null -> sheets.detailActiveShelf?.title.orEmpty()
-                        detail != null -> detail.title
+                        detail != null && pageKey == detail.browseId -> detail.title
                         selectedMoodGenreState.value != null -> selectedMoodGenreState.value?.title.orEmpty()
                         else -> tabs[selectedTabIndex].label
+                        }
                     },
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
@@ -4251,46 +4283,54 @@ private fun BitChordApp(
                     },
                     refreshing = currentFeed != null && currentFeed in refreshing,
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
-                    onBack = when {
-                        sheets.showSpotify && detail == null -> ({ sheets.showSpotify = false })
-                        sheets.showDiscord -> ({ sheets.showDiscord = false })
-                        sheets.showHistory -> ({ sheets.showHistory = false })
-                        sheets.showFlow -> ({ sheets.showFlow = false })
-                        sheets.showQuickPicks -> ({ sheets.showQuickPicks = false })
-                        podcastUi.showContinueListening -> ({ podcastUi.showContinueListening = false })
-                        sheets.libraryShowAll != null && detail == null -> ({ sheets.libraryShowAll = null })
-                        nav.showAccountScrobbling -> ({
+                    onBack = when (pageKey) {
+                        "spotify" -> ({ sheets.showSpotify = false })
+                        "discord" -> ({ sheets.showDiscord = false })
+                        "history" -> ({ sheets.showHistory = false })
+                        "flow" -> ({ sheets.showFlow = false })
+                        "quick_picks" -> ({ sheets.showQuickPicks = false })
+                        "continue_listening" -> ({ podcastUi.showContinueListening = false })
+                        "library_show_all" -> ({ sheets.libraryShowAll = null })
+                        "account_scrobbling" -> ({
                             nav.showAccountScrobbling = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showSources -> ({
+                        "sources" -> ({
                             nav.showSources = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showListenTogether -> ({
+                        "listen_together" -> ({
                             nav.showListenTogether = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showEqualizer -> ({
+                        "equalizer" -> ({
                             nav.showEqualizer = false
                             nav.settingsSubScreen = null
                         })
-                        nav.showSettings && nav.settingsCategory != null -> ({
-                            nav.settingsCategory = null
-                        })
-                        sheets.openAudiobook != null -> ({ sheets.openAudiobook = null })
-                        nav.showAudiobooks -> ({ nav.showAudiobooks = false })
-                        nav.itunesPodcastId != null -> ({ nav.itunesPodcastId = null })
-                        nav.showGenres && detail == null -> ({
+                        "settings" -> if (nav.settingsCategory != null) {
+                            { nav.settingsCategory = null }
+                        } else {
+                            { nav.closeSettings(sheets) }
+                        }
+                        "audiobook" -> ({ sheets.openAudiobook = null })
+                        "audiobooks" -> ({ nav.showAudiobooks = false })
+                        "itunespodcast" -> ({ nav.itunesPodcastId = null })
+                        "genres" -> ({
                             if (selectedMoodGenreState.value != null) viewModel.closeMoodGenre() else nav.showGenres = false
                         })
-                        nav.settingsSubScreen != null -> ({ nav.settingsSubScreen = null })
-                        nav.showSettings -> ({ nav.showSettings = false })
-                        nav.showReplay -> ({ nav.showReplay = false })
-                        sheets.detailActiveShelf != null -> ({ sheets.detailActiveShelf = null })
-                        detail != null -> ({ viewModel.closeDetail(); Unit })
-                        selectedMoodGenreState.value != null -> ({ viewModel.closeMoodGenre(); Unit })
-                        else -> null
+                        "replay" -> ({
+                            if (nav.settingsSubScreen == "replay") nav.settingsSubScreen = null
+                            nav.showReplay = false
+                        })
+                        else -> when {
+                            detail != null && pageKey == detail.browseId -> if (sheets.detailActiveShelf != null) {
+                                { sheets.detailActiveShelf = null }
+                            } else {
+                                { viewModel.closeDetail(); Unit }
+                            }
+                            selectedMoodGenreState.value != null -> ({ viewModel.closeMoodGenre(); Unit })
+                            else -> null
+                        }
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
                     // Only on the Search tab itself, not on anything pushed over it.
@@ -5156,7 +5196,10 @@ private fun RootPage(
             onOpenListenBrainzLogin = { sheets.showListenBrainzLogin = true },
             onOpenLastfmLogin = { sheets.showLastfmLogin = true },
             onOpenDiscord = { sheets.showDiscord = true },
-            onOpenSpotify = { sheets.showSpotify = true },
+            onOpenSpotify = {
+                sheets.spotifyFromSettings = true
+                sheets.showSpotify = true
+            },
             contentPadding = listPadding,
         )
     } else if (key == "sources") {
@@ -7483,6 +7526,11 @@ private class PodcastUiState {
  * transition runs on the difference between two of these. Pages that open
  * over the feed win over the tab, in this order; a detail page wins over
  * the pages it can be opened from (the Library grid, Genres).
+ *
+ * The order stands in for the order the pages were opened in, so a page
+ * has to rank above every page it can be opened from. Settings is opened
+ * from the account button, which is on almost every page, so it ranks above
+ * all of them; only the pages opened from Settings rank above it.
  */
 internal fun rootPageKey(
     nav: RootNav,
@@ -7491,12 +7539,33 @@ internal fun rootPageKey(
     detail: DetailPage?,
 ): String {
     return when {
-        sheets.showSpotify && detail == null -> "spotify"
+        // The pages Settings opens, over Settings. Spotify is opened from
+        // Account & scrobbling here, and while Settings is up any release
+        // page is under it (a page pushed over Settings closes it, see
+        // [RootNav.closeSettings]), so no `detail == null` test.
+        sheets.showSpotify && sheets.spotifyFromSettings && nav.showSettings -> "spotify"
         sheets.showDiscord -> "discord"
-        sheets.showHistory -> "history"
-        sheets.showFlow -> "flow"
-        sheets.showQuickPicks -> "quick_picks"
-        showContinueListening -> "continue_listening"
+        nav.showAccountScrobbling -> "account_scrobbling"
+        nav.showSources -> "sources"
+        nav.showListenTogether -> "listen_together"
+        nav.showEqualizer -> "equalizer"
+        nav.showReplay && nav.showSettings && nav.settingsSubScreen == "replay" -> "replay"
+        // Above every page the account button is on. The button sets
+        // `showSettings` from all of them, so with one of them winning the
+        // tie the button was live, hit, and changed nothing on screen until
+        // back had closed that page.
+        nav.showSettings -> "settings"
+        // Spotify's page from the Home card: a playlist opened from it
+        // stacks over it, as the Library grid's do below.
+        sheets.showSpotify && detail == null -> "spotify"
+        // `&& detail == null`, as for the grid below: these open only with
+        // no release page on the stack (the player's "playing from" clears
+        // it first), so with both set the release page was pushed later —
+        // over Settings opened on one of them, say — and is the one on top.
+        sheets.showHistory && detail == null -> "history"
+        sheets.showFlow && detail == null -> "flow"
+        sheets.showQuickPicks && detail == null -> "quick_picks"
+        showContinueListening && detail == null -> "continue_listening"
         // `&& detail == null`: a card opened from the grid
         // stacks a detail page over it exactly as one opened
         // from the Library tab does — see
@@ -7504,15 +7573,6 @@ internal fun rootPageKey(
         // give way to the `detail != null` branch below it
         // rather than keep showing the grid underneath.
         sheets.libraryShowAll != null && detail == null -> "library_show_all"
-        nav.showAccountScrobbling -> "account_scrobbling"
-        nav.showSources -> "sources"
-        nav.showListenTogether -> "listen_together"
-        nav.showEqualizer -> "equalizer"
-        // Above Replay, not below it. The top bar's account
-        // button sets `showSettings` from every page including
-        // this one, so with Replay winning the tie the button
-        // was live, hit, and changed nothing on screen.
-        nav.showSettings -> "settings"
         // `&& detail == null` for the same reason as the grid above: a
         // playlist opened from a genre stacks a detail page over Genres,
         // and with both set the detail page is the one on screen.
@@ -7577,6 +7637,37 @@ internal class RootNav {
     // The player's member drawer, reachable from the track menu as well once
     // there is a party.
     var showListenTogetherMembers by mutableStateOf(false)
+
+    /**
+     * Closes Settings and every page that was opened from it: the open
+     * category, its sub-pages, and Spotify, Discord or Replay when Settings
+     * opened them.
+     *
+     * One place, because the pages Settings opens rank above the pages
+     * Settings is opened over (see [rootPageKey]): one left set after
+     * Settings itself had gone still covered whatever came up next — a
+     * release page opened from the player stayed hidden under the equalizer
+     * — and a category left set opened the next Settings inside it.
+     */
+    fun closeSettings(sheets: RootSheets) {
+        if (showAccountScrobbling) sheets.showDiscord = false
+        if (sheets.spotifyFromSettings) {
+            sheets.showSpotify = false
+            sheets.spotifyFromSettings = false
+        }
+        if (settingsSubScreen == "replay") {
+            showReplay = false
+            replayStory = null
+            showReplayShare = false
+        }
+        showSettings = false
+        settingsCategory = null
+        settingsSubScreen = null
+        showAccountScrobbling = false
+        showSources = false
+        showListenTogether = false
+        showEqualizer = false
+    }
 
     companion object {
         val Saver: Saver<RootNav, Any> = listSaver(
@@ -7704,6 +7795,13 @@ internal class RootSheets {
     // to cover the tab bar and mini player, which are drawn after it.
     var showDiscord by mutableStateOf(false)
     var showSpotify by mutableStateOf(false)
+    /**
+     * Whether [showSpotify]'s page was opened from Settings (Account &
+     * scrobbling) rather than from the Home card. Opened from Settings it is
+     * one of Settings' pages, drawn over it and closed with it; from Home it
+     * is a page of the feed, under Settings and under its own playlists.
+     */
+    var spotifyFromSettings by mutableStateOf(false)
     var showDiscordLogin by mutableStateOf(false)
     var discordDialog by mutableStateOf<DiscordDialog?>(null)
     /** The track menu — see [SongMenu]. */
