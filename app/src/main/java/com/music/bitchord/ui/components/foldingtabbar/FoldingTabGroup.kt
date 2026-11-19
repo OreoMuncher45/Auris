@@ -80,6 +80,8 @@ import com.music.bitchord.ui.components.backdrop.highlight.Highlight
 import com.music.bitchord.ui.components.backdrop.shadow.InnerShadow
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
 import com.music.bitchord.ui.components.glassUsesDarkAppearance
+import com.music.bitchord.ui.components.MIN_GLASS_RESOLUTION_SCALE
+import androidx.compose.ui.graphics.Shape
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -241,10 +243,61 @@ internal fun FoldingTabGroup(
                 child.placeRelative((width - grownWidth) / 2, (slotHeight - grownHeight) / 2)
             }
         }
-        val slotLens: BackdropEffectScope.() -> Unit = {
-            val progress = dampedDragAnimation.pressProgress
-            lens(10.dp.toPx() * progress, 14.dp.toPx() * progress, chromaticAberration = true)
+        val slotLens: BackdropEffectScope.() -> Unit = remember(dampedDragAnimation) {
+            {
+                val progress = dampedDragAnimation.pressProgress
+                lens(10.dp.toPx() * progress, 14.dp.toPx() * progress, chromaticAberration = true)
+            }
         }
+        // At rest the slot is only a soft blur of the page under a 10% film: no lens,
+        // no rim, no shadow. That blur ran at full resolution — the only glass in the
+        // bar that did — so this small capsule cost more GPU per frame than the whole
+        // bar's surface. Resting, it is sampled at the bar's own reduced resolution and
+        // the blur radius scaled to match, which the blur hides; pressed, it goes back
+        // to full resolution for the sharp lens. Derived, so it flips once per press.
+        val slotPressed by remember(dampedDragAnimation) {
+            derivedStateOf { dampedDragAnimation.pressProgress > 0f }
+        }
+        val slotScale = if (slotPressed) 1f else MIN_GLASS_RESOLUTION_SCALE
+        val slotEffects: BackdropEffectScope.() -> Unit = remember(dampedDragAnimation, slotScale, slotLens) {
+            {
+                vibrancy()
+                blur(8.dp.toPx() * slotScale * (1f - dampedDragAnimation.pressProgress.coerceIn(0f, 1f)))
+                slotLens()
+            }
+        }
+        // Each of these is invisible at zero progress, and still recorded and drawn
+        // as its own layer (the inner shadow re-recorded on every draw). Null skips them.
+        val slotHighlight: () -> Highlight? = remember(dampedDragAnimation) {
+            {
+                val progress = dampedDragAnimation.pressProgress
+                if (progress > 0f) Highlight.Default.copy(alpha = progress) else null
+            }
+        }
+        val slotShadow: () -> Shadow? = remember(dampedDragAnimation) {
+            {
+                val progress = dampedDragAnimation.pressProgress
+                if (progress > 0f) Shadow(alpha = progress) else null
+            }
+        }
+        val slotInnerShadow: () -> InnerShadow? = remember(dampedDragAnimation) {
+            {
+                val progress = dampedDragAnimation.pressProgress
+                if (progress > 0f) InnerShadow(radius = 8.dp * progress, alpha = progress) else null
+            }
+        }
+        val slotSurface: DrawScope.() -> Unit = remember(dampedDragAnimation, containerColor, isLightTheme) {
+            {
+                val progress = dampedDragAnimation.pressProgress
+                drawRect(containerColor, alpha = 1f - progress)
+                drawRect(
+                    if (isLightTheme) Color.Black.copy(0.1f) else Color.White.copy(0.1f),
+                    alpha = 1f - progress,
+                )
+                drawRect(Color.Black.copy(alpha = 0.03f * progress))
+            }
+        }
+        val capsuleShape: () -> Shape = remember { { Capsule } }
         // While pressed the slot also refracts the bar's own surface, faded in so release doesn't pop.
         val pressedBackdrop = remember(backdrop, surfaceBackdrop, dampedDragAnimation) {
             object : Backdrop {
@@ -280,27 +333,13 @@ internal fun FoldingTabGroup(
                 .then(slotGrowth)
                 .drawBackdrop(
                     backdrop = pressedBackdrop,
-                    shape = { Capsule },
-                    effects = {
-                        vibrancy()
-                        blur(8.dp.toPx() * (1f - dampedDragAnimation.pressProgress.coerceIn(0f, 1f)))
-                        slotLens()
-                    },
-                    highlight = { Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress) },
-                    shadow = { Shadow(alpha = dampedDragAnimation.pressProgress) },
-                    innerShadow = {
-                        val progress = dampedDragAnimation.pressProgress
-                        InnerShadow(radius = 8.dp * progress, alpha = progress)
-                    },
-                    onDrawSurface = {
-                        val progress = dampedDragAnimation.pressProgress
-                        drawRect(containerColor, alpha = 1f - progress)
-                        drawRect(
-                            if (isLightTheme) Color.Black.copy(0.1f) else Color.White.copy(0.1f),
-                            alpha = 1f - progress,
-                        )
-                        drawRect(Color.Black.copy(alpha = 0.03f * progress))
-                    },
+                    shape = capsuleShape,
+                    effects = slotEffects,
+                    highlight = slotHighlight,
+                    shadow = slotShadow,
+                    innerShadow = slotInnerShadow,
+                    onDrawSurface = slotSurface,
+                    backdropScale = slotScale,
                 )
         )
         Box(
@@ -310,7 +349,7 @@ internal fun FoldingTabGroup(
                 .then(slotGrowth)
                 .drawBackdrop(
                     backdrop = tabsBackdrop,
-                    shape = { Capsule },
+                    shape = capsuleShape,
                     effects = slotLens,
                     highlight = null,
                     shadow = null,

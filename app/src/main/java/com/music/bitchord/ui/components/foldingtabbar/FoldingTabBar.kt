@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -38,6 +40,7 @@ import androidx.compose.ui.util.lerp
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.backdrop.catalog.utils.InteractiveHighlight
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
 import kotlin.math.roundToInt
@@ -45,6 +48,19 @@ import kotlin.math.roundToInt
 internal const val CollapseMorphMs = 560
 internal const val ExpandMorphMs = 470
 private val BarSurfaceExpandSpring = SpringEasing(zeta = 0.74f)
+
+/**
+ * Whether the bar is drawn folded.
+ *
+ * The scroll connection decides this everywhere except search, which has no
+ * folded form: the field is drawn only at fold 0, so a bar left folded by a
+ * scroll would swallow the screen the search icon just opened. The search page
+ * is therefore held open while either its field is showing ([inSearch]) or its
+ * tab is selected ([onSearchTab]) — the latter covering a page opened without
+ * the field, straight to results.
+ */
+internal fun navBarFolded(isInline: Boolean, inSearch: Boolean, onSearchTab: Boolean): Boolean =
+    isInline && !inSearch && !onSearchTab
 
 /**
  * The bottom bar as one layout folded by one number: the tab group shrinks onto the
@@ -76,24 +92,43 @@ fun FoldingTabBar(
     val scope = FloatingTabBarScopeImpl().apply { content() }
     val isInline = scrollConnection.isInline
     val inSearch = searchMode && searchBarContent != null
+    // Search has no folded form, and it is the page the listener is on rather
+    // than a resting state to minimise. The scroll state is ignored rather
+    // than reset: leaving it alone means closing search returns the bar to
+    // the fold the page underneath is actually at.
+    val onSearchTab = scope.tabs.lastOrNull()?.key == selectedTabKey
+    val folded = navBarFolded(isInline, inSearch, onSearchTab)
 
-    val fold = remember { Animatable(if (isInline) 1f else 0f) }
-    LaunchedEffect(isInline) {
+    val fold = remember { Animatable(if (folded) 1f else 0f) }
+    LaunchedEffect(folded) {
+        // The fold moves the very content the bar's glass samples, so every
+        // frame of it would pay a full backdrop re-record for a bar that is
+        // moving anyway. The clock tells the glass to hold its capture for
+        // the length of the fold; the lens stops tracking what passes
+        // underneath it, and the fold gets its frames.
+        GlassMotion.nav.moved()
         fold.animateTo(
-            if (isInline) 1f else 0f,
-            if (isInline) {
+            if (folded) 1f else 0f,
+            if (folded) {
                 tween(CollapseMorphMs, easing = FoldCollapseSpring)
             } else {
                 tween(ExpandMorphMs, easing = BarSurfaceExpandSpring)
             },
-        )
+        ) {
+            GlassMotion.nav.moved()
+        }
+        GlassMotion.nav.settled()
     }
     val search = remember { Animatable(if (inSearch) 1f else 0f) }
     LaunchedEffect(inSearch) {
+        GlassMotion.nav.moved()
         search.animateTo(
             if (inSearch) 1f else 0f,
             spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
-        )
+        ) {
+            GlassMotion.nav.moved()
+        }
+        GlassMotion.nav.settled()
     }
 
     val selected = scope.getInlineTab(selectedTabKey)
@@ -101,7 +136,10 @@ fun FoldingTabBar(
     val selectedIndex = scope.tabs.indexOf(selected).coerceAtLeast(0)
     val tabsCount = scope.tabs.size.coerceAtLeast(1)
     val surfaceBackdrop = rememberLayerBackdrop()
-    val foldedOrSearching = isInline || inSearch
+    val searchGlassShown by remember {
+        derivedStateOf { fold.value > 0f || search.value > 0f }
+    }
+    val foldedOrSearching = folded || inSearch
     val noTap = remember { MutableInteractionSource() }
     val glowScope = rememberCoroutineScope()
     val selectedGlow = remember(glowScope) { InteractiveHighlight(animationScope = glowScope) }
@@ -151,7 +189,7 @@ fun FoldingTabBar(
                     .then(
                         if (foldedOrSearching) {
                             Modifier.then(selectedGlow.gestureModifier).clickable(noTap, null) {
-                                if (isInline) scrollConnection.expand() else selected?.onClick?.invoke()
+                                if (folded) scrollConnection.expand() else selected?.onClick?.invoke()
                             }
                         } else {
                             Modifier.clearAndSetSemantics {}
@@ -165,14 +203,27 @@ fun FoldingTabBar(
                 )
             }
             // 3: search's own glass, only while detached from the group.
+            //
+            // At rest (open, not searching) this sits at alpha 0 under the group, and
+            // it used to carry the full glass anyway: a backdrop sampler, its blur and
+            // lens chain, rim and shadow layers, all recorded for a surface no one can
+            // see. The glass is attached only while the circle has any opacity; the
+            // flag is derived, so it flips once at each end of a fold, not per frame.
             Box(
                 Modifier
                     .graphicsLayer(elasticStretchLayerBlock(searchGlow))
                     .graphicsLayer { alpha = maxOf(fold.value, search.value).coerceIn(0f, 1f) }
-                    .background(colors.backgroundColor, shapes.standaloneTabShape)
-                    .clip(shapes.standaloneTabShape)
-                    .then(tabBarContentModifier)
-                    .then(searchGlow.modifier)
+                    .then(
+                        if (searchGlassShown) {
+                            Modifier
+                                .background(colors.backgroundColor, shapes.standaloneTabShape)
+                                .clip(shapes.standaloneTabShape)
+                                .then(tabBarContentModifier)
+                                .then(searchGlow.modifier)
+                        } else {
+                            Modifier
+                        }
+                    )
             )
             // 4: the detached search control.
             Box(
@@ -184,7 +235,7 @@ fun FoldingTabBar(
                         alpha = maxOf(p, s) * (1f - s * (1f - p))
                     }
                     .then(
-                        if (foldedOrSearching && (!inSearch || isInline)) {
+                        if (foldedOrSearching && (!inSearch || folded)) {
                             Modifier.then(searchGlow.gestureModifier).clickable(noTap, null) { searchTab?.onClick?.invoke() }
                         } else {
                             Modifier.clearAndSetSemantics {}
@@ -201,7 +252,7 @@ fun FoldingTabBar(
             Box(
                 Modifier
                     .graphicsLayer { alpha = (search.value * (1f - fold.value)).coerceIn(0f, 1f) }
-                    .then(if (!inSearch || isInline) Modifier.clearAndSetSemantics {} else Modifier)
+                    .then(if (!inSearch || folded) Modifier.clearAndSetSemantics {} else Modifier)
             ) {
                 if (inSearch || search.value > 0f) {
                     searchBarContent?.invoke(Modifier.fillMaxSize())
@@ -212,10 +263,10 @@ fun FoldingTabBar(
                 accessory?.invoke(
                     Modifier
                         .fillMaxWidth()
-                        .pillShadow(shapes.accessoryShape, if (isInline) elevations.inlineElevation else elevations.expandedElevation)
+                        .pillShadow(shapes.accessoryShape, if (folded) elevations.inlineElevation else elevations.expandedElevation)
                         .clip(shapes.accessoryShape)
                         .background(colors.accessoryBackgroundColor, shapes.accessoryShape),
-                    isInline,
+                    folded,
                 )
             }
         },

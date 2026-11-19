@@ -87,7 +87,7 @@ internal fun AudioPopupCard(
                         Modifier.background(Color(0xFF121212))
                     } else {
                         Modifier
-                            .optimizedHazeEffect(
+                            .liveMenuFrost(
                                 state = hazeState,
                                 style = HazeMaterials.regular(Color(0xFF141414)),
                             )

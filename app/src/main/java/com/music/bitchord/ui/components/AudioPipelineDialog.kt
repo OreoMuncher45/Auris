@@ -4,14 +4,17 @@ import android.media.AudioFormat
 import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -42,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -65,6 +70,8 @@ import com.music.bitchord.R
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.audio.AudioFidelity
+import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
 import dev.chrisbanes.haze.HazeState
@@ -73,6 +80,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
 
@@ -85,7 +93,7 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  * on, and because the app otherwise breaks bit-exactness whenever the
  * equaliser or spatial audio is switched on without saying so anywhere.
  *
- * There are two independent ways to lose it, and the ordering names the
+ * There are three independent ways to lose it, and the ordering names the
  * *first* one in the signal chain, which is also the first thing someone
  * would change to get it back:
  *
@@ -95,12 +103,19 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  *    that will not open a float track, or 32-bit integer PCM, which no route
  *    can carry. [outputExact] is the sink's own verdict on that; see
  *    `PrecisionAudioSink.publishOutputExactness`.
+ * 3. The app is applying the listener's volume to the samples. A bit-perfect
+ *    route gives up the mixer's gain, so the app has to put the level back
+ *    itself — and a gain on the samples is a change to the samples. It is
+ *    named here rather than left to be guessed at, because the listener's
+ *    own slider is what causes it.
  *
- * This used to be gated behind a Bit-perfect mode that turned the DSP stages
- * off for you. The mode is gone — with every stage already idle the samples
- * were bit-exact without it, so the toggle mostly duplicated the Output
- * precision preference — but the readout is not, because "is it exact right
- * now" is worth answering whether or not there is a switch that forces it.
+ * Bit-perfect mode takes the first out of the path deliberately. What remains
+ * is the second, plus a third no sink can answer for: whether Android's mixer
+ * passed the track through or resampled it. On Android 14 bit-perfect mode also
+ * asks the framework for an unmixed path ([mixerBitPerfect]); when that request
+ * is refused the verdict says the samples are unchanged by the app but the
+ * system mixer may still resample them, rather than claiming a chain that does
+ * not exist.
  */
 private fun bitExactVerdict(
     dsd: Boolean,
@@ -109,16 +124,80 @@ private fun bitExactVerdict(
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
+    simAtmosActive: Boolean,
+    dspBypassed: Boolean,
+    mixerBitPerfect: Boolean,
+    volumeApplication: VolumeApplication,
+    volumeGain: Float,
 ): String = when {
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
     dsd -> "No — DSD converted to PCM"
+    // The app scaling the samples is itself a change to them. The mixer's
+    // gain is what a bit-perfect route gives up, and putting it back in
+    // software is the price of the phone's own slider still working.
+    volumeApplication == VolumeApplication.APP_SOFTWARE && volumeGain < 0.999f ->
+        "No — volume applied in software"
+    // Bit-perfect deliberately ignores the loudness/equaliser/spatial
+    // switches, so reporting one of them would name a stage that is not
+    // running. What is left to report is whether the source encoding survived
+    // the sink and whether the system's own mixer was taken out of the path.
+    dspBypassed && outputExact && mixerBitPerfect ->
+        "Yes (bit-perfect: JamesDSP and system mixer bypassed)"
+    dspBypassed && outputExact ->
+        "Yes (DSP bypassed; the system mixer may resample)"
+    dspBypassed -> "No — bit-perfect requested, ${outputExactDetail ?: "the route cannot carry the source"}"
     loudnessActive -> "No — loudness normalization"
     eqActive -> "No — equalizer"
     spatialActive -> "No — spatial audio"
+    simAtmosActive -> "No — simulated Dolby Atmos"
     outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
     else -> "No — ${outputExactDetail ?: "converted downstream"}"
+}
+
+/**
+ * Where the listener's volume is applied on the path that is playing.
+ *
+ * Named rather than left to be inferred, because the answer decides whether
+ * the phone's own slider can work at all: with the mixer out of the path,
+ * the app applies the level itself — on the samples, or in the DAC after
+ * them.
+ *
+ * The numbers are the ones the listener is asking about: how far the level
+ * has been turned down, and — where a DAC has a control of its own — where
+ * that leaves the output in absolute terms.
+ */
+private fun volumeApplicationText(
+    application: VolumeApplication,
+    gain: Float,
+    offsetDb: Double?,
+    outputDb: Double?,
+): String {
+    val offset = offsetDb ?: if (application == VolumeApplication.APP_SOFTWARE) {
+        if (gain > 0f) 20.0 * kotlin.math.log10(gain.toDouble()) else -120.0
+    } else {
+        null
+    }
+    val gainText = if (application == VolumeApplication.APP_SOFTWARE) {
+        val percent = (gain.coerceIn(0f, 1f) * 100f).toInt()
+        " · ${percent}%"
+    } else {
+        ""
+    }
+    val outputText = outputDb?.let { " · output %+.1f dB".format(Locale.ROOT, it) } ?: ""
+    return when (application) {
+        VolumeApplication.SYSTEM_MIXER -> "System mixer (Android attenuates)"
+        VolumeApplication.APP_SOFTWARE -> {
+            val db = offset ?: -120.0
+            "App software gain (%+.1f dB%s%s)".format(Locale.ROOT, db, gainText, outputText)
+        }
+        VolumeApplication.DAC_HARDWARE -> {
+            val db = offset
+            val offsetText = db?.let { " %+.1f dB".format(Locale.ROOT, it) }.orEmpty()
+            "DAC hardware volume (the PCM is untouched$offsetText$outputText)"
+        }
+    }
 }
 
 /**
@@ -147,7 +226,10 @@ fun AudioPipelineDialog(
     val eqEnabled by AppSettings.equalizerEnabled.collectAsStateWithLifecycle()
     val eqPreset by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
+    val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
+    val singLevel by AppSettings.singLevel.collectAsStateWithLifecycle()
+    val jamesDspEnabled by AppSettings.jamesDspEnabled.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -266,6 +348,31 @@ fun AudioPipelineDialog(
                 else -> "${nerdStats?.channels} (Surround)"
             }
 
+            val fidelity = AudioFidelity.assess(
+                AudioFidelity.Inputs(
+                    routeKind = outputStatus.routeKind,
+                    exclusiveUsbActive = outputStatus.exclusiveUsbActive,
+                    directPlaybackActual = outputStatus.directPlaybackActual,
+                    bitPerfectMixerActive = outputStatus.bitPerfectMixer?.active == true,
+                    outputExact = outputStatus.outputExact,
+                    dspAvailable = outputStatus.dspAvailable,
+                    dspBypassed = outputStatus.dspBypassed,
+                    loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
+                    equalizerActive = eqEnabled,
+                    spatialActive = spatialAudio,
+                    simAtmosActive = simulatedAtmos,
+                    vocalCutActive = singLevel > 0.001f,
+                    jamesDspActive = jamesDspEnabled,
+                    dsd = dsdRateHz != null,
+                    volumeInSoftware = outputStatus.volumeApplication ==
+                        VolumeApplication.APP_SOFTWARE && outputStatus.volumeGain < 0.999f,
+                    sourceRateHz = pcmRateHz,
+                    outputRateHz = outputStatus.actualSampleRateHz,
+                ),
+            )
+
+            FidelitySummary(fidelity)
+
             PipelineRule()
             PipelineSection(
                 stageIndex = 0,
@@ -363,7 +470,11 @@ fun AudioPipelineDialog(
             } else {
                 "Flat"
             }
-            val stereoExpandText = if (spatialAudio) "250%" else "100%"
+            val stereoExpandText = when {
+                spatialAudio -> "250%"
+                simulatedAtmos -> "190%"
+                else -> "100%"
+            }
             val buffersText = outputStatus.bufferSize?.let { size ->
                 val rate = outputStatus.actualSampleRateHz
                 val bytesPerSample = when (outputStatus.actualEncoding) {
@@ -428,6 +539,14 @@ fun AudioPipelineDialog(
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                         eqActive = eqEnabled,
                         spatialActive = spatialAudio,
+                        simAtmosActive = simulatedAtmos,
+                        dspBypassed = outputStatus.dspBypassed,
+                        mixerBitPerfect = outputStatus.bitPerfectMixer?.active == true ||
+                            outputStatus.directPlaybackActual ||
+                            outputStatus.transportType ==
+                            com.music.bitchord.playback.audio.TransportType.DIRECT_USB,
+                        volumeApplication = outputStatus.volumeApplication,
+                        volumeGain = outputStatus.volumeGain,
                     ),
                 )
             }
@@ -462,6 +581,29 @@ fun AudioPipelineDialog(
                 PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
                 PipelineRow("Route", outputStatus.routeKind.name)
                 PipelineRow("Transport", outputStatus.transportType.label)
+                // Where the phone's own slider is applied. It is the one row
+                // that says whether the slider can work at all: with the
+                // mixer out of the path, the app applies the level itself.
+                PipelineRow(
+                    "Volume",
+                    volumeApplicationText(
+                        outputStatus.volumeApplication,
+                        outputStatus.volumeGain,
+                        outputStatus.volumeOffsetDb,
+                        outputStatus.volumeOutputDb,
+                    ),
+                )
+
+                if (outputStatus.exclusiveUsbActive || outputStatus.exclusiveUsbDetail != null) {
+                    PipelineRow(
+                        "USB exclusive",
+                        if (outputStatus.exclusiveUsbActive) {
+                            "Active — ${outputStatus.exclusiveUsbDetail ?: "usbdevfs"}".trim()
+                        } else {
+                            outputStatus.exclusiveUsbDetail ?: "Not active"
+                        },
+                    )
+                }
 
                 val directStatusText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
@@ -492,10 +634,29 @@ fun AudioPipelineDialog(
                             "AudioFlinger Mixer $mixerRate"
                         }
                     }
+                    // The route is mixed, but Android does not publish the
+                    // rate or encoding the mixer hands downstream. Saying so
+                    // beats naming 48 kHz, which used to read as though the
+                    // app had resampled a 44.1 or 96 kHz source.
+                    outputStatus.actualSampleRateHz != null ->
+                        "AudioFlinger mixer (rate and encoding not reported)"
                     else -> null
                 }
                 mixerText?.let {
                     PipelineRow("System", it)
+                }
+
+                outputStatus.bitPerfectMixer?.let { mixer ->
+                    PipelineRow(
+                        "Bit-perfect mixer",
+                        when {
+                            outputStatus.directPlaybackActual ||
+                                outputStatus.transportType ==
+                                com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                                "Not needed (direct path already bypasses it)"
+                            else -> mixer.detail
+                        },
+                    )
                 }
 
                 outputStatus.usbEndpointFormat?.let {
@@ -512,6 +673,10 @@ fun AudioPipelineDialog(
                         bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", rateText(it)) }
                         PipelineRow("Codec Bitrate", bt.bitrateLabel)
                         bt.mode?.let { PipelineRow("Codec Mode", it) }
+                        PipelineNote(
+                            "Bluetooth re-encodes the stream. Codec Bits and Rate describe " +
+                                "what the link negotiated, not the source's own depth.",
+                        )
                     } else {
                         PipelineRow("Codec", "System Managed")
                     }
@@ -763,6 +928,186 @@ private fun calculateStageActivation(
     return (raw * absorption * flowAlpha).coerceIn(0f, 1f)
 }
 
+/** The one number, and the arithmetic behind it. */
+@Composable
+private fun FidelitySummary(assessment: AudioFidelity.Assessment) {
+    val accent = if (assessment.score >= 72) Color.White else Color(0xFFFFB86B)
+    val animatedScore by animateFloatAsState(
+        targetValue = assessment.score.toFloat(),
+        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        label = "fidelityScore",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 2.dp)
+            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(78.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Canvas(Modifier.matchParentSize()) {
+                    val stroke = 5.dp.toPx()
+                    val inset = stroke / 2f
+                    val arcSize = Size(size.width - stroke, size.height - stroke)
+                    val topLeft = Offset(inset, inset)
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.12f),
+                        startAngle = 135f,
+                        sweepAngle = 270f,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round),
+                    )
+                    val sweep = 270f * (animatedScore / 100f).coerceIn(0f, 1f)
+                    if (sweep > 0f) {
+                        drawArc(
+                            color = accent.copy(alpha = 0.14f),
+                            startAngle = 135f,
+                            sweepAngle = sweep,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = Stroke(width = stroke * 2.4f, cap = StrokeCap.Round),
+                        )
+                        drawArc(
+                            color = accent.copy(alpha = 0.92f),
+                            startAngle = 135f,
+                            sweepAngle = sweep,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = Stroke(width = stroke, cap = StrokeCap.Round),
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = animatedScore.roundToInt().toString(),
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.W700,
+                        ),
+                        color = accent,
+                    )
+                    Text(
+                        text = "/ 100",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = Color.White.copy(alpha = 0.45f),
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(16.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "FIDELITY",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.4.sp,
+                    ),
+                    color = Color.White.copy(alpha = 0.5f),
+                )
+                Text(
+                    text = assessment.grade,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = Color.White,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val effects = when {
+                        !assessment.effectsAvailable -> "DSP unavailable"
+                        assessment.effectsBypassed -> "DSP bypassed"
+                        assessment.activeEffects.isEmpty() -> "DSP idle"
+                        else -> "DSP ${assessment.activeEffects.size} active"
+                    }
+                    FidelityChip(effects, highlighted = assessment.activeEffects.isNotEmpty())
+                    FidelityChip(
+                        if (assessment.deductions.isEmpty()) "Exact path" else "${assessment.deductions.size} deductions",
+                    )
+                }
+            }
+        }
+
+        if (assessment.activeEffects.isNotEmpty()) {
+            Text(
+                text = assessment.activeEffects.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                color = Color.White.copy(alpha = 0.58f),
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        val shown = assessment.deductions.sortedByDescending { it.points }.take(3)
+        if (shown.isEmpty()) {
+            Text(
+                text = "Nothing in the app's path alters the samples.",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                color = Color.White.copy(alpha = 0.62f),
+            )
+        } else {
+            shown.forEach { deduction ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = deduction.label,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                        color = Color.White.copy(alpha = 0.62f),
+                    )
+                    Text(
+                        text = "−${deduction.points}",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = Color.White.copy(alpha = 0.72f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FidelityChip(label: String, highlighted: Boolean = false) {
+    Box(
+        modifier = Modifier
+            .background(
+                Color.White.copy(alpha = if (highlighted) 0.16f else 0.07f),
+                RoundedCornerShape(50),
+            )
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = Color.White.copy(alpha = if (highlighted) 0.95f else 0.65f),
+        )
+    }
+}
+
 /** One pipeline stage: an icon, its title, and the label/value rows under it. */
 @Composable
 private fun PipelineSection(
@@ -827,7 +1172,18 @@ private fun PipelineSection(
             modifier = Modifier.weight(1f),
         ) {
             Text(
-                text = title.uppercase(),
+                text = buildAnnotatedString {
+                    withStyle(
+                        SpanStyle(
+                            color = Color.White.copy(alpha = 0.35f),
+                            fontWeight = FontWeight.Medium,
+                        ),
+                    ) {
+                        append((stageIndex + 1).toString().padStart(2, '0'))
+                    }
+                    append("  ")
+                    append(title.uppercase())
+                },
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.W600,

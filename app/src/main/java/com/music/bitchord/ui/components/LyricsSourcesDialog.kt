@@ -58,8 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.ui.player.edgeScrollSpeed
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -85,6 +87,15 @@ import dev.chrisbanes.haze.materials.HazeMaterials
 fun LyricsSourcesDialog(
     hazeState: HazeState,
     onDismiss: () -> Unit,
+    /**
+     * Opens the settings of the installed extension that answers lyrics.
+     *
+     * Apple's package asks the listener for their MusicKit token and answers
+     * nothing until it has one, so the row for it is a dead end on its own:
+     * the listener is told the source is there, ticks it, and every song comes
+     * back empty. This is the way to the one field that fixes it.
+     */
+    onOpenExtensionSettings: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -92,6 +103,11 @@ fun LyricsSourcesDialog(
     val savedOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
     val prioritizeSyllableSync by AppSettings.prioritizeSyllableSync.collectAsStateWithLifecycle()
     val paxSenixApiKey by AppSettings.paxSenixApiKey.collectAsStateWithLifecycle()
+    val extensions by SflxCatalog.installed.collectAsStateWithLifecycle()
+    // The package that answers this source, when one is installed. Its own
+    // name is what the row says — "Apple Music", not "Mornye extension".
+    val lyricsExtension = extensions.firstOrNull { it.manifest.isLyricsProvider }
+    val needsSetup = LyricsRepository.extensionSetup
     var showPaxSenixKeyDialog by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ALERT_CORNER)
 
@@ -189,6 +205,23 @@ fun LyricsSourcesDialog(
                 emphasised = false,
                 onClick = { showPaxSenixKeyDialog = true },
             )
+            if (lyricsExtension != null) {
+                // The door to the one field that makes this source answer.
+                // Said plainly, because the failure it prevents is invisible:
+                // a package waiting for a token misses every song, and a miss
+                // says nothing about why.
+                AlertRule()
+                AlertAction(
+                    label = buildString {
+                        append(lyricsExtension.manifest.displayName)
+                        append(" · ")
+                        append(stringResource(R.string.settings))
+                        needsSetup?.let { append(" — ").append(it.settingLabel) }
+                    },
+                    emphasised = needsSetup != null,
+                    onClick = { onOpenExtensionSettings(lyricsExtension.id) },
+                )
+            }
             AlertRule()
             SyllableSyncToggle(
                 checked = prioritizeSyllableSync,

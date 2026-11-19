@@ -8,14 +8,19 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.structuralEqualityPolicy
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.os.bundleOf
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -29,7 +34,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
-import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
@@ -37,6 +42,7 @@ import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -54,6 +60,10 @@ data class PlayerState(
      * Left here rather than moved alongside the position: it settles once per
      * track, and [mutableStateOf] compares structurally, so the poll writing it
      * back unchanged every tick invalidates nothing.
+     *
+     * Not always the player's own answer: an addon stream that arrives without
+     * a parsable length leaves the timeline's duration unset, and
+     * [claimedDurationMs] stands in — see [playbackDurationMs].
      */
     val durationMs: Long = 0L,
     val error: String? = null,
@@ -72,6 +82,43 @@ data class PlayerState(
     /** True while the current item is the replacement installed by a quality upgrade. */
     val isQualityUpgraded: Boolean = false,
 )
+
+/**
+ * What a queue row said this track runs for, in milliseconds, or 0 when it
+ * didn't say.
+ *
+ * The player's own duration is the measured answer and is preferred wherever
+ * it exists — this is the fallback for the case it doesn't. An addon answering
+ * with a chunked transfer or a container whose length is only written at the
+ * end leaves the timeline's window at [C.TIME_UNSET] for the whole track, and
+ * both the scrubber and every crossfade path read that as "no duration" rather
+ * than "not measured yet": taps scaled by zero do nothing and the transition
+ * watcher returns before it plans anything. The catalogue's runtime is already
+ * on the item — see `Song.matchQuery`, which carries it as `d=` for matching —
+ * so it costs a query-parameter read to say what the track is.
+ *
+ * The extras are the second source, for a track whose URI could not carry one
+ * (a local file, or an item built before this existed).
+ */
+fun MediaItem.claimedDurationMs(): Long {
+    // [Uri.getQueryParameter] throws on an opaque URI, and a stem like "item/3"
+    // is one; a missing or unparsable `d=` is simply an absent duration.
+    val seconds = runCatching {
+        localConfiguration?.uri?.getQueryParameter("d")?.toLongOrNull()
+    }.getOrNull()
+    if (seconds != null && seconds > 0L) return seconds * 1_000L
+    return mediaMetadata.extras?.getString(EXTRA_DURATION).durationMillis()
+}
+
+/**
+ * The duration everything downstream should scale by: what the player measured,
+ * or what the queue row claimed when the player has nothing to say.
+ *
+ * [C.TIME_UNSET] is negative and must not be mistaken for a runtime, which is
+ * why this tests `> 0` rather than "not zero".
+ */
+internal fun playbackDurationMs(playerDurationMs: Long, claimedDurationMs: Long): Long =
+    if (playerDurationMs > 0L) playerDurationMs else claimedDurationMs.coerceAtLeast(0L)
 
 /** Binds to [PlaybackService] for the lifetime of the composition. */
 @Composable
@@ -121,6 +168,34 @@ suspend fun MediaController.beginRadioQueue() {
     ).await()
 }
 
+/** The key the service's answer about a manual upgrade travels in. */
+const val EXTRA_UPGRADE_OUTCOME = "com.music.bitchord.extra.UPGRADE_OUTCOME"
+
+/**
+ * What the service made of a manual quality upgrade.
+ *
+ * The command used to answer "yes" whatever it had done, including nothing
+ * at all, so a listener who tapped "Upgrade quality" and heard no change had
+ * no way of telling a refused request from a refused answer. The outcome is
+ * the difference between those two.
+ */
+enum class UpgradeOutcome(val wire: String) {
+    /** The search is running. */
+    STARTED("started"),
+
+    /** Offline mode is on, and an upgrade is a fetch. */
+    OFFLINE("offline"),
+
+    /** The last manual upgrade was too recent; the addons are still on it. */
+    COOLDOWN("cooldown"),
+    ;
+
+    companion object {
+        fun of(wire: String?): UpgradeOutcome =
+            entries.firstOrNull { it.wire == wire } ?: STARTED
+    }
+}
+
 /**
  * Asks the service to go looking for a better copy of the playing track, now,
  * because the listener asked for it.
@@ -129,12 +204,16 @@ suspend fun MediaController.beginRadioQueue() {
  * be rebuilt, the track's cached rendition has to be dropped and the automatic
  * path's verdicts about it have to be cleared, and all three live on the
  * service's side of the session — see [PlaybackService]'s `upgradeQualityNow`.
+ *
+ * @return what the service made of the request, so the listener is told when
+ *   it could not be carried out and why.
  */
-fun MediaController.upgradeQuality() {
-    sendCustomCommand(
+suspend fun MediaController.upgradeQuality(): UpgradeOutcome {
+    val result = sendCustomCommand(
         SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY),
         Bundle.EMPTY,
-    )
+    ).await()
+    return UpgradeOutcome.of(result.extras?.getString(EXTRA_UPGRADE_OUTCOME))
 }
 
 /**
@@ -259,11 +338,63 @@ fun MediaController.setQueueDragActive(active: Boolean) {
     )
 }
 
-/** Mirrors the controller into Compose state, polling position while playing. */
+/**
+ * [PlayerState], read one property at a time.
+ *
+ * The controller's state is one [PlayerState] value, replaced whenever any
+ * field of it changes. Read as that value — `player.isPlaying` in a
+ * composable body — every read subscribes to all of it: a buffering flip or
+ * a duration settling recomposed everything that had only asked for the
+ * track. Each property here is its own derived state, compared
+ * structurally, so a reader is invalidated only when the property it read
+ * changes. The names are [PlayerState]'s, so `player.song` reads the same
+ * at a call site either way.
+ *
+ * The [structuralEqualityPolicy] is spelled out rather than left to the
+ * runtime's default for derived state (which is the same), because it is the
+ * whole point: [PlayerReadsTest] pins the counts.
+ *
+ * Reads made outside composition (a click handler, an effect after a
+ * suspension) see the current value, not the value at the last recomposition.
+ */
+@Stable
+class PlayerReads internal constructor(
+    private val source: State<PlayerState>,
+    /** The playhead. Its identity never changes — see [PlaybackPosition]. */
+    val position: PlaybackPosition,
+) {
+    private fun <T> derived(read: (PlayerState) -> T): State<T> =
+        derivedStateOf(structuralEqualityPolicy()) { read(source.value) }
+
+    /**
+     * The whole snapshot, for a reader that really takes all of it (the
+     * Classipod shell). Reading this subscribes to every field.
+     */
+    val snapshot: PlayerState get() = source.value
+
+    val song: Song? by derived { it.song }
+    val isPlaying: Boolean by derived { it.isPlaying }
+    val durationMs: Long by derived { it.durationMs }
+    val error: String? by derived { it.error }
+    val isLoading: Boolean by derived { it.isLoading }
+    val repeatMode: Int by derived { it.repeatMode }
+    val queue: List<Song> by derived { it.queue }
+    val queueIndex: Int by derived { it.queueIndex }
+    val hasPrevious: Boolean by derived { it.hasPrevious }
+    val hasNext: Boolean by derived { it.hasNext }
+    val isQualityUpgraded: Boolean by derived { it.isQualityUpgraded }
+}
+
+/**
+ * Mirrors the controller into Compose state, polling position while playing,
+ * and hands it out as [PlayerReads].
+ */
 @Composable
-fun rememberPlayerState(controller: MediaController?): PlayerState {
+fun rememberPlayerReads(controller: MediaController?): PlayerReads {
     val position = remember { PlaybackPosition() }
-    var state by remember { mutableStateOf(PlayerState(position = position)) }
+    val stateHolder = remember { mutableStateOf(PlayerState(position = position)) }
+    var state by stateHolder
+    val reads = remember { PlayerReads(stateHolder, position) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
@@ -297,8 +428,14 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
                     .map { player.getMediaItemAt(it).toSong() }
             } else if (refreshCurrentQueueItem && item != null) {
                 val index = player.currentMediaItemIndex
-                if (index in queueSnapshot.indices) {
-                    queueSnapshot = queueSnapshot.toMutableList().also { it[index] = item.toSong() }
+                // Metadata events also come from playlist metadata — the
+                // service's lyric subtitle sets it on every line — which leaves
+                // the item itself as it was. Copying the queue for those meant
+                // an O(queue) copy, and an O(queue) equality check in the
+                // `queue` read, once per lyric line.
+                val refreshed = item.toSong()
+                if (index in queueSnapshot.indices && queueSnapshot[index] != refreshed) {
+                    queueSnapshot = queueSnapshot.toMutableList().also { it[index] = refreshed }
                 }
             }
             // Synced here too, so seeking while paused or buffering still moves
@@ -307,7 +444,10 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
             state = state.copy(
                 song = item?.toSong(),
                 isPlaying = player.isPlaying,
-                durationMs = player.duration.coerceAtLeast(0L),
+                durationMs = playbackDurationMs(
+                    player.duration,
+                    item?.claimedDurationMs() ?: 0L,
+                ),
                 error = error,
                 isLoading = player.playbackState == Player.STATE_BUFFERING,
                 repeatMode = player.repeatMode,
@@ -363,15 +503,47 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
     // Nothing is lost by stopping: `sync` above runs on the controller's own
     // events, and the first thing that happens on the way back is a fresh read.
     val foreground = rememberIsForeground()
-    LaunchedEffect(controller, state.isPlaying, foreground) {
-        while (controller != null && state.isPlaying && foreground) {
+    //
+    // Whether it is playing is watched inside the effect, not read as a key:
+    // this composable returns a value, so a read here belongs to the caller's
+    // scope, and the caller (the app root) would recompose on every play and
+    // pause just to restart this loop. collectLatest restarts it the same
+    // way — the running loop is cancelled when playback stops or starts.
+    LaunchedEffect(controller, foreground) {
+        if (controller == null || !foreground) return@LaunchedEffect
+        pollWhilePlaying(isPlaying = { state.isPlaying }, intervalMs = 500) {
             position.report(controller.currentPosition.coerceAtLeast(0L))
-            val duration = controller.duration.coerceAtLeast(0L)
+            val duration = playbackDurationMs(
+                controller.duration,
+                controller.currentMediaItem?.claimedDurationMs() ?: 0L,
+            )
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
-            delay(500)
         }
     }
-    return state
+    return reads
+}
+
+/**
+ * Runs [tick] every [intervalMs] for as long as [isPlaying] reads true, and
+ * starts again when it next turns true. [isPlaying] is read as snapshot
+ * state: a change cancels the running loop (collectLatest) and starts or
+ * stops it, the same as a LaunchedEffect keyed on it — without the read
+ * landing in a composable's scope. Never returns; cancel its coroutine.
+ *
+ * Only the flow stops the loop. The loop does not read [isPlaying] itself:
+ * a pause and a resume that both land between two looks of the flow emit
+ * nothing, and a loop that had noticed the pause on its own would have
+ * stopped with nothing left to start it again. A real pause is an emission
+ * of false, which cancels the loop at its next delay.
+ */
+internal suspend fun pollWhilePlaying(isPlaying: () -> Boolean, intervalMs: Long, tick: () -> Unit) {
+    snapshotFlow(isPlaying).collectLatest { playing ->
+        if (!playing) return@collectLatest
+        while (true) {
+            tick()
+            delay(intervalMs)
+        }
+    }
 }
 
 /**
@@ -441,6 +613,18 @@ const val EXTRA_QUEUE_TIER = "bitchord.queueTier"
 const val EXTRA_QUEUE_ENTRY_ID = "bitchord.queueEntryId"
 
 /**
+ * The browsable folder a song was listed in, carried onto each child so a
+ * tap in Android Auto can be turned back into the whole playlist.
+ *
+ * Android Auto plays the item it was handed — often the single song under the
+ * thumb, not the folder around it — and a one-item queue is indistinguishable
+ * from a radio station, so AutoPlay used to take over from the second track.
+ * The parent id lets the session rebuild the full ordered list and start at
+ * the tapped song instead.
+ */
+const val EXTRA_AUTO_PARENT = "bitchord.autoParent"
+
+/**
  * Marks a queue entry as AutoPlay's rather than the user's. Carried on the
  * MediaItem so it survives the trip through the session — the queue belongs to
  * the player, and the UI only ever sees it back through a MediaController.
@@ -503,10 +687,27 @@ private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
 /** Set only on the replacement item produced by [QualityUpgrade]. */
 const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
 
-/** Whether this item was selected from a music-video row, even after conversion. */
+/**
+ * Whether this item was selected from a music-video row, even after conversion.
+ *
+ * Kept apart from [isVideo] on purpose: the origin says where the row came
+ * from, and survives the conversion of that row into an audio-only stream. It
+ * is provenance, not a capability.
+ */
 val MediaItem.isVideoOrigin: Boolean
     get() = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
+
+/**
+ * Whether this item is *playing video*.
+ *
+ * The distinction that matters everywhere: a music-video row that has been
+ * converted to an audio-only stream is still video-origin, but it is audio, and
+ * Automix can analyse, cue and blend it like any other audio. Only an item
+ * that actually plays video is excluded.
+ */
+val MediaItem.isVideo: Boolean
+    get() = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
 
 fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
     fromAutoplay = (0 until mediaItemCount).map { getMediaItemAt(it).fromAutoplay },
@@ -565,17 +766,14 @@ private fun Song.matchQuery(): String = buildString {
 }
 
 /**
- * Whether a track plays from its downloaded file.
+ * Whether a track the device holds a copy of plays that copy.
  *
- * A file is the *offline* path, not the preferred one. With a network up the
- * answer is always a stream, at whatever the connection's ceiling allows —
- * which is what "upgrade to the quality set on WiFi" means, and why a
- * downloaded 128kbps copy does not get in the way of a lossless one. Neither
- * YouTube nor the local file outranks a source that can serve better; see
- * [SourceRegistry.active] for that order.
+ * Yes, unconditionally — with a network up or down. The file is the copy the
+ * listener asked for when they saved it, and it is the only copy that is
+ * certain to play at all.
  *
- * This has been inverted twice, both times reported as the same bug — "a
- * downloaded song sometimes plays the file and sometimes streams".
+ * This has been inverted three times, and the third inversion is the one that
+ * cost the most, because it was a whole *policy* rather than a bug:
  *
  * - Disk-always-wins: a download kept playing as itself while a better copy
  *   sat one lookup away.
@@ -583,33 +781,41 @@ private fun Song.matchQuery(): String = buildString {
  *   "offline" and "not determined yet", and it flips for a moment on every
  *   network handover, so the verdict differed between two queues built seconds
  *   apart.
+ * - Network-first, decided from `AppSettings.effectiveOffline`: a downloaded
+ *   track streamed whenever a network was up, and fell back to its file when
+ *   one was not.
  *
- * What settles it is [AppSettings.effectiveOffline]: the switch in Settings, or
- * the detector, or either — never a value read from one and forgotten about
- * the other. The detector is optimistic about a network and waits out a
- * handover before believing one has gone. Getting this wrong is survivable in
- * one direction only: a stream that fails falls back to the file
- * ([PlaybackService.fallbackOnlineStreamToFile]), while a stale file cannot
- * fall forward.
+ * The trouble with the third was that nothing else in the app agreed with it.
+ * A queue entry for a downloaded track carries its file URI as a *claim*
+ * ([EXTRA_LOCAL_URI]) and every other reader took that claim at its word: the
+ * disk cache skipped it (`AudioCache.noteSongs`), read-ahead skipped it
+ * (`AudioCache.prefetchQueue`), "stats for nerds" named it Local Storage
+ * (`PlaybackService.isLocalPlayback`), and the download badge showed the
+ * file's own bitrate. Only [Song.toMediaItem] disagreed, silently deciding to
+ * resolve a stream instead — so a track that every other part of the app
+ * believed was a file on disk was opened as a `bitchord://` stream that
+ * nothing had warmed, on a resolve nobody had asked for. That is the "keeps
+ * loading" report, and the file was sitting right there the whole time.
+ *
+ * Being right in one direction only still holds, and it now holds for the
+ * file: a stream that fails can be replaced by the file
+ * ([PlaybackService.fallbackOnlineStreamToFile]), while a file that has gone
+ * missing cannot be played at all — and is caught at build time instead, by
+ * [Downloads.verifiedSavedUri].
+ *
+ * The one thing that outranks the file is a source that can serve a better
+ * copy — the Lossless/Hi-res rung. That is not a decision made here, because
+ * finding one costs a search: the file starts playing, and the ordinary second
+ * look ([QualityUpgrade]) swaps a lossless copy in over it, exactly as it does
+ * for a lossy stream. See [PlaybackService.lookForBetterCopy], and
+ * [QualityUpgrade.couldStillUpgrade], which is what lets a file-backed track
+ * be looked at again.
  *
  * Pinned by `StreamPreferenceTest`.
  */
-internal fun shouldPlayLocalFile(hasLocalFile: Boolean, canStream: Boolean): Boolean =
-    hasLocalFile && !canStream
+internal fun preferLocalFile(hasLocalFile: Boolean): Boolean = hasLocalFile
 
-/**
- * The same question, asked of the app's own answers rather than of two
- * booleans someone remembered to combine: [AppSettings.effectiveOffline] is the
- * manual switch OR the detector, so a caller cannot get this wrong by reading
- * one and forgetting the other.
- */
-internal fun shouldPlayLocalFile(hasLocalFile: Boolean): Boolean =
-    shouldPlayLocalFile(
-        hasLocalFile = hasLocalFile,
-        canStream = !AppSettings.effectiveOffline.value,
-    )
-
-fun Song.toMediaItem(): MediaItem {
+fun Song.toMediaItem(parentBrowseId: String? = null, playLocalFile: Boolean = true): MediaItem {
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
@@ -637,12 +843,17 @@ fun Song.toMediaItem(): MediaItem {
     // leaves that path unguarded.
     val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
         ?: Downloads.verifiedSavedUri(videoId)
-    // Streaming first while a network is up, file when there is none — see
-    // [shouldPlayLocalFile] for why that distinction has been got wrong twice.
+    // The file is what plays, whenever there is one — see [preferLocalFile].
     // A stream that fails still falls back to the file via
     // [PlaybackService.fallbackOnlineStreamToFile]; a file that has gone
     // missing is caught above and by the player's own recovery.
-    val playFile = shouldPlayLocalFile(hasLocalFile = offlineUri != null)
+    //
+    // [playLocalFile] is the only caller that can contradict that, and it has
+    // exactly one: the *upgrade* of a file-backed track, which has to build
+    // the item the song would have had if it had never been saved, so the
+    // parked lossless stream can be swapped in over the file. See
+    // [toStreamMediaItem].
+    val playFile = playLocalFile && preferLocalFile(hasLocalFile = offlineUri != null)
     // One map read, no I/O: lets the row report the file's own bitrate even
     // when the song came from a playlist that knew nothing about the download.
     val offlineFormat: String? = if (playFile) Downloads.savedFormat(videoId) else null
@@ -650,6 +861,10 @@ fun Song.toMediaItem(): MediaItem {
     val playUri = offlineUri?.takeIf { playFile }
     val uriString = playUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
+        // A chapter of a public-domain book is a file on an archive, not a
+        // YouTube track: its URL is the whole of its identity, and there is
+        // nothing to resolve — it plays where it lies.
+        videoId.startsWith("http://") || videoId.startsWith("https://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what
         // a cross-source match is made on, and the resolver runs on ExoPlayer's
         // loader thread with nothing but a DataSpec in hand — see
@@ -692,7 +907,13 @@ fun Song.toMediaItem(): MediaItem {
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
-            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri())
+            //
+            // A track with no sleeve of its own gets the white-only mark
+            // rather than nothing: with no artwork at all, these surfaces
+            // reach for the app's own full-colour icon, and the whole old
+            // logo ends up drawn where a sleeve should be. See
+            // [FallbackArtwork].
+            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri() ?: FallbackArtwork.uri())
             // System media surfaces (One UI's Now Bar, Android Auto, Assistant)
             // classify a session by its media type; untyped sessions get treated
             // as generic audio and lose the music-specific card.
@@ -720,13 +941,15 @@ fun Song.toMediaItem(): MediaItem {
                     sourceQuality != null ||
                     artistId != null || albumId != null || setVideoId != null ||
                     isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
-                    playbackSource != null || playbackSourceType != null || playbackSourceId != null
+                    playbackSource != null || playbackSourceType != null || playbackSourceId != null ||
+                    parentBrowseId != null
                 ) {
                     setExtras(
                         bundleOf(
                             EXTRA_QUEUE_TIER to queueTier.name,
                             EXTRA_QUEUE_ENTRY_ID to queueEntryId,
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
+                            EXTRA_AUTO_PARENT to parentBrowseId,
                             EXTRA_RADIO_NAME to radioName,
                             EXTRA_PLAYBACK_SOURCE to playbackSource,
                             EXTRA_PLAYBACK_SOURCE_TYPE to playbackSourceType?.name,
@@ -767,6 +990,26 @@ fun Song.toDirectYouTubeMediaItem(): MediaItem =
     toMediaItem().buildUpon()
         .setUri(directYouTubeUri())
         .build()
+
+/**
+ * The same track with its downloaded file stepped over: the item this song
+ * would have been queued as if it had never been saved.
+ *
+ * For one caller only — the upgrade of a track that is playing from its file.
+ * A swap hands the player a *marked* `bitchord://` URI and lets the resolving
+ * data source turn it back into the parked stream ([QualityUpgrade]), and a
+ * file-backed item has no such URI to mark: its own is a `content://` path,
+ * which the resolver never sees and which OkHttp would reject if it did. So
+ * the upgrade is built on the stream this track would otherwise have had, and
+ * the item keeps everything else — the media id the queue is keyed on, the
+ * metadata the lock screen draws, and the download's own claim in its extras,
+ * which is what the row still says about the file on disk.
+ *
+ * Deliberately not used to decide what plays. Nothing but the upgrade path
+ * should ever hand a downloaded track a stream, and everything else asks
+ * [toMediaItem] — see [preferLocalFile].
+ */
+fun Song.toStreamMediaItem(): MediaItem = toMediaItem(playLocalFile = false)
 
 private fun Song.directYouTubeUri(): String =
     "bitchord://watch?v=$videoId${matchQuery()}&$DIRECT_YOUTUBE_PARAMETER=1&q=original"

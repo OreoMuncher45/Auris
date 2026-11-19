@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.model.Song
+import java.util.concurrent.Executors
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -12,6 +13,15 @@ import kotlinx.serialization.json.Json
  * Queue contents are serialized only when Media3 reports that the playlist
  * changed. The frequently changing index and position are stored separately as
  * primitives, so progress sampling never walks or serializes the song list.
+ *
+ * The routine writes ([saveQueue], [savePlaybackState]) are encoded and handed
+ * to SharedPreferences on one background thread, in the order they were made.
+ * They are called from the service's Media3 listener on the main looper, and a
+ * queue edit — every neighbour crossed in a drag is one — used to encode up to
+ * 76 tracks to JSON there before the next frame could be drawn. The explicit
+ * boundaries ([saveQueueImmediately], [clear], [clearImmediately]) stay
+ * synchronous; each one moves [generation] on, so a routine write queued before
+ * a boundary can never land on top of it.
  */
 object LastPlayed {
 
@@ -19,6 +29,33 @@ object LastPlayed {
 
     private lateinit var prefs: SharedPreferences
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** One thread, so routine writes reach prefs in the order they were made. */
+    private val writer = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "LastPlayed-writer").apply { isDaemon = true }
+    }
+
+    /** Guards [generation] and every write to [prefs]. */
+    private val lock = Any()
+
+    /** Moved on by each synchronous boundary; a queued write from before it is dropped. */
+    private var generation = 0L
+
+    private fun enqueue(write: () -> Unit) {
+        val queuedAt = synchronized(lock) { generation }
+        writer.execute {
+            synchronized(lock) {
+                if (generation == queuedAt) write()
+            }
+        }
+    }
+
+    private inline fun boundary(write: () -> Unit) {
+        synchronized(lock) {
+            generation++
+            write()
+        }
+    }
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -39,16 +76,25 @@ object LastPlayed {
         }
         val safeIndex = index.coerceIn(songs.indices)
         val bounds = window(songs.size, safeIndex)
+        // The Song -> StoredTrack copy stays on the caller's thread: it is cheap,
+        // and it means the writer never touches a list the caller may change.
         val stored = StoredQueue(
             tracks = songs.subList(bounds.first, bounds.last + 1).map { StoredTrack.from(it) },
         )
-        val encoded = runCatching {
-            json.encodeToString(StoredQueue.serializer(), stored)
-        }.getOrNull() ?: return
-        prefs.edit()
-            .putString(KEY_QUEUE, encoded)
-            .putInt(KEY_INDEX, safeIndex - bounds.first)
-            .apply()
+        val storedIndex = safeIndex - bounds.first
+        val queuedAt = synchronized(lock) { generation }
+        writer.execute {
+            val encoded = runCatching {
+                json.encodeToString(StoredQueue.serializer(), stored)
+            }.getOrNull() ?: return@execute
+            synchronized(lock) {
+                if (generation != queuedAt) return@execute
+                prefs.edit()
+                    .putString(KEY_QUEUE, encoded)
+                    .putInt(KEY_INDEX, storedIndex)
+                    .apply()
+            }
+        }
     }
 
     /**
@@ -69,16 +115,20 @@ object LastPlayed {
         val encoded = runCatching {
             json.encodeToString(StoredQueue.serializer(), stored)
         }.getOrNull() ?: return
-        prefs.edit()
-            .putString(KEY_QUEUE, encoded)
-            .putInt(KEY_INDEX, safeIndex - bounds.first)
-            .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
-            .commit()
+        boundary {
+            prefs.edit()
+                .putString(KEY_QUEUE, encoded)
+                .putInt(KEY_INDEX, safeIndex - bounds.first)
+                .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
+                .commit()
+        }
     }
 
     /** Update only cheap scalar state; this performs no queue conversion or JSON work. */
-    fun savePlaybackState(index: Int, positionMs: Long) {
-        if (!prefs.contains(KEY_QUEUE)) return
+    fun savePlaybackState(index: Int, positionMs: Long) = enqueue {
+        // Read on the writer, behind any queue write made just before this one,
+        // so the first save of a new queue is not skipped for want of KEY_QUEUE.
+        if (!prefs.contains(KEY_QUEUE)) return@enqueue
         prefs.edit()
             .putInt(KEY_INDEX, index.coerceAtLeast(0))
             .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
@@ -86,6 +136,9 @@ object LastPlayed {
     }
 
     fun load(): Snapshot? {
+        // Let any routine write already queued land first, so a load straight
+        // after a save sees it. Normally empty: load runs at a cold start.
+        runCatching { writer.submit {}.get() }
         val raw = prefs.getString(KEY_QUEUE, null) ?: return null
         val stored = runCatching { json.decodeFromString<StoredQueue>(raw) }.getOrNull()
             ?: return null
@@ -108,12 +161,12 @@ object LastPlayed {
         )
     }
 
-    fun clear() {
+    fun clear() = boundary {
         prefs.edit().clear().apply()
     }
 
     /** Remove a stale queue before another one is installed. */
-    fun clearImmediately() {
+    fun clearImmediately() = boundary {
         prefs.edit().clear().commit()
     }
 

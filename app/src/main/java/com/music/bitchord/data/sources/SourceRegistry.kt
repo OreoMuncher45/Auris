@@ -11,9 +11,8 @@ import com.music.bitchord.data.settings.permits
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.DetectedFormat
-import com.music.bitchord.data.tidal.TidalApi
-import com.music.bitchord.data.tidal.TidalInstances
 import com.music.bitchord.data.sources.addon.SourceFormats
+import com.music.bitchord.data.sources.mornye.SflxHost
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.audio.LosslessOutput
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +37,20 @@ data class SourceConfig(
     /** What the user called it. Blank falls back to the server's host, or the kind's own label. */
     val label: String = "",
     val baseUrl: String = "",
+    /**
+     * Whether this is one of the sources this build ships, rather than one the
+     * listener pointed at.
+     *
+     * Only a stock row is a permanent part of the list: it wears the Auris
+     * name for its kind and cannot be removed. A source the listener added is
+     * theirs even when it speaks one of the built-in protocols — it keeps its
+     * own name (or its host), against stock-or-not, and the delete button
+     * works. Decoded as false by every config written before this existed;
+     * [SourceRegistry.sourcesForInit] then promotes exactly one row per
+     * built-in kind, so old duplicates become removable instead of staying
+     * indistinguishable from the bundled source.
+     */
+    val stock: Boolean = false,
     /** JioSaavn is opt-in because catalogue matches can select the wrong recording. */
     val enabled: Boolean = kind != SourceKind.JIOSAAVN,
     /**
@@ -93,15 +106,15 @@ data class SourceConfig(
     /** What the sources screen and the player show. Never blank. */
     val displayName: String
         get() {
-            // The bundled lossless source is a sealed appliance: one brand,
-            // no address anywhere in the UI. Toggle on/off is the only control.
-            if (kind == SourceKind.TIDAL) return SourceRegistry.TIDAL_DISPLAY_NAME
-            if (kind == SourceKind.HIRES) return SourceRegistry.HIRES_DISPLAY_NAME
-            return label.ifBlank {
-                baseUrl.takeIf { it.isNotBlank() }
-                    ?.let { runCatching { Uri.parse(it).host }.getOrNull() }
-                    ?: kind.label
-            }
+            // Only the rows this build seeded wear the Auris names. A link the
+            // listener pasted that happens to speak the same protocol is that
+            // listener's source, not ours: calling it "Auris Addon" claimed an
+            // addon this app does not run and made a user's own server
+            // indistinguishable from the bundled one.
+            val named = label.trim()
+            return named?.takeIf { it.isNotBlank() }
+                ?: baseUrl.takeIf { it.isNotBlank() }?.let(SourceRegistry::hostOf)
+                ?: kind.label
         }
 
     /** Whether this has enough filled in to be worth contacting at all. */
@@ -113,12 +126,17 @@ data class SourceConfig(
  * The user's sources, always tried in the fixed order [SourceKind] declares:
  * their own addons first, then JioSaavn, then YouTube Music.
  *
- * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, only
- * disabled — it needs no configuration, so a "remove" would delete something
- * the user could not then re-create by typing anything in, it would just be a
- * switch that hides itself. Addons are entirely optional: with none
+ * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, but it can
+ * be switched off — it is the one source whose catalogue the app's own browsing
+ * is built on, so a "remove" would take away something the user could not then
+ * restore by typing anything in. Addons are entirely optional: with none
  * configured, YouTube is the only active source on a fresh install. JioSaavn
  * is present but off until the user accepts its catalogue-matching risk.
+ *
+ * Switching YouTube off is honoured for playback, not just for the row:
+ * everything enabled then ranks above it in the ordinary sense, and a track no
+ * other source has fails instead of quietly playing YouTube. See
+ * [SourceResolver][com.music.bitchord.data.sources.SourceResolver].
  */
 object SourceRegistry {
 
@@ -175,34 +193,67 @@ object SourceRegistry {
     ): List<SourceConfig> {
         // Seeded rather than persisted-on-first-write, so a build adding a new
         // built-in kind picks it up for existing installs too. SourceConfig's
-        // default is the policy: JioSaavn off, everything else on. Tidal
-        // arrives with the first bundled instance as its primary so it works
-        // with zero setup — the toggle is the off switch.
+        // default is the policy: JioSaavn off, everything else on.
         val seeded = stored + BUILT_IN_KINDS
             .filter { kind -> stored.none { it.kind == kind } }
             .map { kind ->
                 SourceConfig(
                     kind = kind,
-                    baseUrl = when (kind) {
-                        SourceKind.TIDAL -> TidalInstances.BUNDLED.first().url
-                        else -> ""
-                    },
                     // JioSaavn arrives off after the forced opt-out migration.
                     enabled = kind != SourceKind.JIOSAAVN,
+                    stock = true,
                 )
             }
 
         // The retired built-in module is removed, while a custom module entered
         // by the user is preserved.
-        return seeded
-            .filterNot { it.kind == SourceKind.MODULE }
+        //
+        // And an *installed extension* is preserved too, which is the whole
+        // point of the exception: an extension's row is a `MODULE` row as
+        // well — it speaks the same protocol and is built by the same
+        // [ModuleSource] — and dropping every `MODULE` row here dropped the
+        // extensions with it. The row was then rebuilt from the installed
+        // package by [com.music.bitchord.data.sources.mornye.SflxCatalog], and
+        // a rebuilt row arrives with the default state, which is *on*.
+        //
+        // So every extension turned itself back on after every restart, and a
+        // listener who had switched one off to stop it being asked found it
+        // asking again the next morning.
+        //
+        // What is retired is the built-in module *index* this build no longer
+        // carries — a row pointing at a URL nothing serves any more. An
+        // extension points at `sflx://`, which is the app's own address for
+        // "the package that is installed", and that is a live source.
+        val migrated = seeded
+            .filterNot { it.kind == SourceKind.MODULE && !isExtension(it) }
             .map { config ->
-                when {
-                    config.kind == SourceKind.YOUTUBE && !config.enabled -> config.copy(enabled = true)
-                    config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff -> config.copy(enabled = false)
-                    else -> config
+                if (config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff) {
+                    config.copy(enabled = false)
+                } else {
+                    config
                 }
             }
+        return stampStock(migrated)
+    }
+
+    /**
+     * Marks exactly one shipped source per built-in kind as [SourceConfig.stock].
+     *
+     * Builds before the flag stored every row without it, and a listener could
+     * already have added a second row of a built-in kind by pasting a URL that
+     * answered the same protocol — the row that used to be stuck, branded and
+     * unremovable. Preference keeps history rather than rewriting it: an
+     * already-stamped row stays stock across launches, then whichever row came
+     * first. Every other row of that kind is left unstamped, so it is named
+     * after itself and the delete button works.
+     */
+    private fun stampStock(configs: List<SourceConfig>): List<SourceConfig> {
+        val stockIds = BUILT_IN_KINDS.mapNotNull { kind ->
+            configs.filter { it.kind == kind }
+                .let { candidates -> candidates.firstOrNull { it.stock } ?: candidates.firstOrNull() }
+                ?.id
+        }.toSet()
+        return configs.map { it.copy(stock = it.id in stockIds) }
     }
 
     /**
@@ -309,12 +360,25 @@ object SourceRegistry {
 
     // ── Editing ─────────────────────────────────────────────────────────
 
-    fun add(config: SourceConfig) = publish(configs.value + config.tidied())
+    /**
+     * Adds a source the listener configured. Never stock: a pasted link is
+     * theirs, so it must stay removable and keep its own name however its
+     * protocol happens to be recognised.
+     */
+    fun add(config: SourceConfig) =
+        publish(configs.value + config.tidied().copy(stock = false))
 
-    fun update(config: SourceConfig) =
+    /**
+     * Saves an edit. Stock-ness is not the editor's to set — it stays whatever
+     * the stored row already was, so editing a shipped source cannot turn a
+     * user's own row into a permanent one or the reverse.
+     */
+    fun update(config: SourceConfig) {
+        val current = config(config.id)
         config.tidied().let { tidied ->
-            publish(configs.value.map { if (it.id == tidied.id) tidied else it })
+            publish(configs.value.map { if (it.id == tidied.id) tidied.copy(stock = current?.stock ?: false) else it })
         }
+    }
 
     /**
      * The config as it should be stored, rather than as it was typed.
@@ -332,25 +396,76 @@ object SourceRegistry {
 
     fun remove(configId: String) {
         val target = config(configId) ?: return
-        if (target.kind in BUILT_IN_KINDS) return
+        // Only a shipped row is permanent. Anything the listener added is
+        // theirs to delete, even when it speaks a built-in protocol — the old
+        // kind check is what left a pasted link stuck in the list forever.
+        if (target.stock) return
+        // YouTube is never removable whatever its flag: it is the only source
+        // that can supply a home feed, radio or related tracks, and nothing a
+        // listener types in could recreate it.
+        if (target.kind == SourceKind.YOUTUBE) return
         publish(configs.value.filterNot { it.id == configId })
     }
 
     /**
      * Turns one source on or off.
      *
-     * YouTube is not switchable and silently ignores a request to disable it.
-     * It is the only source that can supply a home feed, radio or related
-     * tracks, and nothing else holds the full catalogue — switching it off
-     * doesn't even stop it being played, because a YouTube-queued track whose
-     * substitutes all miss still falls back to it. A switch that cannot honour
-     * its own off position is worse than no switch, so it isn't offered one:
-     * see [SourcesScreen][com.music.bitchord.ui.screens.SourcesScreen].
+     * YouTube obeys its switch like any other row. It used to ignore a request
+     * to disable it, on the reasoning that it is the only source that can
+     * supply a home feed, radio or related tracks and the full catalogue — and
+     * that still stops it being *removed*, because nothing a listener types in
+     * could recreate it. But "off" has a meaning that can be honoured without
+     * the catalogue: nothing plays from it. The resolver treats every enabled
+     * source as ranked above a switched-off YouTube, so an addon becomes the
+     * only answer for a stream, and a track none of them holds fails with that
+     * reason rather than falling back to Opus. The catalogue itself (search,
+     * home, radio) stays available; it is not a stream.
      */
     fun setEnabled(configId: String, enabled: Boolean) {
-        if (!enabled && config(configId)?.kind == SourceKind.YOUTUBE) return
         publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
     }
+
+    /**
+     * Whether YouTube Music may serve a stream right now.
+     *
+     * Read by the playback and download paths, which otherwise have no reason
+     * to know that the row exists: YouTube is reached directly through
+     * [StreamResolver][com.music.bitchord.data.innertube.StreamResolver], not
+     * through [active], so a switch on it would be invisible to every one of
+     * those paths without this.
+     */
+    fun youtubeEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE && it.enabled }
+
+    /**
+     * Whether YouTube may be asked for the bytes Automix's *analysis* reads.
+     *
+     * Deliberately not [youtubeEnabled], and the difference is the whole point.
+     *
+     * [youtubeEnabled] is about what the listener **hears**: it decides
+     * whether a stream may be served from YouTube at all, and switching it
+     * off is a promise that no byte of YouTube reaches the speaker.
+     *
+     * The analysis is not a performance. It fetches a copy of its own, under a
+     * marker that playback never sends
+     * ([com.music.bitchord.playback.smart.AutomixAnalysisSource]), and reads
+     * it to measure a tempo; not one of its bytes is ever played. And it has
+     * to keep working when YouTube is switched off, because otherwise every
+     * Automix panel opens on "Waiting for analysis" — the one thing that
+     * could have answered it was the very thing the listener had turned off,
+     * and the panel sits there waiting for a fetch that was never allowed to
+     * start. That is the bug this exists to end.
+     *
+     * So the source switch does not reach here. What does: the listener's own
+     * Automix switch, read where the work is queued rather than here, so that
+     * turning Automix off still stops every byte being fetched.
+     *
+     * The answer is "yes" whenever the YouTube row is there, and the row is
+     * never removable — see [remove] — so this is the reachability of
+     * YouTube, not a preference.
+     */
+    fun youtubeAnalysisEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE }
 
     /**
      * Puts the addons in [orderedIds], which is the order they will be asked in.
@@ -379,8 +494,44 @@ object SourceRegistry {
         publish(reordered + configs.value.filterNot { it.kind.isUserAdded })
     }
 
-    private fun publish(next: List<SourceConfig>, persist: Boolean = true) {
-        configs.value = next
+    /**
+     * Puts the installed extensions in [orderedIds], which is the order they
+     * will be asked in.
+     *
+     * A sibling of [reorderAddons] rather than the same function, because the
+     * two reorder different things in different ways. An addon is moved to the
+     * front of the list, since its whole kind ranks below everything the app
+     * ships. An extension is a `MODULE`-kind source living in the middle of the
+     * list, so it is moved *within its own group* and everything else keeps its
+     * place — otherwise dragging an extension would silently re-rank the
+     * addons, the modules and the built-ins against each other, which is not
+     * what the drag asked for and not visible on the screen it happened on.
+     */
+    fun reorderExtensions(orderedIds: List<String>) {
+        val extensions = configs.value.filter { isExtension(it) }
+        if (extensions.size < 2) return
+        val byId = extensions.associateBy { it.id }
+        val moved = orderedIds.mapNotNull(byId::get)
+        val missed = extensions.filterNot { config -> moved.any { it.id == config.id } }
+        val order = moved + missed
+        if (order.map { it.id } == extensions.map { it.id }) return
+        // Rebuilt by walking the whole list in order and taking the next
+        // extension from the new order wherever an extension used to be.
+        val next = order.iterator()
+        val rebuilt = configs.value.map { config ->
+            if (isExtension(config) && next.hasNext()) next.next() else config
+        }
+        publish(rebuilt)
+    }
+
+    /** Whether [config] is one row per installed extension rather than one per index. */
+    private fun isExtension(config: SourceConfig): Boolean =
+        config.baseUrl.startsWith(SflxHost.CONFIG_SCHEME, ignoreCase = true)
+
+    /** The installed-extension rows, in the order they will be asked in. */
+    fun extensions(): List<SourceConfig> = configs.value.filter { isExtension(it) }
+
+    private fun publish(next: List<SourceConfig>, persist: Boolean = true) {        configs.value = next
         // Rebuilt against the previous map so that an untouched source keeps
         // the instance it already had, rather than being replaced by an
         // identical-but-cold one every time an unrelated row is toggled.
@@ -422,22 +573,6 @@ object SourceRegistry {
      * its on/off state; a new source gets a fresh config.
      */
     suspend fun identify(url: String, existing: SourceConfig? = null): Result<SourceConfig> {
-        // Tidal first: its root answers a version document no other format
-        // shapes, and the probe is one cheap GET. Anything else falls through
-        // to the addon/module detection untouched.
-        TidalApi.probeBestEffort(url)?.let { version ->
-            val base = TidalApi.normalize(url) ?: url.trim().trimEnd('/')
-            val host = runCatching { android.net.Uri.parse(base).host }.getOrNull()
-            return Result.success(
-                (existing ?: SourceConfig(kind = SourceKind.TIDAL)).copy(
-                    kind = SourceKind.TIDAL,
-                    baseUrl = base,
-                    label = existing?.label.orEmpty().ifBlank {
-                        host?.takeIf { it.isNotBlank() } ?: SourceKind.TIDAL.label
-                    },
-                ),
-            )
-        }
         val detected = SourceFormats.identify(url).getOrElse { return Result.failure(it) }
         return when (detected) {
             is DetectedFormat.Addon -> Result.success(
@@ -517,8 +652,6 @@ object SourceRegistry {
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
         SourceKind.MODULE -> ModuleSource(config)
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
-        SourceKind.TIDAL -> TidalSource(config)
-        SourceKind.HIRES -> HiresDirectSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
     }
 
@@ -563,13 +696,21 @@ object SourceRegistry {
             .build()
             .toString()
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.TIDAL, SourceKind.HIRES, SourceKind.YOUTUBE)
 
-    /** The branded name of the sealed lossless source. */
-    const val TIDAL_DISPLAY_NAME = "BitChord NEXT Addon"
+    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
 
-    /** The branded name of the community Hi-Res source. */
-    const val HIRES_DISPLAY_NAME = "BitChord Hi-Res Lossless Addon"
+    /**
+     * The host a source's address points at, for rows that have no name of
+     * their own. Accepts a bare host as well as a full URL, since both reach
+     * the same field. OkHttp parses both; `android.net.Uri` is only a stub in
+     * JVM unit tests, which is why this is not the parser used.
+     */
+    internal fun hostOf(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val candidate = if ("://" in trimmed) trimmed else "https://$trimmed"
+        return candidate.toHttpUrlOrNull()?.host?.takeIf { it.isNotBlank() }
+    }
 
     private const val KEY_SOURCES = "sources"
     /** One-shot migration: existing users must explicitly opt in again. */

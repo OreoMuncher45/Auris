@@ -14,6 +14,7 @@
 package com.music.bitchord.ui.components.backdrop.catalog.components
 
 import com.music.bitchord.ui.components.glassUsesDarkAppearance
+import com.music.bitchord.ui.components.rememberLiquidGlassHaptics
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -65,6 +66,7 @@ fun LiquidToggle(
     backdrop: Backdrop,
     modifier: Modifier = Modifier
 ) {
+    val glassHaptic = rememberLiquidGlassHaptics()
     val isLightTheme = !glassUsesDarkAppearance()
     val accentColor =
         if (isLightTheme) Color(0xFF34C759)
@@ -92,10 +94,12 @@ fun LiquidToggle(
                 if (didDrag) {
                     fraction = if (targetValue >= 0.5f) 1f else 0f
                     onSelect(fraction == 1f)
+                    glassHaptic()
                     didDrag = false
                 } else {
                     fraction = if (selected()) 0f else 1f
                     onSelect(fraction == 1f)
+                    glassHaptic()
                 }
             },
             onDrag = { _, dragAmount ->

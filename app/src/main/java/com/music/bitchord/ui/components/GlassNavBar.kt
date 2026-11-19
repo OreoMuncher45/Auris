@@ -300,7 +300,7 @@ internal fun GlassNowPlaying(
         label = "accessoryPressScale",
     )
 
-    val artSize = if (isInline) 32.dp else 40.dp
+    val art = MiniArt.of(isInline)
     val glyphSlot = if (isInline) 32.dp else 40.dp
     val glyphSize = if (isInline) 24.dp else 32.dp
 
@@ -313,11 +313,15 @@ internal fun GlassNowPlaying(
         // couple of dp above the pill's centre line. Expanded the Box wraps its
         // content, so centring is a no-op there.
         contentAlignment = Alignment.Center,
+        // The row sees the height the pill is stretched to, so the cover can sit
+        // on the centre of that pill's end cap rather than the row's.
+        propagateMinConstraints = true,
         // The gestures and the tap belong to the whole glass surface, not the
         // row centred in it. Inline, that row is shorter than the pill it sits
         // in, and a pull started in the strip above or below it went nowhere —
         // on a bar only 45dp tall to begin with.
         modifier = Modifier
+            .playerDockPill(dock)
             // Outside the press scale, which it lifts along with everything else.
             .miniPlayerGestures(
                 pull = pull,
@@ -333,8 +337,12 @@ internal fun GlassNowPlaying(
                 onBlocked = onBlockedControl,
             )
             .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
+                // Level while the panel is up: the player's cover flies to and
+                // from the artwork laid out inside this, and a press still
+                // easing back would move that target from under it.
+                val factor = if (dock?.panelShown == true) 1f else pressScale
+                scaleX = factor
+                scaleY = factor
             }
             .then(modifier)
             .clickable(
@@ -347,23 +355,20 @@ internal fun GlassNowPlaying(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = if (isInline) 8.dp else 12.dp,
-                    vertical = if (isInline) 4.dp else 8.dp,
-                ),
+                .miniArtPadding(art),
         ) {
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(artSize)
+                    .size(art.size)
                     // Whichever of the two densities is on screen is the one
                     // the player flies to: only one is composed at rest.
-                    .playerDockArt(dock, if (isInline) 6.dp else 8.dp)
-                    .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
+                    .playerDockArt(dock, art.corner)
+                    .clip(art.shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
+            Spacer(Modifier.width(art.gap))
             if (isInline) {
                 Text(
                     text = song.title,

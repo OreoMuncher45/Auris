@@ -1,11 +1,10 @@
 package com.music.bitchord.download
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.artwork.ArtworkCompressor
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import kotlinx.coroutines.sync.Mutex
@@ -14,7 +13,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
-import kotlin.math.max
 
 /**
  * Embeds title, artist, album, lyrics and cover art into a track [Downloads]
@@ -40,7 +38,7 @@ object MediaTagger {
     private const val TAG = "BitChord"
 
     /** Long side of the embedded cover — plenty for a lock screen or a car head unit, without ballooning the file. */
-    private const val COVER_MAX_SIDE = 1000
+    private const val COVER_MAX_SIDE = ArtworkCompressor.EMBED_MAX_SIDE
 
     /**
      * How much of a FLAC has to be read to be sure the whole metadata chain is
@@ -67,6 +65,15 @@ object MediaTagger {
      * number of players ignore outright.
      */
     private val TAGGABLE = setOf("m4a", "webm", "flac")
+
+    /**
+     * The largest file the in-memory tagging route will take.
+     *
+     * That route holds the file three times over, so thirty-two megabytes is
+     * about a hundred megabytes of byte arrays — a budget that leaves room
+     * for everything else in a process that has just come out of a download.
+     */
+    private const val IN_MEMORY_TAG_LIMIT = 32L * 1024 * 1024
 
     /**
      * Whether a file of [extension] gets tags at all.
@@ -162,7 +169,10 @@ object MediaTagger {
     internal fun cacheArtwork(context: Context, sourceUrl: String?): String? {
         if (sourceUrl.isNullOrBlank()) return null
         artworkFile(context, sourceUrl).takeIf { it.isFile }?.let { return Uri.fromFile(it).toString() }
-        val artwork = fetchCover(sourceUrl.artworkAt(1200) ?: sourceUrl, "collection") ?: return null
+        // Asked for at the size the cover is kept at: a larger copy would be
+        // fetched and then scaled down to the same thing.
+        val artwork = fetchCover(sourceUrl.artworkAt(COVER_MAX_SIDE) ?: sourceUrl, "collection")
+            ?: return null
         return persistArtwork(context, sourceUrl, artwork)
     }
 
@@ -217,6 +227,33 @@ object MediaTagger {
         if (extension == "flac" &&
             tagFlacStreaming(context, uri, track, plain, words, artwork)
         ) {
+            return
+        }
+        // WebM — which is what YouTube serves, and so what a podcast episode
+        // or an audiobook chapter arrives as — is tagged on disk too: its
+        // tags are appended at the end and its Segment size is widened in
+        // place, so the file never has to be in memory. A two-hour episode is
+        // a hundred and twenty megabytes, and the in-memory route takes three
+        // copies of that to write a few kilobytes of text.
+        if (extension == "webm" &&
+            tagWebmOnDisk(context, uri, track, plain, words, artwork)
+        ) {
+            return
+        }
+
+        // What is left needs the whole file in memory: an MP4's `stco`
+        // offsets move when the `moov` grows, so the file has to be reachable
+        // from both ends at once.
+        //
+        // Which puts a ceiling on it. The in-memory route holds the file
+        // three times over — the array that was read, the one the tagger
+        // builds, and the one that copy is turned into — and the app's heap
+        // is a quarter of a gigabyte. A file over the cap is left as it
+        // arrived rather than risking the process for it: the artwork is
+        // already saved beside the file, and the app's own record of the
+        // download knows what the file is.
+        if (fileSize(context, uri) > IN_MEMORY_TAG_LIMIT) {
+            Log.w(TAG, "not tagging ${track.videoId}: the file is over the ${IN_MEMORY_TAG_LIMIT}B limit")
             return
         }
 
@@ -342,6 +379,38 @@ object MediaTagger {
         }.getOrDefault(false)
     }
 
+    /**
+     * Tags a WebM file where it lies, without reading it into memory.
+     *
+     * The file has to be one this app can open by path — the download lands
+     * in the app's own directory — and anything else (a `content://` uri, a
+     * file that isn't there) falls back to the general route below.
+     */
+    private fun tagWebmOnDisk(
+        context: Context,
+        uri: Uri,
+        track: Song,
+        lyrics: String?,
+        wordLyrics: String?,
+        artwork: Artwork?,
+    ): Boolean {
+        if (uri.scheme != "file") return false
+        val file = File(requireNotNull(uri.path))
+        if (!file.isFile) return false
+        return WebmTagger.tagFile(
+            file = file,
+            title = track.title,
+            artist = track.artist,
+            album = track.albumName,
+            lyrics = lyrics,
+            cover = artwork?.bytes,
+            coverMime = artwork?.mime ?: "image/jpeg",
+            wordLyrics = wordLyrics,
+        ).also { tagged ->
+            if (!tagged) Log.w(TAG, "streaming webm tag failed for ${track.videoId}")
+        }
+    }
+
     /** Move [temp] over whatever [uri] names, leaving nothing behind either way. */
     private fun replaceWith(context: Context, uri: Uri, temp: File) {
         if (uri.scheme == "file") {
@@ -405,7 +474,9 @@ object MediaTagger {
     }
 
     private fun fetchCover(track: Song): Artwork? {
-        val url = track.artworkAt(1200) ?: return null
+        // Asked for at the size the cover is kept at: a larger copy would be
+        // fetched and then scaled down to the same thing.
+        val url = track.artworkAt(COVER_MAX_SIDE) ?: return null
         return fetchCover(url, track.videoId)
     }
 
@@ -415,26 +486,29 @@ object MediaTagger {
             Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@runCatching null
                 val raw = response.body?.bytes() ?: return@runCatching null
-                val bitmap = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return@runCatching null
-                val scaled = downscale(bitmap, COVER_MAX_SIDE)
-                val out = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 92, out)
-                Artwork(out.toByteArray(), "image/jpeg")
+                // Compressed rather than kept as it arrived: the cover is filed
+                // inside the track and beside it, and it is read at thumbnail
+                // size by every other player — see [ArtworkCompressor].
+                //
+                // The decode is subsampled to the size the cover is kept at
+                // and both bitmaps are freed here rather than left to the GC,
+                // because a batch download tags one track after another and
+                // each decode is megabytes.
+                val jpeg = ArtworkCompressor.toJpeg(raw, COVER_MAX_SIDE)
+                    ?: return@runCatching null
+                Artwork(jpeg, "image/jpeg")
             }
         }.onFailure { Log.d(TAG, "no cover saved for $logId: ${it.message}") }.getOrNull()
     }
 
-    private fun downscale(bitmap: Bitmap, maxSide: Int): Bitmap {
-        val longest = max(bitmap.width, bitmap.height)
-        if (longest <= maxSide) return bitmap
-        val scale = maxSide.toFloat() / longest
-        return Bitmap.createScaledBitmap(
-            bitmap,
-            (bitmap.width * scale).toInt().coerceAtLeast(1),
-            (bitmap.height * scale).toInt().coerceAtLeast(1),
-            true,
-        )
-    }
+    /** How long the file is, or null when it cannot be asked. */
+    private fun fileSize(context: Context, uri: Uri): Long = runCatching {
+        if (uri.scheme == "file") {
+            File(requireNotNull(uri.path)).length()
+        } else {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+        }
+    }.getOrDefault(0L)
 
     private fun readAll(context: Context, uri: Uri): ByteArray? = runCatching {
         if (uri.scheme == "file") {

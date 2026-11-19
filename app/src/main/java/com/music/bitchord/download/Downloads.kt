@@ -1,21 +1,25 @@
 package com.music.bitchord.download
 
 import android.content.Context
+import android.os.SystemClock
 import android.content.Intent
 import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -136,6 +140,9 @@ object Downloads {
     private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
     private val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
 
+    /** The list of tracks deleted by hand; a plain list of ids. */
+    private val deletedSerializer = kotlinx.serialization.builtins.ListSerializer(String.serializer())
+
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
 
@@ -189,6 +196,110 @@ object Downloads {
      */
     val collections: StateFlow<Map<String, SavedCollection>> = _collections.asStateFlow()
 
+    /**
+     * The tracks the listener deleted by hand, and nothing else.
+     *
+     * A deletion is an instruction, and the only kind that outranks every
+     * automatic path in the app: the played-song download, the
+     * downloaded-playlist sync, anything else that would put the file back.
+     * Without a record of it, the next pass over the playlist fetched the
+     * track again — which is the exact complaint this exists to answer.
+     *
+     * Written down rather than remembered in memory, because the paths that
+     * would act on it are the ones that run when the app was not looking: the
+     * sync's pass happens half an hour later, and a fresh process knows
+     * nothing.
+     *
+     * Cleared when the listener asks for the track again by hand. The later
+     * instruction wins.
+     */
+    private val _deletedByHand = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Whether [videoId] was deleted by the listener, and must not come back on
+     * its own.
+     */
+    fun deletedByHand(videoId: String): Boolean = videoId in _deletedByHand.value
+
+    /** The ids themselves, for callers that ask about a whole batch. */
+    fun deletedByHandIds(): Set<String> = _deletedByHand.value
+
+    /** Guards the mark-and-write pair, so two deletions cannot race. */
+    private val deletedLock = Any()
+
+    /**
+     * Records that the listener deleted [videoId] by hand.
+     *
+     * Called from [delete] — the one door every explicit deletion comes
+     * through, whether it was one track or a whole release — so no path can
+     * delete a file and leave the app free to fetch it again.
+     *
+     * Committed rather than applied: a mark that is still in memory when the
+     * process dies is a mark that is gone, and the thing it protects is a
+     * file the listener asked not to have.
+     */
+    fun markDeletedByHand(videoId: String) {
+        if (videoId.isBlank()) return
+        synchronized(deletedLock) {
+            val updated = _deletedByHand.value + videoId
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
+    /**
+     * Forgets the mark on [videoId], because the listener asked for it again.
+     *
+     * The later instruction wins: a track deleted by hand and then downloaded
+     * by hand is a track they want.
+     */
+    fun clearDeletedByHand(videoId: String) {
+        if (videoId.isBlank()) return
+        synchronized(deletedLock) {
+            val current = _deletedByHand.value
+            if (videoId !in current) return
+            val updated = current - videoId
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
+    /**
+     * [clearDeletedByHand] for a whole batch, with one write.
+     *
+     * Re-downloading a release the listener had deleted cleared each track's
+     * mark on its own, and each clear is a synchronous `commit()` — an fsync
+     * per track, on the main thread that the download button runs on.
+     */
+    fun clearDeletedByHand(videoIds: Collection<String>) {
+        synchronized(deletedLock) {
+            val current = _deletedByHand.value
+            val updated = current - videoIds.filterTo(HashSet()) { it.isNotBlank() }
+            if (updated.size == current.size) return
+            _deletedByHand.value = updated
+            persistDeletedByHand(updated)
+        }
+    }
+
+    /** Writes the marks down. Called with the lock held. */
+    private fun persistDeletedByHand(ids: Set<String>) {
+        if (!::prefs.isInitialized) return
+        prefs.edit()
+            .putString(KEY_DELETED_BY_HAND, json.encodeToString(deletedSerializer, ids.toList()))
+            .commit()
+    }
+
+    /** Reads the marks back. A blob that will not parse means no marks. */
+    private fun readDeletedByHand(): Set<String> {
+        if (!::prefs.isInitialized) return emptySet()
+        val raw = prefs.getString(KEY_DELETED_BY_HAND, null) ?: return emptySet()
+        return runCatching { json.decodeFromString(deletedSerializer, raw).toSet() }
+            .getOrElse {
+                Log.w(TAG, "the deleted-by-hand list is unreadable (${it.message}); treating it as empty")
+                emptySet()
+            }
+    }
+
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
 
@@ -207,19 +318,55 @@ object Downloads {
      */
     private val running = LinkedHashMap<String, Job?>()
 
+    /**
+     * Completed once the index has been read off disk.
+     *
+     * The read happens on a background thread, so for a moment after [init]
+     * the live flows are empty even though a library is on the device. Anything
+     * that asks "what has been downloaded?" in that window is told "nothing" —
+     * which is the one answer that must never be wrong. The downloaded-playlist
+     * sync asked it and then went away for two hours; see
+     * [com.music.bitchord.download.DownloadedPlaylistSync].
+     */
+    private val indexReady = CompletableDeferred<Unit>()
+
+    /** Suspends until the download index has been read off disk. */
+    suspend fun awaitIndexReady() {
+        indexReady.await()
+    }
+
     fun init(context: Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
         val legacy = context.getSharedPreferences(LEGACY_PREFS_FILE, Context.MODE_PRIVATE)
+        // The marks are read here rather than with the rest of the index: they
+        // are small, and they have to be known before the first track is
+        // played — the played-song download asks about them the moment a
+        // track starts.
+        _deletedByHand.value = readDeletedByHand()
         // Moved out of the shared settings file. It was three JSON blobs, the
         // largest of which reached ~700 KB for a 1,600-track library, living in
         // the same XML as every setting the app has — so each completed download
         // rewrote the entire settings file atomically, temp file and fsync and
         // all, carrying the whole library with it, four times over on a batch.
         migrateLegacy(legacy)
-        _saved.value = decode(KEY_SAVED, serializer) { prefs.getString(it, null) }
-        _savedMetadata.value = decode(KEY_SAVED_METADATA, metadataSerializer) { prefs.getString(it, null) }
-        _collections.value = decode(KEY_SAVED_COLLECTIONS, collectionSerializer) { prefs.getString(it, null) }
+        // These blobs reach hundreds of kilobytes for a large library, and
+        // parsing them ran before the first frame. Loaded off the main thread
+        // and merged *under* the live flows, so an edit that somehow lands
+        // first wins instead of being overwritten by this snapshot.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val saved = decode(KEY_SAVED, serializer) { prefs.getString(it, null) }
+            val metadata = decode(KEY_SAVED_METADATA, metadataSerializer) { prefs.getString(it, null) }
+            val collections = decode(KEY_SAVED_COLLECTIONS, collectionSerializer) { prefs.getString(it, null) }
+            _saved.updateAndGet { saved + it }
+            _savedMetadata.updateAndGet { metadata + it }
+            _collections.updateAndGet { collections + it }
+            // Opened last, and opened whatever happened above: a decode failure
+            // is logged and treated as an empty library, and the waiter still
+            // has to be let go — it is waiting on an answer, not on a
+            // successful read.
+            indexReady.complete(Unit)
+        }
     }
 
     /**
@@ -306,9 +453,14 @@ object Downloads {
      * @param from what release this track was asked for as part of, when it was
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
+     * @param automatic whether this is the app asking rather than the listener.
+     *   An automatic ask never clears a [deletedByHand] mark: the listener
+     *   deleted the track, and the app noticing that the track is playing is
+     *   not permission to put it back.
      */
-    fun enqueue(context: Context, song: Song, from: String? = null) {
+    fun enqueue(context: Context, song: Song, from: String? = null, automatic: Boolean = false) {
         val id = song.videoId
+        if (!automatic) clearDeletedByHand(id)
         if (!AppSettings.downloadsAllowedNow) {
             // Distinct from the duplicate-tap no-op below: nothing is in flight
             // here to leave alone, and a refusal nobody is told about reads as a
@@ -338,6 +490,63 @@ object Downloads {
             Log.w(TAG, "could not start the download service: ${it.message}")
             synchronized(lock) { pending.remove(id) }
             fail(id, "Downloads can't start right now")
+        }
+    }
+
+    /**
+     * A batch of tracks, queued in one go.
+     *
+     * The loop this replaces did three expensive things per track: it started
+     * the foreground service again for every one of them, it copied the whole
+     * progress map and the whole session list once per track, and it did all
+     * of that on the thread that asked — the thread drawing the screen.
+     * Three hundred tracks is three hundred binder calls and thirty thousand
+     * map entries copied on the main thread, which is what the system's
+     * "app has stopped responding" dialog was about.
+     *
+     * The service is started once, the maps are copied once, and the work
+     * happens where it should: off the screen.
+     *
+     * @param automatic whether this is the app asking rather than the listener.
+     *   See [enqueue]: an automatic ask never clears a [deletedByHand] mark.
+     */
+    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false) {
+        if (songs.isEmpty()) return
+        val app = context.applicationContext
+        val accepted = mutableListOf<Song>()
+        val refused = mutableListOf<Song>()
+        if (!automatic) clearDeletedByHand(songs.map { it.videoId })
+        synchronized(lock) {
+            for (song in songs) {
+                val id = song.videoId
+                if (id in pending || id in running) continue
+                if (!AppSettings.downloadsAllowedNow) {
+                    refused += song
+                    continue
+                }
+                pending[id] = song
+                accepted += song
+            }
+        }
+        if (accepted.isNotEmpty()) {
+            _active.update { current ->
+                var next = current
+                for (song in accepted) next = next + (song.videoId to DownloadState.Queued)
+                next
+            }
+            DownloadSession.queuedAll(accepted, from)
+        }
+        for (song in refused) {
+            DownloadSession.queued(song, from)
+            fail(song.videoId, WIFI_ONLY_REFUSAL)
+        }
+        if (accepted.isEmpty()) return
+        runCatching {
+            ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
+        }.onFailure {
+            Log.w(TAG, "could not start the download service: ${it.message}")
+            synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
+            accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
         }
     }
 
@@ -488,6 +697,10 @@ object Downloads {
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
         val deleted = DownloadStore.delete(context, uri)
+        // The mark is written even when the file was already gone: the
+        // listener asked for this track not to be here, and that is worth
+        // remembering whether or not there was anything left to remove.
+        markDeletedByHand(videoId)
         forget(videoId)
         deleted
     }
@@ -594,6 +807,15 @@ object Downloads {
     }
 
     /**
+     * Whether [id] is a release that was downloaded whole.
+     *
+     * The question the downloaded-playlist sync asks before it spends a walk
+     * on a playlist: there is no promise to keep about a release that was
+     * never downloaded, and fetching it would be a request for nothing.
+     */
+    fun isDownloadedCollection(id: String): Boolean = id in _collections.value
+
+    /**
      * Delete every file downloaded for release [id] and drop the record of it.
      *
      * The counterpart to [forgetCollection]: that one is for a record whose
@@ -632,9 +854,16 @@ object Downloads {
     /** The page id for the release recorded under [id]. */
     fun pageIdFor(id: String): String = PLAYLIST_PREFIX + id
 
-    /** The release [pageIdFor] built [browseId] from, or null if it didn't. */
+    /**
+     * The release [pageIdFor] built [browseId] from, or null if it didn't.
+     *
+     * A page under the prefix that is not a download record — one of the
+     * listener's own local playlists or folders, which live in the same
+     * namespace — has no record behind it, and is not one.
+     */
     fun recordIdOf(browseId: String): String? =
-        browseId.removePrefix(PLAYLIST_PREFIX).takeIf { it != browseId && it.isNotEmpty() && !it.startsWith("sp_local_") }
+        browseId.removePrefix(PLAYLIST_PREFIX)
+            .takeIf { it != browseId && it.isNotEmpty() && !it.startsWith("sp_local_") && !it.startsWith("sp_folder_") }
 
     /**
      * The playlists and albums downloaded whole, in name order, without their
@@ -658,8 +887,79 @@ object Downloads {
     fun savedReleases(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
         if (_collections.value.isEmpty()) return emptyList()
         return _collections.value.values
-            .filter { record -> record.videoIds.any { it in onDisk } }
+            // The record is written at the tap, before a byte has been fetched,
+            // and it is never rewritten afterwards: it names every track the
+            // collection had when it was asked for, and the ones that were
+            // never downloaded are in it too. Left that way the card counts
+            // tracks that are not there, and opening it lands on a playlist
+            // with holes in it.
+            //
+            // So the record is brought up to what is on the disk now, and a
+            // collection with nothing left on the disk is not a collection.
+            .map { record -> record.copy(videoIds = record.videoIds.filter { it in onDisk }) }
+            .filter { record -> record.videoIds.isNotEmpty() }
             .sortedBy { it.title.lowercase(Locale.ROOT) }
+    }
+
+    /**
+     * The downloaded playlists whose switch is on: the ones the sync keeps
+     * whole.
+     *
+     * Deliberately not [savedReleases]. That one prunes each record to the
+     * files still on the disk, which is right for a shelf and wrong for a
+     * promise: a playlist the listener cleared by hand would drop out of it
+     * entirely, and the next song they add would never be noticed. Here the
+     * record is read as written, and what is actually on the disk is a
+     * separate question the sync asks about each track.
+     *
+     * Albums are left out on purpose: an album is a fixed release that never
+     * gains a track, so there is nothing to keep up with.
+     */
+    fun syncableCollections(): List<SavedCollection> =
+        _collections.value.values.filter { it.autoDownload && isMovingCollection(it) }
+
+    /**
+     * Whether a collection can gain tracks: a playlist, or Liked Music, which
+     * is an auto-playlist under another id.
+     *
+     * An album cannot — it is a fixed release — so it has nothing to keep up
+     * with and is left alone.
+     */
+    fun isMovingCollection(record: SavedCollection): Boolean =
+        record.playlist || record.id == YtMusicRepository.LIKED_MUSIC
+
+    /**
+     * The record a page id names, whether it is the downloaded playlist's own
+     * page (`local:playlist:<id>`) or the catalogue page it was downloaded
+     * from.
+     *
+     * The two differ by the `VL` YouTube puts on a playlist's page id and the
+     * record does not always carry, so the comparison ignores it — the same
+     * rule [DownloadedPlaylistSync] uses to match a refresh request.
+     */
+    fun collectionFor(
+        browseId: String,
+        collections: Map<String, SavedCollection> = _collections.value,
+    ): SavedCollection? {
+        recordIdOf(browseId)?.let { id -> collections[id]?.let { return it } }
+        val bare = browseId.removePrefix("VL")
+        return collections.values.firstOrNull { it.id.removePrefix("VL") == bare }
+    }
+
+    /**
+     * Turns the per-playlist switch on [id].
+     *
+     * Written down with the record: the sync runs in a later process than the
+     * tap, and a switch that lived only in memory would be off again by then.
+     * Switching it off leaves the files where they are; switching it on makes
+     * the next pass fetch what was added while it was off.
+     */
+    fun setAutoDownloadNewSongs(id: String, enabled: Boolean) {
+        recordCollections { current ->
+            val record = current[id] ?: return@recordCollections current
+            if (record.autoDownload == enabled) current
+            else current + (id to record.copy(autoDownload = enabled))
+        }
     }
 
     /**
@@ -1208,6 +1508,30 @@ object Downloads {
      * shared between them but the two state flows, and both are written through
      * atomic updates for exactly that reason.
      */
+    /**
+     * Progress, at a rate a screen can take.
+     *
+     * Every callback below fires per chunk written, and each one copies the
+     * whole progress map and the whole session list: with several downloads in
+     * flight that is thousands of copies a second, each of which the screen
+     * then redraws for. A bar that moves in steps of a quarter of a percent is
+     * the same bar, and the app keeps answering the system.
+     */
+    private fun publishProgress(id: String, fraction: Float) {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastProgressAt.getOrPut(id) { 0L }
+        if (now - last < PROGRESS_INTERVAL_MS) return
+        lastProgressAt[id] = now
+        _active.update { it + (id to DownloadState.Running(fraction)) }
+        DownloadSession.running(id, fraction)
+    }
+
+    /** When each track's progress was last published; see [publishProgress]. */
+    private val lastProgressAt = ConcurrentHashMap<String, Long>()
+
+    /** How often a download's progress reaches the screen. */
+    private const val PROGRESS_INTERVAL_MS = 250L
+
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
         // Set before the lookup, not after it. Resolving where a lossless track
@@ -1349,7 +1673,8 @@ object Downloads {
                 // HLS has no tag container, but its private offline package has
                 // sidecars for exactly the same lyrics and full-resolution cover.
                 if (route.taggable && (route.offlineHls != null || MediaTagger.carriesTags(route.extension))) {
-                    lyrics = async { LyricsTag.forTrack(track) }
+                    // Not every tagged file wants lyrics — see [Route.lyrics].
+                    if (route.lyrics) lyrics = async { LyricsTag.forTrack(track) }
                     artwork = async { MediaTagger.artworkFor(context, track) }
                 }
 
@@ -1367,8 +1692,7 @@ object Downloads {
                 if (manifest != null) {
                     val onSegment: (Long, Long) -> Unit = { written, total ->
                         val fraction = written.toFloat() / total
-                        _active.update { it + (id to DownloadState.Running(fraction)) }
-                        DownloadSession.running(id, fraction)
+                        publishProgress(id, fraction)
                     }
                     val savedUri = if (manifest.dash) {
                         OfflineDash.save(
@@ -1403,8 +1727,7 @@ object Downloads {
                 destination.openStream().use { sink ->
                     route.write(sink) { written, total ->
                         val fraction = written.toFloat() / total
-                        _active.update { it + (id to DownloadState.Running(fraction)) }
-                        DownloadSession.running(id, fraction)
+                        publishProgress(id, fraction)
                     }
                 }
                 val words = lyrics?.await()
@@ -1452,6 +1775,15 @@ object Downloads {
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
         val taggable: Boolean = true,
+        /**
+         * Whether to go looking for lyrics for this file.
+         *
+         * A song has a title and an artist that a lyrics service can match
+         * against a catalogue. A podcast episode called "The End" does not:
+         * the search finds a song called "The End", and the episode is then
+         * saved wearing somebody else's words. See [directRoute].
+         */
+        val lyrics: Boolean = true,
         val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
     )
@@ -1480,6 +1812,12 @@ object Downloads {
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
     private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
+        // A podcast episode and an audiobook chapter are not catalogue tracks:
+        // their id *is* the address of the recording, put there by the feed.
+        // There is nothing to match against a catalogue and nothing to resolve
+        // — the bytes are at the other end of that address, and the feed has
+        // already said which address.
+        directRoute(track)?.let { return it }
         fromSources(track, quality)?.let { (stream, storable) ->
             // A manifest is an index, not audio. Whichever kind it is, fetching
             // it as a file writes the index into something named `.flac` —
@@ -1511,6 +1849,37 @@ object Downloads {
                     },
                 )
             }
+            // An encrypted answer is fetched whole and decrypted once it has
+            // landed — the player decrypts as it reads, but a file on disk has
+            // to be clear. FLAC is written back out as a plain `.flac` (see
+            // [CencFlacFile]); any other encrypted codec would need an MP4
+            // writer this app does not have, so it is not filed from here.
+            if (stream.encrypted && !packaged) {
+                if (storable.extension != "flac") {
+                    Log.d(TAG, "can't file an encrypted .${storable.extension} yet; taking YouTube for ${track.videoId}")
+                    return@let
+                }
+                return Route(
+                    extension = storable.extension,
+                    mimeType = storable.mimeType,
+                    describe = "${stream.format.summary} (decrypted)",
+                    downloadFormat = stream.format.downloadBadge(),
+                    taggable = true,
+                    write = { sink, onProgress ->
+                        val encrypted = java.io.File.createTempFile("cenc-", ".mp4", context.cacheDir)
+                        try {
+                            encrypted.outputStream().buffered().use { out ->
+                                Downloader.fetchDirect(stream.url, stream.headers, out, onProgress)
+                            }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                com.music.bitchord.playback.cenc.CencFlacFile.write(encrypted, sink)
+                            }
+                        } finally {
+                            encrypted.delete()
+                        }
+                    },
+                )
+            }
             if (packaged && AppSettings.exportDownloads.value) {
                 Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
                 return@let
@@ -1534,6 +1903,12 @@ object Downloads {
         // Keep Opus for app-private downloads, but pin exported downloads to
         // AAC-in-MP4 for both the initial resolve and any mid-transfer retry.
         val requireM4a = AppSettings.exportDownloads.value
+        // The route below files YouTube's own bytes. With YouTube switched off
+        // there is no such file to file, and saving one anyway would be the
+        // same broken promise the sources screen's switch exists to fix.
+        if (!SourceRegistry.youtubeEnabled()) {
+            error("YouTube Music is turned off; this track can't be downloaded from your sources")
+        }
         val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps, requireM4a)
         return Route(
             extension = stream.downloadExtension,
@@ -1542,6 +1917,46 @@ object Downloads {
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
             write = { sink, onProgress ->
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
+            },
+        )
+    }
+
+    /**
+     * The route for a recording that already knows its own address.
+     *
+     * A podcast episode arrives from an RSS feed with an enclosure URL, and
+     * an audiobook chapter arrives from an archive with a file URL. Both are
+     * carried as the track's own id — see `ItunesPodcasts` — so a download of
+     * one is not a catalogue lookup at all: it is a fetch of the address the
+     * feed gave, with no matching, no source search, and no quality ladder to
+     * climb. The feed's file is the recording.
+     *
+     * The extension is read off the URL so the file is named and typed for
+     * what it is. A feed that serves its audio without an extension in the
+     * path is served as an mp3, which is what the overwhelming majority of
+     * them are.
+     *
+     * Lyrics are not looked for: an episode titled "The End" is not a song
+     * titled "The End", and a lyrics service that cannot tell the difference
+     * would save the episode wearing a stranger's words.
+     */
+    private fun directRoute(track: Song): Route? {
+        val url = track.videoId.trim()
+        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
+            return null
+        }
+        val path = url.substringBefore('?').substringBefore('#')
+        val fromPath = path.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it in DIRECT_EXTENSIONS }
+        val extension = fromPath ?: DEFAULT_DIRECT_EXTENSION
+        return Route(
+            extension = extension,
+            mimeType = DIRECT_MIME_TYPES[extension] ?: "audio/mpeg",
+            describe = "direct file",
+            lyrics = false,
+            write = { sink, onProgress ->
+                Downloader.fetchDirect(url, emptyMap(), sink, onProgress)
             },
         )
     }
@@ -1560,7 +1975,7 @@ object Downloads {
      * `ModuleSource.SEARCH_PATIENT_MS`) and does that once per query the matcher
      * offers. For a track no module holds, that is the whole queue stopped for
      * the better part of a minute on the way to a download that was always
-     * going to be YouTube's. `PlaybackService.SUBSTITUTE_TIMEOUT_MS` bounds the
+     * going to be YouTube's. `SUBSTITUTE_TIMEOUT_MS` bounds the
      * same search for the same reason.
      *
      * The [DownloadStore.storable] check belongs here rather than inside the
@@ -1670,7 +2085,7 @@ object Downloads {
      * have the recording.
      *
      * The comparison with playback is no longer the right one and is worth
-     * stating plainly: `PlaybackService.SUBSTITUTE_TIMEOUT_MS` is short because
+     * stating plainly: `SUBSTITUTE_TIMEOUT_MS` is short because
      * a listener is staring at a paused player. Nothing is waiting here, the
      * answer becomes a permanent file, and re-fetching it later costs the whole
      * download again.
@@ -1695,6 +2110,26 @@ object Downloads {
     private val LOSSLESS_EXTENSIONS = listOf("flac", "wav")
 
     /**
+     * The container types a podcast feed or an audiobook archive is allowed to
+     * hand over, and what the file is called and typed as once it has.
+     *
+     * Only the ones Android's audio collection will accept: `webm` is refused
+     * by the media store on affected versions, which is the same reason the
+     * YouTube route pins an exported Opus download to AAC in MP4.
+     */
+    private val DIRECT_EXTENSIONS = setOf("mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus")
+    private const val DEFAULT_DIRECT_EXTENSION = "mp3"
+    private val DIRECT_MIME_TYPES = mapOf(
+        "mp3" to "audio/mpeg",
+        "m4a" to "audio/mp4",
+        "mp4" to "audio/mp4",
+        "aac" to "audio/aac",
+        "ogg" to "audio/ogg",
+        "oga" to "audio/ogg",
+        "opus" to "audio/ogg",
+    )
+
+    /**
      * Why a download didn't start, when the reason is a setting rather than a
      * fault.
      *
@@ -1710,6 +2145,9 @@ object Downloads {
     }
 
     private const val KEY_SAVED = "downloaded_tracks"
+
+    /** The tracks the listener deleted by hand; see [deletedByHand]. */
+    private const val KEY_DELETED_BY_HAND = "deleted_by_hand"
 }
 
 @kotlinx.serialization.Serializable
@@ -1826,6 +2264,19 @@ data class SavedCollection(
     val playlist: Boolean = false,
     /** In the order the page listed them, which is the order to play them in. */
     val videoIds: List<String> = emptyList(),
+    /**
+     * Whether songs added to this playlist are downloaded too.
+     *
+     * The switch the listener sets, per playlist, when they ask for a playlist
+     * to live on the device. On by default: downloading a playlist whole is a
+     * promise about a moving thing, and the point of it is that the copy keeps
+     * up. Records written before this existed read as on, which is what those
+     * playlists were already being kept to — see [Downloads.syncableCollections].
+     *
+     * It says nothing about the files already here. Switching it off stops the
+     * next song from arriving; it does not delete anything.
+     */
+    val autoDownload: Boolean = true,
 )
 
 /** A [SavedCollection] with its surviving tracks attached, ready to draw. */

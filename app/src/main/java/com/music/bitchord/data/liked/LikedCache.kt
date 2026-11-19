@@ -39,95 +39,99 @@ object LikedCache {
         prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     }
 
+    /**
+     * The rows as last written in this process, with the account they belong
+     * to. Null until the first read or write.
+     *
+     * Every merge used to decode the whole blob from prefs and encode it again
+     * on the caller's thread — Main, for the sync that calls [mergeBottom] once
+     * per continuation page — so a 1,600-track walk decoded and re-encoded a
+     * growing list sixteen times there. It also read prefs while the previous
+     * page's write could still be queued in [writer], so a merge could start
+     * from rows a page behind. This copy is the source of truth for reads and
+     * merges; prefs are only read the first time, and only written from
+     * [writer], which encodes there.
+     */
+    private var memory: Pair<String, List<Song>>? = null
+    private val memoryLock = Any()
+
     /** Instant rows for [account], or null when there are none to show. */
     fun read(account: String?): List<Song>? {
         if (!this::prefs.isInitialized || account.isNullOrBlank()) return null
+        return rowsFor(account)?.takeIf { it.isNotEmpty() }
+    }
+
+    /** [account]'s rows, empty or not, or null when the cache is somebody else's. */
+    private fun rowsFor(account: String): List<Song>? = synchronized(memoryLock) {
+        memory?.let { (owner, rows) -> return if (owner == account) rows else null }
         if (prefs.getString(KEY_ACCOUNT, null) != account) return null
-        return decodeLikedRows(prefs.getString(KEY_ROWS, null).orEmpty())
-            .takeIf { it.isNotEmpty() }
+        val rows = decodeLikedRows(prefs.getString(KEY_ROWS, null).orEmpty())
+        memory = account to rows
+        rows
     }
 
     /**
-     * Every write goes through here.
-     *
-     * Off the main thread, and committed. A Liked sync walks the whole
-     * continuation chain and calls [mergeBottom] once per page — sixteen
-     * times for a 1,600-track library — and each of those used to read, encode
-     * and rewrite the entire ~1MB blob on the main thread. Now the pending
-     * payload is replaced rather than queued, so a burst costs one write of
-     * the final state, and it happens on [writeScope].
+     * Off the main thread, committed, and coalesced — see [CoalescingWriter].
      *
      * `commit()` rather than `apply()`: this blob is the only thing standing
      * between a force-stop and another full rewalk of the network, and an
      * async write that a kill discards buys nothing for a save that happens on
      * a background thread anyway.
-     */
-    /**
-     * Off the main thread, committed, and coalesced — see [CoalescingWriter].
      *
-     * The payload is a complete key/value set, so there is no longer a flag
-     * that decides whether the account key is written with it. That flag was
-     * the bug: it was read from whichever call started the drain while the
-     * bytes came from whichever call last set the pending slot, so a `write`
-     * immediately followed by a `mergeBottom` left rows on disk with no account
-     * beside them — and [read] gates on that key, so the cache read back as
-     * "not yours" forever. The Liked page sat on its loading skeleton after
-     * every cold start, with no error and no spinner that would ever stop.
+     * The account and the rows are written together, from the same snapshot of
+     * [memory], on every flush. [read] gates on the account key, so rows on
+     * disk without their account beside them would read back as "not yours"
+     * forever — the Liked page sat on its loading skeleton after every cold
+     * start when an earlier version let the two come from different calls.
      *
-     * Sharing the writer also means the account is written on every flush by
-     * construction rather than by remembering to.
+     * The submitted payload is only a wake-up: coalescing means the latest
+     * state wins anyway, so the sink takes it from [memory] and encodes it
+     * here, off the caller's thread.
      */
-    private val writer = CoalescingWriter { payload ->
-        prefs.edit().apply {
-            payload.forEach { (key, value) -> putString(key, value) }
-        }.commit()
+    private val writer = CoalescingWriter { _ ->
+        val (account, rows) = synchronized(memoryLock) { memory } ?: return@CoalescingWriter
+        val encoded = encodeLikedRows(rows)
+        prefs.edit()
+            .putString(KEY_ACCOUNT, account)
+            .putString(KEY_ROWS, encoded)
+            .commit()
     }
 
-    private fun store(account: String, rows: String) =
-        writer.submit(mapOf(KEY_ACCOUNT to account, KEY_ROWS to rows))
+    private fun store(account: String, rows: List<Song>) {
+        synchronized(memoryLock) { memory = account to rows.take(MAX_ROWS) }
+        writer.submit(emptyMap())
+        _generation.value += 1
+    }
 
     /** Full replace — the end of a successful fetch or background walk. */
     fun write(account: String?, songs: List<Song>) {
         if (!this::prefs.isInitialized || account.isNullOrBlank()) return
-        store(account, encodeLikedRows(songs))
-        _generation.value += 1
+        store(account, songs)
     }
 
     /** A fresh like lands on top without a refetch. */
     fun mergeTop(account: String?, rows: List<Song>) {
         if (!this::prefs.isInitialized || account.isNullOrBlank() || rows.isEmpty()) return
-        val current = read(account).orEmpty()
-        if (prefs.getString(KEY_ACCOUNT, null) != account) {
-            write(account, rows)
-            return
-        }
+        // Somebody else's cache (null) is replaced outright, as before.
+        val current = rowsFor(account).orEmpty()
         val known = current.mapTo(HashSet()) { it.videoId }
-        val merged = (rows.filter { known.add(it.videoId) } + current).take(MAX_ROWS)
-        store(account, encodeLikedRows(merged))
-        _generation.value += 1
+        store(account, rows.filter { known.add(it.videoId) } + current)
     }
 
     /** Rows trickling in from a background walk append underneath. */
     fun mergeBottom(account: String?, rows: List<Song>) {
         if (!this::prefs.isInitialized || account.isNullOrBlank() || rows.isEmpty()) return
-        if (prefs.getString(KEY_ACCOUNT, null) != account) {
-            write(account, rows)
-            return
-        }
-        val current = read(account).orEmpty()
+        val current = rowsFor(account).orEmpty()
         val known = current.mapTo(HashSet()) { it.videoId }
-        val merged = (current + rows.filter { known.add(it.videoId) }).take(MAX_ROWS)
-        store(account, encodeLikedRows(merged))
-        _generation.value += 1
+        store(account, current + rows.filter { known.add(it.videoId) })
     }
 
     /** An unlike leaves instantly, here and on screen. */
     fun drop(account: String?, videoId: String) {
         if (!this::prefs.isInitialized || account.isNullOrBlank() || videoId.isBlank()) return
-        val current = read(account) ?: return
+        val current = rowsFor(account) ?: return
         if (current.none { it.videoId == videoId }) return
-        store(account, encodeLikedRows(current.filterNot { it.videoId == videoId }))
-        _generation.value += 1
+        store(account, current.filterNot { it.videoId == videoId })
     }
 }
 

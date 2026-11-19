@@ -37,21 +37,7 @@ sealed interface BackdropEffectScope : Density, RuntimeShaderCache {
      * offscreen for its render effect, so compositing through a colour filter is free.
      */
     var compositeColorFilter: ColorFilter?
-
-    /**
-     * Set (via `poolLens`) instead of chaining a lens effect when sampling the shared glass
-     * pool: the pool then refracts this surface's region in its single multi-shape pass, and
-     * this surface needs no offscreen layer or lens pass of its own.
-     */
-    var poolLens: PoolLens?
 }
-
-/** Refraction a pooled glass surface asks the pool for, in this surface's pixels. */
-data class PoolLens(
-    val refractionHeight: Float,
-    val refractionAmount: Float,
-    val depthEffect: Boolean,
-)
 
 internal abstract class BackdropEffectScopeImpl : BackdropEffectScope, RuntimeShaderCache {
 
@@ -62,7 +48,6 @@ internal abstract class BackdropEffectScopeImpl : BackdropEffectScope, RuntimeSh
     override var padding: Float = 0f
     override var renderEffect: RenderEffect? = null
     override var compositeColorFilter: ColorFilter? = null
-    override var poolLens: PoolLens? = null
 
     private val runtimeShaderCache = RuntimeShaderCacheImpl()
 
@@ -98,7 +83,6 @@ internal abstract class BackdropEffectScopeImpl : BackdropEffectScope, RuntimeSh
         padding = 0f
         renderEffect = null
         compositeColorFilter = null
-        poolLens = null
         effects()
     }
 
@@ -110,7 +94,6 @@ internal abstract class BackdropEffectScopeImpl : BackdropEffectScope, RuntimeSh
         padding = 0f
         renderEffect = null
         compositeColorFilter = null
-        poolLens = null
         runtimeShaderCache.clear()
     }
 }

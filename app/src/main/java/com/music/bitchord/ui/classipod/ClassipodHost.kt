@@ -141,7 +141,6 @@ fun ClassipodHost(
     val discordRpc by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val discordQuality by AppSettings.discordShowAudioQuality.collectAsStateWithLifecycle()
     val discordDetails by AppSettings.discordUseDetails.collectAsStateWithLifecycle()
-    val atmosOn by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val dlQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDl by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val musicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
@@ -150,7 +149,6 @@ fun ClassipodHost(
     val skipSil by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val usbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
     val spatial by AppSettings.spatialAudio.collectAsStateWithLifecycle()
-    val automixEngineVal by AppSettings.automixEngine.collectAsStateWithLifecycle()
     val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val themeModeVal by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -273,7 +271,7 @@ fun ClassipodHost(
         if (playlists.isEmpty()) {
             return ClassipodPage.Menu(
                 song.title,
-                listOf(MenuItem("No playlists yet", "Create one in BitChord")),
+                listOf(MenuItem("No playlists yet", "Create one in Auris")),
             )
         }
         return ClassipodPage.Menu(
@@ -323,7 +321,7 @@ fun ClassipodHost(
                     pop()
                 },
                 MenuItem(if (liked) "Unlove" else "Love") {
-                    viewModel.toggleLike(song.videoId)
+                    viewModel.toggleLike(song)
                     pop()
                     push(podSongMenu(song))
                 },
@@ -370,7 +368,10 @@ fun ClassipodHost(
     // Cycling a rung re-pushes a fresh page (values are snapshots).
     fun qualityPage(): ClassipodPage.Menu {
         fun cycle(current: AudioQuality, setter: (AudioQuality) -> Unit): () -> Unit = {
-            val order = listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW)
+            val order = listOf(
+                AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                AudioQuality.MEDIUM, AudioQuality.LOW,
+            )
             setter(order[(order.indexOf(current) + 1) % order.size])
         }
         return ClassipodPage.Menu(
@@ -407,7 +408,7 @@ fun ClassipodHost(
     fun interfacePage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "Interface",
         listOf(
-            MenuItem("Theme: BitChord") { AppSettings.setAppUi(AppUi.BITCHORD) },
+            MenuItem("Theme: Auris") { AppSettings.setAppUi(AppUi.BITCHORD) },
             MenuItem(
                 "Faceplate",
                 AppSettings.classipodColorway.value,
@@ -442,7 +443,7 @@ fun ClassipodHost(
     fun aboutPage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "About",
         listOf(
-            MenuItem("BitChord Next", "v" + BuildConfig.VERSION_NAME),
+            MenuItem("Auris", "v" + BuildConfig.VERSION_NAME),
             MenuItem("Tracks", allKnown.size.toString()),
             MenuItem("Liked", likedAll.size.toString()),
         ),
@@ -502,12 +503,17 @@ fun ClassipodHost(
         "Audio",
         listOf(
             cyc("Wi-Fi ceiling", wifiQuality.label, wifiQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityWifi, ::advAudioPage),
             cyc("Data ceiling", cellularQuality.label, cellularQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityCellular, ::advAudioPage),
-            tog("Dolby Atmos", atmosOn, AppSettings::setDolbyAtmos, ::advAudioPage),
             cyc("Download quality", dlQuality.label, dlQuality,
                 com.music.bitchord.data.settings.DownloadQuality.entries,
                 AppSettings::setDownloadQuality, ::advAudioPage),
@@ -518,17 +524,6 @@ fun ClassipodHost(
     fun advPlaybackPage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "Playback",
         listOf(
-            MenuItem("Automix engine", automixEngineVal.label) {
-                AppSettings.setAutomixEngine(
-                    if (automixEngineVal == com.music.bitchord.data.settings.AutomixEngine.V2) {
-                        com.music.bitchord.data.settings.AutomixEngine.LEGACY
-                    } else {
-                        com.music.bitchord.data.settings.AutomixEngine.V2
-                    },
-                )
-                push(advPlaybackPage())
-                pop()
-            },
             tog("Music only", musicOnly, AppSettings::setPreferMusicOnly, ::advPlaybackPage),
             tog("Autoplay", autoplayOn, AppSettings::setAutoplay, ::advPlaybackPage),
             tog("Loudness", loudness, AppSettings::setLoudnessNormalization, ::advPlaybackPage),

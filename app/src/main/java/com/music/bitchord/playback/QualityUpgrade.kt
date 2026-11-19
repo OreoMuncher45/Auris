@@ -4,6 +4,8 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -85,8 +87,34 @@ object QualityUpgrade {
          * [SourceResolver.upgradeFor]'s own `servedBy`. Left out of the second
          * look so a deterministic catalogue isn't asked the same question
          * twice for a rejection it already gave the first time.
+         *
+         * Left out unconditionally, which it used not to be: it was only
+         * passed on when the copy already playing was lossless, so the
+         * ordinary case — a source serving a lossy copy, asked again in the
+         * hope of a better one — asked that same source a second time and
+         * took its answer again. The second look is the patient one; it is
+         * the last chance a track has for a better copy, and spending part
+         * of it re-asking the source that already answered is how it ended
+         * up answering "no" while a better copy sat behind another source
+         * that had not been asked yet.
          */
         val servedBy: String? = null,
+        /**
+         * Whether the copy playing is *known* to be lossy.
+         *
+         * This is what decides whether a lossless candidate is an answer or
+         * an intrusion. The immersive rung asks for the spatial mix, and a
+         * FLAC is not that mix — but a FLAC over a 150kbps Opus is a better
+         * copy of the same recording, and the app's own live path serves
+         * exactly that when no Atmos master exists ("a track with no Atmos
+         * master must still play its FLAC"). Refusing it here refused the
+         * upgrade the listener asked for and left the track on the copy it
+         * was already playing.
+         *
+         * Known, not assumed: a copy whose codec was never stated is not
+         * evidence of anything, and the refusal stands for it.
+         */
+        val playingLossy: Boolean = false,
     )
 
     private val pending = ConcurrentHashMap<String, Pending>()
@@ -96,17 +124,71 @@ object QualityUpgrade {
      * quickly; with lossless requested, JioSaavn can be that answer while a
      * slower FLAC source is still searching. Once JioSaavn is playing, ask
      * again with its bitrate as the floor: it is then rejected as unchanged and
-     * the slower lossless source gets a chance to win. Dolby Atmos is final too:
-     * it is lossy by codec definition, but it is the completed immersive tier,
-     * not an interim copy to search over and swap to again.
+     * the slower lossless source gets a chance to win.
+     *
+     * Dolby Atmos is final too: it is lossy by codec definition, but it is the
+     * completed immersive tier, not an interim copy to search over and swap to
+     * again. The immersive rung queues nothing at all — see
+     * [needsLosslessFollowUp] — because a tier that was asked for and missed
+     * is not answered late by the tier below it.
      */
     private val followUps = ConcurrentHashMap<String, Pending>()
     private val forced = ConcurrentHashMap<String, SourceStream>()
 
-    internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
-        SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            format.isLossless != true &&
-            !format.isDolbyAtmos
+    /**
+     * Whether this answer is still worth a second, lossless-flavoured pass.
+     *
+     * The lossless rung answers yes when what is playing is not the
+     * bit-exact copy that was asked for: the first pass takes the first
+     * source that beats the fallback, and a slower FLAC source may still be
+     * searching. Once a lossless copy — or an Atmos one, which is the
+     * completed immersive tier — is playing, there is nothing left to ask
+     * for.
+     *
+     * The immersive rung answers no, always. Atmos is a tier rather than a
+     * bonus on top of lossless: a track with no Atmos master has no Atmos
+     * master to find later, and the tier below it — a lossless or hi-res
+     * file — is not a late answer to a request for the spatial mix. Queuing
+     * one was how a Dolby-listening session ended up with a FLAC cut into
+     * the middle of it. The only late swap the rung allows is an Atmos
+     * answer itself, and that is [SourceResolver.worthSwapping]'s rule
+     * rather than a pass to queue here.
+     */
+    internal fun needsLosslessFollowUp(format: StreamFormat): Boolean {
+        if (!SourceResolver.requestForNow().wantsLossless) return false
+        if (SourceResolver.immersiveRungActive()) return false
+        return format.isLossless != true && !format.isDolbyAtmos
+    }
+
+    /**
+     * Whether the source already serving the track is worth asking again.
+     *
+     * The second look leaves the serving source out, because the same source
+     * asked the same question usually answers the same way — and the answer
+     * is already playing. That is true of a catalogue, where the copy does not
+     * change under the search.
+     *
+     * It is not true of a source that holds several tiers of the same
+     * recording: an extension asked for a lossless copy and answered with a
+     * lossy one because its own fallback ladder was walked, because its
+     * catalogue was slow that second, or because the tier it wanted was not
+     * warm yet. Asked again, it can answer with the tier it wanted the first
+     * time — and it is the only source that can, because nothing else in the
+     * list holds that recording in that tier.
+     *
+     * So it is asked again exactly when the answer would be worth having: the
+     * request wants a bit-exact copy and what is playing is known to be a
+     * lossy one. A bit-exact copy already playing, an unknown one (nothing
+     * lossy could be told apart from it) and the immersive rung all leave it
+     * out — asking again there would reproduce the stream already playing and
+     * cost a seam in the audio for nothing.
+     */
+    private fun servedByMayHoldBetter(playing: StreamFormat?): Boolean {
+        val format = playing ?: return false
+        if (format.isLossless == true || format.isDolbyAtmos) return false
+        if (!SourceResolver.requestForNow().wantsLossless) return false
+        return !SourceResolver.immersiveRungActive()
+    }
 
     /**
      * Tracks whose upgraded stream is being *proved* rather than played — see
@@ -213,7 +295,15 @@ object QualityUpgrade {
             inFlight?.cancel()
             return false
         }
-        pending[mediaId] = Pending(target, inFlight, playing, servedBy)
+        pending[mediaId] = Pending(
+            target = target,
+            inFlight = inFlight,
+            playing = playing,
+            servedBy = servedBy,
+            // The stream that won the race named its own codec, so what is
+            // playing is known to be lossy unless it says otherwise.
+            playingLossy = playing != null && playing.isLossless == false && !playing.isDolbyAtmos,
+        )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -275,32 +365,101 @@ object QualityUpgrade {
      * main thread every progress sample while the other half has to wait for
      * the decoder to settle first. Everything here is a fact about the queue
      * entry and the settings; nothing here touches the network.
+     *
+     * @param explicit whether the listener asked for this upgrade themselves.
+     *   A request of their own is answered whatever the automatic path's rules
+     *   say — the setting below governs what the app does on its own, not what
+     *   it refuses when it is told.
      */
-    fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
+    fun couldStillUpgrade(mediaId: String, uri: Uri?, explicit: Boolean = false): Boolean {
         if (uri == null || uri.getQueryParameter("m") == "1") return false
-        // A file on the device is final. There is nothing better than the copy
-        // the user already has, and no amount of looking will change it — which
-        // is why this used to be decided earlier and further away, in
-        // [PlayerConnection.shouldPlayLocalFile], where a downloaded track was
-        // routed to its file before it could ever be asked. With streaming
-        // preferred while a network is up, the case arrives here instead, and
-        // it is decided on the scheme rather than on the presence of a `v`
-        // parameter: an addon hands back a plain https url with no `v` in it,
-        // so requiring one meant a track served by an addon could never be
-        // looked at again — the better copy was available and permanently
-        // ineligible.
-        if (uri.scheme == "file" || uri.scheme == "content") return false
+        // A downloaded file plays, and the second look for one is not about
+        // replacing it with a stream — it is about what the *sources* can add
+        // on top of it. Two things follow, and both are below.
+        val isFile = uri.scheme == "file" || uri.scheme == "content"
+        // Everything below decides on the scheme and the marker rather than on
+        // the presence of a `v` parameter: an addon hands back a plain https
+        // url with no `v` in it, so requiring one meant a track served by an
+        // addon could never be looked at again — the better copy was available
+        // and permanently ineligible.
+        //
         // Already upgraded: this *is* the better copy. Except when the listener
         // has asked by hand, where the marker is on a *reverted* item and
         // saying "this is the copy that was chosen" is the very thing being
         // overruled — see [askByHand].
         if (mediaId !in handAsked && uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
+        if (isFile) {
+            // The listener's own switch, and only the listener's own switch,
+            // decides whether the songs on the device are upgraded without
+            // being asked — see
+            // [AppSettings.effectiveAutoUpgradeLocalStorage]. It reads the
+            // effective value, so offline mode turns it off without the
+            // listener's own answer being forgotten.
+            if (!explicit && !AppSettings.effectiveAutoUpgradeLocalStorage.value) return false
+            // The source the file was downloaded from, when it was downloaded
+            // from one.
+            //
+            // It counts, and it counts whatever rank the listener gave it: it
+            // is the source that holds this recording, and the only one that
+            // can hold a *better* tier of it. Leaving it out made "upgrade
+            // local music" do nothing at all on every track an extension had
+            // downloaded — the file was already on the device, the extension
+            // held the FLAC, and the question was never asked.
+            val serving = servingSourceOf(mediaId)
+            // A lossy re-encode of a file is never better than the file
+            // ([SourceResolver.worthSwapping] refuses one against an unknown
+            // floor anyway), so only a source that can hand over a bit-exact
+            // copy is worth starting the search for — and the search is not
+            // free.
+            //
+            // This used to be a flat no, "a file on the device is final",
+            // which was true of the copy and wrong about the ladder: Lossless
+            // and Hi-res sources are ranked *above* local storage
+            // deliberately, and a 128kbps file YouTube gave the listener when
+            // they saved a track is not the copy the app would choose now.
+            //
+            // The upgrade itself is what a file-backed track needs care for,
+            // and that care lives where the item is built: see
+            // [Song.toStreamMediaItem] and [PlaybackService.swapPointFor].
+            return if (explicit) {
+                // A hand-asked upgrade may take any better copy, not only a
+                // bit-exact one: the listener asked, and a 320kbps copy of a
+                // 128kbps file is what they were asking for. So every source
+                // that could stand in for YouTube counts — and so does the
+                // source the file came from, which counts only when it is
+                // still switched on and still serves audio. A source that has
+                // been turned off, or one that only describes a catalogue, is
+                // not somewhere a better copy can come from.
+                SourceResolver.canSubstituteForYouTube() || SourceResolver.canServe(serving)
+            } else {
+                SourceResolver.canServeLossless(serving)
+            }
+        }
+        // A source-backed track is already being served by a source, so the
+        // question is not "can anything stand in for YouTube" but "is there
+        // anything that could hold a better copy of this recording" — and the
+        // source playing it counts, because a source that holds several tiers
+        // of one recording can answer with a better one than it did a minute
+        // ago. Asking the question is cheap; the sources decide.
+        if (uri.authority == "source") return true
         // Same widening as [settledForLess]: a track playing off the cache is
         // worth a second look whenever anything outranks YouTube, not only
         // when lossless was asked for.
         return SourceResolver.canSubstituteForYouTube()
     }
+
+    /**
+     * The source a track came from, when it came from one.
+     *
+     * Read off the media id, which is where a source-backed track keeps its
+     * identity: `src:<config>::<track>`. The URI cannot say it, because the
+     * file an extension downloaded is a `content://` path with no query at all
+     * — and the source behind that file is the one that may hold a better
+     * tier of the very recording it is a copy of.
+     */
+    private fun servingSourceOf(mediaId: String): String? =
+        SourceRegistry.parseTrackKey(mediaId)?.first
 
     /**
      * Marks a track that is playing without ever having been resolved.
@@ -359,8 +518,22 @@ object QualityUpgrade {
         target: TrackMatcher.Target,
         playingMime: String?,
         playing: StreamFormat?,
+        explicit: Boolean = false,
+        /**
+         * The source serving the track, when it is not in the URI.
+         *
+         * A stream-backed item says so in its own query — `bitchord://source?s=…`
+         * — but a *file* has no query at all: the file that an extension
+         * downloaded is a `content://` path, and the source it came from is
+         * known only from the media id, which is `src:<config>::<track>`.
+         *
+         * It matters because that source is the one that may hold a better
+         * tier of the very recording the file is a copy of, and the second
+         * look leaves a serving source out unless it is named here.
+         */
+        servedBy: String? = null,
     ): Boolean {
-        if (!couldStillUpgrade(mediaId, uri)) return false
+        if (!couldStillUpgrade(mediaId, uri, explicit)) return false
         // [asked] is set only on the two *verdicts* below, not on adoption.
         // Both are facts about the bytes on disk and the row that queued them,
         // neither changes while the track plays, and neither is worth
@@ -368,7 +541,7 @@ object QualityUpgrade {
         // entry here at all: [pending] keeps [couldStillUpgrade] off it for
         // exactly as long as the question is genuinely open, and marking it
         // answered before it has been asked is what made a skip permanent.
-        if (NerdStats.isLosslessMime(playingMime)) {
+        if (NerdStats.isLosslessMime(playingMime) || NerdStats.isDolbyAtmosMime(playingMime)) {
             asked += mediaId
             // The codec is named because this line is a dead end — the track is
             // in [asked] by now and will never be offered an upgrade again — and
@@ -385,7 +558,22 @@ object QualityUpgrade {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        pending[mediaId] = Pending(
+            target = target,
+            inFlight = null,
+            playing = playing,
+            // The source serving the track, when the track is a source-backed
+            // one. It is the source that may hold the better tier — an
+            // extension holds several copies of a recording and answers with
+            // whichever its own ladder reached — and the second look leaves
+            // the serving source out unless it is named here.
+            servedBy = servedBy ?: uri.getQueryParameter("s")?.takeIf { it.isNotBlank() },
+            // The decoder said what the bytes are. A copy that is not
+            // bit-exact and not the spatial mix is a lossy one, and a lossless
+            // candidate over it is an upgrade rather than an intrusion — see
+            // [Pending.playingLossy].
+            playingLossy = playingMime != null && !NerdStats.isLosslessMime(playingMime),
+        )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -475,7 +663,7 @@ object QualityUpgrade {
             waiting.inFlight?.let { lookup ->
                 val late = runCatching { lookup.await() }.getOrNull()
                 if (late != null &&
-                    SourceResolver.worthSwapping(late.format, waiting.playing) &&
+                    SourceResolver.worthSwapping(late.format, waiting.playing, explicitFor(mediaId, waiting)) &&
                     SourceResolver.sameRecordingAs(late.durationSec, effectiveDurationSec)
                 ) {
                     found = late
@@ -494,11 +682,27 @@ object QualityUpgrade {
             // It finished with nothing better, so the question gets asked
             // again from scratch — this time waiting on every module, which is
             // what the live path could not afford to do. The source already
-            // serving the track is left out — see [SourceResolver.upgradeFor].
+            // serving the track is left out — unless it is the only one that
+            // can hold the better copy, which is the case for an extension:
+            // see [servedByMayHoldBetter].
             SourceResolver.upgradeFor(
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
-                servedBy = waiting.servedBy?.takeIf { waiting.playing?.isLossless == true },
+                // Unconditionally: the source already serving this track is
+                // the one that answered first, and asking it the same
+                // question again reproduces the stream already playing.
+                servedBy = waiting.servedBy,
+                // …unless what is playing is known to be lossy and a bit-exact
+                // copy was asked for. Then the source that answered first is
+                // the one that may hold the better tier, and leaving it out
+                // made "Upgrade quality" do nothing at all on every track an
+                // extension was serving.
+                reaskServedBy = servedByMayHoldBetter(waiting.playing),
+                // Asked per candidate rather than once: a listener who taps
+                // "Upgrade quality" while the search is already running has
+                // asked for the answer to be judged by their rules, and the
+                // search may not have reached a candidate yet.
+                explicit = { explicitFor(mediaId, waiting) },
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
@@ -633,8 +837,25 @@ object QualityUpgrade {
         asked += mediaId
     }
 
-    /** Abandons the second look for [mediaId] — the queue has moved on. */
-    fun forget(mediaId: String) {
+    /** Whether [mediaId] still carries the listener's own request. */
+    fun isHandAsked(mediaId: String): Boolean = mediaId in handAsked
+
+    /** Test seam: whether [mediaId] still carries the listener's own request. */
+    internal fun isHandAskedForTest(mediaId: String): Boolean = isHandAsked(mediaId)
+
+    /**
+     * Abandons the second look for [mediaId] — the queue has moved on, or the
+     * track failed on the copy it had been swapped to.
+     *
+     * @param keepHandAsk leaves the listener's own request standing. A reverted
+     *   item resolves through the direct-YouTube branch on every open, and that
+     *   branch calls this — so without it, "Upgrade quality" was erased by the
+     *   item's own open a few hundred milliseconds after it was asked, and the
+     *   marker rule then refused the track for the rest of the session with no
+     *   line in the log saying why. The request is not about the rendition being
+     *   abandoned; it is about the track.
+     */
+    fun forget(mediaId: String, keepHandAsk: Boolean = false) {
         pending.remove(mediaId)?.inFlight?.cancel()
         followUps.remove(mediaId)?.inFlight?.cancel()
         forced.remove(mediaId)
@@ -644,7 +865,7 @@ object QualityUpgrade {
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
         // the track re-run a search that has already been answered.
-        handAsked -= mediaId
+        if (!keepHandAsk) handAsked -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
     }
 
@@ -686,6 +907,30 @@ object QualityUpgrade {
         asked -= mediaId
         refused -= mediaId
     }
+
+    /**
+     * Whether this swap was asked for, and so may answer with the rung below
+     * the one that was requested.
+     *
+     * Two things make a swap explicit:
+     *
+     *  - **The listener asked.** "Upgrade quality" is a request for the best
+     *    copy the sources hold, not for the copy of one particular tier. It is
+     *    refused when no copy is better, not when the copy is not the tier
+     *    that was asked for.
+     *  - **What is playing is known to be lossy.** A bit-exact copy over a
+     *    150kbps Opus is a better copy of the same recording, and the app's
+     *    own live path serves exactly that when a track has no spatial mix —
+     *    "a track with no Atmos master must still play its FLAC". Refusing
+     *    it left the track on the copy it was already playing, which is what
+     *    "Upgrade quality" was reporting as doing nothing.
+     *
+     * An unknown floor is neither: a copy whose codec was never stated is not
+     * evidence that a lossless candidate would be an improvement, and the
+     * refusal stands for it.
+     */
+    private fun explicitFor(mediaId: String, waiting: Pending): Boolean =
+        handAsked.contains(mediaId) || waiting.playingLossy
 
     /**
      * Abandons the second look for every track at once, because the player all
@@ -764,7 +1009,14 @@ object QualityUpgrade {
      */
     fun forcedStream(uri: Uri): SourceStream? {
         if (uri.getQueryParameter(MARKER)?.startsWith(UPGRADED) != true) return null
-        return uri.getQueryParameter("v")?.let(forced::get)
+        // The media id, not the `v` parameter.
+        //
+        // A source-backed track's URI carries no `v` at all — its identity is
+        // `src:<config>::<track>`, spelled out in [mediaIdIn] — so asking for
+        // the `v` parameter found nothing, and the upgrade of an
+        // addon-served track was found, parked, auditioned and then never
+        // served. "Upgrade quality" on a catalogue row did nothing.
+        return mediaIdIn(uri)?.let(forced::get)
     }
 
     /** The same URI, marked so Media3 rebuilds it and each upgrade gets its own cache entry. */

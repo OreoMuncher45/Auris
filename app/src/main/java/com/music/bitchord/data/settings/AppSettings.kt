@@ -1,6 +1,7 @@
 package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.webdav.update
+import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import android.content.SharedPreferences
@@ -12,9 +13,11 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
+import com.music.bitchord.playback.audio.JamesDspConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +31,7 @@ import com.music.bitchord.playback.SingMethod
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.Locale
 
 
 /**
@@ -47,15 +51,37 @@ import kotlinx.coroutines.flow.asStateFlow
  * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
  * caps, and it is the only source that can answer at all when the ones
  * above it are skipped.
+ *
+ * ### What the rung may exclude, and what it may not
+ *
+ * A rung used to exclude a source by what it *could* serve rather than by
+ * what it would cost: High dropped every source that could serve lossless,
+ * and Medium and Low dropped everything that was not YouTube. That made an
+ * addon a lower-priority source than JioSaavn on the rung where JioSaavn was
+ * allowed at all, which is the opposite of what the source list says — the
+ * sources the user added come first, and they come first among themselves,
+ * with YouTube last — and it left the High rung unable to play a 320kbps
+ * copy from an addon that had one, which is the best copy available.
+ *
+ * What is excluded now is only what the rung cannot pay for. Low asks for
+ * 64kbps, and YouTube's own Opus ladder is the only source that can be
+ * asked for *that* tier — an addon is asked for its best lossy rendition,
+ * which is 128kbps at the floor, twice the data. Every other rung asks for
+ * the best copy available and lets every enabled source answer, which is
+ * what [SourceResolver] then weighs: the highest-quality result available
+ * plays first, and YouTube is last in the list rather than excluded from it.
  */
 fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
-    AudioQuality.LOSSLESS -> true
-    // No lossless answer is wanted here, and a source that can serve one is
-    // the slow half of the list: an addon fronting several catalogues walks
-    // all of them before it answers, which is seconds spent to land on a
-    // transcode JioSaavn already has at 320.
-    AudioQuality.HIGH -> !kind.canServeLossless
-    AudioQuality.MEDIUM, AudioQuality.LOW -> kind == SourceKind.YOUTUBE
+    // Atmos is additive rather than a cap: the immersive mix is looked for
+    // first, and every source that could serve the lossless ladder below it
+    // is still in the walk.
+    AudioQuality.DOLBY, AudioQuality.LOSSLESS -> true
+    // The best copy on offer, whoever holds it. An addon is asked for its
+    // high tier here rather than its lossless one — the rung is what asks
+    // for bit-exact audio, not the source's ability to supply it.
+    AudioQuality.HIGH, AudioQuality.MEDIUM -> true
+    // The one rung with a byte budget too small for a source's own floor.
+    AudioQuality.LOW -> kind == SourceKind.YOUTUBE
 }
 
 /**
@@ -86,6 +112,13 @@ enum class OutputPcmMode(val label: String) {
  * while configured sources can supply their own AAC or lossless copy. And
  * [LOSSLESS] has no streaming counterpart at all: it is the only rung that lets
  * a configured source's bit-exact file end up as a file on disk.
+ *
+ * [DOLBY] is the one rung that asks for something other than a copy of the
+ * recording: the spatial mix, where the catalogue holds one, and the bit-exact
+ * ladder below it where it does not. It is a rung of its own rather than a
+ * modifier on [LOSSLESS] because the two are different files — E-AC-3 JOC is
+ * lossy and spatial, FLAC is neither — and a listener who picked one deserves
+ * the file they picked rather than the other one.
  */
 enum class DownloadQuality(
     /** Ceiling for the YouTube Opus ladder. [Int.MAX_VALUE] means "whichever rung is best". */
@@ -96,15 +129,32 @@ enum class DownloadQuality(
     val perTrack: String,
     /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
     val keepsLossless: Boolean,
+    /**
+     * Whether this rung asks for the immersive mix.
+     *
+     * Its own statement rather than something read off the streaming rung: the
+     * file being kept and the stream being played are two questions, and a
+     * listener who asked for Dolby Atmos while streaming did not ask for a
+     * spatial mix in the file they save — nor the other way round.
+     */
+    val wantsAtmos: Boolean = false,
 ) {
     STANDARD(128, "Standard", "~128 kbps Opus · fits more on the device", "~4 MB", false),
     HIGH(Int.MAX_VALUE, "High", "Best audio on offer; source quality first", "~8 MB", false),
     LOSSLESS(
         Int.MAX_VALUE,
         "Lossless",
-        "Bit-exact if a source has it, best Opus if not",
+        "Up to hi-res · never the spatial mix",
         "~35 MB",
         true,
+    ),
+    DOLBY(
+        Int.MAX_VALUE,
+        "Dolby Atmos",
+        "Immersive E-AC-3 where held, lossless below it",
+        "~20 MB",
+        true,
+        wantsAtmos = true,
     ),
 }
 
@@ -119,7 +169,7 @@ enum class ThemeMode(val label: String) {
  * ways, from either shell's settings.
  */
 enum class AppUi(val label: String) {
-    BITCHORD("BitChord"), CLASSIPOD("Classipod")
+    BITCHORD("Auris"), CLASSIPOD("Classipod")
 }
 
 /**
@@ -256,18 +306,142 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
+    /**
+     * Blends a proved lossless copy in over the lossy stream it replaces,
+     * instead of cutting the audio while the player rebuilds its source.
+     * Off by default: the two masters can differ enough to double or phase
+     * during the overlap, so it is only turned on after a confirmation.
+     */
+    val seamlessQualityUpgrade = MutableStateFlow(false)
+
+    /**
+     * Whether the songs kept on the device are upgraded to a better copy
+     * while they play.
+     *
+     * A download is a copy of whatever the sources held when it was saved —
+     * often a 128kbps transcode — and it is played for as long as the
+     * listener keeps it. The sources can do better now, so the second look
+     * offers the file's own track to them.
+     *
+     * On by default, because the path it governs has always been there: the
+     * question was never whether a saved song *may* be upgraded, but whether
+     * the upgrade could actually land — and it could not, because the tier
+     * below the one that was asked for was refused as an answer. This switch
+     * is the listener's way of saying no to it.
+     *
+     * Read through [effectiveAutoUpgradeLocalStorage] rather than this: an
+     * upgrade needs the network, so offline mode turns this off whatever it
+     * says here.
+     */
+    val autoUpgradeLocalStorage = MutableStateFlow(true)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
-    /** Which transition planner Automix runs. V2 is the default; Legacy is the way back. */
+    /**
+     * Where the homepage, Flow and Autoplay get their content.
+     *
+     * Read through [HomeProvider] for what this does and does not change —
+     * briefly: the algorithm, not the audio, and not the Library. Changing it
+     * restarts the app, because Flow's and Autoplay's learning are trained
+     * against the provider that built them; see [HomeProvider].
+     */
+    val homeProvider = MutableStateFlow(HomeProvider.YOUTUBE)
+
+    /**
+     * The transition planner Automix runs.
+     *
+     * Pinned to the phrase-aware engine: the legacy plan it replaced is gone,
+     * so there is nothing to switch back to. Kept as a setting because the
+     * plan reads it, and because an install that still has the old engine
+     * name in its preferences has to land somewhere that resolves.
+     */
     val automixEngine = MutableStateFlow(AutomixEngine.V2)
     val skipSilence = MutableStateFlow(false)
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
 
+    /**
+     * Bit-perfect output: the decoder's samples reach the output unchanged.
+     *
+     * Not the same question as [outputPcmMode], which picks a *representation*
+     * while every DSP stage still runs its own settings. This is a promise
+     * about the whole path: the equaliser, spatial widening, vocal cut,
+     * levelling and transition filtering are bypassed whatever their switches
+     * say, and a crossfade — which mixes two tracks — is never armed. The
+     * route still has the last word; where it cannot carry the source
+     * encoding the pipeline readout says so rather than claiming otherwise.
+     */
+    val bitPerfect = MutableStateFlow(false)
+
+    /**
+     * The listener's own volume, 0..1, as the app sees it.
+     *
+     * Written by the volume bar and by the system's own volume keys, and read
+     * by the audio path. With the mixer bypassed — bit-perfect — the system
+     * volume attenuates nothing: the gain the mixer would have applied is
+     * exactly what a bit-perfect route gives up, so the bar would move and the
+     * sound would not. The app cuts the sound itself instead, on the samples
+     * on their way out; see [com.music.bitchord.playback.audio.PrecisionAudioSink].
+     *
+     * Remembered on disk, because the system volume is no longer always the
+     * truth: Android pins the media stream at maximum when a USB DAC
+     * attaches, and a level read off that is a reading of Android's doing
+     * rather than of the listener's choice.
+     */
+    val playerVolume = MutableStateFlow(1f)
+
+    /**
+     * Sets the listener's level and remembers it.
+     *
+     * The one way the level changes: the volume bar, the system's own volume
+     * keys, and the start of the app restoring what it left.
+     */
+    fun setPlayerVolume(level: Float) {
+        val value = level.coerceIn(0f, 1f)
+        // The system's settings observer fires on every change under
+        // Settings.System, so this is asked for far more often than the
+        // level actually moves.
+        if (playerVolume.value == value) return
+        playerVolume.value = value
+        if (::prefs.isInitialized) {
+            prefs.edit().putFloat(KEY_PLAYER_VOLUME, value).apply()
+        }
+    }
+
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
+
+    /**
+     * The face the whole app is set in.
+     *
+     * The default is the one Apple Music itself is set in. The rest are the
+     * listener's to pick — see [com.music.bitchord.ui.theme.AppFonts].
+     */
+    val appFont = MutableStateFlow(KEY_APP_FONT_DEFAULT)
+
+    /** The face the listener brought, as a path in the app's own storage. */
+    val customFontPath = MutableStateFlow<String?>(null)
+
+    /**
+     * Whether Arabic and Urdu text is set in faces of its own.
+     *
+     * On by default: an Arabic song read in a Latin face is not readable, and
+     * the listener did not ask for that.
+     */
+    val scriptFonts = MutableStateFlow(true)
+
+    /**
+     * How many downloads run at once, 1 to 6.
+     *
+     * Four is the default and was the only value there was: the width of the
+     * queue was a constant in the service. It is a setting now because the
+     * right width depends on the connection and on the phone — one on a
+     * metered link, six on a fast one, and fewer on a device that cannot keep
+     * six lookups in memory at once.
+     */
+    val concurrentDownloads = MutableStateFlow(DEFAULT_CONCURRENT_DOWNLOADS)
 
     /**
      * Level every track to the same loudness, using YouTube's own
@@ -295,28 +469,27 @@ object AppSettings {
     val loudnessOffOnSpeaker = MutableStateFlow(true)
 
     /**
-     * Whether a source offering a Dolby Atmos rendition is allowed to serve it.
+     * Whether the listener wants the immersive mix on the connection in hand.
      *
-     * On by default: where the device can decode it, Atmos is the premium
-     * rendition the catalogue holds and the one most people are paying a
-     * subscription for.
+     * The quality rung is the *only* thing that decides this. It used to be two
+     * statements — a standalone "Dolby Atmos" switch, on by default, OR'd with
+     * [AudioQuality.DOLBY] — and that combination was wrong in the way the
+     * switch was designed to be convenient: with the switch on, choosing
+     * **Lossless** still served Atmos. Lossless means the bit-exact stereo
+     * ladder, up to hi-res; Atmos is E-AC-3, which is lossy, and it is a
+     * different listen rather than a higher rung of the same one. A listener who
+     * asked for lossless and got a spatial mix had no way to say otherwise —
+     * the rung they picked was not the thing being honoured.
      *
-     * Off is a real preference and not just a safety valve. Atmos is E-AC-3,
-     * which is *lossy* — a track with an Atmos master is frequently also held
-     * as a FLAC, and someone listening on wired headphones may well prefer the
-     * bit-exact stereo copy to a spatial mix their output can't render. Turning
-     * this off is how they say so; see
-     * [ModuleSource.unplayable][com.music.bitchord.data.sources.ModuleSource],
-     * which is where the refusal is applied.
+     * So the switch is gone and the rung answers: [AudioQuality.DOLBY] asks for
+     * Atmos first and falls back down the lossless ladder below it, and every
+     * other rung — Lossless included — leaves Atmos out of the walk entirely.
      *
-     * Independent of whether the device *can* decode it — that question is
-     * [DeviceCodecs.playsDolbyAtmos][com.music.bitchord.data.sources.DeviceCodecs],
-     * and the two are deliberately not folded together: this one is the
-     * listener's answer, is persisted, and must survive being read on a phone
-     * that cannot honour it (a restored backup, a swapped device) without
-     * quietly rewriting itself.
+     * Callers still pair this with [DeviceCodecs.playsDolbyAtmos]; capability is
+     * the phone's answer, not the listener's.
      */
-    val dolbyAtmos = MutableStateFlow(true)
+    val wantsDolbyAtmos: Boolean
+        get() = effectiveAudioQuality == AudioQuality.DOLBY
 
     /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],
@@ -325,6 +498,36 @@ object AppSettings {
      * us a stereo stream, so there's no Atmos-style source to render.
      */
     val spatialAudio = MutableStateFlow(false)
+
+    /** Haptic buzz on every liquid-glass interaction (nav, toggles, sliders, menus). */
+    val liquidGlassHaptics = MutableStateFlow(true)
+
+    /**
+     * Hides the device status bar (clock, battery, notifications) while the
+     * main player is open.
+     *
+     * Player-scoped, and off by default: the rest of the app is left alone,
+     * so the bar is there everywhere but inside the player and nowhere in
+     * both at once. The bar is taken off the player's own window rather than
+     * the activity's — see
+     * [com.music.bitchord.ui.theme.HideStatusBar] — so nothing outside the
+     * player re-lays out when it comes and goes.
+     */
+    val hideStatusBarInPlayer = MutableStateFlow(false)
+
+    /**
+     * "Simulated Dolby Atmos": a widening DSP effect applied to ordinary
+     * stereo (mid/side widening with the side channel high-passed so bass
+     * stays centered). It is a *sound* effect, not a stream — the Atmos
+     * quality rung already handles real object-based mixes — so it lives
+     * beside [spatialAudio] and runs in the same DSP chain.
+     *
+     * On by default. Nothing about the effect itself is decided here — this
+     * is the value a fresh install starts from, and the value a listener who
+     * turns it off stays off at, because the switch is read from the stored
+     * preference when there is one.
+     */
+    val simulatedAtmos = MutableStateFlow(true)
 
     /**
      * Apple Music Sing equivalent: how much of the center-mixed lead vocal to
@@ -389,6 +592,34 @@ object AppSettings {
      */
     val equalizerPreset = MutableStateFlow(EqualizerPreset.FLAT)
 
+    // ---- JamesDSP ---------------------------------------------------------
+    //
+    // A second, native tone/space stage after BitChord's own equaliser. It is
+    // deliberately opt-in and neutral by default: bass, widening, tube drive
+    // and reverb all start at zero, so turning the engine on alone does not
+    // change the sound beyond its final safety limiter. See
+    // `JamesDspProcessor` for why this runs in-process rather than capturing
+    // the audio session.
+    val jamesDspEnabled = MutableStateFlow(false)
+
+    /** Auto bass boost, 0..15 dB. Zero means the effect is bypassed. */
+    val jamesDspBassGainDb = MutableStateFlow(0f)
+
+    /** Stereo widening, 0 or 20..80. Zero means bypassed. */
+    val jamesDspStereoLevel = MutableStateFlow(0f)
+
+    /** Vacuum-tube harmonic drive, 0..100. Zero means bypassed. */
+    val jamesDspTubeLevel = MutableStateFlow(0f)
+
+    /** -1 is off; otherwise an SF2 reverb preset index (0..18). */
+    val jamesDspReverbPreset = MutableStateFlow(-1)
+
+    /** Pre-level trim, -15..+15 dB. */
+    val jamesDspPreGainDb = MutableStateFlow(0f)
+
+    /** Final limiter, at -1 dBFS. Off leaves only the engine's 0 dB clamp. */
+    val jamesDspLimiter = MutableStateFlow(true)
+
     val playbackSpeed = MutableStateFlow(1.0f)
     val themeMode = MutableStateFlow(ThemeMode.DARK)
 
@@ -397,6 +628,66 @@ object AppSettings {
 
     /** Keep playing similar music once the queue runs out. */
     val autoplay = MutableStateFlow(true)
+
+    // ---- Now Playing customisation ---------------------------------------
+    //
+    // Null means "follow the artwork", which is the behaviour the player has
+    // always had. A stored ARGB value pins one role; the three roles are kept
+    // apart so a listener can recolour the transport without also recolouring
+    // the title or the scrubber.
+    val playerAccentColor = MutableStateFlow<Int?>(null)
+    val playerSeekbarColor = MutableStateFlow<Int?>(null)
+    val playerTextColor = MutableStateFlow<Int?>(null)
+
+    /** The one-line lyric above the scrubber; null follows the artwork ink. */
+    val playerLyricsColor = MutableStateFlow<Int?>(null)
+
+    /**
+     * The lyrics panel's own controls — the translate, romanize and sing discs.
+     * Null follows the artwork ink, like the rest of the player's controls.
+     */
+    val playerLyricsButtonsColor = MutableStateFlow<Int?>(null)
+
+    /**
+     * The line above the scrubber that says where the lyrics came from.
+     * Null follows the artwork ink.
+     */
+    val playerLyricsSourceColor = MutableStateFlow<Int?>(null)
+
+    /**
+     * How round the transport glyphs' corners are, 0 (sharp) to 1 (soft).
+     *
+     * The play triangle and both skip arrows are drawn from polygons, so the
+     * corner radius can follow this value instead of being baked into a vector.
+     * Kept below 1 by default: the reference shape is a fill, not a lozenge.
+     */
+    val transportSmoothness = MutableStateFlow(DEFAULT_TRANSPORT_SMOOTHNESS)
+
+    /** Most recently picked colours, newest first, shared by all three roles. */
+    val recentPlayerColors = MutableStateFlow<List<Int>>(emptyList())
+
+    /**
+     * Home shelf titles in the listener's order. Titles not present in the
+     * feed are ignored; shelves missing from the list keep their feed order
+     * after the ones that are listed. Empty means "leave YouTube's order".
+     *
+     * The order is the feed's order, not the screen's: the shelves are
+     * published in it, so a row moved to the top is loaded at the top.
+     */
+    val homeShelfOrder = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * Home shelves the listener has hidden, by title.
+     *
+     * A hidden shelf is not on the page at all — it is not rendered and not
+     * loaded — so the feed it would have brought is not fetched either. The
+     * title is the one the feed gave the shelf, so a shelf YouTube renames
+     * comes back on its own.
+     */
+    val hiddenHomeShelves = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Never play a track YouTube has labelled as generated with AI. */
+    val blockAiMusic = MutableStateFlow(false)
 
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
@@ -417,7 +708,7 @@ object AppSettings {
     val performanceRefreshRate = MutableStateFlow(DEFAULT_PERFORMANCE_REFRESH_RATE)
 
     /** Stop playback when the app is swiped away from the recent apps screen. */
-    val stopOnTaskRemoved = MutableStateFlow(false)
+    val stopOnTaskRemoved = MutableStateFlow(true)
 
     /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
     val hideVolumeBar = MutableStateFlow(false)
@@ -456,6 +747,20 @@ object AppSettings {
     val foldingNavBar = MutableStateFlow(true)
 
     /**
+     * Whether podcasts are part of the app at all.
+     *
+     * Off means off: the tab goes out of the navbar, the podcast shelves
+     * ("Continue listening", "Liked podcasts", "Episodes for later") go off
+     * the Home and Library pages, and the podcasts filter leaves the search
+     * screen. Nothing is deleted — the shelves are still there when podcasts
+     * come back, and the episodes already downloaded stay on the device.
+     *
+     * The switch is there for the listener who never wanted podcasts and
+     * would rather not have the app carry them at all.
+     */
+    val podcastsEnabled = MutableStateFlow(true)
+
+    /**
      * How strong the [liquidGlass] material is,
      * [MIN_LIQUID_GLASS_INTENSITY]..[MAX_LIQUID_GLASS_INTENSITY], multiplied
      * onto the glass engine's blur, refraction and vibrancy where the config
@@ -468,8 +773,67 @@ object AppSettings {
      */
     val liquidGlassIntensity = MutableStateFlow(1f)
 
+    /**
+     * Frosts the glass instead of refracting it, BitChord's "Better Performance
+     * for Glass": the blur is deeper and the lens shader is skipped, for phones
+     * the refraction is too much for. The bar's rim, shadow, tint and motion
+     * all stay; only the lens goes. A Liquid Glass option, honoured only while
+     * [liquidGlass] is on.
+     */
+    val glassPerformance = MutableStateFlow(false)
+
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
+    /**
+     * Re-read a playing cover's frame often enough to follow it.
+     *
+     * On by default, because that is how the player has always behaved: the
+     * wash behind an animated cover moves with the cover, and a listener who
+     * has seen it move does not want it to step. The read is a copy of the
+     * clip's texture off the GPU, and thirty of those a second is a real cost
+     * on every frame the artwork plays — so this is the switch for the
+     * listener who wants the cover followed and the battery kept. Off, the
+     * backdrop and the ink still follow it, every few seconds.
+     *
+     * Off by default, as Zenith (a sibling BitChord fork) ships it: a still
+     * of the cover, re-read now and then, is most of the look for a fraction
+     * of the GPU readbacks. The live wash is the opt-in.
+     */
+    val liveBlur = MutableStateFlow(false)
+    /**
+     * Sample this process's CPU and the player's per-frame counters, and keep
+     * a log that can be written out. Off by default and off in every sense:
+     * no timer runs unless this is on.
+     */
+    val perfMonitor = MutableStateFlow(false)
+
+    /** Draws the bloom behind lyrics and the shadow behind player text. */
+    val textGlow = MutableStateFlow(true)
+
+    /** Shows the current lyric line above the player's controls. */
+    val showNowPlayingLyrics = MutableStateFlow(true)
+
+    /**
+     * Shows the Automix analysis line under the sleeve — "this song: … · next:
+     * …", or why analysis is off for this one. Separate from
+     * [showNerdStats] because the measured-stream line above it is a different
+     * fact: someone can want the format readout without the next track's
+     * analysis state beside it.
+     */
+    val showNextTrackStatus = MutableStateFlow(true)
+
+    /** Shows "Upgrading quality" while a better copy is still being looked for. */
+    val showUpgradeBadge = MutableStateFlow(true)
+
+    /** Shows the "Lossless" badge once the stream decodes losslessly. */
+    val showLosslessBadge = MutableStateFlow(true)
+
+    /**
+     * Whether the lossless badge may say "Hi-Res" rather than the plain
+     * "Lossless" on high-resolution streams. Only consulted while
+     * [showLosslessBadge] is on — a hidden badge has no wording to keep.
+     */
+    val showHiResBadge = MutableStateFlow(true)
 
     /** Positive values delay synced lyrics; negative values bring them forward. */
     val lyricsOffsetMs = MutableStateFlow(0)
@@ -519,6 +883,16 @@ object AppSettings {
     val prioritizeSpotifyCanvas = MutableStateFlow(false)
 
     /**
+     * Whether Spotify's Canvas is looked up at all.
+     *
+     * Off means the Spotify source is never asked, even as the last resort —
+     * the other animated-art providers still are. The player itself never
+     * shows a spinner for a missing canvas, so this is safe to leave off
+     * indefinitely; it is not a temporary disable.
+     */
+    val spotifyCanvasEnabled = MutableStateFlow(true)
+
+    /**
      * Blows the player's cover art out to a full-bleed banner running off the
      * top of the screen, rather than sitting it in a square card.
      *
@@ -534,6 +908,21 @@ object AppSettings {
      * transport gaps, and was withdrawn the same day.
      */
     val fullBleedArtwork = MutableStateFlow(true)
+
+    /**
+     * Draws the album art a little smaller inside its card, so a little more of
+     * the picture shows.
+     *
+     * Off by default: the picture fills the card and the card fills the
+     * player's width. On, the picture keeps its proportions and sits inside the
+     * card with a thin edge of the card's own colour around it — the way a
+     * record sleeve looks with the print a little smaller than the paper.
+     *
+     * The card's own treatment is untouched by it: the rounded corners, the
+     * shadow and the shrink while paused all stay, and the picture is simply
+     * drawn smaller inside them.
+     */
+    val zoomOutAlbumArt = MutableStateFlow(false)
 
     /**
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
@@ -629,7 +1018,196 @@ object AppSettings {
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     /** Layout used by the Recents shelf on Play; compact tracks are the default. */
     val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST)
+
+    /**
+     * The Library's Playlists shelf as a row of cards or as a list of rows.
+     *
+     * A grid of covers says nothing about how many tracks are in a playlist
+     * or when it was last touched, and a listener with thirty playlists wants
+     * to read the names rather than look at thirty squares.
+     */
+    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.GRID)
+
+    /**
+     * Whether the synthetic Flow card is offered on Home.
+     *
+     * The Flow feature itself is untouched: this hides only the Home entry, so
+     * the Flow route and an in-progress mix survive turning the card off.
+     * Quick Picks is deliberately not part of this switch.
+     */
+    val homeFlowVisible = MutableStateFlow(true)
+
+    /**
+     * Whether the Replay card is shown on Home.
+     *
+     * The same switch as [homeFlowVisible] and for the same reason: Replay
+     * is a card in the top row, and a listener who never opens it should not
+     * have to look at it. Turning it off hides the card only — Replay itself,
+     * and everything saved in it, are untouched.
+     */
+    val homeReplayVisible = MutableStateFlow(true)
+
+    /**
+     * Artists the listener has hidden, encoded as `<identity>\t<display name>`.
+     *
+     * An identity is the artist's own channel id when a row carried one, or the
+     * normalised name when it didn't — never both, so hiding the same act from a
+     * song, a search row and an artist page collapses to one entry. The display
+     * name is kept beside it so the settings list can say who was hidden
+     * without a network lookup.
+     */
+    val blockedArtists = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Every identity currently hidden, for cheap membership tests. */
+    private val blockedArtistKeys: Set<String>
+        get() = blockedArtists.value.mapTo(HashSet()) { it.substringBefore('\t') }
+
+    fun blockArtist(artistId: String?, name: String?) {
+        val entry = artistEntry(artistId, name) ?: return
+        blockedArtists.value = blockedArtists.value + entry
+        prefs.edit().putStringSet(KEY_BLOCKED_ARTISTS, blockedArtists.value).apply()
+    }
+
+    fun unblockArtist(entry: String) {
+        blockedArtists.value = blockedArtists.value - entry
+        prefs.edit().putStringSet(KEY_BLOCKED_ARTISTS, blockedArtists.value).apply()
+    }
+
+    fun isArtistBlocked(artistId: String?, name: String?): Boolean {
+        val keys = blockedArtistKeys
+        if (keys.isEmpty()) return false
+        if (!artistId.isNullOrBlank() && "id:$artistId" in keys) return true
+        val normalized = normalizeArtistName(name) ?: return false
+        return "name:$normalized" in keys
+    }
+
+    /**
+     * Where a settings page was left, in pixels.
+     *
+     * The settings screen is long — some of its pages are a screenful and a
+     * half — and it is a page the listener goes into, changes one thing and
+     * comes back to. Opening it at the top every time meant finding the same
+     * row again after every visit, which on the pages with the most rows in
+     * them was most of the work.
+     *
+     * Kept per page rather than as one offset: the index and each category
+     * are different lists, and an offset that belonged to one of them means
+     * nothing in another.
+     */
+    fun settingsScrollOffset(page: String): Int {
+        if (!::prefs.isInitialized) return 0
+        return runCatching {
+            prefs.getInt(KEY_SETTINGS_SCROLL_PREFIX + page, 0)
+        }.getOrDefault(0).coerceAtLeast(0)
+    }
+
+    /** Remembers where a settings page was left — see [settingsScrollOffset]. */
+    fun saveSettingsScrollOffset(page: String, offset: Int) {
+        if (!::prefs.isInitialized) return
+        prefs.edit()
+            .putInt(KEY_SETTINGS_SCROLL_PREFIX + page, offset.coerceAtLeast(0))
+            .apply()
+    }
+
+    /** True when any credit on [song] is hidden, including a collaboration. */
+    fun isSongBlocked(song: Song): Boolean {
+        // isSongAi covers both YouTube's own disclosure and the listener's
+        // marks, so a strict build has one definition of "AI track" rather
+        // than two that can disagree.
+        if (blockAiMusic.value && isSongAi(song)) return true
+        if (blockedArtists.value.isEmpty()) return false
+        if (isArtistBlocked(song.artistId, song.artist)) return true
+        if (song.artists.any { isArtistBlocked(it.browseId, it.name) }) return true
+        // A byline that never linked its artists still names them.
+        return song.artist.split(CREDIT_ARTIST_SEPARATOR).any {
+            isArtistBlocked(null, it)
+        }
+    }
+
+    /**
+     * Acts the listener has marked as AI-generated.
+     *
+     * YouTube's disclosure never reaches the clients BitChord reads: the live
+     * WEB_REMIX search rows and player-overlay payloads for known AI acts
+     * (Xania Monet, Blue Monroe) contain no marker at all, so
+     * [GenAiDisclosure] can only ever be a bonus for the day YouTube starts
+     * sending one. This list is what makes the strict switch mean something —
+     * marking an act once flags every track it is credited on, and strict mode
+     * refuses to queue them. Same entry format as [blockedArtists], so identity
+     * matching stays in one place.
+     */
+    val aiArtists = MutableStateFlow<Set<String>>(emptySet())
+
+    private val aiArtistKeys: Set<String>
+        get() = aiArtists.value.mapTo(HashSet()) { it.substringBefore('\t') }
+
+    /** Marks the act as AI, or clears the mark. One call, so the menu can't drift. */
+    fun toggleArtistAi(artistId: String?, name: String?) {
+        val entry = artistEntry(artistId, name) ?: return
+        aiArtists.value = if (entry in aiArtists.value) {
+            aiArtists.value - entry
+        } else {
+            aiArtists.value + entry
+        }
+        prefs.edit().putStringSet(KEY_AI_ARTISTS, aiArtists.value).apply()
+    }
+
+    fun isArtistAi(artistId: String?, name: String?): Boolean {
+        val keys = aiArtistKeys
+        if (keys.isEmpty()) return false
+        if (!artistId.isNullOrBlank() && "id:$artistId" in keys) return true
+        val normalized = normalizeArtistName(name) ?: return false
+        if ("name:$normalized" in keys) return true
+        // The artist page is the natural place to mark an act, and it always
+        // supplies a channel id, so the stored key is usually `id:`. Songs from
+        // a radio or `next` do not always carry that id. Fall back to the
+        // display name kept beside every key, or a marked act would only be
+        // filtered on the surfaces that happened to include the channel.
+        return aiArtists.value.any { entry ->
+            normalizeArtistName(entry.substringAfter('\t', "")) == normalized
+        }
+    }
+
+    /** True when the track, or any act credited on it, is known to be AI. */
+    fun isSongAi(song: Song): Boolean {
+        if (song.genAi == com.music.bitchord.data.model.GenAiDisclosure.FULLY ||
+            song.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY
+        ) return true
+        if (aiArtists.value.isEmpty()) return false
+        if (isArtistAi(song.artistId, song.artist)) return true
+        if (song.artists.any { isArtistAi(it.browseId, it.name) }) return true
+        return song.artist.split(CREDIT_ARTIST_SEPARATOR).any { isArtistAi(null, it) }
+    }
+
+    /** What the settings list shows for one stored entry. */
+    fun blockedArtistName(entry: String): String =
+        entry.substringAfter('\t', entry.substringAfter(':'))
+
+    private fun artistEntry(artistId: String?, name: String?): String? {
+        if (!artistId.isNullOrBlank()) return "id:$artistId\t${name.orEmpty().cleanArtistName()}"
+        val normalized = normalizeArtistName(name) ?: return null
+        return "name:$normalized\t${name.orEmpty().cleanArtistName()}"
+    }
+
+    private fun normalizeArtistName(name: String?): String? =
+        name?.trim()?.lowercase(Locale.ROOT)?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotEmpty() }
+
+    private fun String.cleanArtistName(): String =
+        replace('\t', ' ').replace('\n', ' ').trim()
+
+    private val CREDIT_ARTIST_SEPARATOR = Regex(
+        """,\s*|\s*&\s*|\s+(?:x|and|feat\.?|ft\.?|with)\s+""",
+        RegexOption.IGNORE_CASE,
+    )
+
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
+
+    /**
+     * Whether the Replay cards sit at the head of the Library. Off by default:
+     * Replay now leads Home's Top Picks, so the Library row is optional rather
+     * than the first thing every visit starts with.
+     */
+    val libraryReplayVisible = MutableStateFlow(false)
 
     /**
      * Each album/playlist page's track-list order, keyed by browse id —
@@ -796,6 +1374,16 @@ object AppSettings {
     val smartAnalysis = MutableStateFlow(SmartAnalysis())
 
     /**
+     * Everything the Automix panel shows: the analysis in full, the plan that
+     * came out of it, and the listener's own choice for this track.
+     *
+     * Published by the crossfade controller, which is the only thing that
+     * knows which two tracks the next transition is between and what the
+     * planner made of them.
+     */
+    val automixPanel = MutableStateFlow(AutomixPanelState())
+
+    /**
      * Where on the *playing* track the next transition is planned to happen, as
      * fractions of its duration, or null when there is nothing worth drawing.
      *
@@ -846,6 +1434,37 @@ object AppSettings {
         combine(offlineModeFlow, streamingAvailableFlow) { manual, streaming -> manual || !streaming }
             .stateIn(networkScope, SharingStarted.Eagerly, false)
 
+    /**
+     * Whether the songs on the device are upgraded right now.
+     *
+     * The listener's own answer and the app's ability to act on it, in that
+     * order: an upgrade is a fetch, so an app that is offline — because the
+     * switch says so or because nothing has been reachable for a while —
+     * cannot make one, and a switch left on says nothing about what is
+     * possible.
+     *
+     * The listener's answer is kept while it is off. Coming back online
+     * restores the upgrade; it does not silently turn a switch the listener
+     * had deliberately turned off back on, and it does not quietly forget one
+     * they had turned on.
+     */
+    val effectiveAutoUpgradeLocalStorage: StateFlow<Boolean> =
+        combine(autoUpgradeLocalStorage, effectiveOffline) { requested, offline ->
+            autoUpgradeLocalStorageAllowed(requested, offline)
+        }.stateIn(networkScope, SharingStarted.Eagerly, true)
+
+    /**
+     * Whether the songs on the device may be upgraded, given the listener's
+     * answer and whether the app is offline.
+     *
+     * Spelled out as its own function so the rule can be read — and tested —
+     * on its own. An upgrade is a fetch, so offline mode turns it off
+     * whatever the listener said, and the listener's answer is kept for when
+     * the network comes back rather than being overwritten by it.
+     */
+    fun autoUpgradeLocalStorageAllowed(requested: Boolean, offline: Boolean): Boolean =
+        requested && !offline
+
     fun setOfflineMode(value: Boolean) {
         if (offlineModeFlow.value == value) return
         offlineModeFlow.value = value
@@ -868,23 +1487,64 @@ object AppSettings {
      * deliberately allowed through: a download with nothing to download over
      * fails on the network and says so, which is true, where refusing it here
      * would blame a Wi-Fi setting for an outage.
+     *
+     * Offline mode is not that case. Offline mode is not "there is no network"
+     * — it is the listener saying that nothing may leave the device — so a
+     * download asked for in it is refused outright rather than started and
+     * left to fail. The refusal is the truth: there is nowhere to fetch it
+     * from, and a row that spins forever is a worse answer than one that says
+     * so.
      */
     val downloadsAllowedNow: Boolean
-        get() = !wifiOnlyDownloads.value || meteredConnection.value != true
+        get() {
+            if (effectiveOffline.value) return false
+            return !wifiOnlyDownloads.value || meteredConnection.value != true
+        }
 
     /**
      * [authStore] is the application's own, passed in rather than opened again:
      * each open of the encrypted store is a keystore round trip, and a second
      * one here was a measurable slice of cold start.
      */
+    /**
+     * Whether Android classifies this device as low-RAM, read once at startup.
+     *
+     * Used only as the default for the motion and blur switches, so the app
+     * arrives already lean on hardware that cannot afford to draw it — and a
+     * listener who wants the effects back still can, because an explicit choice
+     * written to disk always wins over this.
+     */
+    private var lowEndDevice = false
+
     fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         this.authStore = authStore
+        lowEndDevice = runCatching {
+            context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        }.getOrDefault(false)
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
+        // The listener's own Automix choices, kept with the songs. Initialized
+        // here because this is the first point at which the app has a place to
+        // keep files, and a choice that forgets itself when the app closes is
+        // not a choice.
+        com.music.bitchord.playback.AutomixProfiles.init(context.filesDir)
         readAll()
         watchConnection(context)
+        // The offline verdict, published to the one place every request in the
+        // app goes through — see [com.music.bitchord.data.NetworkPolicy].
+        //
+        // This is what makes offline mode mean *zero* internet access rather
+        // than "the subsystems that remembered to check": the switch is on, or
+        // the network has gone, and from that moment not one request leaves
+        // the device — not the player's, not the library's, not the lyrics
+        // provider's, not the scrobbler's.
+        networkScope.launch {
+            effectiveOffline.collect { offline ->
+                com.music.bitchord.data.NetworkPolicy.offline = offline
+            }
+        }
     }
 
     /**
@@ -917,11 +1577,18 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
+        autoUpgradeLocalStorage.value = prefs.getBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
+        // An unknown name lands on YouTube rather than on nothing: the provider
+        // a listener never chose is the one that works without an account.
+        homeProvider.value = HomeProvider.of(prefs.getString(KEY_HOME_PROVIDER, null))
+        // An install that still has the removed engine's name in its
+        // preferences fails the lookup and lands on the one engine there is.
         automixEngine.value = runCatching {
             AutomixEngine.valueOf(
                 prefs.getString(KEY_AUTOMIX_ENGINE, null) ?: AutomixEngine.V2.name,
@@ -934,11 +1601,26 @@ object AppSettings {
                     ?: OutputPcmMode.PCM_16.name,
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
+        bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
+        // The listener's own level, remembered: the system volume cannot be
+        // trusted on its own once a USB DAC is attached, because Android
+        // pins the media stream at maximum and the reading says nothing
+        // about what the listener chose.
+        playerVolume.value = prefs.getFloat(KEY_PLAYER_VOLUME, 1f).coerceIn(0f, 1f)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
-        dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
+        // The old `dolby_atmos` preference is deliberately not read any more.
+        // It was a second way to ask for Atmos, on by default, which is what
+        // made Lossless serve a spatial mix; the quality rung is the only
+        // statement now. Leftover keys are ignored rather than migrated: there
+        // is nothing for them to migrate *to*.
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
+        liquidGlassHaptics.value = prefs.getBoolean(KEY_LIQUID_GLASS_HAPTICS, true)
+        hideStatusBarInPlayer.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, false)
+        // On by default: see [simulatedAtmos]. A listener who has turned it
+        // off keeps it off — the stored preference wins over the default.
+        simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, true)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -951,6 +1633,15 @@ object AppSettings {
         equalizerBalance.value = prefs.getFloat(KEY_EQ_BALANCE, 0f).coerceIn(-1f, 1f)
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
+        jamesDspEnabled.value = prefs.getBoolean(KEY_JAMESDSP_ENABLED, false)
+        jamesDspBassGainDb.value = prefs.getFloat(KEY_JAMESDSP_BASS_DB, 0f).coerceIn(0f, 15f)
+        jamesDspStereoLevel.value = JamesDspConfig.safeStereoLevel(
+            prefs.getFloat(KEY_JAMESDSP_STEREO, 0f),
+        )
+        jamesDspTubeLevel.value = prefs.getFloat(KEY_JAMESDSP_TUBE, 0f).coerceIn(0f, 100f)
+        jamesDspReverbPreset.value = prefs.getInt(KEY_JAMESDSP_REVERB, -1).coerceIn(-1, 18)
+        jamesDspPreGainDb.value = prefs.getFloat(KEY_JAMESDSP_PREGAIN_DB, 0f).coerceIn(-15f, 15f)
+        jamesDspLimiter.value = prefs.getBoolean(KEY_JAMESDSP_LIMITER, true)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -963,27 +1654,63 @@ object AppSettings {
         classipodClicks.value = prefs.getBoolean(KEY_CLASSIPOD_CLICKS, true)
         classipodWheelSteps.value = prefs.getInt(KEY_CLASSIPOD_WHEEL_STEPS, 36).coerceIn(12, 72)
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
+        playerAccentColor.value = prefs.getInt(KEY_PLAYER_ACCENT, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerSeekbarColor.value = prefs.getInt(KEY_PLAYER_SEEKBAR, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerTextColor.value = prefs.getInt(KEY_PLAYER_TEXT, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerLyricsColor.value = prefs.getInt(KEY_PLAYER_LYRICS, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerLyricsButtonsColor.value = prefs.getInt(KEY_PLAYER_LYRICS_BUTTONS, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerLyricsSourceColor.value = prefs.getInt(KEY_PLAYER_LYRICS_SOURCE, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        recentPlayerColors.value = prefs.getString(KEY_RECENT_PLAYER_COLORS, null)
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.take(MAX_RECENT_PLAYER_COLORS)
+            .orEmpty()
+        homeShelfOrder.value = prefs.getString(KEY_HOME_SHELF_ORDER, null)
+            ?.split('\u001F')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+        transportSmoothness.value = prefs
+            .getFloat(KEY_TRANSPORT_SMOOTHNESS, DEFAULT_TRANSPORT_SMOOTHNESS)
+            .coerceIn(0f, 1f)
+        blockAiMusic.value = prefs.getBoolean(KEY_BLOCK_AI_MUSIC, false)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
-        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
         )
-        stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
+        stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, true)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
-        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
+        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, lowEndDevice)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         foldingNavBar.value = prefs.getBoolean(KEY_FOLDING_NAV_BAR, true)
+        podcastsEnabled.value = prefs.getBoolean(KEY_PODCASTS_ENABLED, true)
         liquidGlassIntensity.value = prefs.getFloat(KEY_LIQUID_GLASS_INTENSITY, 1f)
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
-        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
+        glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
+        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
+        liveBlur.value = prefs.getBoolean(KEY_LIVE_BLUR, false)
+        perfMonitor.value = prefs.getBoolean(KEY_PERF_MONITOR, false)
+        textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
+        showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
+        showNextTrackStatus.value = prefs.getBoolean(KEY_SHOW_NEXT_TRACK_STATUS, true)
+        showUpgradeBadge.value = prefs.getBoolean(KEY_SHOW_UPGRADE_BADGE, true)
+        showLosslessBadge.value = prefs.getBoolean(KEY_SHOW_LOSSLESS_BADGE, true)
+        showHiResBadge.value = prefs.getBoolean(KEY_SHOW_HI_RES_BADGE, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
@@ -991,11 +1718,13 @@ object AppSettings {
             reduceAnimation.value = false
             reduceDynamicBlur.value = false
         }
-        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
+        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, !lowEndDevice)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
+        spotifyCanvasEnabled.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_ENABLED, true)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
+        zoomOutAlbumArt.value = prefs.getBoolean(KEY_ZOOM_OUT_ALBUM_ART, false)
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
@@ -1009,6 +1738,11 @@ object AppSettings {
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
+        concurrentDownloads.value = prefs.getInt(KEY_CONCURRENT_DOWNLOADS, DEFAULT_CONCURRENT_DOWNLOADS)
+            .coerceIn(MIN_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_DOWNLOADS)
+        appFont.value = prefs.getString(KEY_APP_FONT, KEY_APP_FONT_DEFAULT) ?: KEY_APP_FONT_DEFAULT
+        customFontPath.value = prefs.getString(KEY_CUSTOM_FONT_PATH, null)
+        scriptFonts.value = prefs.getBoolean(KEY_SCRIPT_FONTS, true)
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
@@ -1033,9 +1767,22 @@ object AppSettings {
         localMusicViewType.value = readLibraryViewType(KEY_LOCAL_MUSIC_VIEW_TYPE)
         downloadedMusicViewType.value = readLibraryViewType(KEY_DOWNLOADED_MUSIC_VIEW_TYPE)
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
+        libraryPlaylistsViewType.value = readLibraryViewType(
+            KEY_LIBRARY_PLAYLISTS_VIEW_TYPE,
+            fallback = LibraryViewType.GRID,
+        )
+        homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
+        homeReplayVisible.value = prefs.getBoolean(KEY_HOME_REPLAY_VISIBLE, true)
+        hiddenHomeShelves.value = prefs.getStringSet(KEY_HIDDEN_HOME_SHELVES, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
+        blockedArtists.value = prefs.getStringSet(KEY_BLOCKED_ARTISTS, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
+        aiArtists.value = prefs.getStringSet(KEY_AI_ARTISTS, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
         librarySort.value = prefs.getString(KEY_LIBRARY_SORT, null)
             ?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } }
             ?: LibrarySort.DEFAULT
+        libraryReplayVisible.value = prefs.getBoolean(KEY_LIBRARY_REPLAY_VISIBLE, false)
         detailSongSorts.value = readDetailSongSorts()
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
@@ -1057,6 +1804,12 @@ object AppSettings {
             webdavUrl.value,
             webdavUsername.value,
             webdavPassword.value,
+        )
+        // The listener's own storage is not the internet: offline mode takes
+        // the internet away, not the files that live on a server they set up
+        // themselves. See [com.music.bitchord.data.NetworkPolicy].
+        com.music.bitchord.data.NetworkPolicy.setLocalHost(
+            com.music.bitchord.data.webdav.WebDavConfig.hostOf(webdavUrl.value),
         )
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
@@ -1227,6 +1980,96 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_AUTOPLAY, value).apply()
     }
 
+    /** Which part of Now Playing a colour pick applies to. */
+    enum class PlayerColorTarget { ACCENT, SEEKBAR, TEXT, LYRICS, LYRICS_BUTTONS, LYRICS_SOURCE }
+
+    fun setPlayerColor(target: PlayerColorTarget, argb: Int?) {
+        when (target) {
+            PlayerColorTarget.ACCENT -> playerAccentColor.value = argb
+            PlayerColorTarget.SEEKBAR -> playerSeekbarColor.value = argb
+            PlayerColorTarget.TEXT -> playerTextColor.value = argb
+            PlayerColorTarget.LYRICS -> playerLyricsColor.value = argb
+            PlayerColorTarget.LYRICS_BUTTONS -> playerLyricsButtonsColor.value = argb
+            PlayerColorTarget.LYRICS_SOURCE -> playerLyricsSourceColor.value = argb
+        }
+        prefs.edit()
+            .putInt(
+                when (target) {
+                    PlayerColorTarget.ACCENT -> KEY_PLAYER_ACCENT
+                    PlayerColorTarget.SEEKBAR -> KEY_PLAYER_SEEKBAR
+                    PlayerColorTarget.TEXT -> KEY_PLAYER_TEXT
+                    PlayerColorTarget.LYRICS -> KEY_PLAYER_LYRICS
+                    PlayerColorTarget.LYRICS_BUTTONS -> KEY_PLAYER_LYRICS_BUTTONS
+                    PlayerColorTarget.LYRICS_SOURCE -> KEY_PLAYER_LYRICS_SOURCE
+                },
+                argb ?: RESET_COLOR,
+            )
+            .apply()
+        if (argb != null) rememberPlayerColor(argb)
+    }
+
+    fun setTransportSmoothness(value: Float) {
+        val clean = value.coerceIn(0f, 1f)
+        transportSmoothness.value = clean
+        prefs.edit().putFloat(KEY_TRANSPORT_SMOOTHNESS, clean).apply()
+    }
+
+    fun resetPlayerColors() {
+        playerAccentColor.value = null
+        playerSeekbarColor.value = null
+        playerTextColor.value = null
+        playerLyricsColor.value = null
+        playerLyricsButtonsColor.value = null
+        playerLyricsSourceColor.value = null
+        prefs.edit()
+            .putInt(KEY_PLAYER_ACCENT, RESET_COLOR)
+            .putInt(KEY_PLAYER_SEEKBAR, RESET_COLOR)
+            .putInt(KEY_PLAYER_TEXT, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS_BUTTONS, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS_SOURCE, RESET_COLOR)
+            .apply()
+    }
+
+    private fun rememberPlayerColor(argb: Int) {
+        val next = (listOf(argb) + recentPlayerColors.value)
+            .distinct()
+            .take(MAX_RECENT_PLAYER_COLORS)
+        recentPlayerColors.value = next
+        prefs.edit().putString(KEY_RECENT_PLAYER_COLORS, next.joinToString(",")).apply()
+    }
+
+    /** Hides a Home shelf by title, or lets it back onto the page. */
+    fun setHomeShelfHidden(title: String, hidden: Boolean) {
+        val clean = title.trim()
+        if (clean.isEmpty()) return
+        val next = if (hidden) hiddenHomeShelves.value + clean else hiddenHomeShelves.value - clean
+        hiddenHomeShelves.value = next
+        prefs.edit().putStringSet(KEY_HIDDEN_HOME_SHELVES, next).apply()
+    }
+
+    /** Puts every hidden shelf back on the page. */
+    fun showAllHomeShelves() {
+        hiddenHomeShelves.value = emptySet()
+        prefs.edit().putStringSet(KEY_HIDDEN_HOME_SHELVES, emptySet()).apply()
+    }
+
+    fun setHomeReplayVisible(value: Boolean) {
+        homeReplayVisible.value = value
+        prefs.edit().putBoolean(KEY_HOME_REPLAY_VISIBLE, value).apply()
+    }
+
+    fun setHomeShelfOrder(titles: List<String>) {
+        val clean = titles.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        homeShelfOrder.value = clean
+        prefs.edit().putString(KEY_HOME_SHELF_ORDER, clean.joinToString("\u001F")).apply()
+    }
+
+    fun setBlockAiMusic(value: Boolean) {
+        blockAiMusic.value = value
+        prefs.edit().putBoolean(KEY_BLOCK_AI_MUSIC, value).apply()
+    }
+
     fun setShuffleEnabled(value: Boolean) {
         shuffleEnabled.value = value
         prefs.edit().putBoolean(KEY_SHUFFLE_ENABLED, value).apply()
@@ -1276,11 +2119,50 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
+    fun setSeamlessQualityUpgrade(value: Boolean) {
+        seamlessQualityUpgrade.value = value
+        prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
+    /**
+     * Records the listener's answer about upgrading the songs on the device.
+     *
+     * The answer is stored as it was given, not as it applies: offline mode
+     * turns the upgrade off on its own, and the listener's own switch is
+     * still theirs when the network comes back.
+     */
+    fun setAutoUpgradeLocalStorage(value: Boolean) {
+        autoUpgradeLocalStorage.value = value
+        prefs.edit().putBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, value).apply()
+    }
+
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
         prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
     }
 
+    /**
+     * Records the selected content provider.
+     *
+     * The restart that makes the change take effect is the caller's — see
+     * [com.music.bitchord.util.AppRelaunch] — because a settings write has no
+     * business killing the process behind the screen that called it.
+     */
+    fun setHomeProvider(value: HomeProvider) {
+        homeProvider.value = value
+        // Committed, not applied: the caller restarts the process as soon as
+        // this returns, and an async write that has not reached disk when the
+        // process dies is a switch that reports success and comes back on the
+        // old provider — which is exactly what it did.
+        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).commit()
+    }
+
+    /**
+     * Records the engine in the preferences.
+     *
+     * The only engine is the phrase-aware one, so this writes what it is
+     * given and nothing can be moved off it.
+     */
     fun setAutomixEngine(value: AutomixEngine) {
         automixEngine.value = value
         prefs.edit().putString(KEY_AUTOMIX_ENGINE, value.name).apply()
@@ -1291,14 +2173,24 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
     }
 
-    fun setDolbyAtmos(value: Boolean) {
-        dolbyAtmos.value = value
-        prefs.edit().putBoolean(KEY_DOLBY_ATMOS, value).apply()
+    fun setLiquidGlassHaptics(value: Boolean) {
+        liquidGlassHaptics.value = value
+        prefs.edit().putBoolean(KEY_LIQUID_GLASS_HAPTICS, value).apply()
+    }
+
+    fun setHideStatusBarInPlayer(value: Boolean) {
+        hideStatusBarInPlayer.value = value
+        prefs.edit().putBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
         spatialAudio.value = value
         prefs.edit().putBoolean(KEY_SPATIAL_AUDIO, value).apply()
+    }
+
+    fun setSimulatedAtmos(value: Boolean) {
+        simulatedAtmos.value = value
+        prefs.edit().putBoolean(KEY_SIMULATED_ATMOS, value).apply()
     }
 
     fun setSingLevel(value: Float) {
@@ -1310,6 +2202,46 @@ object AppSettings {
     fun setEqualizerEnabled(value: Boolean) {
         equalizerEnabled.value = value
         prefs.edit().putBoolean(KEY_EQ_ENABLED, value).apply()
+    }
+
+    fun setJamesDspEnabled(value: Boolean) {
+        jamesDspEnabled.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_ENABLED, value).apply()
+    }
+
+    fun setJamesDspBassGain(value: Float) {
+        val clamped = value.coerceIn(0f, 15f)
+        jamesDspBassGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_BASS_DB, clamped).apply()
+    }
+
+    fun setJamesDspStereoLevel(value: Float) {
+        val clamped = JamesDspConfig.safeStereoLevel(value)
+        jamesDspStereoLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_STEREO, clamped).apply()
+    }
+
+    fun setJamesDspTubeLevel(value: Float) {
+        val clamped = value.coerceIn(0f, 100f)
+        jamesDspTubeLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_TUBE, clamped).apply()
+    }
+
+    fun setJamesDspReverbPreset(value: Int) {
+        val clamped = value.coerceIn(-1, 18)
+        jamesDspReverbPreset.value = clamped
+        prefs.edit().putInt(KEY_JAMESDSP_REVERB, clamped).apply()
+    }
+
+    fun setJamesDspPreGain(value: Float) {
+        val clamped = value.coerceIn(-15f, 15f)
+        jamesDspPreGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_PREGAIN_DB, clamped).apply()
+    }
+
+    fun setJamesDspLimiter(value: Boolean) {
+        jamesDspLimiter.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_LIMITER, value).apply()
     }
 
     fun setEqualizerMode(value: EqualizerMode) {
@@ -1478,10 +2410,20 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_FOLDING_NAV_BAR, value).apply()
     }
 
+    fun setPodcastsEnabled(value: Boolean) {
+        podcastsEnabled.value = value
+        prefs.edit().putBoolean(KEY_PODCASTS_ENABLED, value).apply()
+    }
+
     fun setLiquidGlassIntensity(value: Float) {
         val clamped = normalizeLiquidGlassIntensity(value)
         liquidGlassIntensity.value = clamped
         prefs.edit().putFloat(KEY_LIQUID_GLASS_INTENSITY, clamped).apply()
+    }
+
+    fun setGlassPerformance(value: Boolean) {
+        glassPerformance.value = value
+        prefs.edit().putBoolean(KEY_GLASS_PERFORMANCE, value).apply()
     }
 
     fun setHighPerformanceMode(value: Boolean) {
@@ -1507,6 +2449,46 @@ object AppSettings {
     fun setLyricsBlur(value: Boolean) {
         lyricsBlur.value = value
         prefs.edit().putBoolean(KEY_LYRICS_BLUR, value).apply()
+    }
+
+    fun setLiveBlur(value: Boolean) {
+        liveBlur.value = value
+        prefs.edit().putBoolean(KEY_LIVE_BLUR, value).apply()
+    }
+
+    fun setPerfMonitor(value: Boolean) {
+        perfMonitor.value = value
+        prefs.edit().putBoolean(KEY_PERF_MONITOR, value).apply()
+    }
+
+    fun setTextGlow(value: Boolean) {
+        textGlow.value = value
+        prefs.edit().putBoolean(KEY_TEXT_GLOW, value).apply()
+    }
+
+    fun setShowNowPlayingLyrics(value: Boolean) {
+        showNowPlayingLyrics.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, value).apply()
+    }
+
+    fun setShowNextTrackStatus(value: Boolean) {
+        showNextTrackStatus.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NEXT_TRACK_STATUS, value).apply()
+    }
+
+    fun setShowUpgradeBadge(value: Boolean) {
+        showUpgradeBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_UPGRADE_BADGE, value).apply()
+    }
+
+    fun setShowLosslessBadge(value: Boolean) {
+        showLosslessBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_LOSSLESS_BADGE, value).apply()
+    }
+
+    fun setShowHiResBadge(value: Boolean) {
+        showHiResBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_HI_RES_BADGE, value).apply()
     }
 
     fun setLyricsOffsetMs(value: Int) {
@@ -1645,9 +2627,26 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, value).apply()
     }
 
+    fun setSpotifyCanvasEnabled(value: Boolean) {
+        spotifyCanvasEnabled.value = value
+        prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_ENABLED, value).apply()
+        // Prioritising a source that is switched off would be a contradiction
+        // the settings screen then has to explain; switching Spotify off puts
+        // the order back to the default and leaves Apple in front.
+        if (!value && prioritizeSpotifyCanvas.value) {
+            prioritizeSpotifyCanvas.value = false
+            prefs.edit().putBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false).apply()
+        }
+    }
+
     fun setFullBleedArtwork(value: Boolean) {
         fullBleedArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
+    }
+
+    fun setZoomOutAlbumArt(value: Boolean) {
+        zoomOutAlbumArt.value = value
+        prefs.edit().putBoolean(KEY_ZOOM_OUT_ALBUM_ART, value).apply()
     }
 
     fun setLegacyMeshGradient(value: Boolean) {
@@ -1734,6 +2733,36 @@ object AppSettings {
     fun setOutputPcmMode(value: OutputPcmMode) {
         outputPcmMode.value = value
         prefs.edit().putString(KEY_OUTPUT_PCM_MODE, value.name).apply()
+    }
+
+    fun setBitPerfect(value: Boolean) {
+        bitPerfect.value = value
+        prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
+    }
+
+    /** Sets the face the whole app is set in. */
+    fun setAppFont(value: String) {
+        appFont.value = value
+        prefs.edit().putString(KEY_APP_FONT, value).apply()
+    }
+
+    /** Sets the face the listener brought, as a path in the app's own storage. */
+    fun setCustomFontPath(value: String?) {
+        customFontPath.value = value
+        prefs.edit().putString(KEY_CUSTOM_FONT_PATH, value).apply()
+    }
+
+    /** Sets whether Arabic and Urdu text gets faces of its own. */
+    fun setScriptFonts(value: Boolean) {
+        scriptFonts.value = value
+        prefs.edit().putBoolean(KEY_SCRIPT_FONTS, value).apply()
+    }
+
+    /** Sets how many downloads run at once. Clamped to 1..6. */
+    fun setConcurrentDownloads(value: Int) {
+        val clamped = value.coerceIn(MIN_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_DOWNLOADS)
+        concurrentDownloads.value = clamped
+        prefs.edit().putInt(KEY_CONCURRENT_DOWNLOADS, clamped).apply()
     }
 
     fun setPreferUsbDac(value: Boolean) {
@@ -1903,6 +2932,11 @@ object AppSettings {
         prefs.edit().putString(KEY_LIBRARY_SORT, value.name).apply()
     }
 
+    fun setLibraryReplayVisible(value: Boolean) {
+        libraryReplayVisible.value = value
+        prefs.edit().putBoolean(KEY_LIBRARY_REPLAY_VISIBLE, value).apply()
+    }
+
     fun setDetailSongSort(browseId: String, value: SongSort) {
         detailSongSorts.value = detailSongSorts.value + (browseId to value)
         prefs.edit().putString(
@@ -1924,6 +2958,16 @@ object AppSettings {
     fun setHomeRecentsViewType(value: LibraryViewType) {
         homeRecentsViewType.value = value
         prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
+    }
+
+    fun setLibraryPlaylistsViewType(value: LibraryViewType) {
+        libraryPlaylistsViewType.value = value
+        prefs.edit().putString(KEY_LIBRARY_PLAYLISTS_VIEW_TYPE, value.name).apply()
+    }
+
+    fun setHomeFlowVisible(value: Boolean) {
+        homeFlowVisible.value = value
+        prefs.edit().putBoolean(KEY_HOME_FLOW_VISIBLE, value).apply()
     }
 
     fun setLocalMusicFolderUri(value: String) {
@@ -2019,6 +3063,11 @@ object AppSettings {
             webdavUsername.value,
             webdavPassword.value,
         )
+        // The host is the listener's own storage, so it keeps working while
+        // the internet is off — see [com.music.bitchord.data.NetworkPolicy].
+        com.music.bitchord.data.NetworkPolicy.setLocalHost(
+            com.music.bitchord.data.webdav.WebDavConfig.hostOf(webdavUrl.value),
+        )
     }
 
     private fun readLocalMusicSort(key: String): LocalMusicSort =
@@ -2026,10 +3075,10 @@ object AppSettings {
             ?.let { saved -> LocalMusicSort.entries.firstOrNull { it.name == saved } }
             ?: LocalMusicSort.TITLE_ASC
 
-    private fun readLibraryViewType(key: String): LibraryViewType =
+    private fun readLibraryViewType(key: String, fallback: LibraryViewType = LibraryViewType.LIST): LibraryViewType =
         prefs.getString(key, null)
             ?.let { saved -> LibraryViewType.entries.firstOrNull { it.name == saved } }
-            ?: LibraryViewType.LIST
+            ?: fallback
 
     /**
      * Pins or unpins [browseId], returning whether it is pinned afterwards.
@@ -2175,6 +3224,9 @@ object AppSettings {
     const val MIN_LIQUID_GLASS_INTENSITY = 0.1f
     const val MAX_LIQUID_GLASS_INTENSITY = 1f
 
+    /** Mid-soft transport corners: visibly rounder than the old glyphs, not pills. */
+    const val DEFAULT_TRANSPORT_SMOOTHNESS = 0.55f
+
     fun normalizeLiquidGlassIntensity(value: Float): Float =
         value.coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
 
@@ -2193,15 +3245,22 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
+    private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
+    private const val KEY_HOME_PROVIDER = "home_provider"
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
+    private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
+    private const val KEY_PLAYER_VOLUME = "player_volume"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
-    private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
+    private const val KEY_LIQUID_GLASS_HAPTICS = "liquid_glass_haptics"
+    private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
+    private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"
     /** Stored by name so an unknown value falls back rather than crashing. */
@@ -2214,6 +3273,13 @@ object AppSettings {
     private const val KEY_EQ_FOCUSED = "equalizer_focused"
     private const val KEY_EQ_BALANCE = "equalizer_balance"
     private const val KEY_EQ_BANDS = "equalizer_bands"
+    private const val KEY_JAMESDSP_ENABLED = "jamesdsp_enabled"
+    private const val KEY_JAMESDSP_BASS_DB = "jamesdsp_bass_db"
+    private const val KEY_JAMESDSP_STEREO = "jamesdsp_stereo_level"
+    private const val KEY_JAMESDSP_TUBE = "jamesdsp_tube_level"
+    private const val KEY_JAMESDSP_REVERB = "jamesdsp_reverb_preset"
+    private const val KEY_JAMESDSP_PREGAIN_DB = "jamesdsp_pregain_db"
+    private const val KEY_JAMESDSP_LIMITER = "jamesdsp_limiter"
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_APP_UI = "app_ui"
@@ -2221,10 +3287,42 @@ object AppSettings {
     private const val KEY_CLASSIPOD_CLICKS = "classipod_clicks"
     private const val KEY_CLASSIPOD_WHEEL_STEPS = "classipod_wheel_steps"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_TRANSPORT_SMOOTHNESS = "transport_smoothness"
+    private const val KEY_PLAYER_ACCENT = "player_accent_color"
+    private const val KEY_PLAYER_SEEKBAR = "player_seekbar_color"
+    private const val KEY_PLAYER_TEXT = "player_text_color"
+    private const val KEY_PLAYER_LYRICS = "player_lyrics_color"
+    private const val KEY_PLAYER_LYRICS_BUTTONS = "player_lyrics_buttons_color"
+    private const val KEY_PLAYER_LYRICS_SOURCE = "player_lyrics_source_color"
+    private const val KEY_RECENT_PLAYER_COLORS = "recent_player_colors"
+    private const val KEY_HOME_SHELF_ORDER = "home_shelf_order"
+    private const val KEY_HIDDEN_HOME_SHELVES = "hidden_home_shelves"
+    private const val KEY_HOME_REPLAY_VISIBLE = "home_replay_visible"
+    private const val KEY_BLOCK_AI_MUSIC = "block_ai_music"
+
+    /** Sentinel for "no override"; distinct from every opaque ARGB value. */
+    private const val RESET_COLOR = Int.MIN_VALUE
+    private const val MAX_RECENT_PLAYER_COLORS = 12
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
+
+    private const val KEY_CONCURRENT_DOWNLOADS = "concurrent_downloads"
+
+    private const val KEY_APP_FONT = "app_font"
+    private const val KEY_APP_FONT_DEFAULT = "default"
+    private const val KEY_CUSTOM_FONT_PATH = "custom_font_path"
+    private const val KEY_SCRIPT_FONTS = "script_fonts"
+
+    /** Downloads in flight at once, when the listener has not said otherwise. */
+    const val DEFAULT_CONCURRENT_DOWNLOADS = 4
+
+    /** The narrowest queue worth having. */
+    const val MIN_CONCURRENT_DOWNLOADS = 1
+
+    /** The widest queue: past this the phone is the limit, not the setting. */
+    const val MAX_CONCURRENT_DOWNLOADS = 6
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
@@ -2237,16 +3335,28 @@ object AppSettings {
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
+    private const val KEY_GLASS_PERFORMANCE = "glass_performance"
     private const val KEY_FOLDING_NAV_BAR = "folding_nav_bar"
+    private const val KEY_PODCASTS_ENABLED = "podcasts_enabled"
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
+    private const val KEY_LIVE_BLUR = "live_blur"
+    private const val KEY_PERF_MONITOR = "perf_monitor"
+    private const val KEY_TEXT_GLOW = "text_glow"
+    private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
+    private const val KEY_SHOW_NEXT_TRACK_STATUS = "show_next_track_status"
+    private const val KEY_SHOW_UPGRADE_BADGE = "show_upgrade_badge"
+    private const val KEY_SHOW_LOSSLESS_BADGE = "show_lossless_badge"
+    private const val KEY_SHOW_HI_RES_BADGE = "show_hi_res_badge"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
+    private const val KEY_SPOTIFY_CANVAS_ENABLED = "spotify_canvas_enabled"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
+    private const val KEY_ZOOM_OUT_ALBUM_ART = "zoom_out_album_art"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
@@ -2261,10 +3371,15 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
     private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
     private const val KEY_LIBRARY_SORT = "library_sort"
+    private const val KEY_LIBRARY_REPLAY_VISIBLE = "library_replay_visible"
     private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type"
+    private const val KEY_LIBRARY_PLAYLISTS_VIEW_TYPE = "library_playlists_view_type"
+    private const val KEY_HOME_FLOW_VISIBLE = "home_flow_visible"
+    private const val KEY_BLOCKED_ARTISTS = "blocked_artists"
+    private const val KEY_AI_ARTISTS = "ai_artists"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"
@@ -2309,6 +3424,9 @@ object AppSettings {
     private const val KEY_DISCORD_BUTTON_2_VISIBLE = "discord_button_2_visible"
     private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
+
+    /** Prefix for the per-page settings scroll offsets — see [settingsScrollOffset]. */
+    private const val KEY_SETTINGS_SCROLL_PREFIX = "settings_scroll_"
 }
 
 
