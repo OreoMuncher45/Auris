@@ -1391,11 +1391,17 @@ object SflxDownloads {
                 if (declared > MAX_PACKAGE_BYTES) {
                     throw SflxException("that file is ${declared / 1024 / 1024} MB, which is too large to be an extension")
                 }
-                val bytes = response.body?.bytes() ?: throw SflxException("the server sent nothing")
-                if (bytes.size > MAX_PACKAGE_BYTES) {
-                    throw SflxException("that file is too large to be an extension")
+                val body = response.body ?: throw SflxException("the server sent nothing")
+                // Read in bounded steps: with no Content-Length, the size is
+                // only known once it has been read, so stop at the ceiling.
+                val buffer = okio.Buffer()
+                val source = body.source()
+                while (source.read(buffer, 64 * 1024L) != -1L) {
+                    if (buffer.size > MAX_PACKAGE_BYTES) {
+                        throw SflxException("that file is too large to be an extension")
+                    }
                 }
-                bytes
+                buffer.readByteArray()
             }
         }.onFailure { Log.w(TAG, "sflx fetch failed for $url: ${it.message}") }
     }
