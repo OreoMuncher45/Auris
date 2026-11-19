@@ -160,6 +160,22 @@ class SflxHostTest {
     }
 
     @Test
+    fun `an Opus or Vorbis option without a kind is still a lossy tier`() {
+        val opus = SflxManifestParser.parse(
+            """
+            {"name":"opus","type":["download_provider"],
+             "qualityOptions":[{"id":"best","label":"FLAC"},{"id":"opus","label":"Opus 320kbps"}]}
+            """.trimIndent(),
+        )
+        assertEquals("opus", SflxQuality.forTier(opus, "HIGH"))
+        assertTrue(SflxQuality.fallbacks(opus, "HIGH").isNotEmpty())
+        val vorbis = SflxManifestParser.parse(
+            """{"name":"ogg","type":["download_provider"],"qualityOptions":[{"id":"ogg","label":"Ogg Vorbis 160"}]}""",
+        )
+        assertEquals("ogg", SflxQuality.forTier(vorbis, "LOW"))
+    }
+
+    @Test
     fun `an extension with only lossless tiers declines a lossy request`() {
         val losslessOnly = SflxManifestParser.parse(
             """

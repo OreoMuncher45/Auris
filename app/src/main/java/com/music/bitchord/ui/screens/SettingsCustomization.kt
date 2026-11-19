@@ -350,6 +350,13 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
     }
 }
 
+/**
+ * Counts font choices made in the sheet. An import compares it with the count
+ * at pick time, so any choice made while it copies (even one back to the font
+ * that was already set) wins over the import.
+ */
+private var fontChoiceSerial = 0
+
 /** Serialises custom-font imports, which all write the same file. */
 private val fontImportLock = kotlinx.coroutines.sync.Mutex()
 
@@ -379,7 +386,7 @@ internal fun FontSheet(onDismiss: () -> Unit) {
         val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
         // Whatever was chosen when the file was picked: a choice made while the
         // copy runs is newer, and wins.
-        val chosenAtPick = AppSettings.appFont.value
+        val serialAtPick = fontChoiceSerial
         fontImportScope.launch {
             // One import at a time: two picks in quick succession write the same file.
             fontImportLock.withLock {
@@ -395,7 +402,7 @@ internal fun FontSheet(onDismiss: () -> Unit) {
             runCatching {
                 AppFonts.forgetCustom()
                 AppSettings.setCustomFontPath(target.absolutePath)
-                if (AppSettings.appFont.value == chosenAtPick) AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+                if (fontChoiceSerial == serialAtPick) AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
             }
             }
         }
@@ -439,6 +446,7 @@ internal fun FontSheet(onDismiss: () -> Unit) {
                             if (value == AppFonts.CHOICE_CUSTOM) {
                                 picker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf"))
                             } else {
+                                fontChoiceSerial++
                                 AppSettings.setAppFont(value)
                             }
                         }

@@ -2913,8 +2913,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // whole, header and all — even a page that is all header.
             homeCachedRaw = null
             _homeShowingCached.value = false
-            publishHomeShelves(outcome.shelves)
-            if (outcome.shelves.isEmpty()) publishHeaderOnlyHome()
+            // Judged after the blocked-artist filter: a page whose every shelf
+            // is blocked must not leave the cached page up under the new header.
+            val visible = outcome.shelves.withoutBlockedArtists()
+            if (visible.isEmpty()) publishHeaderOnlyHome() else publishHomeShelves(visible)
             keepHomeCache(identity, generation, cacheOwner)
         }
     }

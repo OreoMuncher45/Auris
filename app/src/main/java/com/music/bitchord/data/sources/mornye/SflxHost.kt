@@ -1387,7 +1387,8 @@ internal object SflxQuality {
             text.contains("lossless") || text.contains("flac") || text.contains("alac") ||
                 text.contains("24-bit") || text.contains("16-bit") || token == "hi_res" ->
                 "lossless"
-            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ->
+            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ||
+                text.contains("opus") || text.contains("vorbis") ->
                 "lossy"
             else -> ""
         }

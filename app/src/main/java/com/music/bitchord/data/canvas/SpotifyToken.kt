@@ -177,7 +177,8 @@ internal object SpotifyToken {
         if (restored) return
         synchronized(stateLock) {
             if (restored) return
-            restored = true
+            // Marked only once everything is in place, at the end, so a second
+            // caller can't pass the unlocked check above and find the cache empty.
             val prefs = store() ?: return
             val now = System.currentTimeMillis()
             fun live(expiresKey: String) = prefs.getLong(expiresKey, 0L).takeIf { now < it - 30_000 }
@@ -203,6 +204,7 @@ internal object SpotifyToken {
                 cachedClientToken = client
                 clientTokenExpiresAtMs = clientExpires
             }
+            restored = true
         }
     }
 
