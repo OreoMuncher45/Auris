@@ -68,6 +68,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
@@ -613,18 +615,15 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
     }
 
     // A failure is worth stating once. Leaving it set would have the row still
-    // reporting last week's dead connection the next time the sheet is opened.
-    // Only the failure this row actually showed is cleared: a menu stays up
-    // for its exit, and a failure arriving in those frames has not been seen.
+    // reporting last week's dead connection the next time the menu is opened.
+    // Only a failure this row actually showed is cleared — see [seenWhenOnScreen].
     val shownFailure = remember(song.videoId) { arrayOfNulls<DownloadState.Failed>(1) }
     DisposableEffect(song.videoId) {
         onDispose { shownFailure[0]?.let { Downloads.dismissFailure(song.videoId, it) } }
     }
 
     val state = active[song.videoId]
-    // Recorded only while the menu is open: one that arrives during the exit
-    // is drawn but not seen, so it stays for the next opening.
-    if (state is DownloadState.Failed && LocalMenuInteractive.current) shownFailure[0] = state
+    val interactive = LocalMenuInteractive.current
     when (state) {
         is DownloadState.Queued -> ActionRow(
             icon = Icons.Rounded.Downloading,
@@ -651,6 +650,12 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
             // failure whatever the sleeve happens to be tinted.
             tint = MaterialTheme.colorScheme.error,
             accent = MaterialTheme.colorScheme.error,
+            modifier = if (interactive) {
+                Modifier.seenWhenOnScreen { shownFailure[0] = state }
+            } else {
+                // A menu on its way out: drawn, but no longer being read.
+                Modifier
+            },
             onClick = onDownload,
         )
 
@@ -672,6 +677,23 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
         }
     }
 }
+
+/**
+ * Calls [onSeen] once at least half of this element has been inside every
+ * clip around it — for a row in a menu, the menu's visible, scrolled part.
+ *
+ * What a row that reports something once (a failed download) uses to decide
+ * it has been read: a row scrolled out of view was composed but never seen.
+ * Asked from this one element's own placement — a comparison each time it
+ * moves, as the menu scrolls — so no other row pays for it.
+ */
+internal fun Modifier.seenWhenOnScreen(onSeen: () -> Unit): Modifier = onGloballyPositioned { coordinates ->
+    if (isHalfOnScreen(coordinates.size.height, coordinates.boundsInWindow().height)) onSeen()
+}
+
+/** Whether a row [height] px tall, of which [visibleHeight] px are unclipped, counts as on screen. */
+internal fun isHalfOnScreen(height: Int, visibleHeight: Float): Boolean =
+    height > 0 && visibleHeight * 2f >= height
 
 /**
  * Sends a device file to the WebDAV server. Sits beside the download row
