@@ -4582,6 +4582,8 @@ private fun BitChordApp(
                     nav.settingsSubScreen = null
                     sheets.showHistory = false
                     sheets.showFlow = false
+                    sheets.showQuickPicks = false
+                    podcastUi.showContinueListening = false
                     sheets.libraryShowAll = null
 
                     if (tab == TAB_SEARCH) {
