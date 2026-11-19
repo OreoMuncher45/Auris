@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -141,6 +144,17 @@ fun <T : Any> AppSheet(
     // composition that closed it is applied, so nothing is left to hand the
     // focus back.
     if (!expanded) SideEffect { focusManager.clearFocus(force = true) }
+
+    // With a keyboard, focus moves into the sheet as it opens, rather than
+    // staying on whatever opened it behind the scrim. Only with a keyboard:
+    // in touch mode focusing the sheet would mean nothing but a focus ring.
+    // Content that focuses something of its own (a form's field) does so
+    // after this and wins.
+    val sheetFocus = remember { FocusRequester() }
+    val inputModes = LocalInputModeManager.current
+    LaunchedEffect(expanded) {
+        if (expanded && inputModes.inputMode == InputMode.Keyboard) sheetFocus.requestFocus()
+    }
 
     BackHandler(enabled = expanded, onBack = onDismiss)
     val scope = rememberCoroutineScope()
@@ -287,6 +301,7 @@ fun <T : Any> AppSheet(
                         // nothing behind it can be reached, and while it goes,
                         // nothing on it can be — not even by the window
                         // handing its focus back to the first thing it finds.
+                        .focusRequester(sheetFocus)
                         .focusProperties {
                             if (expanded) {
                                 exit = { FocusRequester.Cancel }

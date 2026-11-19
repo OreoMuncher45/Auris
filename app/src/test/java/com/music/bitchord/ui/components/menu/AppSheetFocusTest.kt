@@ -1,5 +1,18 @@
 package com.music.bitchord.ui.components.menu
 
+import org.junit.Assert.assertEquals
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.focusable
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,7 +88,70 @@ class AppSheetFocusTest {
         compose.waitForIdle()
     }
 
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test
+    fun withAKeyboardTheSheetTakesTheFocusFromWhatOpenedIt() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var behindFocused = false
+        val behind = FocusRequester()
+        compose.setContent {
+            val modes = LocalInputModeManager.current
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    // The button that opened it, with the focus.
+                    Box(
+                        Modifier
+                            .focusRequester(behind)
+                            .onFocusChanged { behindFocused = it.isFocused }
+                            .focusable(),
+                    )
+                    AppSheet(item = item, onDismiss = { item = null }) {
+                        Box(Modifier.focusable())
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { modes.requestInputMode(InputMode.Keyboard) }
+        }
+        compose.runOnIdle { behind.requestFocus() }
+        compose.waitForIdle()
+        assertTrue(behindFocused)
+
+        item = "downloads"
+        compose.waitForIdle()
+        assertFalse("the sheet took the focus from what is behind it", behindFocused)
+    }
+
+    @Test
+    fun aDismissalSwappedWhileOpenIsTheOneADragCalls() {
+        AppUi.install(AndroidAppUiHost)
+        var item by mutableStateOf<String?>(null)
+        var first = 0
+        var second = 0
+        var dismiss by mutableStateOf<() -> Unit>({ first++ })
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    AppSheet(item = item, onDismiss = dismiss) {
+                        Box(Modifier.testTag(BODY).fillMaxWidth().height(300.dp))
+                    }
+                }
+            }
+        }
+        item = "sheet"
+        compose.waitForIdle()
+        // Swapped after the gesture handler and the list connection were made.
+        dismiss = { second++ }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag(BODY).performTouchInput { swipeDown(startY = 10f, endY = bottom, durationMillis = 600) }
+        compose.waitForIdle()
+        assertEquals("the stale dismissal isn't called", 0, first)
+        assertEquals("the current one is", 1, second)
+    }
+
     private companion object {
+        const val BODY = "body"
         const val FIELD = "field"
     }
 }
