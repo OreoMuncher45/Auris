@@ -168,6 +168,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.asSpotifyQueueRow
 import com.music.bitchord.data.model.asSpotifyQueueRows
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
@@ -1854,7 +1855,11 @@ private fun BitChordApp(
                 .filterNot { it.fromAutoplay }
                 .map { it.mediaId }
             scope.launch {
-                val seed = song.copy(
+                // A pending or missing Spotify row becomes the canonical
+                // Spotify queue row before it enters the player. The radio
+                // seed is resolved separately, but the queued song still needs
+                // the id the playback resolver knows how to open.
+                val seed = song.asSpotifyQueueRow().copy(
                     radioName = song.title,
                     playbackSource = song.title,
                     playbackSourceType = PlaybackSourceType.SHARED_LINK,
@@ -1889,7 +1894,7 @@ private fun BitChordApp(
                 activeController.beginRadioQueue()
                 val currentIndex = activeController.currentMediaItemIndex
                 val currentItem = activeController.currentMediaItem
-                if (currentIndex >= 0 && currentItem?.mediaId == song.videoId) {
+                if (currentIndex >= 0 && currentItem?.mediaId == seed.videoId) {
                     // Keep the current MediaItem itself untouched. Replacing it,
                     // even with the same song, reparses the source at position
                     // zero and audibly stops/restarts the track.
@@ -1898,7 +1903,7 @@ private fun BitChordApp(
                     }
                     if (currentIndex > 0) activeController.removeMediaItems(0, currentIndex)
                     activeController.addMediaItems(1, related.map { it.toMediaItem() })
-                    activeRadioSeed = song.videoId to song.title
+                    activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
                     activeController.playSongs(listOf(seed) + related, 0)

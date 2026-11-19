@@ -66,6 +66,22 @@ class DownloadedPlaylistSyncTest {
     }
 
     @Test
+    fun `a track the collection already asked for does not come back on a restart`() {
+        // The on-disk projection is not complete: a cold start can read it
+        // before the index is ready, and a file saved under a fetched id does
+        // not always list the id the playlist asked for. Judged on disk alone
+        // these looked new again on every launch, which is how completed and
+        // cleared downloads kept reappearing in the queue.
+        val missing = missingFromPlaylist(
+            listOf(song("done"), song("new")),
+            onDisk = emptySet(),
+            deletedByHand = emptySet(),
+            alreadyRequested = setOf("done"),
+        ).map { it.videoId }
+        assertEquals(listOf("new"), missing)
+    }
+
+    @Test
     fun `the two ids of one playlist are the same playlist`() {
         assertTrue(samePlaylist("VLPL123", "PL123"))
         assertTrue(samePlaylist("PL123", "VLPL123"))

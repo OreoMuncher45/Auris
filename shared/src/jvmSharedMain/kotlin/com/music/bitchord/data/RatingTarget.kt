@@ -3,13 +3,16 @@ package com.music.bitchord.data
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.songOrNull
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_ROW_PREFIX
+import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * The id a rating is written against.
@@ -23,8 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * do: tap the heart on a track found in the Spotify catalogue, or found by
  * searching Spotify, and nothing was liked anywhere.
  *
- * So a Spotify row is resolved to the YouTube recording behind it before it is
- * rated. Two ways to get there, in this order:
+ * So a Spotify or source-backed row is resolved to the YouTube recording
+ * behind it before it is rated. Two ways to get there, in this order:
  *
  *  - **What playback already worked out.** A Spotify row played from YouTube
  *    is matched to a video id on the way in — that is how the row is played at
@@ -40,16 +43,20 @@ import kotlinx.coroutines.flow.asStateFlow
 object RatingTarget {
 
     /**
-     * Whether [videoId] is a row id rather than a YouTube Music video id.
+     * Whether [videoId] is a catalogue row rather than a YouTube Music video id.
      *
-     * The three prefixes are the three ways a Spotify row reaches the app:
-     * its own catalogue entry, a match still being looked for, and a match
-     * that was looked for and found to be missing.
+     * The three Spotify prefixes are the three ways a Spotify row reaches the
+     * app: its own catalogue entry, a match still being looked for, and a
+     * match that was looked for and found to be missing. A source-backed row
+     * carries its own catalogue's id for the same reason and needs the same
+     * YouTube recording found behind it before YouTube Music can be asked to
+     * rate it or start a radio from it.
      */
     fun isRowId(videoId: String): Boolean =
         videoId.startsWith(SPOTIFY_ROW_PREFIX) ||
             videoId.startsWith(SPOTIFY_PENDING_PREFIX) ||
-            videoId.startsWith(SPOTIFY_MISSING_PREFIX)
+            videoId.startsWith(SPOTIFY_MISSING_PREFIX) ||
+            SourceTrackKeys.parse(videoId) != null
 
     /** The Spotify track id behind a row id, when it is one. */
     fun spotifyIdOf(videoId: String): String? = when {
@@ -75,9 +82,9 @@ object RatingTarget {
      */
     fun remember(rowId: String, videoId: String) {
         if (rowId == videoId || videoId.isBlank()) return
-        val current = _resolved.value
-        if (current.containsKey(rowId)) return
-        _resolved.value = current + (rowId to videoId)
+        _resolved.update { current ->
+            if (current.containsKey(rowId)) current else current + (rowId to videoId)
+        }
     }
 
     /** The video id a row was resolved to, when it is known. */
@@ -95,7 +102,15 @@ object RatingTarget {
      * nothing to write, and saying so is better than writing an id that means
      * nothing.
      */
-    suspend fun resolve(song: Song): String? {
+    suspend fun resolve(song: Song): String? = resolve(song) { query ->
+        YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull().orEmpty()
+    }
+
+    /** [resolve], with the catalogue search supplied so the match can be tested without a network. */
+    internal suspend fun resolve(
+        song: Song,
+        search: suspend (String) -> List<SearchResult>,
+    ): String? {
         if (!isRowId(song.videoId)) return song.videoId
         _resolved.value[song.videoId]?.let { return it }
 
@@ -103,8 +118,8 @@ object RatingTarget {
         if (target.title.isBlank()) return null
         val queries = TrackMatcher.queries(target)
         for (query in queries) {
-            val rows = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull().orEmpty()
-            val songs = rows.mapNotNull { row -> (row as? SearchResult.Track)?.song }
+            val rows = search(query)
+            val songs = rows.mapNotNull { row -> row.songOrNull() }
             // The matcher's answer, and then — only if it has none — a row by
             // the same artist. The same pair the player uses when it plays a
             // Spotify row, so the recording the heart likes is the recording
@@ -112,7 +127,10 @@ object RatingTarget {
             val best = TrackMatcher.bestOrSameArtist(songs, target)
             if (best != null) {
                 remember(song.videoId, best.videoId)
-                return best.videoId
+                // Another lookup may have answered first while this one was in
+                // flight. The remembered recording is the one every surface
+                // must use, so return that rather than this later answer.
+                return videoIdFor(song.videoId) ?: best.videoId
             }
         }
         return null

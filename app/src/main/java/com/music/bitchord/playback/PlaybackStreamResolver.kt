@@ -10,6 +10,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.songOrNull
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -538,7 +539,7 @@ internal class PlaybackStreamResolver(
             } catch (error: Exception) {
                 emptyList()
             }
-            val songs = rows.mapNotNull { row -> (row as? SearchResult.Track)?.song }
+            val songs = rows.mapNotNull { row -> row.songOrNull() }
             // The matcher's answer, and then — only if it has none — a
             // row by the *same* artist.
             //

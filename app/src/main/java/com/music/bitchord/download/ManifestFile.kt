@@ -12,6 +12,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.File
 import java.io.OutputStream
+import java.net.URI
 
 /**
  * A manifest's segments joined back into one ordinary file, so a lossless
@@ -66,14 +67,24 @@ internal object ManifestFile {
             }
         }
 
-        val base = url.toHttpUrlOrNull() ?: error("Invalid manifest URL")
-        val index = String(fetch(url), Charsets.UTF_8)
+        // An extension's segmented answer is written to a local playlist so
+        // the player can stream it; the same file is what a download reads.
+        // Its segment URLs are absolute, so there is no base to resolve against.
+        val local = url.startsWith("file:", ignoreCase = true)
+        val base = if (local) null else url.toHttpUrlOrNull() ?: error("Invalid manifest URL")
+        val index = if (local) {
+            runCatching { File(URI(url)).readText() }.getOrElse { error("Unreadable playlist: ${it.message}") }
+        } else {
+            String(fetch(url), Charsets.UTF_8)
+        }
         val (initRef, mediaRefs) = if (dash) {
             OfflineDash.parse(index).let { it.initialization to it.media }
         } else {
             hlsSegments(index)
         }
-        fun resolve(ref: String) = base.resolve(ref)?.toString() ?: error("Invalid segment URL")
+        fun resolve(ref: String) = base?.resolve(ref)?.toString()
+            ?: ref.toHttpUrlOrNull()?.toString()
+            ?: error("Invalid segment URL")
         val total = mediaRefs.size + 1L
 
         val init = fetch(resolve(initRef))

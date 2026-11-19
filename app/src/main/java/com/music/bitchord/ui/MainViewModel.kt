@@ -1097,7 +1097,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Liked Music is now out of date either way.
                 libraryStale = true
                 if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)
-                else prependLikedRow()
+                else {
+                    prependLikedRow()
+                    // Liked Music downloaded whole is a promise about a moving
+                    // list: a track liked now belongs on the device now, not at
+                    // the next scheduled pass. Adding to an ordinary playlist
+                    // already refreshed it here; liking did not, so new likes
+                    // were never downloaded at all.
+                    com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+                        getApplication(),
+                        YtMusicRepository.LIKED_MUSIC,
+                        force = true,
+                    )
+                }
                 // Clearing the heart means forgetting the song, not
                 // demoting it — see [forgetFromLibrary].
                 val unliked = previous == LikeStatus.LIKE &&

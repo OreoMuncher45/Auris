@@ -61,8 +61,8 @@ internal object SflxAnswer {
      *
      * A URL, or the parts of one. Tidal, Amazon and Apple Music answer with
      * `streamUrl: null` and a list of segments, and the segments are the
-     * answer: the host assembles them into one file (see [SflxSegments]) and
-     * hands the player that.
+     * answer: the host writes them as a streaming playlist (see [SflxSegments])
+     * and hands the player that.
      */
     fun carriesStream(raw: String): Boolean = streamUrl(raw) != null || segments(raw).isNotEmpty()
 

@@ -34,6 +34,9 @@ package com.music.bitchord.data.sources.mornye
  *  - `fetch`/`http` return the web `Response` shape extensions branch on
  *    (`ok`, `status`, `json()`, `text()`, `headers.get()`), and they are
  *    subject to the same host allowlist the extension declared in its manifest.
+ *    Both are **synchronous**, as they are in the mobile host these extensions
+ *    were written for: a request is answered on the next line, and `await` on
+ *    that value still works.
  *  - the pure-JS utilities are real implementations rather than stubs, because
  *    a wrong HMAC is worse than a missing one: extensions that sign requests
  *    (Spotify's TOTP, most of the signed backends) get a real SHA-1/HMAC-SHA1
@@ -47,10 +50,12 @@ package com.music.bitchord.data.sources.mornye
  *    [SflxHost] replaces `file.download` with a capturer, which is how an
  *    extension's own resolution logic — the part that knows the API — is made
  *    to hand over the URL it would have downloaded.
- *  - `session`/`auth` (the `signedSession` capability) are not implemented.
- *    They answer with a specific "this host cannot do signed sessions" result,
- *    so an extension requiring one reports *that* instead of a type error three
- *    frames deep inside its own code.
+ *  - `session` is real when the host supplies a session client: bootstrap,
+ *    grant exchange and signed requests live in [SflxSignedSession]. Without
+ *    one, it answers with a specific "this host cannot do signed sessions"
+ *    result, so an extension requiring one reports *that* instead of a type
+ *    error three frames deep inside its own code. `auth` is still a named
+ *    refusal: it is the interactive half no extension in the store uses.
  */
 internal object SflxShim {
 
@@ -330,6 +335,181 @@ internal object SflxShim {
                     };
                 };
             }
+            // ── URL / URLSearchParams ────────────────────────────────────
+            // QuickJS is an ECMAScript engine, not a browser: there is no URL
+            // global at all. Amazon's search parser runs `new URL(deeplink,
+            // base)` for every result and catches the ReferenceError, so a
+            // perfectly good 700 KB search page parsed to *zero* tracks while
+            // the same code returned 14 under an engine that has URL. Any
+            // extension reading `new URL(...).searchParams` fails the same way.
+            function __sflx_query_decode(value) {
+                try { return decodeURIComponent(String(value).replace(/\+/g, ' ')); }
+                catch (e) { return String(value); }
+            }
+            function __sflx_query_encode(value) {
+                return encodeURIComponent(String(value)).replace(/%20/g, '+');
+            }
+            if (typeof URLSearchParams === 'undefined') {
+                globalThis.URLSearchParams = function (init) {
+                    var pairs = [];
+                    this.append = function (name, value) { pairs.push([String(name), String(value)]); };
+                    this.get = function (name) {
+                        for (var i = 0; i < pairs.length; i++) {
+                            if (pairs[i][0] === String(name)) return pairs[i][1];
+                        }
+                        return null;
+                    };
+                    this.getAll = function (name) {
+                        var found = [];
+                        for (var i = 0; i < pairs.length; i++) {
+                            if (pairs[i][0] === String(name)) found.push(pairs[i][1]);
+                        }
+                        return found;
+                    };
+                    this.has = function (name) { return this.get(name) !== null; };
+                    this.set = function (name, value) {
+                        var written = false;
+                        for (var i = pairs.length - 1; i >= 0; i--) {
+                            if (pairs[i][0] !== String(name)) continue;
+                            if (written) pairs.splice(i, 1);
+                            else { pairs[i][1] = String(value); written = true; }
+                        }
+                        if (!written) this.append(name, value);
+                    };
+                    this.delete = function (name) {
+                        for (var i = pairs.length - 1; i >= 0; i--) {
+                            if (pairs[i][0] === String(name)) pairs.splice(i, 1);
+                        }
+                    };
+                    this.toString = function () {
+                        var out = [];
+                        for (var i = 0; i < pairs.length; i++) {
+                            out.push(__sflx_query_encode(pairs[i][0]) + '=' + __sflx_query_encode(pairs[i][1]));
+                        }
+                        return out.join('&');
+                    };
+                    this.forEach = function (fn, self) {
+                        for (var i = 0; i < pairs.length; i++) fn.call(self, pairs[i][1], pairs[i][0], this);
+                    };
+                    if (init === undefined || init === null) return;
+                    if (typeof init === 'string') {
+                        var text = init.charAt(0) === '?' ? init.substring(1) : init;
+                        if (!text) return;
+                        var parts = text.split('&');
+                        for (var i = 0; i < parts.length; i++) {
+                            if (!parts[i]) continue;
+                            var eq = parts[i].indexOf('=');
+                            this.append(
+                                __sflx_query_decode(eq < 0 ? parts[i] : parts[i].substring(0, eq)),
+                                __sflx_query_decode(eq < 0 ? '' : parts[i].substring(eq + 1))
+                            );
+                        }
+                        return;
+                    }
+                    if (Array.isArray(init)) {
+                        for (var j = 0; j < init.length; j++) this.append(init[j][0], init[j][1]);
+                        return;
+                    }
+                    if (typeof init === 'object') {
+                        for (var key in init) this.append(key, init[key]);
+                    }
+                };
+            }
+            function __sflx_url_path(path, basePath) {
+                var merged = path;
+                if (path.charAt(0) !== '/') {
+                    var directory = basePath || '/';
+                    merged = directory.substring(0, directory.lastIndexOf('/') + 1) + path;
+                }
+                var segments = merged.split('/');
+                var out = [];
+                for (var i = 0; i < segments.length; i++) {
+                    var part = segments[i];
+                    if (part === '.') continue;
+                    if (part === '..') { if (out.length > 1) out.pop(); continue; }
+                    out.push(part);
+                }
+                return out.join('/');
+            }
+            // Assigned unconditionally, not guarded on `typeof URL`: the
+            // engine's own POLYFILLS already define a `URL` that is little
+            // more than an href holder — no searchParams, no real relative
+            // resolution — so the guard saw "URL exists" and left Amazon with
+            // a parser that still could not read one deeplink.
+            globalThis.URL = function (input, base) {
+                    var raw = String(input === undefined ? '' : input).trim();
+                    var baseUrl = (base === undefined || base === null) ? null : new globalThis.URL(String(base));
+                    var schemeMatch = /^([A-Za-z][A-Za-z0-9+.\-]*):/.exec(raw);
+                    var rest = raw;
+                    var scheme;
+                    if (schemeMatch) {
+                        scheme = schemeMatch[1].toLowerCase() + ':';
+                        rest = raw.substring(schemeMatch[0].length);
+                    } else if (baseUrl) {
+                        scheme = baseUrl.protocol;
+                    } else {
+                        throw new TypeError('Invalid URL: ' + raw);
+                    }
+                    var authority = '';
+                    if (rest.substring(0, 2) === '//') {
+                        var end = rest.length;
+                        for (var i = 0; i < 3; i++) {
+                            var at = rest.indexOf('/?#'.charAt(i), 2);
+                            if (at >= 0 && at < end) end = at;
+                        }
+                        authority = rest.substring(2, end);
+                        rest = rest.substring(end);
+                    } else if (!schemeMatch && baseUrl) {
+                        authority = baseUrl.host;
+                    }
+                    var hash = '';
+                    var hashAt = rest.indexOf('#');
+                    if (hashAt >= 0) { hash = rest.substring(hashAt); rest = rest.substring(0, hashAt); }
+                    var query = '';
+                    var queryAt = rest.indexOf('?');
+                    if (queryAt >= 0) { query = rest.substring(queryAt + 1); rest = rest.substring(0, queryAt); }
+                    var path = rest;
+                    if (!schemeMatch) {
+                        if (path === '') {
+                            path = baseUrl ? baseUrl.pathname : '/';
+                            if (query === '' && baseUrl) query = baseUrl.search.replace(/^\?/, '');
+                        } else {
+                            path = __sflx_url_path(path, baseUrl ? baseUrl.pathname : '/');
+                        }
+                    }
+                    if (authority !== '' && path === '') path = '/';
+                    var hostPort = authority;
+                    var atSign = hostPort.lastIndexOf('@');
+                    if (atSign >= 0) hostPort = hostPort.substring(atSign + 1);
+                    var hostname = hostPort;
+                    var port = '';
+                    if (hostPort.charAt(0) === '[') {
+                        var close = hostPort.indexOf(']');
+                        if (close >= 0) {
+                            hostname = hostPort.substring(0, close + 1);
+                            port = hostPort.substring(close + 1).replace(/^:/, '');
+                        }
+                    } else {
+                        var colon = hostPort.lastIndexOf(':');
+                        if (colon >= 0) {
+                            hostname = hostPort.substring(0, colon);
+                            port = hostPort.substring(colon + 1);
+                        }
+                    }
+                    this.protocol = scheme;
+                    this.host = hostPort;
+                    this.hostname = hostname;
+                    this.port = port;
+                    this.origin = authority === '' ? 'null' : scheme + '//' + hostPort;
+                    this.pathname = path;
+                    this.search = query === '' ? '' : '?' + query;
+                    this.hash = hash;
+                    this.href = scheme + (authority === '' ? '' : '//' + authority) + path + this.search + hash;
+                    this.searchParams = new globalThis.URLSearchParams(query);
+                    this.toString = function () { return this.href; };
+                    this.toJSON = function () { return this.href; };
+            };
+
             if (typeof globalThis.crypto === 'undefined') {
                 // Extensions use this for device ids and cache-busting nonces, not
                 // for anything secret. Math.random is what is available in here.
@@ -652,6 +832,57 @@ internal object SflxShim {
                     arrayBuffer: function () { throw new Error('Not implemented'); }
                 };
             }
+
+            // `fetch` is the same synchronous request, not a Promise.
+            //
+            // The mobile host this stands in for answers `fetch(url, opts)`
+            // with a response object at once; an extension reads `res.status`
+            // on the next line. Our shared `fetch` was async, so every one of
+            // those reads was `undefined`, every request looked like "no
+            // result", and Amazon retried its way through the whole ladder:
+            // "initSession config.json status: undefined", "Using fallback
+            // random session", then no search results at all. The reference
+            // host's own bridge comments on exactly this (Mornye-Python,
+            // `mornye/extensions/_bridge.js`).
+            //
+            // `await fetch(...)` still works: awaiting a plain value yields it.
+            globalThis.fetch = function (url, options) {
+                var opts = options && typeof options === 'object' ? options : {};
+                var method = String(opts.method || 'GET').toUpperCase();
+                var headers = opts.headers && typeof opts.headers === 'object' ? opts.headers : {};
+                var body = opts.body === undefined || opts.body === null
+                    ? null
+                    : (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body));
+                var res = __sflx_http(url, method, headers, body) || {};
+                var bodyText = typeof res.body === 'string' ? res.body : '';
+                var responseHeaders = res.headers && typeof res.headers === 'object' ? res.headers : {};
+                if (typeof responseHeaders.get !== 'function') {
+                    responseHeaders.get = function (name) {
+                        if (name === null || name === undefined) return null;
+                        var wanted = String(name).toLowerCase();
+                        for (var key in responseHeaders) {
+                            if (key !== 'get' && String(key).toLowerCase() === wanted) {
+                                return String(responseHeaders[key]);
+                            }
+                        }
+                        return null;
+                    };
+                }
+                return {
+                    ok: !!res.ok,
+                    status: typeof res.status === 'number' ? res.status : 0,
+                    statusCode: typeof res.status === 'number' ? res.status : 0,
+                    statusText: res.statusText || (res.ok ? 'OK' : 'Error'),
+                    url: res.url || __sflx_goString(url),
+                    body: bodyText,
+                    headers: responseHeaders,
+                    text: function () { return bodyText; },
+                    json: function () {
+                        try { return JSON.parse(bodyText); } catch (e) { return null; }
+                    },
+                    arrayBuffer: function () { throw new Error('Not implemented'); }
+                };
+            };
 
             globalThis.http = {
                 get: function (url, headers) { return __sflx_http(url, 'GET', headers, null); },

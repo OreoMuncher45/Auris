@@ -659,6 +659,23 @@ internal object QuickJsExecutor {
                     }
                     return runCatching {
                         val result = fetchUrlSync(url, method, headersJson, body)
+                        // The synchronous bridge the Mornye shim rides on used
+                        // to be silent, which hid the one fact that matters when
+                        // a catalogue answers 200 with nothing in it: how big
+                        // the answer was. Log sizes, never the body, except for
+                        // an Amazon answer with no search template in it — that
+                        // is the refusal itself, and it holds no credentials.
+                        TrackLog.d(
+                            TAG,
+                            "  httpSync $method ${redactModuleUrl(url)} req=${body?.length ?: 0}" +
+                                " → HTTP ${result.code} (${result.body.length} chars)",
+                        )
+                        if (url.contains("a2z.com") && !result.body.contains("SearchTemplate")) {
+                            TrackLog.w(
+                                TAG,
+                                "  amazon answer without a search template: ${result.body.take(400)}",
+                            )
+                        }
                         JSONObject()
                             .put("ok", result.code in 200..299)
                             .put("status", result.code)
