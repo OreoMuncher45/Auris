@@ -5539,8 +5539,10 @@ private fun RootPage(
             // is where a whole release is asked for — and the tracks
             // arrive stamped with the album they came off, which is what
             // the download record groups them under.
+            // Through openBrowseMenu, so the menu hangs off the ⋯ that
+            // recorded itself and no earlier hold is reused.
             onMore = { songs ->
-                sheets.browseMenu.target = BrowseTarget(
+                pageActions.openBrowseMenu(BrowseTarget(
                     browseId = page.browseId,
                     title = page.title,
                     subtitle = page.subtitle,
@@ -5549,7 +5551,7 @@ private fun RootPage(
                     songs = songs.map(withAlbum),
                     fromCard = false,
                     downloadId = pageActions.downloadIdFor(page.browseId),
-                )
+                ))
             },
             onArtistClick = { id, name ->
                 viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
