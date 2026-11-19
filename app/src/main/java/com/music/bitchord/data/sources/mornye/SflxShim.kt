@@ -968,7 +968,15 @@ internal object SflxShim {
                         .trim();
                 },
                 buildFilename: function () { return ''; },
-                getLocalTime: function () { return { error: 'this host does not implement gobackend.getLocalTime' }; },
+                // The device's wall clock, in the reference host's shape.
+                // QuickJS has no `Intl`, so the zone is "Local" and the offset
+                // carries it, in `Date#getTimezoneOffset` minutes (UTC+7 is
+                // -420), the convention Spotify Web's own table is keyed by.
+                getLocalTime: function () {
+                    var now = new Date();
+                    return { hour: now.getHours(), minute: now.getMinutes(), timezone: 'Local',
+                             offsetMinutes: now.getTimezoneOffset() };
+                },
                 getAudioQuality: function () { return { error: 'this host does not read files' }; },
                 getLyricsLRC: function () { return { error: 'this host does not implement gobackend.getLyricsLRC' }; },
                 checkISRCExists: function () { return { exists: false }; },

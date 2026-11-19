@@ -153,6 +153,9 @@ class SflxStreamAdapterTest {
               }
               const searched = JSON.parse(await module.exports.searchTracks('telekinesis', 5, { settings: {} }));
               out.push({ case: 'search', answer: { ids: searched.tracks.map(t => t.id) }, calls: [], restored: true });
+              const now = new Date();
+              out.push({ case: 'local time', answer: { time: gobackend.getLocalTime(), hour: now.getHours(),
+                         offset: now.getTimezoneOffset() }, calls: [], restored: true });
               console.log(JSON.stringify(out));
             })();
         """
@@ -185,6 +188,19 @@ class SflxStreamAdapterTest {
         val own = case("own row")
         assertFalse(own.calls().contains("trusted preparedContext.track"))
         assertFalse("host_track is still there", own.calls().contains("getTrack"))
+    }
+
+    @Test
+    fun `the local time is the device's clock in the reference host's shape`() {
+        // Spotify Web, YouTube Music and Jellyfin read it for their home-feed
+        // greeting and time zone. It used to answer with only an error.
+        val answer = case("local time").answer()
+        val time = answer.getValue("time").jsonObject
+        assertFalse(time.containsKey("error"))
+        assertEquals(answer.number("hour"), time.number("hour"))
+        assertTrue(time.number("minute") in 0..59)
+        assertEquals("Local", time.text("timezone"))
+        assertEquals(answer.number("offset"), time.number("offsetMinutes"))
     }
 
     @Test
