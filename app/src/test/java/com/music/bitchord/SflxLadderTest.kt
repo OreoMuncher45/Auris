@@ -29,6 +29,15 @@ class SflxLadderTest {
     }
 
     @Test
+    fun `a decrypted local file is built, not skipped for having no URL`() = runBlocking {
+        val local = """{"track":{"id":"1"},"error":"","localFile":"/sandbox/1.flac"}"""
+        val built = ArrayList<String>()
+        val result = SflxHost.ladder(listOf("flac"), { Result.success(local) }, { tier, raw -> built += raw; tier })
+        assertEquals("flac", result.getOrNull())
+        assertEquals(listOf(local), built)
+    }
+
+    @Test
     fun `a playable preferred tier returns at once`() = runBlocking {
         val asked = ArrayList<String>()
         val result = SflxHost.ladder(listOf("best", "opus"), { tier -> asked += tier; Result.success(clear) }, { tier, _ -> tier })

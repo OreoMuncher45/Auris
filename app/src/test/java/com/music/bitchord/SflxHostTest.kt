@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.sources.mornye.SflxException
 import com.music.bitchord.data.sources.mornye.SflxHost
 import com.music.bitchord.data.sources.mornye.SflxManifest
 import com.music.bitchord.data.sources.mornye.SflxManifestParser
@@ -84,6 +85,38 @@ class SflxHostTest {
             val parsed = SflxRows.parse(answer)
             assertTrue("$answer should map to no rows", parsed.response.tracks.isEmpty())
         }
+    }
+
+    @Test
+    fun `a search the extension refused is a failure, not an empty result`() {
+        // Qobuz 1.2.27 and Beatport 1.0.2 search through a signed session, and
+        // before Verify they answer like this. Shown as "0 results", the
+        // listener was never told to verify.
+        for ((answer, reason) in listOf(
+            """{"error":"VERIFY_REQUIRED"}""" to "VERIFY_REQUIRED",
+            """{"tracks":[],"total":0,"error":"Verification required"}""" to "Verification required",
+        )) {
+            val result = SflxRows.searchAnswer(answer)
+            assertTrue("$answer should fail", result.isFailure)
+            assertTrue(result.exceptionOrNull() is SflxException)
+            assertEquals(reason, result.exceptionOrNull()?.message)
+        }
+    }
+
+    @Test
+    fun `an empty search with no error is still an empty search`() {
+        for (answer in listOf("""{"tracks":[],"total":0,"error":""}""", """{"tracks":[]}""", "{}", """{"error":"  "}""")) {
+            val result = SflxRows.searchAnswer(answer)
+            assertTrue("$answer is a plain miss", result.isSuccess)
+            assertTrue(result.getOrThrow().rows.isEmpty())
+        }
+    }
+
+    @Test
+    fun `rows that come with an error are still the answer`() {
+        val result = SflxRows.searchAnswer("""{"tracks":[{"id":"a","title":"A"}],"error":"partial"}""")
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("a"), result.getOrThrow().rows.map { it.result.id })
     }
 
     // ── Quality ──────────────────────────────────────────────────────────
