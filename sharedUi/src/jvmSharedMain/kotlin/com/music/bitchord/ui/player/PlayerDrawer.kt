@@ -254,6 +254,9 @@ private fun DrawerBody(
     val holdsFocus = remember { BooleanArray(1) }
     if (!visible) SideEffect { if (holdsFocus[0]) focusManager.clearFocus(force = true) }
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    // Read as a release lands: a pull begun while up and let go as the
+    // drawer goes dismisses nothing a second time.
+    val currentVisible by rememberUpdatedState(visible)
     // A short drag's way back to rest, while it runs: stopped by the next
     // drag, so the two never write the offset over each other.
     val springBack = remember { arrayOfNulls<Job>(1) }
@@ -305,7 +308,8 @@ private fun DrawerBody(
 
             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (drag.floatValue <= 0f) return Velocity.Zero
-                dismissOnRelease()
+                // Still taken, so it doesn't reach the player's sheet.
+                if (currentVisible) dismissOnRelease()
                 return available
             }
 

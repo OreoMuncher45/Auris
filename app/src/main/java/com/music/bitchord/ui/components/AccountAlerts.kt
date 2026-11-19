@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -875,7 +877,7 @@ fun AlertScaffold(
     AlertCard(hazeState, onDismiss, modifier, content)
 }
 
-@OptIn(ExperimentalHazeMaterialsApi::class)
+@OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun AlertCard(
     hazeState: HazeState?,
@@ -922,7 +924,13 @@ private fun AlertCard(
                     },
                 )
                 .onFocusChanged { holdsFocus[0] = it.hasFocus }
+                // Covered or going, nothing on it can take the focus — Tab
+                // from the dialog on top never lands here, where every key
+                // is swallowed and the focus couldn't leave again.
+                .focusProperties { if (!interactive) enter = { FocusRequester.Cancel } }
+                .focusGroup()
                 .focusRequester(cardFocus)
+                .focusProperties { canFocus = interactive }
                 .focusable()
                 // The tap-catcher below isn't a second stop for the keyboard.
                 .focusProperties { canFocus = false }

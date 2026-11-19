@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.ExperimentalTestApi
 import org.junit.Assert.assertTrue
 import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.focus.onFocusChanged
@@ -229,6 +233,20 @@ class DialogHostTest {
         second = true
         compose.waitForIdle()
         assertFalse("the covered dialog's row lets go of the focus", rowFocused)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun tabFromTheDialogOnTopNeverReachesTheOneItCovers() {
+        custom = true
+        compose.waitForIdle()
+        second = true
+        compose.waitForIdle()
+        repeat(6) {
+            compose.onRoot().performKeyInput { pressKey(Key.Tab) }
+            compose.waitForIdle()
+            assertFalse("Tab ${it + 1} stays out of the covered dialog", rowFocused)
+        }
     }
 
     private companion object {
