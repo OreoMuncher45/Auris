@@ -1,5 +1,12 @@
 package com.music.bitchord.ui.components.menu
 
+import com.music.bitchord.ui.components.AlertScaffold
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
 import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
@@ -47,7 +54,9 @@ class DialogHostTest {
     private val host = DialogHostState()
     private var first by mutableStateOf(false)
     private var second by mutableStateOf(false)
+    private var custom by mutableStateOf(false)
     private var confirmed = 0
+    private var languageSet = 0
     private var reduceDynamicBlur = false
 
     @Before
@@ -78,6 +87,19 @@ class DialogHostTest {
                                 onConfirm = {},
                                 onDismiss = { second = false },
                             )
+                        }
+                        // A dialog with a control of its own, as the language
+                        // pickers have: a plain clickable row, no AlertAction.
+                        if (custom) {
+                            AlertScaffold(hazeState = null, onDismiss = { custom = false }) {
+                                Box(
+                                    Modifier
+                                        .testTag(ROW)
+                                        .fillMaxWidth()
+                                        .height(56.dp)
+                                        .clickable { languageSet++ },
+                                )
+                            }
                         }
                         DialogHostOverlay(host, hazeState = null)
                     }
@@ -149,7 +171,27 @@ class DialogHostTest {
         assertEquals(1, confirmed)
     }
 
+    @Test
+    fun aCustomControlInAClosingDialogDoesNothing() {
+        custom = true
+        compose.waitForIdle()
+        val row = compose.onNodeWithTag(ROW).fetchSemanticsNode().boundsInRoot.center
+        compose.mainClock.autoAdvance = false
+        custom = false
+        Snapshot.sendApplyNotifications()
+        // The asker lets go on one frame and the overlay turns to its exit on
+        // the next: two frames in, still at the very start of the exit.
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
+        compose.onRoot().performTouchInput { click(row) }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals("a row tapped as the dialog goes changes nothing", 0, languageSet)
+    }
+
     private companion object {
+        const val ROW = "row"
         const val FIRST = "Clear the cache?"
         const val SECOND = "Sign out?"
         const val CONFIRM = "Clear"

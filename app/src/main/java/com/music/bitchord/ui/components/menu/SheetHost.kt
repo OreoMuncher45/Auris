@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.key
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.material3.ProvideTextStyle
@@ -37,43 +39,59 @@ class SheetHostState {
         val content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     )
 
-    internal var request by mutableStateOf<Request?>(null)
-        private set
+    /**
+     * Every sheet asked for, oldest first. Usually one; a sheet opened from
+     * a sheet — a colour picker from the player colours — stands over it,
+     * and closing it shows the one beneath again.
+     */
+    internal val requests = mutableStateListOf<Request>()
+
+    /** Every sheet on screen: the ones asked for, and any still on its way down. */
+    internal val shown = mutableStateListOf<Request>()
 
     internal fun open(
         dragFromContent: Boolean,
         onClosed: () -> Unit,
         content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
-    ): Request = Request(dragFromContent, onClosed, content).also { request = it }
-
-    /** Closed from the sheet — the scrim, Back, a drag, a row: tells its asker. */
-    fun close() {
-        val closing = request ?: return
-        request = null
-        closing.onClosed()
+    ): Request = Request(dragFromContent, onClosed, content).also {
+        requests += it
+        shown += it
     }
 
-    /** Closed by its asker, who already knows: [request] only, if it is still the one up. */
+    /** [request] closed from the sheet — the scrim, Back, a drag, a row: tells its asker. */
+    internal fun close(request: Request) {
+        if (requests.remove(request)) request.onClosed()
+    }
+
+    /** [request] let go by its asker, who already knows. */
     internal fun withdraw(request: Request) {
-        if (this.request === request) this.request = null
+        requests.remove(request)
+    }
+
+    /** [request] is all the way down after going. */
+    internal fun gone(request: Request) {
+        if (request !in requests) shown.remove(request)
     }
 }
 
 val LocalSheetHost = staticCompositionLocalOf<SheetHostState?> { null }
 
-/** Draws [state]'s sheet. Compose it among the root's last overlays. */
+/** Draws [state]'s sheets, each over the one before. Compose it among the root's last overlays. */
 @Composable
 fun SheetHostOverlay(state: SheetHostState) {
-    val request = state.request
-    // Kept for the exit, so the closing sheet keeps the drag rule it had.
-    val last = remember { arrayOfNulls<SheetHostState.Request>(1) }
-    if (request != null) last[0] = request
-    AppSheet(
-        item = request,
-        onDismiss = state::close,
-        dragFromContent = (request ?: last[0])?.dragFromContent ?: true,
-    ) { shown ->
-        shown.content(this) { state.close() }
+    state.shown.toList().forEach { request ->
+        key(request) {
+            AppSheet(
+                item = request.takeIf { it in state.requests },
+                onDismiss = { state.close(request) },
+                dragFromContent = request.dragFromContent,
+                // Only the top sheet keeps the focus in.
+                trapFocus = { state.requests.lastOrNull() === request },
+                onGone = { state.gone(request) },
+            ) { shown ->
+                shown.content(this) { state.close(shown) }
+            }
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.music.bitchord.ui.components.menu.ConfirmationPresenter
 import com.music.bitchord.ui.components.menu.LocalMenuInteractive
 import com.music.bitchord.ui.components.menu.LocalInDialogHost
@@ -897,9 +899,22 @@ private fun AlertCard(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = {},
-                ),
+                )
+                // Mid-exit, nothing in it answers, whatever its controls are:
+                // out of the accessibility tree, and every touch taken by the
+                // cover below before it reaches a row.
+                .then(if (interactive) Modifier else Modifier.clearAndSetSemantics { }),
             content = content,
         )
+        if (!interactive) Box(Modifier.matchParentSize().pointerInput(Unit) { swallowAllTouches() })
+    }
+}
+
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.swallowAllTouches() {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() }
+        }
     }
 }
 

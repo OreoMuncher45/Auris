@@ -44,6 +44,7 @@ class SheetHostTest {
 
     private val host = SheetHostState()
     private var wanted by mutableStateOf(false)
+    private var picking by mutableStateOf(false)
     private var dismissed = 0
 
     @Before
@@ -60,6 +61,12 @@ class SheetHostTest {
                                 wanted = false
                             }) { _ ->
                                 Box(Modifier.testTag(BODY).fillMaxWidth().height(200.dp))
+                                // A sheet opened from this one: a colour picker.
+                                if (picking) {
+                                    HostedSheet(onDismiss = { picking = false }) { _ ->
+                                        Box(Modifier.testTag(PICKER).fillMaxWidth().height(120.dp))
+                                    }
+                                }
                             }
                         }
                         // The root's overlay, last.
@@ -99,7 +106,26 @@ class SheetHostTest {
         assertEquals("the screen let go itself; nobody tells it", 0, dismissed)
     }
 
+    @Test
+    fun aSheetOpenedFromASheetStandsOverItAndGivesItBack() {
+        wanted = true
+        compose.waitForIdle()
+        picking = true
+        compose.waitForIdle()
+        compose.onNodeWithTag(PICKER).assertExists()
+        compose.onNodeWithTag(BODY).assertExists()
+
+        // The picker closed, the sheet it was opened from is there again —
+        // not taken down with it.
+        picking = false
+        compose.waitForIdle()
+        compose.onNodeWithTag(PICKER).assertDoesNotExist()
+        compose.onNodeWithTag(BODY).assertExists()
+        assertEquals("closing the picker isn't closing the sheet", 0, dismissed)
+    }
+
     private companion object {
+        const val PICKER = "picker"
         const val BODY = "body"
     }
 }

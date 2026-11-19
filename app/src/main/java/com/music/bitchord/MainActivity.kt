@@ -7085,7 +7085,10 @@ private fun RootOverlays(
             // The extension that answers lyrics has its own settings, and
             // one of them is what makes it answer at all. The dialog's
             // door opens the same sheet the sources screen opens.
+            // Hands over rather than opening underneath: dialogs are drawn
+            // over sheets, so the settings sheet would sit under this dialog.
             onOpenExtensionSettings = { id ->
+                sheets.showLyricsSources = false
                 sheets.editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
             },
         )

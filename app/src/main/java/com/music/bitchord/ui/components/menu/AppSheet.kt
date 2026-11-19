@@ -117,6 +117,8 @@ fun <T : Any> AppSheet(
      * sheet stacked on this one — take the focus; the host says when.
      */
     trapFocus: () -> Boolean = { true },
+    /** Called once the sheet is all the way down after going, so a host can forget it. */
+    onGone: () -> Unit = {},
     content: @Composable ColumnScope.(T) -> Unit,
 ) {
     val expanded = item != null
@@ -143,8 +145,12 @@ fun <T : Any> AppSheet(
     }
     if (!expanded && !sheet.stillVisible) {
         sheet.item = null
+        SideEffect { onGone() }
         return
     }
+    // A dialog up over the sheet needs the focus for its field; the trap
+    // gives way to it for as long as one is up.
+    val dialogs = LocalDialogHost.current
     val current = sheet.item ?: return
 
     // A sheet on its way out keeps nothing focused: the keyboard goes with
@@ -319,7 +325,10 @@ fun <T : Any> AppSheet(
                         .focusRequester(sheetFocus)
                         .focusProperties {
                             if (expanded) {
-                                exit = { if (trapFocus()) FocusRequester.Cancel else FocusRequester.Default }
+                                exit = {
+                                    val dialogUp = dialogs?.requests?.isNotEmpty() == true
+                                    if (trapFocus() && !dialogUp) FocusRequester.Cancel else FocusRequester.Default
+                                }
                             } else {
                                 enter = { FocusRequester.Cancel }
                             }
