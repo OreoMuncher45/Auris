@@ -628,9 +628,18 @@ object AudioCache {
             offline = ::isOffline,
             isComplete = ::isComplete,
             isKeptOrigin = ::isKeptOrigin,
-        )?.also { key ->
+        )?.let { key ->
+            // A playback request is only lent a copy it can later tell apart
+            // from a replacement. Unstamped, it plays the preferred key from
+            // the network instead; the complete copy stays for a later try.
+            val request = openingRequest.get()
+            if (request != null) {
+                val token = lendToken(key)
+                if (token == BorrowedEntries.NO_TOKEN) return null
+                request.lend(key, token)
+            }
             borrowedKeys.lend(key)
-            openingRequest.get()?.lend(key, lendToken(key))
+            key
         }
     }
 
@@ -662,8 +671,13 @@ object AudioCache {
         do token = java.util.concurrent.ThreadLocalRandom.current().nextLong() while (token == BorrowedEntries.NO_TOKEN)
         runCatching {
             cache.applyContentMetadataMutations(key, ContentMetadataMutations().set(META_LEND_TOKEN, token))
-        }.getOrElse { return BorrowedEntries.NO_TOKEN }
-        token
+        }
+        // Read back rather than trusted: SimpleCache can update the index in
+        // memory and then fail to persist it, and what the borrower is later
+        // checked against is the in-memory value. Anything else refuses the
+        // loan — see [completeSibling].
+        val stamped = cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN)
+        if (stamped == token) token else BorrowedEntries.NO_TOKEN
     }
 
     /**
@@ -674,23 +688,45 @@ object AudioCache {
      * Keys the request was not lent pass straight through.
      */
     private fun lentView(lent: BorrowedEntries): Cache = object : Cache by cache {
+        // Every check runs under SimpleCache's own monitor — the one its
+        // remove, write and span methods synchronise on — so no discard or
+        // refill can land between the check and what it guards.
+        private val monitor = cache as Object
+
         private fun check(key: String) {
             val token = lent.tokenOf(key) ?: return
-            if (token == BorrowedEntries.NO_TOKEN) return
             if (cache.getContentMetadata(key).get(META_LEND_TOKEN, BorrowedEntries.NO_TOKEN) != token) {
                 throw Cache.CacheException("cache entry $key no longer holds the copy this request was lent")
             }
         }
 
-        override fun startReadWrite(key: String, position: Long, length: Long): CacheSpan {
+        // CacheDataSource reads the content length from here to decide where
+        // the entry ends, before it asks for any span: a shorter replacement
+        // would otherwise read as a clean end-of-input.
+        override fun getContentMetadata(key: String): ContentMetadata = synchronized(monitor) {
             check(key)
-            return cache.startReadWrite(key, position, length)
+            cache.getContentMetadata(key)
         }
 
-        override fun startReadWriteNonBlocking(key: String, position: Long, length: Long): CacheSpan? {
-            check(key)
-            return cache.startReadWriteNonBlocking(key, position, length)
-        }
+        override fun startReadWriteNonBlocking(key: String, position: Long, length: Long): CacheSpan? =
+            synchronized(monitor) {
+                check(key)
+                cache.startReadWriteNonBlocking(key, position, length)
+            }
+
+        // SimpleCache.startReadWrite's own loop, with the check repeated after
+        // every wait: the entry can be replaced while this request waits for
+        // another writer's hole to be released.
+        override fun startReadWrite(key: String, position: Long, length: Long): CacheSpan =
+            synchronized(monitor) {
+                var span: CacheSpan? = null
+                while (span == null) {
+                    check(key)
+                    span = cache.startReadWriteNonBlocking(key, position, length)
+                    if (span == null) monitor.wait()
+                }
+                span
+            }
     }
 
     /**
