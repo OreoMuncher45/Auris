@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -71,7 +72,13 @@ fun AccountProfileSelector(
     val shape = MaterialTheme.shapes.extraLarge
     Column(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            .clickable(onClick = onDismiss),
+            // A tap on the page dismisses; nothing on the page was pressed,
+            // so nothing ripples across it.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
@@ -92,7 +99,12 @@ fun AccountProfileSelector(
                         )
                     },
                 )
-                .clickable(onClick = {}),
+                // Swallows taps between rows; it isn't a control itself.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         ) {
             LazyColumn {
                 item { Text(stringResource(R.string.switch_account), style = MaterialTheme.typography.titleLarge,

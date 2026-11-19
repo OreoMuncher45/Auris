@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -7922,7 +7923,13 @@ internal fun FrostedSortMenu(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
-            .clickable(onClick = onDismiss),
+            // A tap on the page dismisses; nothing on the page was pressed,
+            // so nothing ripples across it.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
         contentAlignment = Alignment.TopEnd,
     ) {
         Surface(
@@ -7943,7 +7950,12 @@ internal fun FrostedSortMenu(
                         )
                     },
                 )
-                .clickable(onClick = {}),
+                // Swallows taps between rows; it isn't a control itself.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 // Date added is one row, Spotify-style: the arrow on it shows
