@@ -116,6 +116,13 @@ class SflxVerifyActivity : AppCompatActivity() {
     private var extensionId: String? = null
     private var finished = false
 
+    /**
+     * Grants already handed to an exchange. The WebView reports one callback URL
+     * through several of its hooks, and the bridge can post the same grant too;
+     * a grant is single-use, so only its first delivery is redeemed.
+     */
+    private val redeeming = java.util.Collections.synchronizedSet(HashSet<String>())
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -348,9 +355,11 @@ class SflxVerifyActivity : AppCompatActivity() {
             state = null
         }
         if (grant.isBlank()) return
+        if (!redeeming.add(grant)) return
         redeem({ SflxCatalog.host?.completeGrantForState(grant, state) == true }) { ok ->
             Log.d(TAG, "sflx verification: grant ${if (ok) "redeemed" else "refused"}")
-            if (ok) finishWith(true)
+            // A refusal (a dropped connection, say) can be pasted and tried again.
+            if (ok) finishWith(true) else redeeming.remove(grant)
         }
     }
 
@@ -390,6 +399,7 @@ class SflxVerifyActivity : AppCompatActivity() {
             return true
         }
 
+        if (!redeeming.add(grant)) return true
         redeem({ SflxCatalog.host?.completeGrant(id, grant, state) == true }) { ok ->
             Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
             finishWith(ok)
