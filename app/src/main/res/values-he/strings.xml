@@ -881,7 +881,8 @@
 
     <string name="output_precision">דיוק פלט</string>
     <string name="bit_perfect">פלט ביט-מושלם</string>
-    <string name="bit_perfect_subtitle">שולח את הדגימות המפוענחות ללא שינוי: ללא DSP, ללא איזון עוצמה וללא מעבר הדרגתי. היציאה חייבת לתמוך בפורמט המקור.</string>
+    <string name="bit_perfect_subtitle">שולח את הדגימות המפוענחות ללא שינוי: ללא DSP, ללא איזון עוצמה, ללא מעבר הדרגתי וללא Automix. היציאה חייבת לתמוך בפורמט המקור.</string>
+    <string name="transitions_off_bit_perfect">כבוי כל עוד פלט ביט-מושלם פועל.</string>
 
     <string name="personal">אישי</string>
 

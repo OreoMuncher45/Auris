@@ -877,7 +877,8 @@
 
     <string name="output_precision">Précision de sortie</string>
     <string name="bit_perfect">Sortie bit-perfect</string>
-    <string name="bit_perfect_subtitle">Envoie les échantillons décodés sans modification : sans DSP, sans normalisation du niveau ni fondu enchaîné. La sortie doit pouvoir transporter le format source.</string>
+    <string name="bit_perfect_subtitle">Envoie les échantillons décodés sans modification : sans DSP, sans normalisation du niveau, fondu enchaîné ni Automix. La sortie doit pouvoir transporter le format source.</string>
+    <string name="transitions_off_bit_perfect">Désactivé tant que la sortie bit-perfect est activée.</string>
 
     <string name="personal">Personnel</string>
 
