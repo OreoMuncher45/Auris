@@ -158,7 +158,14 @@ internal fun PlayerPanel(
     overlay: @Composable BoxScope.() -> Unit = {},
     content: @Composable () -> Unit,
 ) {
-    val full = remember { arrayOf(IntSize.Zero) }
+    // The window's size, as state the player's layout reads: a rotation lays
+    // the panel out at a new size, and only a state write tells the player
+    // inside it to follow (a plain holder kept the portrait size, #57). Taken
+    // from the constraints before the children measure, so the player gets
+    // the new size in the same pass rather than a frame late. Read in layout
+    // alone, so a change costs a relayout and no recomposition, and the value
+    // changes only when the window does — never while the player is dragged.
+    val full = remember { mutableStateOf(IntSize.Zero) }
     // Whatever takes the panel away, the pill comes back with it.
     DisposableEffect(dock) {
         onDispose { dock?.releasePanel() }
@@ -196,10 +203,14 @@ internal fun PlayerPanel(
     Box(
         modifier
             .fillMaxSize()
-            .onSizeChanged {
-                full[0] = it
-                onLaidOut(it)
+            .layout { measurable, constraints ->
+                if (constraints.hasBoundedWidth && constraints.hasBoundedHeight) {
+                    full.value = IntSize(constraints.maxWidth, constraints.maxHeight)
+                }
+                val placeable = measurable.measure(constraints)
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
             }
+            .onSizeChanged(onLaidOut)
             .onGloballyPositioned { dock?.panelPlaced(it) }
             .drawBehind {
                 if (dock == null) return@drawBehind
@@ -234,7 +245,7 @@ internal fun PlayerPanel(
             }
             Box(Modifier.fillMaxSize().clip(shape)) {
                 Box(
-                    (if (dock != null) Modifier.windowSized(dock) { full[0] } else Modifier.fillMaxSize())
+                    (if (dock != null) Modifier.windowSized(dock) { full.value } else Modifier.fillMaxSize())
                         .graphicsLayer {
                             // Once the player takes part in the docking it fades
                             // itself (and flies its cover and credits outside
