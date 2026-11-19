@@ -726,6 +726,7 @@ object AudioCache {
         val mediaId = mediaIdIn(spec.uri) ?: return
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)
+        val transport = StreamContainer.manifestMimeOf(servedUrl).orEmpty()
         val song = notedSongs[mediaId]
         // Automix's analysis-only read: its own YouTube Opus download, made
         // whatever the track is actually playing from. Never playback.
@@ -739,6 +740,7 @@ object AudioCache {
             val played = has(META_PLAYED) || (!analysis && mediaId in playedIds)
             val tagged = meta.get(META_ORIGIN, null as String?) == origin.name &&
                 meta.get(META_MEDIA_ID, null as String?) == mediaId &&
+                meta.get(META_TRANSPORT, null as String?).orEmpty() == transport &&
                 has(META_PLAYBACK) == usedByPlayback &&
                 (usedByPlayback || has(META_ANALYSIS)) &&
                 has(META_PLAYED) == played
@@ -750,6 +752,10 @@ object AudioCache {
                 ContentMetadataMutations().also { mutations ->
                     mutations.set(META_ORIGIN, origin.name)
                     mutations.set(META_MEDIA_ID, mediaId)
+                    // Persist this across process death. Otherwise a fully
+                    // cached m3u8 is served as progressive bytes before the
+                    // resolver can rediscover its type or its part headers.
+                    mutations.set(META_TRANSPORT, transport)
                     if (usedByPlayback) mutations.set(META_PLAYBACK, "1") else mutations.set(META_ANALYSIS, "1")
                     if (played) mutations.set(META_PLAYED, "1")
                     describe(mutations, song, spec.uri)
@@ -983,6 +989,9 @@ object AudioCache {
 
     /** Set once the player has played the track from this entry. */
     private const val META_PLAYED = "bc_played"
+
+    /** The resolved URL's manifest MIME, or empty for ordinary progressive audio. */
+    private const val META_TRANSPORT = "bc_transport"
     private const val MAX_NOTED_SONGS = 256
 
     private const val CACHE_STATE_PREFS = "audio_cache_state"
@@ -1017,9 +1026,32 @@ object AudioCache {
             LEGACY_ALT_SUFFIXES.any(key::endsWith)
 
     /**
+     * Whether treating this request as one progressive audio file would be
+     * wrong. A resolved manifest is an index, not contiguous audio: caching its
+     * text can bypass resolution on the next process start, losing both its
+     * Media3 MIME and the headers its init/media parts need. Its remote parts
+     * still pass through the cache individually.
+     */
+    internal fun bypassesPlaybackCache(spec: DataSpec): Boolean {
+        val scheme = spec.uri.scheme
+        if (scheme == "file" || scheme == "content") return true
+        val uri = spec.uri
+        if (uri.getQueryParameter("manifest_reopen") != null) return true
+        val mediaId = mediaIdIn(uri) ?: return false
+        val current = QualityUpgrade.forcedStream(uri) ?: StreamChoice.of(mediaId)
+        if (current?.url?.let(StreamContainer::isManifest) == true) return true
+        if (!::cache.isInitialized) return false
+        val key = spec.key ?: keyFactory.buildCacheKey(spec)
+        return runCatching {
+            !cache.getContentMetadata(key).get(META_TRANSPORT, null as String?).isNullOrEmpty()
+        }.getOrDefault(false)
+    }
+
+    /**
      * Wraps [upstream] so everything played is written to disk on the way
      * through, and anything already there is served without a request.
-     * Local file and content URIs bypass disk caching to prevent redundant writes.
+     * Local files and resolved manifests bypass disk caching: one must not be
+     * copied, the other is not contiguous audio.
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
         val cacheDs = cacheFactory(upstream).createDataSource()
@@ -1033,12 +1065,7 @@ object AudioCache {
             }
 
             override fun open(dataSpec: DataSpec): Long {
-                val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content") {
-                    upstreamDs
-                } else {
-                    cacheDs
-                }
+                activeDs = if (bypassesPlaybackCache(dataSpec)) upstreamDs else cacheDs
                 return activeDs.open(dataSpec)
             }
 

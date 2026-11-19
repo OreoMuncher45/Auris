@@ -16,32 +16,18 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
- * Builds one playable file from a segmented start.
+ * Turns an extension's segmented answer into a streamable local HLS playlist.
  *
- * Tidal, Amazon and Apple Music do not hand over a link to a whole song. Their
- * extensions parse the catalogue's own manifest and produce an ordered list of
- * parts — an initialisation segment describing the track's codec and timescale,
- * then the audio itself — which the reference host fetches concurrently and
- * concatenates byte for byte. That is the entire trick: concatenated fMP4 is a
- * valid fMP4, so no remux is needed for the lossy case, and ExoPlayer plays the
- * result exactly as it plays a download.
+ * Tidal and Apple Music parse the catalogue manifest into an initialisation
+ * segment followed by media parts. Writing those references as M3U lets Media3
+ * fetch while playing instead of waiting for a whole hi-res file before the
+ * first note. [ManifestFile] reads the same playlist when a download must be
+ * saved as one FLAC/M4A; [assemble] remains the legacy eager assembler.
  *
- * ## Why a file and not a playlist
- *
- * The player is handed a URL. A list of forty unrelated CDN links is not a URL,
- * and teaching the pipeline a second kind of source — one that has to fetch
- * parts, honour per-part headers and survive a seek into a part it has not
- * fetched — would be a second player. The parts are small (a few hundred
- * kilobytes each), the whole song is one to two seconds of a fast connection,
- * and after the first play it is a local file. The wait is shown, not hidden:
- * the caller only gets a URL once there is something to play.
- *
- * ## What is preserved from the extension
- *
- * The headers, exactly. A part URL is frequently bound to the `Origin`,
- * `Referer` or bearer header the extension built it with, and each segment can
- * carry its own on top of the response's — the reference merges the global ones
- * first and lets the segment's win, which is the order here too.
+ * HLS has no standard place for arbitrary CDN request headers, so the response
+ * and per-part maps are retained by exact segment URL. Playback restores them
+ * on each Media3 DataSpec and the downloader uses the same values. Segment
+ * values override response-wide ones, exactly as the reference host does.
  */
 internal object SflxSegments {
 
@@ -52,6 +38,33 @@ internal object SflxSegments {
 
     /** Nothing legitimate is this large; a runaway list is stopped rather than filled. */
     private const val MAX_BYTES = 512L * 1024 * 1024
+    private const val MAX_HEADER_URLS = 4096
+
+    /** Segment URL → the headers that URL's own extension response required. */
+    private val requestHeaders = object : LinkedHashMap<String, Map<String, String>>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, String>>): Boolean =
+            size > MAX_HEADER_URLS
+    }
+
+    /** The exact headers a player or downloader must send for [url], if any were registered. */
+    fun headersFor(url: String): Map<String, String>? = synchronized(requestHeaders) {
+        requestHeaders[url]
+    }
+
+    private fun rememberHeaders(
+        segments: List<ModuleStreamSegment>,
+        headers: Map<String, String>,
+    ) = synchronized(requestHeaders) {
+        segments.forEach { segment ->
+            // Same precedence as the reference host and the old assembler:
+            // response-wide values first, then this part's own overrides.
+            requestHeaders[segment.url] = if (segment.headers.isNullOrEmpty()) {
+                headers.toMap()
+            } else {
+                headers + segment.headers
+            }
+        }
+    }
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -88,6 +101,7 @@ internal object SflxSegments {
         key: String,
         segments: List<ModuleStreamSegment>,
         durationMs: Long?,
+        headers: Map<String, String> = emptyMap(),
     ): File? {
         val usable = segments.filter { it.url.isNotBlank() }
         // An init segment alone is not a song.
@@ -107,15 +121,27 @@ internal object SflxSegments {
             }
             append("#EXT-X-ENDLIST\n")
         }
-        val target = File(directory, "${nameOf(extensionId, key)}.m3u8")
+        // The content, not only the track id, names the file. A quality swap
+        // can resolve the same song again while Media3 still has the first
+        // playlist open; replacing that pathname swapped its segment list
+        // underneath the reader and could end playback at the next boundary.
+        val variant = digest(body).take(12)
+        val target = File(directory, "${nameOf(extensionId, key)}-$variant.m3u8")
+        if (target.isFile) {
+            rememberHeaders(usable, headers)
+            return target
+        }
         return runCatching {
-            val tmp = File(directory, "${target.name}.tmp")
+            // Unique temp names also make two simultaneous resolutions of the
+            // same track independent. renameTo publishes atomically on Android;
+            // never delete the old target first and leave a reader with nothing.
+            val tmp = File.createTempFile("${target.name}.", ".tmp", directory)
             tmp.writeText(body)
-            if (target.exists()) target.delete()
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
             }
+            rememberHeaders(usable, headers)
             TrackLog.d(TAG, "wrote ${target.name}: ${media.size} parts to stream")
             target
         }.getOrNull()
@@ -244,11 +270,10 @@ internal object SflxSegments {
      * filename. Eight bytes of SHA-256 is enough to keep two ids apart in one
      * directory.
      */
-    private fun nameOf(extensionId: String, key: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("$extensionId::$key".toByteArray())
-            .take(8)
-            .joinToString("") { "%02x".format(it) }
-        return "sflx-$digest"
-    }
+    private fun nameOf(extensionId: String, key: String): String =
+        "sflx-${digest("$extensionId::$key").take(16)}"
+
+    private fun digest(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray())
+        .joinToString("") { "%02x".format(it) }
 }

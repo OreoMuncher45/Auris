@@ -1294,11 +1294,10 @@ object SourceResolver {
      *   instead of answering from whichever of them are quick — affordable only
      *   when nobody is waiting on the first note.
      * @param strictLength requires a candidate's runtime to agree with
-     *   [target]'s to within [UPGRADE_DRIFT_SEC]. Kept apart from [waitForAll]
-     *   because it is only meaningful when the target *has* a runtime:
-     *   [TrackMatcher.withinSeconds] answers false for every candidate against a
-     *   null one, so asking for this against a target that never carried a
-     *   duration is not a strict search but an empty one.
+     *   [target]'s to within [UPGRADE_DRIFT_SEC] whenever both sides state a
+     *   runtime. Missing metadata is not treated as a disagreement; a stated
+     *   mismatch still is. Kept apart from [waitForAll] because it has no
+     *   filtering to do when the target itself never carried a runtime.
      */
     private suspend fun matchAndStream(
         source: MusicSource,
@@ -1355,7 +1354,17 @@ object SourceResolver {
             // nothing else is worth cutting a listener's audio for — or filing
             // on their device under the name of the track they asked for.
             if (strictLength) {
-                matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
+                matches = matches.filter { candidate ->
+                    // Unknown is not a mismatch. Amazon's showSearch rows
+                    // currently report duration_ms=0 even for the exact track,
+                    // so treating a missing runtime as a disagreement rejected
+                    // every candidate before getTrackStreamUrl was ever called.
+                    // A runtime the catalogue did state is still held to the
+                    // same two-second bar; only the absent claim is ignored.
+                    target.durationSec == null ||
+                        TrackMatcher.secondsOf(candidate.durationText) == null ||
+                        TrackMatcher.withinSeconds(candidate, target, UPGRADE_DRIFT_SEC)
+                }
             }
             if (matches.isEmpty()) continue
             return streamBest(source, matches, target, request)
