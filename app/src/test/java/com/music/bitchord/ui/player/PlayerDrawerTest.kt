@@ -107,12 +107,23 @@ class PlayerDrawerTest {
 
     @Test
     fun itsSlideRecomposesNothing() {
+        // Frame by frame through the opening itself, not after it has settled.
+        compose.mainClock.autoAdvance = false
         open = true
-        compose.waitForIdle()
-        val settled = bodyCompositions
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.waitForIdle()
-        assertEquals(settled, bodyCompositions)
-        assertTrue(settled in 1..2)
+        Snapshot.sendApplyNotifications()
+        // The drawer asks the host, and the host draws it a frame later.
+        var frames = 0
+        while (bodyCompositions == 0 && frames++ < 5) {
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+        }
+        val opened = bodyCompositions
+        assertTrue("composed for the opening", opened in 1..2)
+        repeat(20) {
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+        }
+        assertEquals("no frame of the slide recomposed the body", opened, bodyCompositions)
+        compose.mainClock.autoAdvance = true
     }
 }

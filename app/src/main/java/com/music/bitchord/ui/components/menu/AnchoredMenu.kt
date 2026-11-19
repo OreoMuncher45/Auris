@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
@@ -268,12 +273,22 @@ fun AnchoredMenu(
             // a press that began before the close, and keyboard activation);
             // the closing panel leaves the accessibility tree; and a sibling
             // drawn over the rows takes any new touch first.
+            // With a keyboard, the menu takes the focus as it opens, so its
+            // rows are reachable from whatever opened it — a sheet's row,
+            // whose own trap gives way while a menu is up.
+            val menuFocus = remember { FocusRequester() }
+            val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+            LaunchedEffect(expanded, keyboard) {
+                if (expanded && keyboard) runCatching { menuFocus.requestFocus() }
+            }
             CompositionLocalProvider(LocalMenuInteractive provides expanded) {
                 // No verticalScroll here: the rows bring their own, and a
                 // scrollable inside a scrollable is measured with infinite
                 // height and crashes. The cap above is what lets theirs work.
                 Column(
                     Modifier
+                        .focusRequester(menuFocus)
+                        .focusGroup()
                         .then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })
                         .padding(vertical = MenuTokens.PanelPadding),
                     content = content,

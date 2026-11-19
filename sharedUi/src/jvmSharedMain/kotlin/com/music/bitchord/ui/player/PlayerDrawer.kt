@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -155,6 +159,9 @@ class DrawerHostState {
     internal var request by mutableStateOf<Request?>(null)
         private set
 
+    /** Whether a drawer is up (asked for, not just finishing its exit) — read as state. */
+    val isOpen: Boolean get() = request != null
+
     /** The drawer on screen: the one asked for, or the last one, until its exit has played. */
     internal var shown by mutableStateOf<Request?>(null)
         private set
@@ -232,13 +239,17 @@ private fun DrawerBody(
     val height = remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    // A short drag's way back to rest, while it runs: stopped by the next
+    // drag, so the two never write the offset over each other.
+    val springBack = remember { arrayOfNulls<Job>(1) }
 
     val dismissOnRelease: () -> Unit = {
         val h = height.intValue
+        springBack[0]?.cancel()
         if (h > 0 && drag.floatValue > h * DISMISS_DRAG_FRACTION) {
             currentOnDismiss()
         } else {
-            scope.launch {
+            springBack[0] = scope.launch {
                 animate(drag.floatValue, 0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { v, _ ->
                     drag.floatValue = v
                 }
@@ -258,13 +269,17 @@ private fun DrawerBody(
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (drag.floatValue <= 0f || available.y >= 0f) return Offset.Zero
+                springBack[0]?.cancel()
                 val used = available.y.coerceAtLeast(-drag.floatValue)
                 drag.floatValue += used
                 return Offset(0f, used)
             }
 
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput && available.y > 0f) drag.floatValue += available.y
+                if (source == NestedScrollSource.UserInput && available.y > 0f) {
+                    springBack[0]?.cancel()
+                    drag.floatValue += available.y
+                }
                 if (drag.floatValue > 0f && available.y < 0f) {
                     val used = available.y.coerceAtLeast(-drag.floatValue)
                     drag.floatValue += used
@@ -350,12 +365,14 @@ private fun DrawerBody(
                     enabled = visible,
                     onClick = {},
                 )
+                .then(if (visible) Modifier else Modifier.clearAndSetSemantics { })
                 // Dragged down to dismiss, like every other sheet in the app.
                 // Upward drag is clamped to zero rather than followed: there is
                 // nothing above the drawer to reveal.
                 .then(if (drawerFollowsListScroll) Modifier.nestedScroll(drawerScroll) else Modifier)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
+                        onDragStart = { springBack[0]?.cancel() },
                         onDragEnd = dismissOnRelease,
                         onDragCancel = { drag.floatValue = 0f },
                     ) { _, delta ->
@@ -388,7 +405,24 @@ private fun DrawerBody(
                     .fillMaxWidth()
                     .padding(start = 4.dp, bottom = titleGap),
             )
-            content()
+            // On its way down, nothing in it answers: rows that read
+            // LocalMenuInteractive stop, it leaves the accessibility tree, and
+            // the cover below takes every touch, whatever its controls are.
+            CompositionLocalProvider(LocalMenuInteractive provides visible) { content() }
+        }
+        if (!visible) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clearAndSetSemantics { }
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                            }
+                        }
+                    },
+            )
         }
     }
 }

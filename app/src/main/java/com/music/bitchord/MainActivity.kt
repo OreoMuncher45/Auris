@@ -4116,6 +4116,29 @@ internal fun BitChordApp(
         // moves on every frame of the panel's travel, and read straight in the
         // page's draw it invalidated the page root on each of them. The flag
         // only flips twice per open or close.
+        // The same for a sheet, a menu, a dialog or a player drawer over the
+        // page: they draw in this window too, and a Material sheet's own
+        // window used to keep the page out of TalkBack's reach for them.
+        // Derived, so the root recomposes when one comes or goes, not more.
+        val rootSheets = LocalSheetHost.current
+        val rootDialogs = LocalDialogHost.current
+        val rootMenus = LocalMenuHost.current as? MenuHostState
+        val rootDrawers = LocalDrawerHost.current
+        val pageCoveredBySurface by remember(rootSheets, rootDialogs, rootMenus, rootDrawers) {
+            derivedStateOf {
+                rootSheets?.requests?.isNotEmpty() == true ||
+                    rootDialogs?.requests?.isNotEmpty() == true ||
+                    rootMenus?.request != null ||
+                    rootDrawers?.isOpen == true ||
+                    sheets.showDownloadManager || sheets.showSing || nav.showReplayShare ||
+                    sheets.playlistPick.songs != null || sheets.creatingPlaylist ||
+                    sheets.folderTarget != null || sheets.creatingFolder ||
+                    sheets.reorder.playlist != null ||
+                    sheets.songMenu.song != null || sheets.browseMenu.target != null ||
+                    podcastUi.episodeMenu != null || sheets.showAccountSelector
+            }
+        }
+        val pageCovered = pageCoveredByPlayer || pageCoveredBySurface
         val pageHiddenByPlayer by remember(pageCoveredByPlayer, playerDock) {
             derivedStateOf { pageCoveredByPlayer && playerDock.attached && playerDock.openFraction() >= 1f }
         }
@@ -4125,14 +4148,14 @@ internal fun BitChordApp(
                     .weight(1f)
                     .fillMaxHeight()
                     .then(
-                        if (pageCoveredByPlayer) Modifier.clearAndSetSemantics {} else Modifier,
+                        if (pageCovered) Modifier.clearAndSetSemantics {} else Modifier,
                     )
                     // Semantics hide the page from TalkBack only. A hardware
                     // keyboard's Tab could still walk out of the player into
                     // the covered search field and tabs, so focus may not
                     // enter the page while the player is over it.
                     .focusProperties {
-                        onEnter = { if (pageCoveredByPlayer) cancelFocusChange() }
+                        onEnter = { if (pageCovered) cancelFocusChange() }
                     }
                     .focusGroup()
                     // Nothing of the page under a portrait player that is fully
@@ -7096,6 +7119,8 @@ private fun RootOverlays(
             // over sheets, so the settings sheet would sit under this dialog.
             onOpenExtensionSettings = { id ->
                 sheets.showLyricsSources = false
+                // …and comes back once they are closed.
+                sheets.reopenLyricsSources = true
                 sheets.editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
             },
         )
@@ -7408,7 +7433,14 @@ private fun RootOverlays(
     sheets.editingExtension?.let { installed ->
         SflxSettingsDialog(
             installed = installed,
-            onDismiss = { sheets.editingExtension = null },
+            onDismiss = {
+                sheets.editingExtension = null
+                // Opened from Lyrics Sources: back to where it was asked from.
+                if (sheets.reopenLyricsSources) {
+                    sheets.reopenLyricsSources = false
+                    sheets.showLyricsSources = true
+                }
+            },
         )
     }
 
@@ -7943,6 +7975,8 @@ internal class RootSheets {
     var showAppLanguage by mutableStateOf(false)
     var showTranslationLanguage by mutableStateOf(false)
     var showAccountSelector by mutableStateOf(false)
+    /** Lyrics Sources handed over to an extension's settings, and wants to be back after. */
+    var reopenLyricsSources = false
     /** The account photo the switcher was opened from, in window coordinates; null opens it at the top end. */
     var accountMenuAnchor: Rect? = null
     var pickingMusicCatalogue by mutableStateOf(false)

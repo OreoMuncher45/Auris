@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.music.bitchord.ui.components.menu.ConfirmationPresenter
@@ -269,6 +270,7 @@ fun TextValueAlert(
     isPassword: Boolean = false,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -294,7 +296,8 @@ fun TextValueAlert(
                 placeholder = placeholder,
                 isPassword = isPassword,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onSave() }),
+                // Done on a dialog already going saves nothing — see AlertCard.
+                keyboardActions = KeyboardActions(onDone = { if (interactiveNow) onSave() }),
             )
         }
         AlertRule()
@@ -697,6 +700,7 @@ fun ConfirmationAlert(
     dismissLabel: String? = null,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -746,6 +750,7 @@ fun <T> ChoiceAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -848,13 +853,15 @@ private fun ChoiceRow(
 fun AlertScaffold(
     hazeState: HazeState?,
     onDismiss: () -> Unit,
+    /** Applied to the whole dialog — scrim and card — wherever it is drawn. */
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (LocalDialogHost.current != null && !LocalInDialogHost.current) {
-        HostedDialog { rootHaze -> AlertCard(rootHaze ?: hazeState, onDismiss, content) }
+        HostedDialog { rootHaze -> AlertCard(rootHaze ?: hazeState, onDismiss, modifier, content) }
         return
     }
-    AlertCard(hazeState, onDismiss, content)
+    AlertCard(hazeState, onDismiss, modifier, content)
 }
 
 @OptIn(ExperimentalHazeMaterialsApi::class)
@@ -862,6 +869,7 @@ fun AlertScaffold(
 private fun AlertCard(
     hazeState: HazeState?,
     onDismiss: () -> Unit,
+    modifier: Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -870,7 +878,7 @@ private fun AlertCard(
     BackHandler(enabled = interactive, onBack = onDismiss)
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(SCRIM_COLOR)
             .clickable(
@@ -900,10 +908,19 @@ private fun AlertCard(
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = {},
                 )
-                // Mid-exit, nothing in it answers, whatever its controls are:
-                // out of the accessibility tree, and every touch taken by the
-                // cover below before it reaches a row.
-                .then(if (interactive) Modifier else Modifier.clearAndSetSemantics { }),
+                // Mid-exit — or under a newer dialog — nothing in it answers,
+                // whatever its controls are: out of the accessibility tree,
+                // every key swallowed before it reaches a focused row, and
+                // every touch taken by the cover below.
+                .then(
+                    if (interactive) {
+                        Modifier
+                    } else {
+                        Modifier
+                            .clearAndSetSemantics { }
+                            .onPreviewKeyEvent { true }
+                    },
+                ),
             content = content,
         )
         if (!interactive) Box(Modifier.matchParentSize().pointerInput(Unit) { swallowAllTouches() })

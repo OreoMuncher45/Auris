@@ -137,9 +137,12 @@ class DialogHostTest {
         first = true
         second = true
         compose.waitForIdle()
-        compose.onNodeWithText(FIRST).assertExists()
         compose.onNodeWithText(SECOND).assertExists()
-        // Back takes the newest away first.
+        // The one underneath is out of reach — TalkBack and the keyboard
+        // included — while the newer one stands over it.
+        compose.onNodeWithText(FIRST).assertDoesNotExist()
+        assertEquals("both are up", 2, host.requests.size)
+        // Back takes the newest away first, and the one beneath answers again.
         compose.activity.onBackPressedDispatcher.onBackPressed()
         compose.waitForIdle()
         assertFalse(second)

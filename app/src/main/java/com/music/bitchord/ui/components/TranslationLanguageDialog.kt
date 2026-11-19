@@ -101,7 +101,7 @@ fun TranslationLanguageDialog(
             }
         }
     }
-    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss, modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

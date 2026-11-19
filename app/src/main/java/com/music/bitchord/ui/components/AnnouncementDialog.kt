@@ -58,7 +58,7 @@ fun AnnouncementDialog(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(ALERT_CORNER)
-    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss, modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

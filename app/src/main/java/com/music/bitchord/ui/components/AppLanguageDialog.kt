@@ -87,7 +87,7 @@ fun AppLanguageDialog(
     val shape = RoundedCornerShape(ALERT_CORNER)
     val currentLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
         ?: Locale.getDefault().language
-    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss, modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

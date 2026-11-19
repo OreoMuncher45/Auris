@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.key
 import androidx.compose.ui.unit.dp
@@ -150,9 +152,11 @@ fun HostedSheet(
  * a store to browse — laid out in the app's sheet instead: the approved plan
  * keeps dialogs for a confirmation or a name, and anything bigger is a sheet.
  * Takes AlertDialog's own slots, so a dialog becomes one by its name alone:
- * the title, the body (which scrolls inside the sheet), and the actions at
- * the end of the last line.
+ * the title, the body, and the actions at the end (wrapping onto another line
+ * rather than off the edge). The body is bounded to the sheet's room and
+ * brings its own scroll, as an AlertDialog's body has to.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HostedSheetDialog(
     onDismissRequest: () -> Unit,
@@ -170,10 +174,16 @@ fun HostedSheetDialog(
         ) {
             ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
             Spacer(Modifier.height(12.dp))
+            // Bounded to the room left under the title, so a body that
+            // scrolls (they all bring their own, as an AlertDialog's body
+            // did) scrolls there, and the actions below stay put. No scroll
+            // here: one around theirs would hand them an unbounded height.
             Box(Modifier.weight(1f, fill = false)) {
                 ProvideTextStyle(MaterialTheme.typography.bodyMedium) { text() }
             }
-            Row(
+            // At the end, and onto a second line rather than off the start
+            // edge when three of them don't fit on one.
+            FlowRow(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp),

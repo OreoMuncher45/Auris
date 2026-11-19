@@ -151,6 +151,7 @@ fun <T : Any> AppSheet(
     // A dialog up over the sheet needs the focus for its field; the trap
     // gives way to it for as long as one is up.
     val dialogs = LocalDialogHost.current
+    val menus = LocalMenuHost.current as? MenuHostState
     val current = sheet.item ?: return
 
     // A sheet on its way out keeps nothing focused: the keyboard goes with
@@ -294,6 +295,10 @@ fun <T : Any> AppSheet(
                             change.consume()
                             track(change)
                         }
+                        // The lift itself, which the drag never hands over: a
+                        // flick that stopped before letting go reads as the
+                        // stop it ended in, not the flick before it.
+                        if (ended) currentEvent.changes.firstOrNull { it.id == start.id }?.let(::track)
                         currentSettle(if (ended) tracker.calculateVelocity().y else 0f)
                     }
                 }
@@ -327,8 +332,11 @@ fun <T : Any> AppSheet(
                         .focusProperties {
                             if (expanded) {
                                 exit = {
+                                    // A dialog or a menu up over the sheet — a menu
+                                    // opened from one of its rows — takes the focus.
                                     val dialogUp = dialogs?.requests?.isNotEmpty() == true
-                                    if (trapFocus() && !dialogUp) FocusRequester.Cancel else FocusRequester.Default
+                                    val menuUp = menus?.request != null
+                                    if (trapFocus() && !dialogUp && !menuUp) FocusRequester.Cancel else FocusRequester.Default
                                 }
                             } else {
                                 enter = { FocusRequester.Cancel }

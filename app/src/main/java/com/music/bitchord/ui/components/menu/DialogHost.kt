@@ -68,10 +68,7 @@ fun DialogHostOverlay(state: DialogHostState, hazeState: HazeState?) {
     }
     val shown = if (requests.isNotEmpty()) requests.toList() else last[0] ?: return
     val progress = presence.animation.progress
-    CompositionLocalProvider(
-        LocalInDialogHost provides true,
-        LocalMenuInteractive provides presence.expanded,
-    ) {
+    CompositionLocalProvider(LocalInDialogHost provides true) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -83,9 +80,18 @@ fun DialogHostOverlay(state: DialogHostState, hazeState: HazeState?) {
                     scaleY = scale
                 },
         ) {
-            // Each over the one before; only the newest answers while a newer
-            // one stands over it, because the newest's scrim covers the rest.
-            shown.forEach { dialog -> key(dialog) { dialog.content(hazeState) } }
+            // Each over the one before, and only the newest answers: a dialog
+            // under another is out of reach by touch (the newest's scrim),
+            // by keyboard and by accessibility (its card's own guards, which
+            // read LocalMenuInteractive).
+            val newest = shown.lastOrNull()
+            shown.forEach { dialog ->
+                key(dialog) {
+                    CompositionLocalProvider(
+                        LocalMenuInteractive provides (presence.expanded && dialog === newest),
+                    ) { dialog.content(hazeState) }
+                }
+            }
         }
     }
 }
