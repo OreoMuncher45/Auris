@@ -50,6 +50,30 @@ internal class SflxSearchMemo<V>(
 
     private val answers = ConcurrentHashMap<String, Entry<V>>()
     private val flights = ConcurrentHashMap<String, CompletableDeferred<Result<V>>>()
+
+    /**
+     * Questions that were running when their answers were invalidated. Their
+     * callers still hear them — they asked before the change — but the answer
+     * is not kept, because it is the old script's or the old settings'.
+     */
+    private val fenced = ConcurrentHashMap.newKeySet<CompletableDeferred<Result<V>>>()
+
+    /** Held across "is this flight fenced" and the store, and across an invalidation. */
+    private val storing = Any()
+
+    /**
+     * Bumped by every invalidation. A caller notes it before looking in the
+     * cache and registers its question only if it has not moved, so a caller
+     * that missed the cache, paused, and arrived at the board after an
+     * invalidation cannot put a question there for later callers to join.
+     */
+    @Volatile private var generation = 0L
+
+    /** For tests: runs between a cache miss and the question being registered. */
+    internal var beforeRegister: (() -> Unit)? = null
+
+    /** For tests: runs as a finished question is about to be retired. */
+    internal var beforeRetire: (() -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** The answer to a question already asked, or null when there is none. */
@@ -72,10 +96,43 @@ internal class SflxSearchMemo<V>(
         answers.remove(key)
     }
 
-    /** Forgets every answer whose key starts with [prefix]. */
+    /**
+     * Forgets every answer whose key starts with [prefix], and the questions
+     * still running under it: a caller that arrives after this asks afresh
+     * rather than joining one of them, and what they answer is not kept.
+     */
     fun forgetMatching(prefix: String) {
-        answers.keys.removeIf { it.startsWith(prefix) }
+        synchronized(storing) {
+            generation++
+            answers.keys.removeIf { it.startsWith(prefix) }
+            flights.entries.removeIf { (key, flight) ->
+                if (key.startsWith(prefix)) {
+                    fenced.add(flight)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
     }
+
+    /**
+     * Takes a finished question off the board, and keeps its answer unless an
+     * invalidation fenced it — one step under [storing], so an invalidation
+     * cannot land between the store and the removal and leave a fence behind
+     * that nothing would ever clear.
+     */
+    private fun retire(key: String, flight: CompletableDeferred<Result<V>>, answer: Result<V>?) {
+        beforeRetire?.invoke()
+        synchronized(storing) {
+            val wasFenced = fenced.remove(flight)
+            flights.remove(key, flight)
+            if (!wasFenced) answer?.onSuccess { put(key, it) }
+        }
+    }
+
+    /** For tests: how many fences are being held. */
+    internal fun fencesHeld(): Int = fenced.size
 
     /**
      * The answer to [key], asked once.
@@ -85,29 +142,52 @@ internal class SflxSearchMemo<V>(
      * the answer is kept for the next caller.
      */
     suspend fun once(key: String, ask: suspend () -> Result<V>): Result<V> {
+        val seen = generation
         cached(key)?.let { return Result.success(it) }
+        beforeRegister?.invoke()
         val flight = CompletableDeferred<Result<V>>()
-        val running = flights.putIfAbsent(key, flight)
+        var straddled = false
+        val running = synchronized(storing) {
+            if (generation != seen) {
+                straddled = true
+                null
+            } else {
+                // Again under the lock: a flight retiring while this caller
+                // waited for it has just stored its answer, and asking a
+                // second time would resolve the same thing twice.
+                cached(key)?.let { return Result.success(it) }
+                flights.putIfAbsent(key, flight)
+            }
+        }
+        // Asked before an invalidation, registered after it: the question is
+        // answered for this caller alone, and its answer is not kept.
+        if (straddled) {
+            return try {
+                ask()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Result.failure(SflxException(error.message ?: "the question failed"))
+            }
+        }
         if (running != null) return running.await()
         scope.launch {
             val answer = try {
                 ask()
             } catch (error: Throwable) {
                 if (error is CancellationException) {
-                    flights.remove(key, flight)
+                    retire(key, flight, null)
                     flight.completeExceptionally(error)
                     return@launch
                 }
                 Result.failure(SflxException(error.message ?: "the question failed"))
             }
-            answer.onSuccess { put(key, it) }
             // Off the board before anyone hears the answer. Completing first
             // resumes the waiting caller, which may ask again — after a
-            // forget, say — before this line runs, find the finished flight
-            // still there, and be handed its old answer without asking. With
-            // the order this way round, a caller that arrives in between finds
-            // the answer in the cache, or nothing, and asks afresh.
-            flights.remove(key, flight)
+            // forget, say — before the flight is retired, find it still there,
+            // and be handed its old answer without asking. With the order this
+            // way round, a caller that arrives in between finds the answer in
+            // the cache, or nothing, and asks afresh.
+            retire(key, flight, answer)
             flight.complete(answer)
         }
         return flight.await()

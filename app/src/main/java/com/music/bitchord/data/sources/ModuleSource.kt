@@ -412,7 +412,12 @@ class ModuleSource(
                 )
                 return@withContext null
             }
-            SourceStream(url = url, format = format, headers = streamResponse.headers.orEmpty())
+            SourceStream(
+                url = url,
+                format = format,
+                headers = streamResponse.headers.orEmpty(),
+                encrypted = streamResponse.cencKid != null,
+            )
         }
 
     /**

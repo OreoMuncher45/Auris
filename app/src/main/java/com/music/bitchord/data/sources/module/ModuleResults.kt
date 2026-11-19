@@ -59,6 +59,13 @@ data class ModuleStreamResponse(
      * finished list, so the host only has to fetch and concatenate.
      */
     @SerialName("segments") val segments: List<ModuleStreamSegment>? = null,
+    /**
+     * The key id an encrypted answer's samples are under, as hex, when the
+     * source handed over its key — which is then held by
+     * [CencKeys][com.music.bitchord.playback.cenc.CencKeys], not carried here.
+     * Null for the ordinary, clear answer.
+     */
+    @SerialName("cencKid") val cencKid: String? = null,
 )
 
 /** One part of a segmented start, with whatever it alone requires. */

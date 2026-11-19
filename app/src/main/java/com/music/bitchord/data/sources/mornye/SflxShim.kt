@@ -1386,6 +1386,38 @@ internal object SflxShim {
                 if (dot < 0) return '';
                 return name.slice(dot + 1).toLowerCase();
             }
+            // What a finished `download` says it resolved, in the reference's
+            // result fields: `audio_codec` (Amazon), `format` (Jellyfin), and
+            // the depth and rate under either spelling.
+            var MIME_BY_CODEC = {
+                flac: 'audio/flac', alac: 'audio/alac', opus: 'audio/opus', eac3: 'audio/eac3',
+                'ec-3': 'audio/eac3', ac4: 'audio/ac4', 'ac-4': 'audio/ac4', aac: 'audio/mp4',
+                mp4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav'
+            };
+            function statedAudio(result) {
+                if (!result || typeof result !== 'object') return { mimeType: '', bitDepth: 0, sampleRate: 0, atmos: false };
+                var codec = text(firstOf(result.audio_codec, result.codec, result.format)).toLowerCase().split('.')[0];
+                var mime = MIME_BY_CODEC[codec] || '';
+                var depth = number(firstOf(result.bit_depth, result.actual_bit_depth), 0);
+                var rate = number(firstOf(result.sample_rate, result.actual_sample_rate), 0);
+                return {
+                    mimeType: mime,
+                    bitDepth: depth > 0 ? depth : 0,
+                    sampleRate: rate > 0 ? rate : 0,
+                    atmos: mime === 'audio/eac3' || mime === 'audio/ac4'
+                };
+            }
+
+            // The kind the manifest declares for one of its tiers, or ''.
+            function kindOfTier(tier) {
+                var wanted = text(tier).toLowerCase();
+                var list = (globalThis.__spine_sflx && globalThis.__spine_sflx.qualities) || [];
+                for (var index = 0; index < list.length; index++) {
+                    if (text(list[index].id).toLowerCase() === wanted) return text(list[index].kind).toLowerCase();
+                }
+                return '';
+            }
+
             function audioHints(path, options, context) {
                 var opts = options && typeof options === 'object' ? options : {};
                 var hinted = text(firstOf(
@@ -1445,6 +1477,31 @@ internal object SflxShim {
                     format: text(firstOf(track.format, track.codec)),
                     raw: track
                 };
+            }
+
+            // Whether a search row is a recording rather than a collection.
+            //
+            // `item_type` is the contract's own field, and every extension in
+            // the store fills it from the same four words (track, album,
+            // artist, playlist): a row that sets it is a track only when it
+            // says so. The looser `type` and `kind` mean other things in some
+            // packages (SoundCloud's `resolve`), so they only rule a row out
+            // when they name a collection. A row that says nothing is kept.
+            var TRACK_TYPES = { track: true, song: true, recording: true, audio: true };
+            var COLLECTION_TYPES = {
+                artist: true, album: true, playlist: true, station: true, podcast: true, audiobook: true,
+                episode: true, show: true, user: true, profile: true, mix: true, label: true, genre: true
+            };
+            // Own keys only: `constructor` or `toString` is not a type.
+            function listed(table, key) {
+                return Object.prototype.hasOwnProperty.call(table, key);
+            }
+            function isTrackRow(row) {
+                if (!row || typeof row !== 'object') return false;
+                var declared = text(firstOf(row.item_type, row.itemType)).toLowerCase();
+                if (declared) return listed(TRACK_TYPES, declared);
+                var loose = text(firstOf(row.type, row.kind)).toLowerCase();
+                return !loose || !listed(COLLECTION_TYPES, loose);
             }
 
             function isArray(value) {
@@ -1530,6 +1587,13 @@ internal object SflxShim {
                     var rows = [];
                     var candidates = tracksOf(result);
                     for (var i = 0; i < candidates.length; i++) {
+                        // Only tracks. Amazon's search answers with artists,
+                        // albums and playlists ahead of the recordings — for
+                        // "telekinesis travis scott", fourteen of them before
+                        // the one track — and each became a "song" that could
+                        // not be played and could push the real one out of a
+                        // shortened list. A row that names no type is kept.
+                        if (!isTrackRow(candidates[i])) continue;
                         var row = rowOf(candidates[i]);
                         if (row) rows.push(row);
                     }
@@ -1565,6 +1629,8 @@ internal object SflxShim {
                         if (extra) {
                             if (extra.headers) payload.headers = extra.headers;
                             if (extra.segments) payload.segments = extra.segments;
+                            if (extra.decryption) payload.decryption = extra.decryption;
+                            if (extra.unfinished) payload.unfinished = true;
                         }
                         return JSON.stringify(payload);
                     };
@@ -1577,9 +1643,16 @@ internal object SflxShim {
                     // downloader that validates its output path, or reads the
                     // container off its extension, is doing the ordinary thing
                     // and was being handed an empty string before.
+                    //
+                    // `.flac`, the reference host's default ("flac: decrypt to
+                    // .flac (Dart default)", in Amazon's downloader). An
+                    // extension renames the path when its container differs —
+                    // Amazon does for AC-4, E-AC-3, Opus and any encrypted
+                    // file — and with an `.m4a` placeholder that rename was
+                    // invisible, because `.m4a` is what it renames to.
                     var cacheDir = (globalThis.__spine_sflx && globalThis.__spine_sflx.cacheDir) || '';
                     var safeId = text(trackId).replace(/[^A-Za-z0-9._-]+/g, '_') || 'track';
-                    var outputPath = (cacheDir ? cacheDir + '/' : '') + safeId + '.m4a';
+                    var outputPath = (cacheDir ? cacheDir + '/' : '') + safeId + '.flac';
 
                     // The context the reference host hands a downloader: the
                     // row's own fields at the top level (an extension reads
@@ -1608,7 +1681,24 @@ internal object SflxShim {
                     // the catalogue will actually serve. An extension that
                     // cannot answer is not required to.
                     var playableId = text(trackId);
-                    if (typeof extension.checkAvailability === 'function') {
+
+                    // A track from this extension's own search is downloaded
+                    // as it is, the way the reference host does it: Amazon's
+                    // own notes call this "Flow A — Go calls download(ASIN)
+                    // directly WITHOUT checkAvailability". The availability
+                    // check is for a track from somewhere else, and it is not
+                    // free: Amazon answers it with a SongLink lookup and a full
+                    // catalogue search, seconds and megabytes inside every
+                    // stream resolution, and then handed its own row back as
+                    // prepared context, so the ASIN it found by searching was
+                    // swapped for the row's in `download` — logged as one ASIN
+                    // being "found" and another downloaded. The row also goes
+                    // in as `host_track`, the name Amazon's downloader reads,
+                    // so it does not fetch the same track's metadata again.
+                    var ownRow = row && text(firstOf(row.id, row.track_id, row.trackId, row.song_id)) === playableId;
+                    if (ownRow) {
+                        options.preparedContext = { track: row, host_track: row };
+                    } else if (typeof extension.checkAvailability === 'function') {
                         try {
                             var availability = await extension.checkAvailability(
                                 text(options.isrc || ''),
@@ -1681,22 +1771,52 @@ internal object SflxShim {
                     var marker = { __sflx_capture: true };
                     var realDownload = globalThis.file.download;
                     var realSegments = globalThis.file.downloadSegments;
+                    // The download "succeeds" without a byte moving, so the
+                    // extension finishes its own `download` and says what it
+                    // would have done with the file: Amazon's answer carries
+                    // the per-track `decryption_key` the reference host feeds
+                    // to FFmpeg, and the codec, depth and rate it resolved.
+                    // Aborting here, as this used to, dropped all of that —
+                    // and with it the only way to play an encrypted answer.
+                    // A second download, or any file or FFmpeg work on the
+                    // file that never arrived, still ends the call here; see
+                    // `guarded` below.
                     globalThis.file.download = function (url, path, opts) {
-                        if (captured === null) {
-                            captured = text(url);
-                            capturedPath = text(path) || outputPath;
-                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
-                        }
-                        throw marker;
+                        if (captured !== null || capturedSegments !== null) throw marker;
+                        captured = text(url);
+                        capturedPath = text(path) || outputPath;
+                        capturedOptions = opts && typeof opts === 'object' ? opts : null;
+                        return { success: true, path: capturedPath };
                     };
+                    // The same for a segmented answer: it "succeeds", so a key
+                    // the extension reports for it is heard and the host can
+                    // refuse what it cannot decrypt, instead of the segments
+                    // reaching the player still encrypted.
                     globalThis.file.downloadSegments = function (segments, path, opts) {
-                        if (capturedSegments === null && segments) {
-                            capturedSegments = segments;
-                            capturedPath = text(path) || outputPath;
-                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
-                        }
-                        throw marker;
+                        if (captured !== null || capturedSegments !== null || !segments) throw marker;
+                        capturedSegments = segments;
+                        capturedPath = text(path) || outputPath;
+                        capturedOptions = opts && typeof opts === 'object' ? opts : null;
+                        return { success: true, path: capturedPath };
                     };
+                    // What an extension may do to the file once it "has" it:
+                    // read it, rewrite it, convert it. There is no file, so
+                    // the call ends there — with the URL already taken, which
+                    // is exactly where it used to end.
+                    var guardedFns = [];
+                    var guard = function (holder, name) {
+                        if (!holder || typeof holder[name] !== 'function') return;
+                        var real = holder[name];
+                        guardedFns.push(function () { holder[name] = real; });
+                        holder[name] = function () {
+                            if (captured !== null || capturedSegments !== null) throw marker;
+                            return real.apply(this, arguments);
+                        };
+                    };
+                    ['getSize', 'readBytes', 'writeBytes', 'transformPatternedBlocks', 'delete',
+                        'read', 'write', 'exists'].forEach(function (name) { guard(globalThis.file, name); });
+                    ['getInfo', 'convert', 'execute'].forEach(function (name) { guard(globalThis.ffmpeg, name); });
+                    var finished = null;
                     var failure = '';
                     try {
                         // `onProgress` is a function, always: the reference
@@ -1712,6 +1832,8 @@ internal object SflxShim {
                         );
                         if (outcome && outcome.success === false) {
                             failure = text(firstOf(outcome.error_message, outcome.error, outcome.reason));
+                        } else if (outcome && typeof outcome === 'object') {
+                            finished = outcome;
                         }
                     } catch (error) {
                         // Our marker is the expected exit; anything else is the
@@ -1722,9 +1844,42 @@ internal object SflxShim {
                     } finally {
                         globalThis.file.download = realDownload;
                         globalThis.file.downloadSegments = realSegments;
+                        guardedFns.forEach(function (restore) { restore(); });
                     }
 
-                    var guessed = audioHints(capturedPath, capturedOptions, context);
+                    // The path is evidence only when the extension chose it.
+                    // The one this host offered is a placeholder, and reading
+                    // its `.m4a` back as the container is how every Amazon
+                    // FLAC answer was reported as MP4 and ranked below the
+                    // lossless request it met. Amazon renames the path itself
+                    // when the container really is MP4 (AC-4, E-AC-3, Opus,
+                    // or an encrypted file), so that case is still read.
+                    var namedByExtension = capturedPath && capturedPath !== outputPath;
+                    var guessed = audioHints(namedByExtension ? capturedPath : '', capturedOptions, context);
+                    // The audio was taken but the extension never got to say
+                    // what it would have done with it — it was stopped at file
+                    // work after the "download". A key it would have reported
+                    // then was never heard, so the host checks the file itself.
+                    var unfinished = (captured !== null || capturedSegments !== null) && finished === null;
+                    // Where the answer names no container at all, the tier it
+                    // answered is the claim: the manifest declares what kind
+                    // each of its tiers is, and a lossless tier's answer is
+                    // reported as lossless, as a module's lossless label is.
+                    if (!guessed.mimeType && kindOfTier(quality) === 'lossless') {
+                        meta.audioQuality = 'LOSSLESS';
+                    }
+                    // The extension's own account of what it resolved, when it
+                    // finished: a statement about the audio rather than about
+                    // a file name, so it outranks both readings above.
+                    var stated = statedAudio(finished);
+                    if (stated.mimeType) guessed.mimeType = stated.mimeType;
+                    if (stated.bitDepth) guessed.bitDepth = stated.bitDepth;
+                    if (stated.sampleRate) guessed.sampleRate = stated.sampleRate;
+                    if (stated.atmos && guessed.audioModes.indexOf('atmos') < 0) guessed.audioModes.push('atmos');
+                    var decryptionKey = finished ? text(firstOf(
+                        finished.decryption_key,
+                        finished.decryption && typeof finished.decryption === 'object' ? finished.decryption.key : ''
+                    )) : '';
                     var headersOf = function () {
                         return capturedOptions && capturedOptions.headers
                             && typeof capturedOptions.headers === 'object'
@@ -1759,7 +1914,12 @@ internal object SflxShim {
                         if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
                         if (guessed.bitrate) meta.bitrate = guessed.bitrate;
                         if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
-                        return answered(null, '', { segments: list, headers: headersOf() });
+                        return answered(null, '', {
+                            segments: list,
+                            headers: headersOf(),
+                            decryption: decryptionKey ? { key: decryptionKey } : null,
+                            unfinished: unfinished
+                        });
                     }
                     if (!captured) {
                         return answered(null, failure || 'the extension did not resolve a stream URL');
@@ -1775,7 +1935,11 @@ internal object SflxShim {
                     if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
                     if (guessed.bitrate) meta.bitrate = guessed.bitrate;
                     if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
-                    return answered(captured, '', { headers: headersOf() });
+                    return answered(captured, '', {
+                        headers: headersOf(),
+                        decryption: decryptionKey ? { key: decryptionKey } : null,
+                        unfinished: unfinished
+                    });
                 },
 
                 // The lyrics, from an extension that declares itself a

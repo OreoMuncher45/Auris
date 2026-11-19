@@ -60,6 +60,13 @@ data class SourceStream(
      * backend can be told apart from a failing source.
      */
     val backend: String? = null,
+    /**
+     * Whether the bytes behind [url] are Common Encryption whose key this app
+     * holds — see [CencKeys][com.music.bitchord.playback.cenc.CencKeys]. The
+     * player decrypts as it reads; a download has to be decrypted once it has
+     * landed, which is why the flag travels.
+     */
+    val encrypted: Boolean = false,
 )
 
 /**

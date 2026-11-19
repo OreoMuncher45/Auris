@@ -63,6 +63,135 @@ class SflxSearchMemoTest {
     }
 
     @Test
+    fun `an invalidation fences the questions still running`() = runBlocking {
+        // A reinstall or a settings change while the old script is still
+        // answering: a caller after it must ask the new one, and the old
+        // answer must not be kept for the cache's lifetime.
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+
+        val before = async {
+            memo.once("amazon|stream|x") {
+                asked.incrementAndGet()
+                started.complete(Unit)
+                gate.await()
+                Result.success("old script")
+            }
+        }
+        started.await()
+        memo.forgetMatching("amazon|")
+        // Bounded: a caller that wrongly joined the old flight would wait on
+        // its gate forever, and a regression should fail, not hang.
+        val after = try {
+            kotlinx.coroutines.withTimeout(5_000) {
+                memo.once("amazon|stream|x") {
+                    asked.incrementAndGet()
+                    Result.success("new script")
+                }
+            }
+        } finally {
+            gate.complete(Unit)
+        }
+
+        assertEquals("the caller after the change asked afresh", "new script", after.getOrNull())
+        assertEquals("the caller before it still hears its answer", "old script", before.await().getOrNull())
+        assertEquals(2, asked.get())
+        delay(50)
+        assertEquals("the old answer was not kept over the new one", "new script", memo.cached("amazon|stream|x"))
+        assertEquals("the fence went with the flight", 0, memo.fencesHeld())
+    }
+
+    @Test
+    fun `an invalidation as a flight retires leaves no fence behind`() = runBlocking {
+        // The invalidation lands exactly between the answer arriving and the
+        // flight being retired, through the retirement hook.
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        var overlapped = false
+        memo.beforeRetire = {
+            memo.beforeRetire = null
+            memo.forgetMatching("amazon|")
+            overlapped = true
+        }
+        val answer = memo.once("amazon|stream|x") { Result.success("old script") }
+        assertTrue("the invalidation overlapped the retirement", overlapped)
+        assertEquals("its caller still hears it", "old script", answer.getOrNull())
+        assertNull("a fenced answer is not kept", memo.cached("amazon|stream|x"))
+        assertEquals("the fence went with the flight", 0, memo.fencesHeld())
+    }
+
+    @Test
+    fun `a caller that waited on a retiring flight takes its answer`() = runBlocking {
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val retiring = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        // Hold the retiring worker just before it takes the lock, while a
+        // second caller misses the cache; then let both go.
+        memo.beforeRetire = {
+            memo.beforeRetire = null
+            retiring.complete(Unit)
+            runBlocking { release.await() }
+        }
+        val first = async(Dispatchers.Default) { memo.once("amazon|stream|y") { asked.incrementAndGet(); Result.success("one") } }
+        retiring.await()
+        // The second caller has missed the cache; now let the first retire,
+        // and register only once its answer is stored.
+        memo.beforeRegister = {
+            memo.beforeRegister = null
+            release.complete(Unit)
+            val until = System.currentTimeMillis() + 5_000
+            while (memo.cached("amazon|stream|y") == null && System.currentTimeMillis() < until) Thread.sleep(5)
+        }
+        val second = memo.once("amazon|stream|y") { asked.incrementAndGet(); Result.success("two") }
+        assertEquals("one", first.await().getOrNull())
+        assertEquals("the second caller took the stored answer", "one", second.getOrNull())
+        assertEquals(1, asked.get())
+    }
+
+    @Test
+    fun `a caller that straddles an invalidation is neither joined nor kept`() = runBlocking {
+        // Missed the cache, paused, and reached the board after an
+        // invalidation: there was no flight for the invalidation to fence.
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        memo.beforeRegister = {
+            memo.beforeRegister = null
+            memo.forgetMatching("amazon|")
+        }
+
+        val straddler = async {
+            memo.once("amazon|stream|x") {
+                asked.incrementAndGet()
+                started.complete(Unit)
+                gate.await()
+                Result.success("asked before the change")
+            }
+        }
+        started.await()
+        // Bounded: a later caller that wrongly joined the straddler would wait
+        // on its gate forever, and a regression should fail, not hang.
+        val later = try {
+            kotlinx.coroutines.withTimeout(5_000) {
+                memo.once("amazon|stream|x") {
+                    asked.incrementAndGet()
+                    Result.success("asked after the change")
+                }
+            }
+        } finally {
+            gate.complete(Unit)
+        }
+
+        assertEquals("the later caller did not join the straddler", "asked after the change", later.getOrNull())
+        assertEquals("asked before the change", straddler.await().getOrNull())
+        assertEquals(2, asked.get())
+        assertEquals("the straddler's answer was not kept", "asked after the change", memo.cached("amazon|stream|x"))
+    }
+
+    @Test
     fun `an answer is kept for the next caller`() = runBlocking {
         val memo = SflxSearchMemo<String>(ttlMs = 120_000)
         val asked = AtomicInteger(0)

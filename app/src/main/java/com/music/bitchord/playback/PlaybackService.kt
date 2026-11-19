@@ -63,6 +63,7 @@ import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.datasource.DataSource
@@ -1622,7 +1623,9 @@ class PlaybackService : MediaLibraryService() {
         // cannot open at all. A DSD file leaves the extractor as float PCM.
         mediaSourceFactory = DefaultMediaSourceFactory(
             AudioCache.playbackFactory(defaultDataSourceFactory),
-            DsdExtractorsFactory(),
+            // Common Encryption inside fragmented MP4, decrypted as it is
+            // read with the key an extension handed over (see CencKeys).
+            DsdExtractorsFactory(com.music.bitchord.playback.cenc.CencExtractorsFactory(DefaultExtractorsFactory())),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
     }
