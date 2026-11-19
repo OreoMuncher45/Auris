@@ -4688,6 +4688,8 @@ internal fun BitChordApp(
                     sheets.showHistory = false
                     sheets.showFlow = false
                     sheets.libraryShowAll = null
+                    sheets.showQuickPicks = false
+                    podcastUi.showContinueListening = false
 
                     if (tab == TAB_SEARCH) {
                         if (useFoldingNav) {
