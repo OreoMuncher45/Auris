@@ -107,6 +107,22 @@ class SpotifySearchTest {
         assertEquals("Ed Sheeran", rows.first().song.artist)
     }
 
+    /** An album with a bare id is not a track, even though it has a name and artists. */
+    @Test
+    fun `an album with a bare id is not read as a track`() {
+        val rows = trackRows(
+            """
+            {"tracksV2": {"items": [
+              {"__typename": "Album", "id": "1HNkqx9Ahdgi1Ixy2xkKkL", "name": "Divide",
+               "artists": {"items": [{"profile": {"name": "Ed Sheeran"}}]}},
+              {"uri": "spotify:album:1HNkqx9Ahdgi1Ixy2xkKkL", "id": "1HNkqx9Ahdgi1Ixy2xkKkL",
+               "name": "Divide", "artists": {"items": [{"profile": {"name": "Ed Sheeran"}}]}}
+            ]}}
+            """,
+        )
+        assertEquals(0, rows.size)
+    }
+
     /** An entity under `data` with no wrapper around it at all. */
     @Test
     fun `a bare entity is read`() {
