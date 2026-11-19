@@ -1386,6 +1386,28 @@ internal object SflxShim {
                 if (dot < 0) return '';
                 return name.slice(dot + 1).toLowerCase();
             }
+            // What a finished `download` says it resolved, in the reference's
+            // result fields: `audio_codec` (Amazon), `format` (Jellyfin), and
+            // the depth and rate under either spelling.
+            var MIME_BY_CODEC = {
+                flac: 'audio/flac', alac: 'audio/alac', opus: 'audio/opus', eac3: 'audio/eac3',
+                'ec-3': 'audio/eac3', ac4: 'audio/ac4', 'ac-4': 'audio/ac4', aac: 'audio/mp4',
+                mp4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav'
+            };
+            function statedAudio(result) {
+                if (!result || typeof result !== 'object') return { mimeType: '', bitDepth: 0, sampleRate: 0, atmos: false };
+                var codec = text(firstOf(result.audio_codec, result.codec, result.format)).toLowerCase().split('.')[0];
+                var mime = MIME_BY_CODEC[codec] || '';
+                var depth = number(firstOf(result.bit_depth, result.actual_bit_depth), 0);
+                var rate = number(firstOf(result.sample_rate, result.actual_sample_rate), 0);
+                return {
+                    mimeType: mime,
+                    bitDepth: depth > 0 ? depth : 0,
+                    sampleRate: rate > 0 ? rate : 0,
+                    atmos: mime === 'audio/eac3' || mime === 'audio/ac4'
+                };
+            }
+
             // The kind the manifest declares for one of its tiers, or ''.
             function kindOfTier(tier) {
                 var wanted = text(tier).toLowerCase();
@@ -1575,6 +1597,7 @@ internal object SflxShim {
                         if (extra) {
                             if (extra.headers) payload.headers = extra.headers;
                             if (extra.segments) payload.segments = extra.segments;
+                            if (extra.decryption) payload.decryption = extra.decryption;
                         }
                         return JSON.stringify(payload);
                     };
@@ -1715,13 +1738,22 @@ internal object SflxShim {
                     var marker = { __sflx_capture: true };
                     var realDownload = globalThis.file.download;
                     var realSegments = globalThis.file.downloadSegments;
+                    // The download "succeeds" without a byte moving, so the
+                    // extension finishes its own `download` and says what it
+                    // would have done with the file: Amazon's answer carries
+                    // the per-track `decryption_key` the reference host feeds
+                    // to FFmpeg, and the codec, depth and rate it resolved.
+                    // Aborting here, as this used to, dropped all of that —
+                    // and with it the only way to play an encrypted answer.
+                    // A second download, or any file or FFmpeg work on the
+                    // file that never arrived, still ends the call here; see
+                    // `guarded` below.
                     globalThis.file.download = function (url, path, opts) {
-                        if (captured === null) {
-                            captured = text(url);
-                            capturedPath = text(path) || outputPath;
-                            capturedOptions = opts && typeof opts === 'object' ? opts : null;
-                        }
-                        throw marker;
+                        if (captured !== null) throw marker;
+                        captured = text(url);
+                        capturedPath = text(path) || outputPath;
+                        capturedOptions = opts && typeof opts === 'object' ? opts : null;
+                        return { success: true, path: capturedPath };
                     };
                     globalThis.file.downloadSegments = function (segments, path, opts) {
                         if (capturedSegments === null && segments) {
@@ -1731,6 +1763,24 @@ internal object SflxShim {
                         }
                         throw marker;
                     };
+                    // What an extension may do to the file once it "has" it:
+                    // read it, rewrite it, convert it. There is no file, so
+                    // the call ends there — with the URL already taken, which
+                    // is exactly where it used to end.
+                    var guardedFns = [];
+                    var guard = function (holder, name) {
+                        if (!holder || typeof holder[name] !== 'function') return;
+                        var real = holder[name];
+                        guardedFns.push(function () { holder[name] = real; });
+                        holder[name] = function () {
+                            if (captured !== null) throw marker;
+                            return real.apply(this, arguments);
+                        };
+                    };
+                    ['getSize', 'readBytes', 'writeBytes', 'transformPatternedBlocks', 'delete',
+                        'read', 'write', 'exists'].forEach(function (name) { guard(globalThis.file, name); });
+                    ['getInfo', 'convert', 'execute'].forEach(function (name) { guard(globalThis.ffmpeg, name); });
+                    var finished = null;
                     var failure = '';
                     try {
                         // `onProgress` is a function, always: the reference
@@ -1746,6 +1796,8 @@ internal object SflxShim {
                         );
                         if (outcome && outcome.success === false) {
                             failure = text(firstOf(outcome.error_message, outcome.error, outcome.reason));
+                        } else if (outcome && typeof outcome === 'object') {
+                            finished = outcome;
                         }
                     } catch (error) {
                         // Our marker is the expected exit; anything else is the
@@ -1756,6 +1808,7 @@ internal object SflxShim {
                     } finally {
                         globalThis.file.download = realDownload;
                         globalThis.file.downloadSegments = realSegments;
+                        guardedFns.forEach(function (restore) { restore(); });
                     }
 
                     // The path is evidence only when the extension chose it.
@@ -1774,6 +1827,18 @@ internal object SflxShim {
                     if (!guessed.mimeType && kindOfTier(quality) === 'lossless') {
                         meta.audioQuality = 'LOSSLESS';
                     }
+                    // The extension's own account of what it resolved, when it
+                    // finished: a statement about the audio rather than about
+                    // a file name, so it outranks both readings above.
+                    var stated = statedAudio(finished);
+                    if (stated.mimeType) guessed.mimeType = stated.mimeType;
+                    if (stated.bitDepth) guessed.bitDepth = stated.bitDepth;
+                    if (stated.sampleRate) guessed.sampleRate = stated.sampleRate;
+                    if (stated.atmos && guessed.audioModes.indexOf('atmos') < 0) guessed.audioModes.push('atmos');
+                    var decryptionKey = finished ? text(firstOf(
+                        finished.decryption_key,
+                        finished.decryption && typeof finished.decryption === 'object' ? finished.decryption.key : ''
+                    )) : '';
                     var headersOf = function () {
                         return capturedOptions && capturedOptions.headers
                             && typeof capturedOptions.headers === 'object'
@@ -1824,7 +1889,10 @@ internal object SflxShim {
                     if (guessed.sampleRate) meta.sampleRate = guessed.sampleRate;
                     if (guessed.bitrate) meta.bitrate = guessed.bitrate;
                     if (guessed.audioModes && guessed.audioModes.length) meta.audioModes = guessed.audioModes;
-                    return answered(captured, '', { headers: headersOf() });
+                    return answered(captured, '', {
+                        headers: headersOf(),
+                        decryption: decryptionKey ? { key: decryptionKey } : null
+                    });
                 },
 
                 // The lyrics, from an extension that declares itself a

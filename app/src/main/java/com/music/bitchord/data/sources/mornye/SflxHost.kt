@@ -6,6 +6,9 @@ import com.music.bitchord.data.sources.module.ModuleSearchResponse
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.ModuleStreamResponse
 import com.music.bitchord.data.sources.module.QuickJsExecutor
+import com.music.bitchord.playback.cenc.CencHead
+import com.music.bitchord.playback.cenc.CencKeys
+import com.music.bitchord.playback.cenc.CencProbe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -497,7 +500,44 @@ class SflxHost(
                 headers = headers.ifEmpty { null },
                 segments = segments.ifEmpty { null },
                 track = SflxAnswer.track(raw, trackId),
+                cencKid = SflxAnswer.decryptionKey(raw)?.let { key ->
+                    if (url == null) throw SflxException("an encrypted segmented answer cannot be decrypted yet")
+                    encryptedKid(extensionId, url, headers, key)
+                },
             )
+        }
+    }
+
+    /**
+     * Keeps the key an encrypted answer came with, under the key id its file
+     * names, and returns that id — or fails the answer outright when the file
+     * is laid out in a way the player cannot decrypt, which is a clear refusal
+     * now rather than a track that buffers and skips later.
+     *
+     * The file's opening is read once to find the id: the extension states the
+     * key but not which samples it opens, and the id is what the player, the
+     * audio cache and a download all look the key up by. See [CencKeys].
+     */
+    private fun encryptedKid(extensionId: String, url: String, headers: Map<String, String>, rawKey: String): String? {
+        val key = CencKeys.parseKey(rawKey) ?: throw SflxException("the extension's decryption key could not be read")
+        return when (val head = runCatching { CencProbe.head(url, headers) }.getOrElse { error ->
+            throw SflxException("the encrypted stream's header could not be read: ${error.message}")
+        }) {
+            is CencHead.Result.Encrypted -> {
+                if (!head.info.fragmented) {
+                    throw SflxException("this encrypted file is not fragmented, which Auris cannot decrypt yet")
+                }
+                if (head.info.scheme != "cenc" && head.info.scheme != "cbcs") {
+                    throw SflxException("this file is encrypted with '${head.info.scheme}', which Auris cannot decrypt")
+                }
+                CencKeys.register(head.info.kid, key)
+                Log.d(TAG, "sflx[$extensionId] encrypted answer (${head.info.scheme}); key kept for its key id")
+                CencKeys.hex(head.info.kid)
+            }
+            // A key for a file that turned out to be clear is simply not needed.
+            CencHead.Result.Clear -> null
+            CencHead.Result.NotMp4, CencHead.Result.NeedMore ->
+                throw SflxException("the extension's encrypted answer is not an MP4 Auris can read")
         }
     }
 

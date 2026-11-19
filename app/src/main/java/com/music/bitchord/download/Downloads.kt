@@ -1849,6 +1849,37 @@ object Downloads {
                     },
                 )
             }
+            // An encrypted answer is fetched whole and decrypted once it has
+            // landed — the player decrypts as it reads, but a file on disk has
+            // to be clear. FLAC is written back out as a plain `.flac` (see
+            // [CencFlacFile]); any other encrypted codec would need an MP4
+            // writer this app does not have, so it is not filed from here.
+            if (stream.encrypted && !packaged) {
+                if (storable.extension != "flac") {
+                    Log.d(TAG, "can't file an encrypted .${storable.extension} yet; taking YouTube for ${track.videoId}")
+                    return@let
+                }
+                return Route(
+                    extension = storable.extension,
+                    mimeType = storable.mimeType,
+                    describe = "${stream.format.summary} (decrypted)",
+                    downloadFormat = stream.format.downloadBadge(),
+                    taggable = true,
+                    write = { sink, onProgress ->
+                        val encrypted = java.io.File.createTempFile("cenc-", ".mp4", context.cacheDir)
+                        try {
+                            encrypted.outputStream().buffered().use { out ->
+                                Downloader.fetchDirect(stream.url, stream.headers, out, onProgress)
+                            }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                com.music.bitchord.playback.cenc.CencFlacFile.write(encrypted, sink)
+                            }
+                        } finally {
+                            encrypted.delete()
+                        }
+                    },
+                )
+            }
             if (packaged && AppSettings.exportDownloads.value) {
                 Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
                 return@let

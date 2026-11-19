@@ -36,6 +36,18 @@ class SflxStreamAdapterTest {
     }
 
     @Test
+    fun `the download finishes so its key and codec are heard, but never touches a file`() {
+        // Amazon's result carries the per-track decryption key; the capture
+        // used to abort before the extension could return it.
+        assertTrue(adapter.contains("return { success: true, path: capturedPath };"))
+        assertTrue(adapter.contains("if (captured !== null) throw marker;"))
+        assertTrue(adapter.contains("['getSize', 'readBytes', 'writeBytes', 'transformPatternedBlocks', 'delete',"))
+        assertTrue(adapter.contains("['getInfo', 'convert', 'execute'].forEach(function (name) { guard(globalThis.ffmpeg, name); });"))
+        assertTrue(adapter.contains("guardedFns.forEach(function (restore) { restore(); });"))
+        assertTrue(adapter.contains("decryption: decryptionKey ? { key: decryptionKey } : null"))
+    }
+
+    @Test
     fun `an answer that names no container is reported as the kind its tier declares`() {
         assertTrue(adapter.contains("if (!guessed.mimeType && kindOfTier(quality) === 'lossless') {"))
         assertTrue(adapter.contains("function kindOfTier(tier) {"))
