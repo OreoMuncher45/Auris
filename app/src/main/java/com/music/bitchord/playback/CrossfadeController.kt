@@ -2417,9 +2417,16 @@ class CrossfadeController(
             // moved and the standby is the one to throw away.
             outgoing?.let { out ->
                 out.volume = 1f
-                // Sped up for a blend that never came: walk it back like any stretch.
+                // Sped up for a blend that never came: walk it back like any
+                // stretch — except under Bit-perfect, where a stretch that
+                // outlasts the dropped arm is exactly the alteration the
+                // switch rules out, so it goes straight back.
                 if (outgoingPlaybackRate != 1.0) {
-                    beginEase(out, outgoingPlaybackRate, out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
+                    if (AppSettings.bitPerfect.value) {
+                        out.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+                    } else {
+                        beginEase(out, outgoingPlaybackRate, out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
+                    }
                 }
             }
             incoming?.let(::retire)
