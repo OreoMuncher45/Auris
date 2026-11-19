@@ -94,15 +94,21 @@ internal class SflxSearchMemo<V>(
                 ask()
             } catch (error: Throwable) {
                 if (error is CancellationException) {
-                    flight.completeExceptionally(error)
                     flights.remove(key, flight)
+                    flight.completeExceptionally(error)
                     return@launch
                 }
                 Result.failure(SflxException(error.message ?: "the question failed"))
             }
             answer.onSuccess { put(key, it) }
-            flight.complete(answer)
+            // Off the board before anyone hears the answer. Completing first
+            // resumes the waiting caller, which may ask again — after a
+            // forget, say — before this line runs, find the finished flight
+            // still there, and be handed its old answer without asking. With
+            // the order this way round, a caller that arrives in between finds
+            // the answer in the cache, or nothing, and asks afresh.
             flights.remove(key, flight)
+            flight.complete(answer)
         }
         return flight.await()
     }

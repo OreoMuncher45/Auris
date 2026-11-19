@@ -1,5 +1,7 @@
 package com.music.bitchord.data.sources.mornye
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -131,6 +133,37 @@ class SflxSearchMemoTest {
             Result.success("tidal again")
         }.getOrNull()
         assertEquals("only the forgotten one was asked again", 3, asked.get())
+    }
+
+    /**
+     * The test above, without its luck. A finished question has to be off
+     * the board before its caller hears the answer: otherwise a caller that
+     * asks again straight away — after a forget — finds the finished flight
+     * and is handed its old answer without anything being asked.
+     *
+     * In the app the caller resumes on another thread, so the window was a
+     * few instructions wide and the test above failed once in a while. Here
+     * the caller waits unconfined, which resumes it inside the completion
+     * itself, before the memo's next line runs: the window is always open.
+     */
+    @Test
+    fun `a question asked as soon as the last answer lands is asked again`() = runBlocking {
+        val memo = SflxSearchMemo<String>(ttlMs = 120_000)
+        val asked = AtomicInteger(0)
+        val again = withContext(Dispatchers.Unconfined) {
+            memo.once("tidal|q|5") {
+                asked.incrementAndGet()
+                Result.success("first")
+            }
+            // Still inside the first answer's completion.
+            memo.forgetMatching("tidal|")
+            memo.once("tidal|q|5") {
+                asked.incrementAndGet()
+                Result.success("second")
+            }.getOrNull()
+        }
+        assertEquals("the forgotten question was asked again", 2, asked.get())
+        assertEquals("second", again)
     }
 
     @Test
