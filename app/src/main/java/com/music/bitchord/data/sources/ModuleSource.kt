@@ -387,6 +387,17 @@ class ModuleSource(
                 }?.takeIf { it > 0 },
                 bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
             )
+            // A lossy request is a data ceiling, not a request for the largest
+            // file the extension can produce. This guard covers direct
+            // source-backed playback as well as SourceResolver's shared walk.
+            if (!request.wantsLossless && (format.isLossless == true || format.isDolbyAtmos)) {
+                TrackLog.w(
+                    TAG,
+                    "${config.displayName}: $moduleId answered ${request.tier} with " +
+                        "${format.summary}, over this lossy request — passing",
+                )
+                return@withContext null
+            }
             val playsAtmos = DeviceCodecs.playsDolbyAtmos
             if (unplayable(format, atmosAllowed = playsAtmos && request.wantsAtmos)) {
                 val why = if (playsAtmos) {

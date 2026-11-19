@@ -24,14 +24,18 @@ import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Waves
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -44,6 +48,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.HomeProvider
+import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.playback.AudioOutputStatus
 import kotlin.math.roundToInt
 
@@ -59,6 +64,11 @@ internal fun PlaybackSettings(
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
+    val unsupportedDolbyAtmos by AppSettings.unsupportedDolbyAtmos.collectAsStateWithLifecycle()
+    val softwareAtmosAvailable = remember {
+        !DeviceCodecs.decodesAtmosInHardware && DeviceCodecs.playsDolbyAtmos
+    }
+    var showUnsupportedAtmosWarning by remember { mutableStateOf(false) }
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val playingFormat by NerdStats.current.collectAsStateWithLifecycle()
     // Derived, so a format publish that leaves the answer as it was (most of
@@ -201,6 +211,35 @@ internal fun PlaybackSettings(
                 onClick = { AppSettings.setSimulatedAtmos(!simulatedAtmos) },
             )
         }
+        if (softwareAtmosAvailable) {
+            val unsupportedAtmosTitle = stringResource(R.string.unsupported_dolby_atmos)
+            row(unsupportedAtmosTitle, "dolby", "atmos", "unsupported", "software", "battery") {
+                SettingsRow(
+                    icon = Icons.Rounded.SurroundSound,
+                    title = unsupportedAtmosTitle,
+                    subtitle = stringResource(R.string.unsupported_dolby_atmos_subtitle),
+                    trailing = {
+                        SettingsSwitch(
+                            checked = unsupportedDolbyAtmos,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    showUnsupportedAtmosWarning = true
+                                } else {
+                                    AppSettings.setUnsupportedDolbyAtmos(false)
+                                }
+                            },
+                        )
+                    },
+                    onClick = {
+                        if (unsupportedDolbyAtmos) {
+                            AppSettings.setUnsupportedDolbyAtmos(false)
+                        } else {
+                            showUnsupportedAtmosWarning = true
+                        }
+                    },
+                )
+            }
+        }
         val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
         row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
             SettingsRow(
@@ -265,6 +304,29 @@ internal fun PlaybackSettings(
                 onClick = { AppSettings.setStopOnTaskRemoved(!stopOnTaskRemoved) },
             )
         }
+    }
+
+    if (showUnsupportedAtmosWarning) {
+        AlertDialog(
+            onDismissRequest = { showUnsupportedAtmosWarning = false },
+            title = { Text(stringResource(R.string.unsupported_dolby_atmos)) },
+            text = { Text(stringResource(R.string.unsupported_dolby_atmos_warning)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        AppSettings.setUnsupportedDolbyAtmos(true)
+                        showUnsupportedAtmosWarning = false
+                    },
+                ) {
+                    Text(stringResource(R.string.unsupported_dolby_atmos_enable))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnsupportedAtmosWarning = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 

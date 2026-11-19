@@ -127,7 +127,7 @@ class SflxHostTest {
     }
 
     @Test
-    fun `an extension with only lossless tiers answers every tier with one of them`() {
+    fun `an extension with only lossless tiers declines a lossy request`() {
         val losslessOnly = SflxManifestParser.parse(
             """
             {"name":"only","type":["download_provider"],
@@ -135,9 +135,11 @@ class SflxHostTest {
             """.trimIndent(),
         )
         assertEquals("HI_RES", SflxQuality.forTier(losslessOnly, "LOSSLESS"))
-        // No lossy tier to fall to, so the answer is the closest honest one
-        // rather than a tier the extension has never heard of.
-        assertEquals("LOSSLESS", SflxQuality.forTier(losslessOnly, "HIGH"))
+        // There is no honest lossy answer. In particular, do not call the
+        // extension with its smallest FLAC and spend more data on Medium.
+        assertEquals("HIGH", SflxQuality.forTier(losslessOnly, "HIGH"))
+        assertTrue(SflxQuality.fallbacks(losslessOnly, "HIGH").isEmpty())
+        assertTrue(SflxQuality.fallbacks(losslessOnly, "LOW").isEmpty())
     }
 
     @Test
@@ -154,6 +156,7 @@ class SflxHostTest {
         // Lossless may reach Hi-Res and never the immersive mix.
         assertEquals("HI_RES", SflxQuality.forTier(manifest, "LOSSLESS"))
         assertEquals("MP3_320", SflxQuality.forTier(manifest, "HIGH"))
+        assertEquals(listOf("MP3_320"), SflxQuality.fallbacks(manifest, "MP3_320"))
         // The immersive request prefers the spatial tier, and is the only
         // request that is allowed to.
         assertEquals("ATMOS", SflxQuality.forTier(manifest, "LOSSLESS", wantsAtmos = true))

@@ -72,14 +72,12 @@ object SourceResolver {
             // fallback is the lossless walk — a track with no Atmos master must
             // still play its FLAC.
             //
-            // And a phone with no hardware Dolby decoder does not get the
-            // spatial mix at all: E-AC-3 in six channels, decoded in software,
-            // costs whole cores for as long as it plays, and that is the one
-            // thing in the app that burns CPU while the screen is off and
-            // nothing is happening. The rung's own fallback is the lossless
-            // walk, so that is what it falls back to.
+            // A phone with no hardware Dolby decoder gets the spatial mix only
+            // after the listener enables the separately warned software-Atmos
+            // setting. Otherwise the rung falls back to lossless rather than
+            // burning whole cores on six-channel software decoding.
             ceiling == AudioQuality.DOLBY -> {
-                if (DeviceCodecs.decodesAtmosInHardware) {
+                if (atmosDecodingAllowed()) {
                     StreamRequest.Atmos
                 } else {
                     warnAtmosIsSoftwareOnly()
@@ -108,8 +106,9 @@ object SourceResolver {
         warnedAtmosSoftwareOnly = true
         TrackLog.w(
             TAG,
-            "Dolby Atmos has no hardware decoder on this device; playing the lossless copy " +
-                "instead of decoding E-AC-3 in software, which costs whole cores",
+            "Dolby Atmos has no hardware decoder on this device; playing the lossless copy. " +
+                "Enable 'Dolby Atmos for unsupported devices' in Playback settings to allow " +
+                "software decoding (this will drain battery)",
         )
     }
 
@@ -143,7 +142,7 @@ object SourceResolver {
         // bit-exact answer: the walk it asks for is the spatial mix where the
         // catalogue holds one and the lossless ladder below it where it does
         // not.
-        quality.wantsAtmos -> StreamRequest.Atmos
+        quality.wantsAtmos -> if (atmosDecodingAllowed()) StreamRequest.Atmos else StreamRequest.Lossless
         quality.keepsLossless -> StreamRequest.Lossless
         quality.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
         else -> StreamRequest.Capped(quality.maxKbps)
@@ -1455,8 +1454,12 @@ object SourceResolver {
      * carries its own signal — the immersive rung, or a download that asked
      * for the spatial mix — passes it in instead.
      */
-    private fun atmosWanted(): Boolean =
-        DeviceCodecs.decodesAtmosInHardware && AppSettings.wantsDolbyAtmos
+    private fun atmosWanted(): Boolean = atmosDecodingAllowed() && AppSettings.wantsDolbyAtmos
+
+    /** Hardware always works; software JOC requires the explicit battery warning opt-in. */
+    private fun atmosDecodingAllowed(): Boolean =
+        DeviceCodecs.decodesAtmosInHardware ||
+            (AppSettings.unsupportedDolbyAtmos.value && DeviceCodecs.playsDolbyAtmos)
 
     private suspend fun streamBest(
         source: MusicSource,
@@ -1483,6 +1486,18 @@ object SourceResolver {
                 sourceConfigId = source.configId,
             )
             val served = stream.format
+            // Medium/High are a ceiling in both directions. A source that has
+            // no lossy rendition must decline, not spend more data by walking
+            // up to FLAC (Qobuz) or an immersive mix. Unknown stays playable:
+            // it has made no claim that would break the cap.
+            if (!wantsLossless && (served.isLossless == true || served.isDolbyAtmos)) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} offered ${served.summary} for '${match.title}'; " +
+                        "over this lossy request — passing",
+                )
+                continue
+            }
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(
                     TAG,

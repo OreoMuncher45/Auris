@@ -353,7 +353,9 @@ object PerfMonitor {
         val playable = DeviceCodecs.playsDolbyAtmos
         when {
             hardware -> "hardware decoder"
-            playable -> "software only — the lossless copy is played instead"
+            playable && AppSettings.unsupportedDolbyAtmos.value ->
+                "software opt-in — true Atmos, high battery use"
+            playable -> "software only — lossless fallback; software Atmos is available in Playback settings"
             else -> "no decoder — the spatial mix is never asked for"
         }
     }.getOrDefault("unknown")
