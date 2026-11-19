@@ -30,13 +30,12 @@ object CencKeys {
     private const val MAX_KEYS = 4096
     private const val KEEP_MS = 30L * 24 * 60 * 60 * 1000
     /**
-     * How stale a use time may be before a use moves it, and how often such a
-     * move is written: at most once an hour, so a restart loses at most an
-     * hour of refreshes against a 30-day window, and a sample lookup never
-     * costs a write.
+     * How stale a use time may be before a use moves it. A move is written at
+     * once, so no restart can bring an old time back; and since a key's time
+     * moves at most once an hour, that is at most one write per key per hour
+     * of playback — never one per sample.
      */
     private const val TOUCH_MS = 60L * 60 * 1000
-    private var lastWrite = 0L
 
     private class Entry(val key: ByteArray, var usedAt: Long)
 
@@ -96,12 +95,12 @@ object CencKeys {
         }
     }
 
-    /** A use: moves a stale use time, and writes it when the last write is an hour old. Lock held. */
+    /** A use: moves a stale use time and writes it. Lock held. */
     private fun touch(entry: Entry, now: Long) {
         if (now - entry.usedAt < TOUCH_MS) return
         entry.usedAt = now
         dirty = true
-        if (now - lastWrite >= TOUCH_MS) persist()
+        persist()
     }
 
     /** Drops the least recently used keys above the cap, but only ones idle for [KEEP_MS]. */
@@ -130,7 +129,6 @@ object CencKeys {
             )
         }
         dirty = written.isFailure
-        if (written.isSuccess) lastWrite = clock()
     }
 
     /** For tests: forget everything held in memory, and where it was kept. */
@@ -138,7 +136,6 @@ object CencKeys {
         keys.clear()
         file = null
         dirty = false
-        lastWrite = 0L
         clock = System::currentTimeMillis
     }
 
