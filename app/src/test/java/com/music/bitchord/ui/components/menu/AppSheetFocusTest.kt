@@ -202,6 +202,7 @@ class AppSheetFocusTest {
         item = "downloads"
         compose.waitForIdle()
         assertFalse("a touch-opened sheet takes nothing", insideFocused)
+        assertTrue("the control behind still holds the focus", behindFocused)
 
         // Then a key is pressed.
         modes.mode = InputMode.Keyboard
