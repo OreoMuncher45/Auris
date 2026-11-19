@@ -72,6 +72,13 @@ internal object SflxAnswer {
     /** Whether the extension was stopped before its download said what it resolved. */
     fun unfinished(raw: String): Boolean = text(field(raw, "unfinished")) == "true"
 
+    /**
+     * The file the extension wrote in its own folder, when it downloaded and
+     * transformed one (Deezer decrypts its download). Only a path: the host
+     * checks it is inside that folder before anything opens it.
+     */
+    fun localFile(raw: String): String? = text(field(raw, "localFile"))
+
     /** The content key an encrypted answer came with, as the extension spelled it. */
     fun decryptionKey(raw: String): String? = text((field(raw, "decryption") as? JsonObject)?.get("key"))
 

@@ -125,7 +125,11 @@ object SflxCatalog {
         // Kept out of backups and device transfer: they are content keys.
         com.music.bitchord.playback.cenc.CencKeys.init(context.noBackupFilesDir)
         val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
-        this.hostRef = SflxHost(store, appVersion, sessions)
+        // Extensions that ask for files get a private folder each, in the
+        // cache: what they write there is a decrypted track, and the system
+        // may reclaim it like any other cache.
+        val extensionFiles = File(context.cacheDir, EXTENSION_FILES_DIRECTORY)
+        this.hostRef = SflxHost(store, appVersion, sessions, extensionFiles)
         // The lyrics bridge. A `.sflx` package that declares itself a lyrics
         // provider is asked through this host and nowhere else, so the
         // repository is given a fetcher here rather than reaching for one
@@ -446,4 +450,5 @@ object SflxCatalog {
      * Mornye's own store does.
      */
     private const val SIGNED_SESSIONS_DIRECTORY = "signed_sessions"
+    private const val EXTENSION_FILES_DIRECTORY = "sflx-files"
 }
