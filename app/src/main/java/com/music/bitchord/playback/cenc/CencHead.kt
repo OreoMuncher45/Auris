@@ -24,7 +24,11 @@ object CencHead {
         data object Clear : Result
         /** The `moov` is not complete yet; read further. */
         data object NeedMore : Result
-        /** Not an MP4 this can read. */
+        /**
+         * Not an MP4 at all: the opening is not a box header (FLAC, ID3, Ogg
+         * and MPEG audio all begin with bytes that cannot be one). An MP4 this
+         * cannot finish reading is [NeedMore], never this.
+         */
         data object NotMp4 : Result
     }
 
@@ -37,8 +41,11 @@ object CencHead {
             if (length - at < 8) return Result.NeedMore
             val size = u32(head, at)
             val type = fourCc(head, at + 4)
+            // Any well-formed box is walked past, whatever it is called: a
+            // file that opens with a `uuid` or another box this does not know
+            // is still an MP4 whose `moov` may be encrypted. Only an opening
+            // that cannot be a box header at all is called not an MP4.
             if (!type.all { it in ' '..'~' }) return if (first) Result.NotMp4 else Result.NeedMore
-            if (first && type !in LEADING) return Result.NotMp4
             first = false
             val header: Int
             val declared: Long
@@ -57,7 +64,7 @@ object CencHead {
                     header = 8
                 }
             }
-            if (declared < header) return Result.NotMp4
+            if (declared < header) return if (at == 0) Result.NotMp4 else Result.NeedMore
             // Compared against what is left before it is added, so a vast size
             // cannot wrap the cursor.
             if (declared > (length - at).toLong()) return Result.NeedMore
@@ -135,8 +142,6 @@ object CencHead {
         }
         return out
     }
-
-    private val LEADING = setOf("ftyp", "styp", "moov", "free", "skip", "sidx", "wide", "pdin")
 
     private fun fourCc(data: ByteArray, at: Int) = String(data, at, 4, Charsets.ISO_8859_1)
 

@@ -1492,12 +1492,16 @@ internal object SflxShim {
                 artist: true, album: true, playlist: true, station: true, podcast: true, audiobook: true,
                 episode: true, show: true, user: true, profile: true, mix: true, label: true, genre: true
             };
+            // Own keys only: `constructor` or `toString` is not a type.
+            function listed(table, key) {
+                return Object.prototype.hasOwnProperty.call(table, key);
+            }
             function isTrackRow(row) {
                 if (!row || typeof row !== 'object') return false;
                 var declared = text(firstOf(row.item_type, row.itemType)).toLowerCase();
-                if (declared) return !!TRACK_TYPES[declared];
+                if (declared) return listed(TRACK_TYPES, declared);
                 var loose = text(firstOf(row.type, row.kind)).toLowerCase();
-                return !loose || !COLLECTION_TYPES[loose];
+                return !loose || !listed(COLLECTION_TYPES, loose);
             }
 
             function isArray(value) {

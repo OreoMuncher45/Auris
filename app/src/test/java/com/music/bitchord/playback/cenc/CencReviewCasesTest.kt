@@ -65,6 +65,18 @@ class CencReviewCasesTest {
     }
 
     @Test
+    fun `an MP4 that opens with an unfamiliar box is still read to its moov`() {
+        val real = resource("sine-cenc.mp4").readBytes()
+        val leading = box("uuid", ByteArray(24) { 0x42 })
+        val result = CencHead.parse(leading + real)
+        assertTrue("an encrypted MP4 behind a uuid box is found encrypted", result is CencHead.Result.Encrypted)
+        // Audio that is not a box at all is still not an MP4.
+        assertEquals(CencHead.Result.NotMp4, CencHead.parse(resource("sine.flac").readBytes()))
+        assertEquals(CencHead.Result.NotMp4, CencHead.parse("ID3".toByteArray() + ByteArray(29)))
+        assertEquals(CencHead.Result.NotMp4, CencHead.parse("OggS".toByteArray() + ByteArray(28)))
+    }
+
+    @Test
     fun `a partial header answer must start at byte zero`() {
         assertTrue(CencProbe.startsAtZero("bytes 0-1048575/9000000"))
         assertTrue(CencProbe.startsAtZero("bytes 0-8999/9000"))
