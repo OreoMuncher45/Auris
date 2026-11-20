@@ -243,8 +243,15 @@ class AAudioExclusiveSession(context: Context) : ExclusiveSession {
     }
 
     private fun push(current: Long) {
-        // The native side refuses single writes above 256 KiB.
-        val count = minOf(pending.remaining(), MAX_WRITE)
+        // The native side refuses single writes above 256 KiB, and any write
+        // that is not whole frames: the cap is cut back to the last whole
+        // frame (24-bit stereo is six bytes, which 256 KiB is not a multiple of).
+        val frameBytes = channels * wireBits / 8
+        val count = if (pending.remaining() <= MAX_WRITE) {
+            pending.remaining()
+        } else {
+            MAX_WRITE - MAX_WRITE % frameBytes
+        }
         val taken = ExclusiveNative.write(current, pending, pending.position(), count)
         pending.position(pending.position() + taken)
     }
