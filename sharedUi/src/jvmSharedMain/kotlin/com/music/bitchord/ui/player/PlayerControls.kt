@@ -564,7 +564,13 @@ internal fun PlaybackQualityLabel(
                 .menuOriginOf(origin)
                 .clickable(enabled = nerdStats != null) {
                     if (menuHost != null) {
-                        menuHost.open(origin.boundsInWindow(), dark = true, content = qualityMenu)
+                        menuHost.open(
+                            anchorInWindow = origin.boundsInWindow(),
+                            dark = true,
+                            centered = true,
+                            fromPlayer = true,
+                            content = qualityMenu,
+                        )
                     } else {
                         details = true
                     }

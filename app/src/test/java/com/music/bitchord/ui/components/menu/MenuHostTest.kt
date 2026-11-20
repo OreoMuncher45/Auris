@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -61,7 +62,7 @@ class MenuHostTest {
         compose.setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalMenuHost provides host) {
-                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host) }
+                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host, fromPlayer = false) }
                 }
             }
         }
@@ -95,6 +96,38 @@ class MenuHostTest {
         val buttonBottom = with(compose.density) { button.bottom.toDp() }
         assertTrue("the menu opens below its anchor", row.top >= buttonBottom)
         assertTrue("…right under it", row.top - buttonBottom < 40.dp)
+    }
+
+    @Test
+    fun aCenteredCardIsCentredInTheWindow() {
+        host.open(button, centered = true) { close ->
+            MenuRow(icon = null, label = "Quality", ink = Color.White, modifier = Modifier.testTag(ROW)) { close() }
+        }
+        compose.waitForIdle()
+
+        val root = compose.onRoot().getUnclippedBoundsInRoot()
+        val row = compose.onNodeWithTag(ROW).getUnclippedBoundsInRoot()
+        // Placement is integer-pixel; allow the resulting fraction of a dp.
+        assertEquals((root.left + root.right).value / 2f, (row.left + row.right).value / 2f, 0.51f)
+    }
+
+    @Test
+    fun aPlayerRequestIsRenderedOnlyByThePlayerHost() {
+        host.open(button, fromPlayer = true) { close ->
+            MenuRow(icon = null, label = "Quality", ink = Color.White, modifier = Modifier.testTag(ROW)) { close() }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertDoesNotExist()
+
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalMenuHost provides host) {
+                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host, fromPlayer = true) }
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertIsDisplayed()
     }
 
     @Test

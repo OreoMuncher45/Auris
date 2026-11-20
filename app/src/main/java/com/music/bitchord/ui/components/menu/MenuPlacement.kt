@@ -52,6 +52,10 @@ internal fun menuY(slot: MenuSlot, menuHeight: Int): Int =
 internal fun menuX(anchorRight: Int, left: Int, right: Int, menuWidth: Int): Int =
     (anchorRight - menuWidth).coerceIn(left, (right - menuWidth).coerceAtLeast(left))
 
+/** Centres a floating card in the host's safe band, independently of its anchor. */
+internal fun centeredMenuX(left: Int, right: Int, menuWidth: Int): Int =
+    (left + (right - left - menuWidth) / 2).coerceIn(left, (right - menuWidth).coerceAtLeast(left))
+
 /**
  * Where the window's safe area starts (its top, or its left) in a host whose
  * own start sits at [hostStart] in the window, given the window's [inset] on

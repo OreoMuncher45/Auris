@@ -7677,7 +7677,7 @@ private fun RootOverlays(
     // The player's drawers first: over the player, under everything below.
     LocalDrawerHost.current?.let { DrawerHostOverlay(it) }
     LocalSheetHost.current?.let { SheetHostOverlay(it) }
-    (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it) }
+    (LocalMenuHost.current as? MenuHostState)?.let { MenuHostOverlay(it, fromPlayer = false) }
     // Last of all: a dialog asked for from anywhere — a sheet, a menu's
     // action, Settings — over everything, frosting the page with this haze.
     LocalDialogHost.current?.let { DialogHostOverlay(it, hazeState) }

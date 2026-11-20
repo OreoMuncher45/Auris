@@ -843,7 +843,7 @@ private fun AutomixMenu(
         val selectedLabel = stringResource(Res.string.selected)
         LaunchedEffect(open) {
             if (!open) return@LaunchedEffect
-            host.open(anchor.boundsInWindow(), dark = true) { close ->
+            host.open(anchor.boundsInWindow(), dark = true, fromPlayer = true) { close ->
                 latest.forEach { option ->
                     MenuChoiceRow(
                         label = option.label,
