@@ -249,7 +249,7 @@ internal class SflxFiles(
                         var offset = 0
                         while (offset < count) {
                             val length = minOf(spec.segmentSize, count - offset)
-                            if (segments % spec.every == spec.offset.toLong() &&
+                            if (segments % spec.every == spec.offset &&
                                 (length == spec.segmentSize || spec.partial)
                             ) {
                                 engine.apply(buffer, offset, length, segments)
@@ -369,7 +369,7 @@ internal class SflxFiles(
         val iv: ByteArray,
         val segmentSize: Int,
         val every: Long,
-        val offset: Int,
+        val offset: Long,
         val bufferSize: Int,
         val partial: Boolean,
     ) {
@@ -429,7 +429,7 @@ internal class SflxFiles(
                     iv = iv,
                     segmentSize = segmentSize.toInt(),
                     every = every,
-                    offset = offset.toInt(),
+                    offset = offset,
                     bufferSize = (requested - requested % segmentSize).toInt(),
                     partial = options.optBoolean("transformPartial", false),
                 )

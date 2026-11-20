@@ -2344,12 +2344,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun refreshHomeRecents() {
         if (!_signedIn.value) return
+        // YouTube's Recents belong on YouTube's home; Spotify's page never
+        // fetches them, so a refresh mustn't add them to it either.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return
         val identity = listenerKey()
         val generation = homeLoadGeneration.get()
         viewModelScope.launch {
             YtMusicRepository.homeRecentlyPlayed().onSuccess { shelf ->
                 // A full load that started meanwhile fetches Recents itself.
                 if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                // Checked again on arrival: the home may have become Spotify's meanwhile.
+                if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return@onSuccess
                 shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
             }
         }
@@ -2915,8 +2920,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // whole, header and all — even a page that is all header.
             homeCachedRaw = null
             _homeShowingCached.value = false
-            publishHomeShelves(outcome.shelves)
-            if (outcome.shelves.isEmpty()) publishHeaderOnlyHome()
+            // Judged after the blocked-artist filter: a page whose every shelf
+            // is blocked must not leave the cached page up under the new header.
+            val visible = outcome.shelves.withoutBlockedArtists()
+            // Replaces the page whole, as a refresh does: nothing added while it
+            // loaded (Recents after a play, say) stays under Spotify's shelves.
+            homeSeenTitles.clear()
+            _homeRaw.value = emptyList()
+            if (visible.isEmpty()) publishHeaderOnlyHome() else publishHomeShelves(visible)
             keepHomeCache(identity, generation, cacheOwner)
         }
     }

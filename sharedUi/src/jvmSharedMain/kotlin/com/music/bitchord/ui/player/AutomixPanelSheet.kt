@@ -151,7 +151,11 @@ fun AutomixPanelSheet(
     // The listener's working copy. Kept apart from the published profile so a
     // drag can move the line before anything has been planned for it, and so
     // a plan that lands mid-gesture cannot pull the line out from under it.
-    var draft by remember(panel.trackId) { mutableStateOf(panel.profile) }
+    val draftState = remember(panel.trackId) { mutableStateOf(panel.profile) }
+    var draft by draftState
+    // What was last written for this track, so the dispose below writes only
+    // what has not been.
+    val written = remember(panel.trackId) { arrayOf(panel.profile) }
     var edited by remember(panel.trackId) { mutableStateOf(false) }
     val latestDraft by rememberUpdatedState(draft)
     val trackId = panel.trackId
@@ -159,14 +163,20 @@ fun AutomixPanelSheet(
     LaunchedEffect(draft, edited, trackId) {
         if (!edited || trackId.isBlank()) return@LaunchedEffect
         delay(WRITE_DEBOUNCE_MS)
-        PlayerSettings.setAutomixProfile(trackId, latestDraft)
+        val toWrite = latestDraft
+        PlayerSettings.setAutomixProfile(trackId, toWrite)
+        written[0] = toWrite
     }
-    // A pending change is not lost because the sheet went away first. The
+    // A pending change is not lost because the sheet went away first, or
+    // because the track changed inside the pause. This track's own draft is
+    // held here, so the write goes under its id and not the next track's. The
     // write itself is off the main thread, so this costs nothing to leave.
     DisposableEffect(trackId) {
+        val ownDraft = draftState
+        val ownWritten = written
         onDispose {
-            if (trackId.isNotBlank() && latestDraft != panel.profile) {
-                PlayerSettings.setAutomixProfile(trackId, latestDraft)
+            if (trackId.isNotBlank() && ownDraft.value != ownWritten[0]) {
+                PlayerSettings.setAutomixProfile(trackId, ownDraft.value)
             }
         }
     }

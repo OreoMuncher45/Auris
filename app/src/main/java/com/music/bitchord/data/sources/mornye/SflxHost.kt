@@ -463,8 +463,8 @@ class SflxHost(
         )
     }
 
-    /** One tier's answer as something the player can open, or why it cannot be. */
-    private fun playable(
+    /** One tier's answer as something the player can open, or why it cannot be. Internal for tests. */
+    internal fun playable(
         installed: InstalledSflx,
         trackId: String,
         prepared: String?,
@@ -479,8 +479,22 @@ class SflxHost(
             return localAnswer(installed, trackId, path, raw)
         }
         val url = SflxAnswer.streamUrl(raw)
+        // A file of the extension's own comes back as `localFile`, above, and
+        // is checked against its folder there. A URL is only ever a network
+        // one: a file:// here could name any of this app's private files, and
+        // the downloader would copy it out.
+        fun network(link: String) =
+            link.startsWith("https://", ignoreCase = true) || link.startsWith("http://", ignoreCase = true)
+        if (url != null && !network(url)) {
+            throw SflxException("the extension answered with a non-network URL")
+        }
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
+        // The same rule for every part of a segmented answer: each one goes into
+        // the playlist the player reads.
+        if (segments.any { it.url.isNotBlank() && !network(it.url) }) {
+            throw SflxException("the extension answered with a non-network segment URL")
+        }
         if (url == null && segments.isEmpty()) {
             val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
             throw SflxException(why)
@@ -861,6 +875,8 @@ class SflxHost(
                 unload(installed.id)
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
+                // And its signed-session client is built from the new manifest.
+                sessions.remove(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
@@ -872,6 +888,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
+            sessions.remove(id)
         }
         removed
     }
@@ -1370,7 +1387,8 @@ internal object SflxQuality {
             text.contains("lossless") || text.contains("flac") || text.contains("alac") ||
                 text.contains("24-bit") || text.contains("16-bit") || token == "hi_res" ->
                 "lossless"
-            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ->
+            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ||
+                text.contains("opus") || text.contains("vorbis") ->
                 "lossy"
             else -> ""
         }
@@ -1401,11 +1419,17 @@ object SflxDownloads {
                 if (declared > MAX_PACKAGE_BYTES) {
                     throw SflxException("that file is ${declared / 1024 / 1024} MB, which is too large to be an extension")
                 }
-                val bytes = response.body?.bytes() ?: throw SflxException("the server sent nothing")
-                if (bytes.size > MAX_PACKAGE_BYTES) {
-                    throw SflxException("that file is too large to be an extension")
+                val body = response.body ?: throw SflxException("the server sent nothing")
+                // Read in bounded steps: with no Content-Length, the size is
+                // only known once it has been read, so stop at the ceiling.
+                val buffer = okio.Buffer()
+                val source = body.source()
+                while (source.read(buffer, 64 * 1024L) != -1L) {
+                    if (buffer.size > MAX_PACKAGE_BYTES) {
+                        throw SflxException("that file is too large to be an extension")
+                    }
                 }
-                bytes
+                buffer.readByteArray()
             }
         }.onFailure { Log.w(TAG, "sflx fetch failed for $url: ${it.message}") }
     }

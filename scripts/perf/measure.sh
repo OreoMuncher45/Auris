@@ -116,8 +116,13 @@ interactive() { sh_ dumpsys power | grep 'mWakefulness=Awake' >/dev/null; }
 playback_state() {
     sh_ dumpsys media_session | awk -v p="package=$PKG" '
         $1 == p { found = 1 }
-        found && !st && /state=PlaybackState/ { match($0, /\{state=[A-Z_]+/); st = substr($0, RSTART + 7, RLENGTH - 7) }
-        END { print (st == "" ? "NONE" : st) }'
+        found && !st && /state=PlaybackState/ { match($0, /\{state=[A-Z_0-9]+/); st = substr($0, RSTART + 7, RLENGTH - 7) }
+        END {
+            # Older Android versions print the state as its number.
+            split("STOPPED PAUSED PLAYING FAST_FORWARDING REWINDING BUFFERING ERROR CONNECTING SKIPPING_TO_PREVIOUS SKIPPING_TO_NEXT SKIPPING_TO_QUEUE_ITEM", names, " ")
+            if (st ~ /^[0-9]+$/) st = (st + 0 >= 1 && st + 0 <= 11) ? names[st + 0] : "NONE"
+            print (st == "" ? "NONE" : st)
+        }'
 }
 
 wait_playing() {

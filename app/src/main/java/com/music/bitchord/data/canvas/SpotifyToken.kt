@@ -177,7 +177,8 @@ internal object SpotifyToken {
         if (restored) return
         synchronized(stateLock) {
             if (restored) return
-            restored = true
+            // Marked only once everything is in place, at the end, so a second
+            // caller can't pass the unlocked check above and find the cache empty.
             val prefs = store() ?: return
             val now = System.currentTimeMillis()
             fun live(expiresKey: String) = prefs.getLong(expiresKey, 0L).takeIf { now < it - 30_000 }
@@ -203,6 +204,7 @@ internal object SpotifyToken {
                 cachedClientToken = client
                 clientTokenExpiresAtMs = clientExpires
             }
+            restored = true
         }
     }
 
@@ -335,6 +337,11 @@ internal object SpotifyToken {
                 return@withLock null
             }
 
+            // The cookie was read before the lock: a harvest queued behind
+            // another may run after the listener disconnected or switched
+            // accounts, and must not put the old cookie back or cache the old
+            // account's token.
+            if (mode == Mode.SIGNED_IN && AppSettings.spotifySpdcToken.value != cookie) return@withLock null
             // The session page is needed by the first request after this one
             // (its client version and the client token both come off it), and
             // it does not need the token — so it is read while the web player
@@ -349,6 +356,7 @@ internal object SpotifyToken {
                 Log.w(TAG, "token harvest failed or timed out")
                 return@withLock null
             }
+            if (mode == Mode.SIGNED_IN && AppSettings.spotifySpdcToken.value != cookie) return@withLock null
 
             val published = synchronized(stateLock) {
                 if (epoch != startEpoch) return@synchronized false
