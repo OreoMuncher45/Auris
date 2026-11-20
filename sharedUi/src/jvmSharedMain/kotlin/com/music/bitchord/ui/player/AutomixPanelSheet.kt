@@ -750,23 +750,26 @@ private fun AutomixSettingRow(
         )
         Spacer(Modifier.weight(1f))
         Box(Modifier.menuOriginOf(origin)) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium,
-                color = AutomixInkTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 200.dp),
-            )
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = AutomixInkFaint,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(start = 8.dp)
-                    .size(18.dp),
-            )
+            // Side by side: stacked in the box, the arrow was drawn over the
+            // value's last letters.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AutomixInkTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 200.dp),
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = AutomixInkFaint,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(18.dp),
+                )
+            }
             // Anchored to the value rather than to the row: the menu belongs
             // under the thing it changes.
             AutomixMenu(open = open, onDismiss = { open = false }, options = options, anchor = origin)
