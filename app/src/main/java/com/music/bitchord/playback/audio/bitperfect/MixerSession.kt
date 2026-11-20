@@ -265,9 +265,10 @@ class MixerSession(
         pending = scratch.also { it.clear().limit(0) }
         framesSubmitted = 0
         startNeedsInit = true
-        // A seek only flushes; the renderer will not call play() again.
-        paused = false
-        runCatching { current.play() }
+        // [paused] is the listener's transport state (see PlaybackService's
+        // onPlayWhenReadyChanged), so it is kept: a seek while paused stays
+        // paused, and the track restarts only if the listener was playing.
+        if (!paused) runCatching { current.play() }
     }
 
     override fun handleDiscontinuity() = Unit

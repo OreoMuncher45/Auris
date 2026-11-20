@@ -291,8 +291,9 @@ class AAudioExclusiveSession(context: Context) : ExclusiveSession {
         lastPlayedFrames = 0
         started = false
         startNeedsInit = true
-        // A seek only flushes; the renderer will not call play() again.
-        paused = false
+        // [paused] is the listener's transport state (see PlaybackService's
+        // onPlayWhenReadyChanged), so it is kept: a seek while paused stays
+        // paused, and a seek while playing starts again on the next write.
     }
 
     override fun handleDiscontinuity() = Unit
