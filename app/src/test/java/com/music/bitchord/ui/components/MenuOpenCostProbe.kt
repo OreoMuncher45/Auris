@@ -40,7 +40,6 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.screens.QualityTarget
-import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import com.music.bitchord.ui.components.menu.AnchoredItemMenu
 import com.music.bitchord.ui.components.menu.AnchoredMenu

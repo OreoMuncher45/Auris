@@ -30,7 +30,7 @@ data class StreamFormat(
      * so callers that care have to say what they want done about it.
      */
     val isLossless: Boolean?
-        get() = codec?.let { it in LOSSLESS_CODECS }
+        get() = codec?.let { DolbyAudio.codec(it) == "truehd" || it in LOSSLESS_CODECS }
 
     /**
      * Whether this is the immersive Dolby mix.
@@ -58,11 +58,15 @@ data class StreamFormat(
      * it before any of this refuses a stream.
      */
     val isDolbyAtmos: Boolean
-        get() = codec in DOLBY_ATMOS_CODECS
+        get() = DolbyAudio.isAtmos(codec)
+
+    /** Any Dolby coding family, including lossless TrueHD/MLP and MAT carriage. */
+    val isDolby: Boolean
+        get() = DolbyAudio.codec(codec) != null
 
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
-        get() = if (isDolbyAtmos) "Dolby Atmos" else listOfNotNull(
+        get() = DolbyAudio.label(codec) ?: listOfNotNull(
             codec?.uppercase(Locale.ROOT),
             bitDepth?.let { "$it-bit" },
             sampleRateHz?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" },
@@ -70,20 +74,75 @@ data class StreamFormat(
         ).joinToString(" · ").ifEmpty { "Unknown format" }
 
     private companion object {
-        val LOSSLESS_CODECS = setOf("flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff")
-
-        /**
-         * Every spelling of the Dolby family that a source may use.
-         *
-         * The JOC spellings name the immersive mix outright; the plain ones
-         * name the codec that carries it, with or without the object layer.
-         * Both are Dolby, both are refused on a device that cannot decode them,
-         * and both are badged as what they are — see [isDolbyAtmos].
-         */
-        val DOLBY_ATMOS_CODECS = setOf(
-            "eac3-joc", "ec3-joc", "ec-3-joc", "ec3_joc", "eac3_joc", "dolby-atmos",
-            "eac3", "eac-3", "ec-3", "ec3",
-            "ac-3", "ac3",
+        val LOSSLESS_CODECS = setOf(
+            "flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff",
+            // Dolby TrueHD is MLP, and is lossless unlike the Dolby delivery
+            // codecs below it. The Atmos badge still takes summary priority.
+            "truehd", "mlp",
         )
     }
+}
+
+/**
+ * The Dolby delivery family, normalised once for sources and playback alike.
+ *
+ * Amazon answers AC-4 as `audioQuality=ac4` beside the generic
+ * `mimeType=audio/mp4`; Media3 later reports `audio/ac4`. Other paths publish
+ * E-AC-3/JOC, AC-3, TrueHD/MLP or Dolby MAT with hyphen, underscore, MIME and
+ * file-extension variations. Keeping those spellings here stops the resolver,
+ * badge and upgrade loop forming three different opinions of the same bytes.
+ */
+object DolbyAudio {
+    private val EXACT = buildMap {
+        fun alias(canonical: String, vararg aliases: String) {
+            put(canonical, canonical)
+            aliases.forEach { put(it, canonical) }
+        }
+        alias("ac4", "ac-4", "ac4-ims", "ac_4", "dolby-ac4")
+        alias("eac3-joc", "eac3_joc", "ec3-joc", "ec3_joc", "ec-3-joc", "dolby-atmos", "joc")
+        alias("eac3", "eac-3", "e-ac-3", "ec3", "ec-3", "ddp", "dd+", "dolby-digital-plus")
+        alias("ac3", "ac-3", "dd", "dolby-digital")
+        alias("truehd", "true-hd", "mlp", "dolby-truehd")
+        alias("mat", "dolby-mat")
+    }
+
+    private val PATTERNS = listOf(
+        Regex("(?<![a-z0-9])ac-?4(?![a-z0-9])") to "ac4",
+        Regex("(?<![a-z0-9])(?:eac3|ec3|ec-3)[_-]?joc(?![a-z0-9])") to "eac3-joc",
+        Regex("(?<![a-z0-9])atmos(?![a-z0-9])") to "eac3-joc",
+        Regex("(?<![a-z0-9])(?:e-?ac-?3|ec-?3)(?![a-z0-9])") to "eac3",
+        Regex("(?<![a-z0-9])ac-?3(?![a-z0-9])") to "ac3",
+        Regex("(?<![a-z0-9])(?:true-?hd|mlp)(?![a-z0-9])") to "truehd",
+        Regex("(?<![a-z0-9])mat(?![a-z0-9])") to "mat",
+    )
+
+    /** Canonical Dolby codec id, or null when [raw] names something else. */
+    fun codec(raw: String?): String? {
+        val text = raw?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return null
+        EXACT[text]?.let { return it }
+        EXACT[text.substringBefore(';').trim().substringAfterLast('/')]?.let { return it }
+        return PATTERNS.firstOrNull { (pattern, _) -> pattern.containsMatchIn(text) }?.second
+    }
+
+    /**
+     * Atmos for this app's delivery paths. AC-4 is Amazon's immersive mix.
+     * TrueHD/MLP and MAT remain Dolby, but do not claim Atmos on codec alone.
+     */
+    fun isAtmos(raw: String?): Boolean = codec(raw) in ATMOS_CODECS
+
+    /** The user-facing codec claim, without reducing every Dolby codec to Atmos. */
+    fun label(raw: String?): String? = when (codec(raw)) {
+        "ac4", "eac3-joc", "eac3", "ac3" -> "Dolby Atmos"
+        "truehd" -> "Dolby TrueHD"
+        "mat" -> "Dolby MAT"
+        else -> null
+    }
+
+    private val ATMOS_CODECS = setOf("ac4", "eac3-joc", "eac3", "ac3")
+
+    /** Dolby filename extensions accepted when a source supplies no MIME or codec field. */
+    val fileExtensions = setOf(
+        "ac4", "ac-4", "eac3-joc", "ec3-joc", "eac3", "eac-3", "ec3", "ec-3",
+        "ac3", "ac-3", "truehd", "true-hd", "mlp", "mat",
+    )
 }

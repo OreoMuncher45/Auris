@@ -95,8 +95,6 @@ import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Upgrade
 import com.music.bitchord.data.listentogether.ServerConnectionState
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -349,7 +347,6 @@ import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.search_hint
 import com.music.bitchord.sharedui.resources.search_library_hint
 import com.music.bitchord.ui.components.TopBarDownloadButton
-import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
@@ -409,8 +406,6 @@ import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -3462,7 +3457,6 @@ internal fun BitChordApp(
         // offers the way back out of a revert rather than the revert again.
         val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
         val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
-        val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
         val refreshingState = viewModel.refreshing.collectAsStateWithLifecycle()
         val refreshing by refreshingState
 

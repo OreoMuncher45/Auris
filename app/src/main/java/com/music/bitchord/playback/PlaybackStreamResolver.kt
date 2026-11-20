@@ -369,7 +369,8 @@ internal class PlaybackStreamResolver(
                 "YouTube is not available; automix analysis for $videoId needs its audio",
             )
         }
-        NerdStats.recordSource(videoId, "YouTube")
+        // This is analysis-only audio. It must never replace the provenance of
+        // the different source currently reaching the speaker.
         val streamUrl = try {
             runBlocking(about) {
                 withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
@@ -648,16 +649,16 @@ internal class PlaybackStreamResolver(
         // trickle or a 403 rather than an error worth the name, so the
         // fetch is dressed as whatever the URL says it should be.
         val headers = StreamResolver.mediaHeadersFor(streamUrl)
-        // Recorded even though only one server can answer here: a
-        // source enabled from Settings mid-track flips the branch
-        // above under a half-filled cache entry, and the entry would
-        // then be finished by a different file.
-        NerdStats.recordSource(videoId, "YouTube")
         val serving = pinOrPinned(
             videoId,
             SourceStream(streamUrl, headers = headers),
             substituted = false,
         )
+        // A prepared substitute may have won the pin while YouTube was being
+        // resolved. Attribute the bytes actually returned, not this losing
+        // candidate; otherwise the pipeline flips to YouTube while Amazon or
+        // Tidal audio continues unchanged.
+        recordServingSource(videoId, serving)
         return dataSpec.buildUpon()
             .setUri(Uri.parse(serving.url))
             .setHttpRequestHeaders(serving.headers)
@@ -693,13 +694,14 @@ internal class PlaybackStreamResolver(
             // no such deadline, so what was nearly in hand is asked for
             // again while the fallback plays.
             is PlaybackService.Resolved.YouTube -> {
-                NerdStats.recordSource(videoId, "YouTube")
                 val headers = StreamResolver.mediaHeadersFor(won.url)
                 val serving = pinOrPinned(
                     videoId,
                     SourceStream(won.url, headers = headers),
                     substituted = false,
                 )
+                // Arbitration, not the candidate's origin, decides provenance.
+                recordServingSource(videoId, serving)
                 dataSpec.buildUpon()
                     .setUri(Uri.parse(serving.url))
                     .setHttpRequestHeaders(serving.headers)
@@ -724,7 +726,14 @@ internal class PlaybackStreamResolver(
      * going to race it — but it is the one window in which two servers can
      * both believe they are filling the same entry.
      */
-    private fun pinOrPinned(
+    /** Records the source of the stream that won arbitration and will supply the bytes. */
+    internal fun recordServingSource(videoId: String, serving: SourceStream) {
+        val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+            ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
+        NerdStats.recordSource(videoId, sourceName)
+    }
+
+    internal fun pinOrPinned(
         videoId: String,
         stream: SourceStream,
         substituted: Boolean,

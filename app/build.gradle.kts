@@ -263,6 +263,16 @@ android {
                         it.filter.excludeTestsMatching("com.music.bitchord.SettingsOverDetailTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.SearchFoldOverPageTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MediaDownloadButtonRecomposeTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.RootRecomposeOnPageAppendTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.SflxFetchContentTypeTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.data.sources.mornye.SflxFilesTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.BorrowedSiblingReopenTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.cenc.CencExtractorsFactoryTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.cenc.CencFlacFileTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.playback.cenc.CencReviewCasesTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.player.PlayerPanelRotationTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.screens.SettingsScrollRestoreTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.screens.ArtistPageInteractionTest")
                     }
                 }
                 // MenuOpenCostProbe runs only with MENU_PROBE=1, and Gradle

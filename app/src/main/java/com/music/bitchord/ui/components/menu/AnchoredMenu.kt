@@ -138,12 +138,11 @@ fun AnchoredMenu(
      */
     hostOffsetInWindow: () -> IntOffset = { IntOffset.Zero },
     /**
-     * Set for a menu over a page of rows: how much its glass frosts what is
-     * behind it ([MenuTokens.PageFrost]), and, with glass off, a plate that
-     * all but covers it ([MenuTokens.PagePlateAlpha]). Null for the player's
-     * menu, whose glass and plate are meant to show the artwork.
+     * Set for a menu over a page of rows: with glass off, use a plate that all
+     * but covers them ([MenuTokens.PagePlateAlpha]). Glass always keeps the
+     * app's configured Liquid/Frosted material, including its blur radius.
      */
-    frost: Dp? = null,
+    pagePlate: Boolean = false,
     /** Forces dark (true) or light (false) colours; null follows the theme. */
     dark: Boolean? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -157,7 +156,7 @@ fun AnchoredMenu(
     val isDark = dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)
     val colors = menuColors(isDark, reduceDynamicBlur)
     // A menu over a page covers the rows behind it — see MenuTokens.PagePlateAlpha.
-    val plate = if (frost != null) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
+    val plate = if (pagePlate) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
     val shape = RoundedCornerShape(MenuTokens.Radius)
     val progress = presence.animation.progress
 
@@ -265,7 +264,7 @@ fun AnchoredMenu(
                         translationY = (1f - p) * if (below) -MenuMotion.TRAVEL_PX else MenuMotion.TRAVEL_PX
                     }
                 }
-                .heldMenuSurface(shape, plate, colors.hairline, reduceDynamicBlur, frost?.value),
+                .heldMenuSurface(shape, plate, colors.hairline, reduceDynamicBlur),
         ) {
             // A row activated while the menu is already on its way out would
             // run its action twice. Three ways in, three guards: the rows read

@@ -134,7 +134,8 @@ object DownloadStore {
     fun storable(codec: String?): Storable? = when (codec?.lowercase(Locale.ROOT)?.trim()) {
         "flac", "x-flac" -> Storable("flac", "audio/flac")
         "wav", "x-wav", "wave" -> Storable("wav", "audio/x-wav")
-        "alac", "m4a", "mp4", "eac3-joc", "ec3-joc", "dolby-atmos" -> Storable("m4a", "audio/mp4")
+        "alac", "m4a", "mp4", "ac4", "ac-4", "eac3-joc", "ec3-joc", "dolby-atmos" ->
+            Storable("m4a", "audio/mp4")
         else -> null
     }
 

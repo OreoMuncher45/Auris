@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -102,6 +103,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -571,17 +573,27 @@ fun DetailScreen(
 
             if (isArtist) {
                 item(key = "artist-meta") {
+                    val menuHost = LocalMenuHost.current
                     ArtistMetaRow(
                         page = page,
                         palette = palette,
-                        albumsShelf = albumsShelf,
-                        singlesShelf = singlesShelf,
                         spotifyStats = spotifyStats,
                         isAiArtist = artistIsAi,
-                        onOpenShelf = onActiveShelfChange,
-                        onHideArtist = onHideArtist,
-                        onToggleAiArtist = {
-                            AppSettings.toggleArtistAi(page.browseId, page.title)
+                        // The artist's own menu, hung off the ⋮ like every other menu.
+                        onOpenMenu = { anchor ->
+                            menuHost?.open(anchor) { close ->
+                                ArtistOverflowRows(
+                                    albumsShelf = albumsShelf,
+                                    singlesShelf = singlesShelf,
+                                    artistIsAi = artistIsAi,
+                                    onOpenShelf = onActiveShelfChange,
+                                    onToggleAiArtist = {
+                                        AppSettings.toggleArtistAi(page.browseId, page.title)
+                                    },
+                                    onHideArtist = onHideArtist,
+                                    close = close,
+                                )
+                            }
                         },
                     )
                 }
@@ -1748,22 +1760,14 @@ private fun ArtistStatsRow(
  * the act from the rest of the app.
  */
 @Composable
-private fun ArtistMetaRow(
+internal fun ArtistMetaRow(
     page: DetailPage,
     palette: ArtworkPalette,
-    albumsShelf: HomeShelf?,
-    singlesShelf: HomeShelf?,
     spotifyStats: SpotifyArtistStats?,
     isAiArtist: Boolean,
-    onOpenShelf: (HomeShelf) -> Unit,
-    onHideArtist: (() -> Unit)?,
-    onToggleAiArtist: (() -> Unit)?,
+    /** Opens the artist's menu ([ArtistOverflowRows]) hung off the ⋮ at this anchor. */
+    onOpenMenu: (anchorInWindow: Rect?) -> Unit,
 ) {
-    if (page.subscriberCountText == null && page.monthlyListenerCount == null &&
-        albumsShelf == null && singlesShelf == null && onHideArtist == null &&
-        spotifyStats == null && !isAiArtist && onToggleAiArtist == null
-    ) return
-
     Box(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1804,45 +1808,9 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        // The artist's own menu, hung off the ⋮ like every other menu.
-        val menuHost = LocalMenuHost.current
         val origin = rememberMenuButtonOrigin()
-        val albumsLabel = stringResource(R.string.albums)
-        val singlesLabel = stringResource(R.string.singles_eps)
         IconButton(
-            onClick = {
-                menuHost?.open(origin.boundsInWindow()) { close ->
-                    val ink = MaterialTheme.colorScheme.onSurface
-                    albumsShelf?.let { shelf ->
-                        MenuRow(icon = null, label = albumsLabel, ink = ink) {
-                            close()
-                            onOpenShelf(shelf)
-                        }
-                    }
-                    singlesShelf?.let { shelf ->
-                        MenuRow(icon = null, label = singlesLabel, ink = ink) {
-                            close()
-                            onOpenShelf(shelf)
-                        }
-                    }
-                    if (onToggleAiArtist != null) {
-                        MenuRow(
-                            icon = Icons.Rounded.AutoAwesome,
-                            label = stringResource(if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai),
-                            ink = ink,
-                        ) {
-                            close()
-                            onToggleAiArtist()
-                        }
-                    }
-                    if (onHideArtist != null) {
-                        MenuRow(icon = Icons.Rounded.VisibilityOff, label = stringResource(R.string.hide_artist), ink = ink) {
-                            close()
-                            onHideArtist()
-                        }
-                    }
-                }
-            },
+            onClick = { onOpenMenu(origin.boundsInWindow()) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = ARTIST_CONTENT_GUTTER)
@@ -1853,6 +1821,51 @@ private fun ArtistMetaRow(
                 contentDescription = stringResource(R.string.more),
                 tint = palette.onBackgroundVariant,
             )
+        }
+    }
+}
+
+/**
+ * The artist page's overflow rows, in the order Albums, Singles & EPs, the AI
+ * mark and Hide. One composable for the root's shared menu host and the
+ * interaction tests alike, so the tests exercise the real rows and callbacks.
+ * Each row closes the menu before it acts.
+ */
+@Composable
+internal fun ColumnScope.ArtistOverflowRows(
+    albumsShelf: HomeShelf?,
+    singlesShelf: HomeShelf?,
+    artistIsAi: Boolean,
+    onOpenShelf: (HomeShelf) -> Unit,
+    onToggleAiArtist: () -> Unit,
+    onHideArtist: (() -> Unit)?,
+    close: () -> Unit,
+) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    albumsShelf?.let { shelf ->
+        MenuRow(icon = null, label = stringResource(R.string.albums), ink = ink) {
+            close()
+            onOpenShelf(shelf)
+        }
+    }
+    singlesShelf?.let { shelf ->
+        MenuRow(icon = null, label = stringResource(R.string.singles_eps), ink = ink) {
+            close()
+            onOpenShelf(shelf)
+        }
+    }
+    MenuRow(
+        icon = Icons.Rounded.AutoAwesome,
+        label = stringResource(if (artistIsAi) R.string.remove_ai_mark else R.string.mark_as_ai),
+        ink = ink,
+    ) {
+        close()
+        onToggleAiArtist()
+    }
+    onHideArtist?.let { hide ->
+        MenuRow(icon = Icons.Rounded.VisibilityOff, label = stringResource(R.string.hide_artist), ink = ink) {
+            close()
+            hide()
         }
     }
 }
