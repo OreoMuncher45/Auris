@@ -437,7 +437,18 @@ object StreamResolver {
                 }
                 ?: run {
                     TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                    try {
+                        timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // Extraction takes progressive audio only, and NewPipe
+                        // files a live broadcast's audio as DASH, so a live id
+                        // InnerTubeX missed fails here. Its HLS playlist is
+                        // tried before giving up — only on that failure, so an
+                        // ordinary track pays no second page fetch.
+                        timed("$videoId live HLS") { liveHlsStream(videoId) } ?: throw e
+                    }
                 }
         } catch (e: CancellationException) {
             throw e
