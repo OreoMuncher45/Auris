@@ -175,7 +175,11 @@ object SpotifyImporter {
     suspend fun matchTrack(track: SpotifyTrack): Song? {
         val context = matchContext()
         matches.get(track.id, context)?.let { return it }
-        return searchMatch(track)?.also { matches.put(track.id, context, it) }
+        // Stored only if the sources are still as they were when the search
+        // began: a toggle while it ran may have produced a row from a source
+        // the captured configuration does not have, and cachedMatch would
+        // then hand it back for that configuration with no new search.
+        return searchMatch(track)?.also { if (matchContext() == context) matches.put(track.id, context, it) }
     }
 
     /**
