@@ -4716,10 +4716,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val endless = browseId.isEndlessMix()
         // Every id the chain has produced so far, first page included, for the
         // loop guard below. Only the request side touches it, one page at a time.
+        // Real tracks and suggestions apart, as the publish below keeps them:
+        // a real track that first showed up as a suggestion is still new.
         val seen = HashSet<String>()
+        val seenSuggested = HashSet<String>()
         _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
-            page.suggestedSongs.mapTo(seen) { it.videoId }
+            page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
         viewModelScope.launch {
             followContinuations(
@@ -4731,7 +4734,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // An endless mix hands its next page to the screen instead
                     // (below), so it never asks for a second one here.
                     val fresh = fetched.songs.count { seen.add(it.videoId) } +
-                        fetched.suggested.count { seen.add(it.videoId) }
+                        fetched.suggested.count { it.videoId !in seen && seenSuggested.add(it.videoId) }
                     fetched.continuation.takeIf { fresh > 0 && !endless }
                 },
                 // Publish and draw the first response before page two lands on
