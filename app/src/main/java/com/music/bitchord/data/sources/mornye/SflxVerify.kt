@@ -50,12 +50,7 @@ object SflxVerify {
     @Volatile
     private var appContext: Context? = null
 
-    /** The prompt already on screen, so three retries do not open three pages. */
-    @Volatile
-    private var showing: String? = null
-
-    @Volatile
-    private var showingAt: Long = 0L
+    private val launches = SflxVerificationLaunchGate()
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -64,39 +59,73 @@ object SflxVerify {
     /**
      * Shows the verification page for [extensionId].
      *
-     * Duplicate requests for the same extension within a few seconds are
-     * dropped: a gateway that refuses three requests in a row would otherwise
-     * stack three identical pages.
+     * Only an exact active duplicate is dropped. A new URL is a new gateway
+     * challenge, and another extension is a new request too; [SflxVerifyActivity]
+     * is single-task and replaces its content for either rather than stacking a
+     * second page. The check and reservation are atomic across signed callers.
      */
     fun open(extensionId: String, displayName: String, url: String) {
         if (url.isBlank()) return
-        val now = System.currentTimeMillis()
-        if (showing == extensionId && now - showingAt < DEDUPE_MS) return
         val context = appContext ?: run {
             Log.w(TAG, "sflx[$extensionId] verification requested before the app context was set")
             return
         }
-        showing = extensionId
-        showingAt = now
-        Log.d(TAG, "sflx[$extensionId] opening verification")
         val intent = Intent(context, SflxVerifyActivity::class.java)
             .putExtra(SflxVerifyActivity.EXTRA_ID, extensionId)
             .putExtra(SflxVerifyActivity.EXTRA_NAME, displayName)
             .putExtra(SflxVerifyActivity.EXTRA_URL, url)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        runCatching { context.startActivity(intent) }
-            .onFailure { Log.w(TAG, "sflx[$extensionId] could not open verification: ${it.message}") }
+        launches.open(extensionId, url, launch = {
+            Log.d(TAG, "sflx[$extensionId] opening verification")
+            context.startActivity(intent)
+        }, onFailure = { error ->
+            Log.w(TAG, "sflx[$extensionId] could not open verification: ${error.message}")
+        })
     }
 
-    /** Called by the page when it closes, so the next refusal may open a new one. */
-    fun closed(extensionId: String?) {
-        if (extensionId == null || extensionId == showing) {
-            showing = null
-            showingAt = 0L
+    /** Called by the page when it closes, so an explicit later request may open it again. */
+    fun closed(extensionId: String?, url: String? = null) = launches.closed(extensionId, url)
+}
+
+/**
+ * One reservation for the verification activity, independent of Android so its
+ * concurrency rules can be tested on every JVM. The launch callback runs under
+ * the same lock as the reservation: two workers cannot both pass before either
+ * has called `startActivity`.
+ */
+internal class SflxVerificationLaunchGate {
+    private data class Challenge(val extensionId: String, val url: String)
+
+    private var showing: Challenge? = null
+
+    @Synchronized
+    fun open(
+        extensionId: String,
+        url: String,
+        onFailure: (Throwable) -> Unit = {},
+        launch: () -> Unit,
+    ) {
+        val challenge = Challenge(extensionId, url)
+        if (showing == challenge) return
+        val previous = showing
+        showing = challenge
+        try {
+            launch()
+        } catch (error: Throwable) {
+            if (showing == challenge) showing = previous
+            onFailure(error)
         }
     }
 
-    private const val DEDUPE_MS = 5_000L
+    @Synchronized
+    fun closed(extensionId: String?, url: String? = null) {
+        val active = showing ?: return
+        if (extensionId == null ||
+            (active.extensionId == extensionId && (url == null || active.url == url))
+        ) {
+            showing = null
+        }
+    }
 }
 
 /**
@@ -110,6 +139,9 @@ class SflxVerifyActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
     private var extensionId: String? = null
+    private var challengeUrl: String? = null
+    private var titleView: TextView? = null
+    private var progressView: ProgressBar? = null
     private var finished = false
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -127,9 +159,7 @@ class SflxVerifyActivity : AppCompatActivity() {
         // and the extension goes on asking.
         if (handleDeepLink(intent)) return
 
-        extensionId = intent.getStringExtra(EXTRA_ID)
         val displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
-        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -151,12 +181,14 @@ class SflxVerifyActivity : AppCompatActivity() {
             text = "Close"
             setOnClickListener { finish() }
         }
+        titleView = title
         bar.addView(title)
         bar.addView(close)
 
         val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             isIndeterminate = true
         }
+        progressView = progress
 
         val view = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -230,11 +262,26 @@ class SflxVerifyActivity : AppCompatActivity() {
         val height = (resources.displayMetrics.heightPixels * 0.85f).toInt()
         window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
 
+        showChallenge(intent)
+    }
+
+    /** Loads a genuinely new challenge into the one existing verification activity. */
+    private fun showChallenge(intent: Intent) {
+        extensionId = intent.getStringExtra(EXTRA_ID)
+        val displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
+        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+        challengeUrl = url
+        finished = false
+        titleView?.text = if (displayName.isBlank()) "Verify" else "Verify $displayName"
+        progressView?.visibility = ProgressBar.VISIBLE
         if (url.isBlank()) {
             finish()
             return
         }
-        view.loadUrl(url)
+        webView?.let { view ->
+            view.stopLoading()
+            view.loadUrl(url)
+        }
     }
 
     /**
@@ -388,7 +435,8 @@ class SflxVerifyActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleDeepLink(intent)
+        if (handleDeepLink(intent)) return
+        if (!intent.getStringExtra(EXTRA_URL).isNullOrBlank()) showChallenge(intent)
     }
 
     /**
@@ -404,7 +452,7 @@ class SflxVerifyActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        SflxVerify.closed(extensionId)
+        SflxVerify.closed(extensionId, challengeUrl)
         webView?.let { view ->
             runCatching {
                 view.stopLoading()
@@ -414,6 +462,8 @@ class SflxVerifyActivity : AppCompatActivity() {
             }
         }
         webView = null
+        titleView = null
+        progressView = null
         super.onDestroy()
     }
 

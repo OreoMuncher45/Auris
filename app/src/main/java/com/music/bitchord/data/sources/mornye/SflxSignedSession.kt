@@ -1,6 +1,5 @@
 package com.music.bitchord.data.sources.mornye
 
-import android.util.Base64
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import kotlinx.serialization.json.JsonArray
@@ -63,6 +62,8 @@ class SflxSignedSession(
     directory: File,
     /** Told when the gateway wants the listener to verify; the URL to open. */
     private val onVerificationRequired: (String) -> Unit = {},
+    private val httpClient: okhttp3.OkHttpClient = Http.client,
+    private val verificationWaitMs: Long = VERIFY_WAIT_MS,
 ) {
 
     /** The install id is the identity the gateway remembers; one per record. */
@@ -80,9 +81,6 @@ class SflxSignedSession(
 
     /** Guards [awaitVerification]; notified when a grant is redeemed. */
     private val verificationMonitor = Object()
-
-    @Volatile
-    private var granted = false
 
     /** Why the last verification attempt produced no page. Shown in the UI. */
     @Volatile
@@ -170,6 +168,8 @@ class SflxSignedSession(
         save(record)
         blockedGeneration = ""
         pending = null
+        lastVerificationError = ""
+        synchronized(verificationMonitor) { verificationMonitor.notifyAll() }
     }
 
     /** What the UI needs to draw the row, without running any JavaScript. */
@@ -228,14 +228,19 @@ class SflxSignedSession(
 
     private fun bootstrap(): Bootstrap {
         synchronized(lock) {
+            val record = load()
+            // Another caller may have redeemed this challenge while this one
+            // was waiting. A live session always outranks the old page.
+            if (usable(record) && !isBlocked(record)) {
+                pending = null
+                return Bootstrap.Session(record)
+            }
             pending?.let { challenge ->
                 if (challenge.authUrl.isNotBlank() && now() - challenge.createdAt < CHALLENGE_LIFETIME_MS) {
                     return Bootstrap.Challenge(challenge.authUrl, challenge.callback, challenge.state)
                 }
                 pending = null
             }
-            val record = load()
-            if (usable(record) && !isBlocked(record)) return Bootstrap.Session(record)
 
             val url = withQuery(
                 endpoint(config.bootstrap)
@@ -363,7 +368,7 @@ class SflxSignedSession(
             save(record)
             blockedGeneration = ""
             pending = null
-            granted = true
+            lastVerificationError = ""
             synchronized(verificationMonitor) { verificationMonitor.notifyAll() }
             Log.d(TAG, "sflx[$extensionId] signed session exchanged and stored")
             return true
@@ -426,7 +431,6 @@ class SflxSignedSession(
         headers: Map<String, String>,
         depth: Int = 0,
     ): JSONObject {
-        granted = false
         val verb = method.trim().uppercase(Locale.ROOT)
         var record = synchronized(lock) { load() }
         val missing = when {
@@ -439,7 +443,7 @@ class SflxSignedSession(
             else -> null
         }
         if (missing != null) {
-            return bootstrapThenVerify(missing, method, path, body, headers, depth)
+            return bootstrapThenVerify(method, path, body, headers, depth)
         }
         if (isBlocked(record)) {
             val bootstrap = bootstrap()
@@ -525,18 +529,19 @@ class SflxSignedSession(
     }
 
     private fun bootstrapThenVerify(
-        reason: String,
         method: String,
         path: String,
         body: String,
         headers: Map<String, String>,
         depth: Int,
     ): JSONObject {
-        val bootstrap = bootstrap()
-        if (bootstrap !is Bootstrap.Challenge) {
-            return JSONObject().put("ok", false).put("error", reason)
+        return when (val bootstrap = bootstrap()) {
+            // Bootstrap can authenticate without a page. That session is the
+            // answer to the failure above, not a reason to make the extension
+            // issue the same signed request a second time.
+            is Bootstrap.Session -> signedFetch(method, path, body, headers, depth)
+            is Bootstrap.Challenge -> afterChallenge(bootstrap.url, method, path, body, headers, depth)
         }
-        return afterChallenge(bootstrap.url, method, path, body, headers, depth)
     }
 
     /**
@@ -556,29 +561,43 @@ class SflxSignedSession(
         depth: Int,
     ): JSONObject {
         if (depth < MAX_VERIFY_RETRIES && awaitVerification(url)) {
-            val record = synchronized(lock) { load() }
-            if (usable(record)) {
-                granted = false
-                return signedFetch(method, path, body, headers, depth + 1)
-            }
+            if (ready()) return signedFetch(method, path, body, headers, depth + 1)
+        } else if (depth >= MAX_VERIFY_RETRIES && !ready()) {
+            // A genuine refusal after the one automatic retry still gets a
+            // page. A timeout or dismissal does not open the same page again.
+            runCatching { onVerificationRequired(url) }
         }
         return verificationRequired(url)
     }
 
-    /** True when a grant arrived before the deadline, false otherwise. */
+    /** Whether the record on disk is usable now, including a grant won by another caller. */
+    private fun ready(): Boolean = synchronized(lock) {
+        load().let { usable(it) && !isBlocked(it) }
+    }
+
+    /** True when any caller obtained a usable grant before the deadline. */
     private fun awaitVerification(url: String): Boolean {
-        if (granted) return true
+        if (ready()) return true
         runCatching { onVerificationRequired(url) }
-        val deadline = now() + VERIFY_WAIT_MS
-        while (!granted && now() < deadline) {
-            runCatching { Thread.sleep(250) }
-            if (Thread.currentThread().isInterrupted) break
+        val deadline = now() + verificationWaitMs
+        while (!ready()) {
+            val remaining = deadline - now()
+            if (remaining <= 0 || Thread.currentThread().isInterrupted) break
+            // Never hold this monitor while taking [lock]: completeGrant takes
+            // them in the opposite order when it stores the record and wakes us.
+            synchronized(verificationMonitor) {
+                try {
+                    verificationMonitor.wait(remaining.coerceAtMost(250L))
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
         }
-        return granted
+        return ready()
     }
 
     private fun verificationRequired(url: String): JSONObject {
-        if (url.isNotBlank()) runCatching { onVerificationRequired(url) }
         return JSONObject()
             .put("ok", false)
             .put("needsVerification", true)
@@ -686,7 +705,7 @@ class SflxSignedSession(
         val payload = if (method == "GET" || method == "HEAD") null
         else body.toRequestBody("application/json".toMediaType())
         builder.method(method, payload)
-        Http.client.newCall(builder.build()).execute().use { response ->
+        httpClient.newCall(builder.build()).execute().use { response ->
             HttpAnswer(
                 code = response.code,
                 body = response.body?.string().orEmpty(),
@@ -916,7 +935,7 @@ class SflxSignedSession(
         }
 
         fun base64UrlNoPad(bytes: ByteArray): String =
-            Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
         /** RFC 3339 with `Z`, `±hh:mm`, comma or dot fractions, to epoch millis. */
         fun parseTime(value: String): Long? {

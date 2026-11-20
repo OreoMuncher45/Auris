@@ -147,6 +147,18 @@ class SourcesTest {
         assertTrue(SourceResolver.worthSwapping(ac4, StreamFormat(codec = "flac")))
     }
 
+    @Test
+    fun `Tidal segmented FLAC and Atmos are read through their generic MP4 envelope`() {
+        val source = ModuleSource(SourceConfig(kind = SourceKind.MODULE))
+        val playlist = "file:///cache/tidal/playlist.m3u8"
+
+        assertEquals("flac", source.codecOf("audio/mp4", "LOSSLESS", playlist))
+        assertEquals("flac", source.codecOf("audio/mp4", "HI_RES_LOSSLESS", playlist))
+        assertEquals("eac3-joc", source.codecOf("audio/mp4", "DOLBY_ATMOS", playlist))
+        // A real payload codec remains more specific than either tier label.
+        assertEquals("aac", source.codecOf("audio/aac", "LOSSLESS", playlist))
+    }
+
     /**
      * ...and premium only where it is allowed to play. E-AC-3 ships with the
      * vendor image, not with Android, and a module that answers every request

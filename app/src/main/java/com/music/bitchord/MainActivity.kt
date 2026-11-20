@@ -7054,6 +7054,7 @@ private fun RootOverlays(
             // one of them is what makes it answer at all. The dialog's
             // door opens the same sheet the sources screen opens.
             onOpenExtensionSettings = { id ->
+                sheets.showLyricsSources = false
                 sheets.editingExtension = SflxCatalog.installed.value.firstOrNull { it.id == id }
             },
         )

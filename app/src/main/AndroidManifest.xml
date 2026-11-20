@@ -130,7 +130,7 @@
             android:name=".data.sources.mornye.SflxVerifyActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.BitChord.Verify">
