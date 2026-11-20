@@ -952,6 +952,9 @@ object Innertube {
         val response = postMusic("feedback") {
             putJsonArray("feedbackTokens") { add(token) }
         }
+        // A refused request is HTTP 200 with an `error` object and no answers,
+        // which the fallback below would read as success.
+        if (response["error"] != null) return false
         val answers = (response["feedbackResponses"] as? kotlinx.serialization.json.JsonArray) ?: return true
         return answers.none { answer ->
             ((answer as? JsonObject)?.get("isProcessed") as? kotlinx.serialization.json.JsonPrimitive)
