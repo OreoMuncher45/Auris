@@ -400,6 +400,10 @@ class CastPlayback(
     private fun load(item: MediaItem?, positionMs: Long, play: Boolean) {
         val remote = client ?: return
         loadJob?.cancel()
+        // A reconcile for the queue being replaced must not append its tracks
+        // to the new one; the load schedules a fresh reconcile when it lands.
+        reconcileJob?.cancel()
+        reconcileAgain = false
         val generation = ++loadGeneration
         wantsPlay = play
         loading = true
@@ -505,6 +509,10 @@ class CastPlayback(
      */
     private suspend fun reconcileOnce() {
         val remote = client ?: return
+        // Every await below can outlive the queue it was working on: a new
+        // load replaces the receiver's queue, and work for the old one stops.
+        val generation = loadGeneration
+        fun stale() = generation != loadGeneration || !active || loading
         val player = localPlayer() ?: return
         val status = remote.mediaStatus ?: return
         val queue = status.queueItems
@@ -524,12 +532,26 @@ class CastPlayback(
         if (kept == remoteAhead.size && kept == wanted.size) return
 
         if (kept < remoteAhead.size) {
-            remote.queueRemoveItems(remoteAhead.drop(kept).map { it.itemId }.toIntArray(), null).awaitResult()
+            val removed = remote.queueRemoveItems(remoteAhead.drop(kept).map { it.itemId }.toIntArray(), null)
+                .awaitResult()
+            if (stale()) return
+            // A failed removal leaves the old tracks queued; appending after
+            // them would play both. The next reconcile tries again.
+            if (!removed.status.isSuccess) {
+                Log.w(TAG, "queue removal failed: ${removed.status.statusCode}")
+                return
+            }
         }
         for (next in wanted.drop(kept)) {
             val queueItem = buildQueueItem(next, autoplay = true) ?: break
-            if (!active) return
-            remote.queueInsertItems(arrayOf(queueItem), MediaQueueItem.INVALID_ITEM_ID, null).awaitResult()
+            if (stale()) return
+            val inserted = remote.queueInsertItems(arrayOf(queueItem), MediaQueueItem.INVALID_ITEM_ID, null)
+                .awaitResult()
+            if (stale()) return
+            if (!inserted.status.isSuccess) {
+                Log.w(TAG, "queue insert failed: ${inserted.status.statusCode}")
+                return
+            }
         }
     }
 
