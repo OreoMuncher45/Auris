@@ -195,3 +195,9 @@ internal object BitPerfectPcm {
         }
     }
 }
+
+/**
+ * Nothing pending. Zero capacity, so no position or limit can move on it, and
+ * one instance serves every session.
+ */
+internal val EMPTY_PCM: java.nio.ByteBuffer = java.nio.ByteBuffer.allocate(0)

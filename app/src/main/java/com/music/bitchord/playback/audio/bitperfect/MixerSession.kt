@@ -309,7 +309,10 @@ class MixerSession(
         current.release()
         BitPerfectMixer.clear(manager)
         AudioOutputStatus.publishBitPerfectMixer(null)
-        pending = scratch.also { it.clear().limit(0) }
+        // A fresh empty buffer, not [scratch]: teardown runs off the playback
+        // thread, which may be converting into [scratch] right now, and
+        // moving its limit under it would overflow that write.
+        pending = EMPTY_PCM
         framesSubmitted = 0
         startNeedsInit = true
     }
