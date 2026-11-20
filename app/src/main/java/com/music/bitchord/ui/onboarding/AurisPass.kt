@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.onboarding
 
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -62,8 +64,25 @@ internal fun AurisPass(
     /** The year the listener started, printed under "listener since". */
     since: Int = remember { Calendar.getInstance().get(Calendar.YEAR) },
 ) {
-    val displayName = name.trim().ifBlank { stringResource(R.string.auris_pass_unnamed) }
-    val serial = remember(name) { passSerial(name) }
+    val current by rememberUpdatedState(name)
+    AurisPass(name = { current }, modifier = modifier, tilt = tilt, since = since)
+}
+
+/**
+ * The same card, with the name read only where it is drawn.
+ *
+ * The setup flow's name page changes the name on every keystroke. Read up
+ * here, each letter re-ran the whole card and the page around it; read in
+ * the stub and the body, a letter redraws the serial, the matrix and the
+ * name, and nothing else.
+ */
+@Composable
+internal fun AurisPass(
+    name: () -> String,
+    modifier: Modifier = Modifier,
+    tilt: () -> Pair<Float, Float> = { 0f to 0f },
+    since: Int = remember { Calendar.getInstance().get(Calendar.YEAR) },
+) {
     val shape = RoundedCornerShape(24.dp)
 
     Box(
@@ -127,7 +146,7 @@ internal fun AurisPass(
         }
 
         Row(Modifier.fillMaxSize()) {
-            PassStub(serial = serial)
+            PassStub(name = name)
             // The perforation. A dashed line rather than a solid one, because a
             // pass is something that can be torn along it.
             Canvas(Modifier.fillMaxHeight().width(1.dp)) {
@@ -139,7 +158,7 @@ internal fun AurisPass(
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f * density, 6f * density)),
                 )
             }
-            PassBody(name = displayName, serial = serial, since = since)
+            PassBody(name = name, since = since)
         }
 
         // A single travelling sheen across the whole card, read in the layer so
@@ -165,7 +184,9 @@ internal fun AurisPass(
 
 /** The torn-off end: vertical label, matrix and the card's own address. */
 @Composable
-private fun PassStub(serial: String) {
+private fun PassStub(name: () -> String) {
+    val raw = name()
+    val serial = remember(raw) { passSerial(raw) }
     Column(
         modifier = Modifier
             .fillMaxHeight()
@@ -207,7 +228,10 @@ private fun PassStub(serial: String) {
 
 /** The card proper: wordmark, serial, the name, and three facts. */
 @Composable
-private fun PassBody(name: String, serial: String, since: Int) {
+private fun PassBody(name: () -> String, since: Int) {
+    val raw = name()
+    val serial = remember(raw) { passSerial(raw) }
+    val displayName = raw.trim().ifBlank { stringResource(R.string.auris_pass_unnamed) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -250,7 +274,7 @@ private fun PassBody(name: String, serial: String, since: Int) {
         Spacer(Modifier.weight(1f))
 
         Text(
-            text = name,
+            text = displayName,
             color = Color.White,
             fontSize = 34.sp,
             lineHeight = 34.sp,

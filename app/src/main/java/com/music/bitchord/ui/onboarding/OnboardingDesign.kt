@@ -390,7 +390,9 @@ internal fun OnbField(
         ),
         cursorBrush = SolidColor(Onb.Title),
         keyboardOptions = KeyboardOptions(imeAction = imeAction),
-        modifier = modifier,
+        // A layer of its own: each letter and each blink of the cursor
+        // re-records this field alone, not the whole sheet it sits on.
+        modifier = modifier.graphicsLayer(),
         decorationBox = { inner ->
             Row(
                 modifier = Modifier

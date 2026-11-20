@@ -113,7 +113,8 @@ import org.jetbrains.compose.resources.painterResource
  */
 @Composable
 internal fun NameStep(
-    name: String,
+    /** Read only by the field and the card, so a keystroke redraws those alone. */
+    name: () -> String,
     onName: (String) -> Unit,
     footer: @Composable ColumnScope.() -> Unit,
 ) {
@@ -126,13 +127,19 @@ internal fun NameStep(
     ) {
         AurisPass(name = name, tilt = tilt)
         Spacer(Modifier.height(18.dp))
-        OnbField(
-            value = name,
-            onValueChange = onName,
-            placeholder = "Your name",
-            modifier = Modifier.fillMaxWidth(),
-        )
+        NameField(name = name, onName = onName)
     }
+}
+
+/** The name field in a scope of its own: typing recomposes this, not the page. */
+@Composable
+private fun NameField(name: () -> String, onName: (String) -> Unit) {
+    OnbField(
+        value = name(),
+        onValueChange = onName,
+        placeholder = "Your name",
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 // ---------------------------------------------------------------------------

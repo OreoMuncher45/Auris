@@ -114,6 +114,10 @@ fun SetupWizard(
 
     var step by rememberSaveable { mutableIntStateOf(0) }
     var name by rememberSaveable { mutableStateOf(OnboardingState.name(context)) }
+    // Handed to the name page unread, so a keystroke does not recompose the
+    // flow's pages, rail and footer — only the field and the card read it.
+    val nameRead = remember { { name } }
+    val onName = remember { { typed: String -> name = typed } }
     var editing by remember { mutableIntStateOf(0) }
     var wifi by remember { mutableStateOf(AppSettings.audioQualityWifi.value) }
     var cellular by remember { mutableStateOf(AppSettings.audioQualityCellular.value) }
@@ -333,8 +337,8 @@ fun SetupWizard(
                     }
                     when (current) {
                         NAME_STEP -> NameStep(
-                            name = name,
-                            onName = { name = it },
+                            name = nameRead,
+                            onName = onName,
                             footer = footer,
                         )
                         SOUND_STEP -> SoundStep(
