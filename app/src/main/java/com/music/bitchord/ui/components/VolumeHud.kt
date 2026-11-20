@@ -58,7 +58,10 @@ object VolumeHud {
     private val _pulses = MutableSharedFlow<Int>(extraBufferCapacity = 8)
     internal val pulses: SharedFlow<Int> = _pulses.asSharedFlow()
 
-    /** True while the full player is up: its own volume bar shows the level. */
+    /**
+     * True while the full player is up: its own volume bar shows the level,
+     * unless the listener hid it (see the collector).
+     */
     @Volatile var suppressed = false
 
     fun pulse(direction: Int, atLimit: Boolean) {
@@ -121,7 +124,10 @@ fun VolumeHudOverlay() {
 
     LaunchedEffect(Unit) {
         VolumeHud.pulses.collect { pulse ->
-            if (VolumeHud.suppressed) return@collect
+            // Read per press, not composed: the player only draws its own
+            // volume row while the bar isn't hidden, so with it hidden the HUD
+            // is the only feedback there is.
+            if (VolumeHud.suppressed && !AppSettings.hideVolumeBar.value) return@collect
             present = true
             launch { slide.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 420f)) }
             scheduleHide()
