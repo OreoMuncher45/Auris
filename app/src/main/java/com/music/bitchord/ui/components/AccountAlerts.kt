@@ -83,6 +83,9 @@ fun ListenBrainzTokenAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        // The keyboard's Done skips the card's key guard; an exiting card
+        // must not save from it either. See TextValueAlert.
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -107,7 +110,7 @@ fun ListenBrainzTokenAlert(
                 onValueChange = onTokenInputChange,
                 placeholder = stringResource(R.string.api_token),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onSave() }),
+                keyboardActions = KeyboardActions(onDone = { if (interactiveNow) onSave() }),
             )
         }
         AlertRule()
@@ -131,6 +134,7 @@ fun LastfmLoginAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -166,7 +170,7 @@ fun LastfmLoginAlert(
                 isPassword = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(
-                    onDone = { if (usernameInput.isNotBlank() && passwordInput.isNotBlank()) onSignIn() },
+                    onDone = { if (interactiveNow && usernameInput.isNotBlank() && passwordInput.isNotBlank()) onSignIn() },
                 ),
             )
         }
@@ -207,6 +211,7 @@ fun DiscordTokenAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -233,7 +238,7 @@ fun DiscordTokenAlert(
                 enabled = !loading,
                 isPassword = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (tokenInput.isNotBlank()) onSave() }),
+                keyboardActions = KeyboardActions(onDone = { if (interactiveNow && tokenInput.isNotBlank()) onSave() }),
             )
         }
         AlertRule()
@@ -372,6 +377,7 @@ fun ServerEditorAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = { if (!testing) onDismiss() }) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -408,7 +414,7 @@ fun ServerEditorAlert(
                         imeAction = if (index == fields.lastIndex) ImeAction.Done else ImeAction.Next,
                     ),
                     keyboardActions = KeyboardActions(
-                        onDone = { if (canSubmit && !testing) onSave() },
+                        onDone = { if (interactiveNow && canSubmit && !testing) onSave() },
                     ),
                 )
                 if (field.help.isNotBlank()) {
