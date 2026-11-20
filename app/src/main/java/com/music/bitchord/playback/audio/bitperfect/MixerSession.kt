@@ -68,6 +68,12 @@ class MixerSession(
     private val lock = Any()
 
     @Volatile private var track: AudioTrack? = null
+    /**
+     * Set when the track refused a write with an error rather than a full
+     * queue (a dead object after a route change, say). [isStreamAlive] then
+     * says so, and the sink falls back instead of retrying it as backpressure.
+     */
+    @Volatile private var trackFailed = false
     @Volatile override var lastFailureReason: String? = null
         private set
     @Volatile private var retryable = false
@@ -170,6 +176,7 @@ class MixerSession(
         startNeedsInit = true
         pending = scratch.also { it.clear().limit(0) }
         lastFailureReason = null
+        trackFailed = false
         if (!paused) built.play()
         Log.i(TAG, "open ${format.sampleRate} Hz $bits-bit (source $sourceBits-bit) on ${device.productName}")
         true
@@ -208,8 +215,10 @@ class MixerSession(
         if (paused) return false
         // What the track did not take last time goes first; the new buffer
         // waits for it, untouched, so nothing is reordered or dropped.
+        if (trackFailed) return false
         if (pending.hasRemaining()) {
-            current.write(pending, pending.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+            val written = current.write(pending, pending.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+            if (written < 0) return failWrite(written)
             if (pending.hasRemaining()) return false
         }
         if (!buffer.hasRemaining()) return true
@@ -235,11 +244,22 @@ class MixerSession(
         }
         framesSubmitted += frames
         pending = out
-        current.write(pending, pending.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+        val written = current.write(pending, pending.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+        // The buffer is converted and held in [pending] either way, so it is
+        // taken; a failed track is reported on the next write.
+        if (written < 0) failWrite(written)
         return true
     }
 
-    override fun isStreamAlive(): Boolean = track?.state == AudioTrack.STATE_INITIALIZED
+    /** Marks the track failed after a write error; always false, for [write]. */
+    private fun failWrite(code: Int): Boolean {
+        trackFailed = true
+        lastFailureReason = "$pathLabel: AudioTrack write failed ($code)"
+        retryable = true
+        return false
+    }
+
+    override fun isStreamAlive(): Boolean = !trackFailed && track?.state == AudioTrack.STATE_INITIALIZED
 
     override fun restartIfStopped(): Boolean = false
 
