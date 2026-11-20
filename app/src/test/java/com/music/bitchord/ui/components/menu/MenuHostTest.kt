@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -48,6 +49,7 @@ class MenuHostTest {
     val compose = createComposeRule()
 
     private val host = MenuHostState()
+    private val playerHostEnabled = mutableStateOf(false)
 
     /** A button-sized rectangle a third of the way down the end edge, in window pixels. */
     private val button = Rect(left = 1_000f, top = 800f, right = 1_100f, bottom = 900f)
@@ -62,7 +64,10 @@ class MenuHostTest {
         compose.setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalMenuHost provides host) {
-                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host, fromPlayer = false) }
+                    Box(Modifier.fillMaxSize()) {
+                        MenuHostOverlay(host, fromPlayer = false)
+                        if (playerHostEnabled.value) MenuHostOverlay(host, fromPlayer = true)
+                    }
                 }
             }
         }
@@ -119,13 +124,8 @@ class MenuHostTest {
         compose.waitForIdle()
         compose.onNodeWithTag(ROW).assertDoesNotExist()
 
-        compose.setContent {
-            MaterialTheme {
-                CompositionLocalProvider(LocalMenuHost provides host) {
-                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host, fromPlayer = true) }
-                }
-            }
-        }
+        playerHostEnabled.value = true
+        Snapshot.sendApplyNotifications()
         compose.waitForIdle()
         compose.onNodeWithTag(ROW).assertIsDisplayed()
     }
