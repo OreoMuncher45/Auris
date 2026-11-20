@@ -7,7 +7,7 @@ import org.junit.Test
 class ScalePcm24Test {
 
     private val scale = Class.forName("com.music.bitchord.playback.usb.ExclusiveUsbOutput\$Companion")
-        .getDeclaredMethod("scalePcmBytes", ByteArray::class.java, Int::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+        .getDeclaredMethod("scalePcmBytes", ByteArray::class.java, Int::class.javaPrimitiveType, Float::class.javaPrimitiveType, Int::class.javaPrimitiveType)
         .apply { isAccessible = true }
     private val companion = ExclusiveUsbOutput::class.java.getDeclaredField("Companion")
         .apply { isAccessible = true }
@@ -28,7 +28,7 @@ class ScalePcm24Test {
 
     private fun scaled(gain: Float, vararg samples: Int): List<Int> {
         val b = bytesOf(*samples)
-        scale.invoke(companion, b, 0x15, gain)
+        scale.invoke(companion, b, 0x15, gain, b.size)
         return samplesOf(b)
     }
 
