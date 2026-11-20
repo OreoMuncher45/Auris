@@ -424,6 +424,15 @@ class SflxHost(
         prepared: String?,
     ): Result<ModuleStreamResponse> {
         val extensionId = installed.id
+        // A provider seen down a moment ago is not asked again yet: each ask
+        // of a dead server waits out its timeout, and the player is preparing
+        // the next tracks too, so every one of them sat behind the same wait.
+        downUntil[extensionId]?.let { until ->
+            if (System.nanoTime() / 1_000_000 < until) {
+                return Result.failure(SflxException("$extensionId's provider was down a moment ago; not asked again yet"))
+            }
+            downUntil.remove(extensionId, until)
+        }
         val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
         // The extension is asked for the wanted tier, and then for the ones
         // below it, and the first answer that carries a URL wins.
@@ -460,8 +469,12 @@ class SflxHost(
             },
             build = { tier, raw -> playable(installed, trackId, prepared, requested, tier, raw) },
             log = { message -> Log.w(TAG, "sflx[$extensionId] $message '$trackId'") },
-        )
+            onProviderDown = { downUntil[extensionId] = System.nanoTime() / 1_000_000 + PROVIDER_DOWN_MS },
+        ).onSuccess { downUntil.remove(extensionId) }
     }
+
+    /** Extensions whose provider was seen down, and until when they are left alone. */
+    private val downUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /** One tier's answer as something the player can open, or why it cannot be. Internal for tests. */
     internal fun playable(
@@ -1096,15 +1109,26 @@ class SflxHost(
          * The tier ladder: each tier asked in turn, and the first answer that
          * carries a stream *and* [build]s into something playable wins. An
          * answer [build] refuses is a failed tier, and the next is asked.
+         *
+         * Except when the way a tier failed says the provider itself is down:
+         * an outage answer ("temporarily unavailable", every provider failed,
+         * a timeout) or a refusal that took [SLOW_TIER_FAILURE_MS] to arrive.
+         * A lower tier goes to the same server and waits out the same
+         * timeout, so a dead server held the track at 0:00 for most of a
+         * minute per tier before the next source was tried. The ladder stops
+         * there and the next source is asked instead.
          */
         internal suspend fun <T> ladder(
             tiers: List<String>,
             ask: suspend (String) -> Result<String>,
             build: (tier: String, raw: String) -> T,
             log: (String) -> Unit = {},
+            nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+            onProviderDown: () -> Unit = {},
         ): Result<T> {
             var failure: Throwable = SflxException("the extension returned no stream URL")
             for (tier in tiers) {
+                val askedAt = nowMs()
                 val answer = ask(tier)
                 val raw = answer.getOrNull()
                 if (raw != null && SflxAnswer.carriesStream(raw)) {
@@ -1123,9 +1147,43 @@ class SflxHost(
                     .ifBlank { "the extension returned no stream URL" }
                 failure = answer.exceptionOrNull() ?: SflxException(why)
                 log("$tier did not resolve ($why):")
+                val slow = nowMs() - askedAt >= SLOW_TIER_FAILURE_MS
+                if (slow || isOutage(why)) {
+                    log("the provider looks down (${if (slow) "slow failure" else "outage answer"}); not asking its other tiers:")
+                    onProviderDown()
+                    break
+                }
             }
             return Result.failure(failure)
         }
+
+        /** How long an extension whose provider is down is left alone before it is asked again. */
+        internal const val PROVIDER_DOWN_MS = 120_000L
+
+        /** How long a tier may take to fail before the provider is taken to be down. */
+        internal const val SLOW_TIER_FAILURE_MS = 15_000L
+
+        /**
+         * Whether a tier's failure is about the provider rather than the track
+         * or the quality: words an extension uses when its server, or every
+         * server behind it, cannot answer at all. "Not available" alone is not
+         * one — that is a track missing at a quality, which a lower tier can fix.
+         */
+        internal fun isOutage(why: String): Boolean {
+            val text = why.lowercase(Locale.ROOT)
+            return OUTAGE_PHRASES.any { it in text } || OUTAGE_STATUS.containsMatchIn(text)
+        }
+
+        private val OUTAGE_PHRASES = listOf(
+            "temporarily unavailable",
+            "service unavailable",
+            "providers failed",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "unable to resolve host",
+        )
+        private val OUTAGE_STATUS = Regex("\\bhttp 50[234]\\b")
 
         /** The start every stream key of one extension shares, so its answers can be dropped together. */
         internal fun streamKeyPrefix(extensionId: String): String = "stream|${extensionId.length}:$extensionId"
