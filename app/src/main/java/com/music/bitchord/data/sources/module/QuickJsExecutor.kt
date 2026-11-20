@@ -136,6 +136,9 @@ internal object QuickJsExecutor {
         OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            // Transparent to the extension: its old public-token request is
+            // retried with catalog OAuth only after TIDAL itself refuses it.
+            .addInterceptor(TidalCatalogAuth.shared)
             .build()
     }
 

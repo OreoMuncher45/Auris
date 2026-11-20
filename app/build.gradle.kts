@@ -265,6 +265,7 @@ android {
                         it.filter.excludeTestsMatching("com.music.bitchord.playback.cenc.CencReviewCasesTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.player.PlayerPanelRotationTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.screens.SettingsScrollRestoreTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.screens.ArtistPageInteractionTest")
                     }
                 }
                 // MenuOpenCostProbe runs only with MENU_PROBE=1, and Gradle

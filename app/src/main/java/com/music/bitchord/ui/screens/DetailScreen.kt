@@ -833,56 +833,17 @@ fun DetailScreen(
             if (isArtist) aboutItem()
         }
 
-        ExpandedAnchoredMenu(
+        ArtistOverflowMenu(
             expanded = artistMenuExpanded,
             anchorInWindow = { artistMenuAnchor },
             onDismiss = { artistMenuExpanded = false },
-        ) {
-            albumsShelf?.let { shelf ->
-                MenuRow(
-                    icon = Icons.Rounded.Album,
-                    label = stringResource(R.string.albums),
-                    ink = MaterialTheme.colorScheme.onSurface,
-                    onClick = {
-                        artistMenuExpanded = false
-                        onActiveShelfChange(shelf)
-                    },
-                )
-            }
-            singlesShelf?.let { shelf ->
-                MenuRow(
-                    icon = Icons.Rounded.MusicNote,
-                    label = stringResource(R.string.singles_eps),
-                    ink = MaterialTheme.colorScheme.onSurface,
-                    onClick = {
-                        artistMenuExpanded = false
-                        onActiveShelfChange(shelf)
-                    },
-                )
-            }
-            MenuRow(
-                icon = Icons.Rounded.AutoAwesome,
-                label = stringResource(
-                    if (artistIsAi) R.string.remove_ai_mark else R.string.mark_as_ai,
-                ),
-                ink = MaterialTheme.colorScheme.onSurface,
-                onClick = {
-                    artistMenuExpanded = false
-                    AppSettings.toggleArtistAi(page.browseId, page.title)
-                },
-            )
-            onHideArtist?.let { hide ->
-                MenuRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    label = stringResource(R.string.hide_artist),
-                    ink = MaterialTheme.colorScheme.onSurface,
-                    onClick = {
-                        artistMenuExpanded = false
-                        hide()
-                    },
-                )
-            }
-        }
+            albumsShelf = albumsShelf,
+            singlesShelf = singlesShelf,
+            artistIsAi = artistIsAi,
+            onActiveShelfChange = onActiveShelfChange,
+            onToggleAiArtist = { AppSettings.toggleArtistAi(page.browseId, page.title) },
+            onHideArtist = onHideArtist,
+        )
 
         // The end of an endless mix: the next page is asked for when the last
         // row is the one in view, which is where the listener has to be to
@@ -1766,7 +1727,7 @@ private fun ArtistStatsRow(
  * the act from the rest of the app.
  */
 @Composable
-private fun ArtistMetaRow(
+internal fun ArtistMetaRow(
     page: DetailPage,
     palette: ArtworkPalette,
     spotifyStats: SpotifyArtistStats?,
@@ -1828,6 +1789,75 @@ private fun ArtistMetaRow(
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = stringResource(R.string.more),
                 tint = palette.onBackgroundVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The beta artist page's four overflow actions in the unified anchored-glass
+ * host. Kept as one composable so interaction tests exercise the real rows,
+ * their order, and their callbacks rather than a test-only copy.
+ */
+@Composable
+internal fun ArtistOverflowMenu(
+    expanded: Boolean,
+    anchorInWindow: () -> Rect?,
+    onDismiss: () -> Unit,
+    albumsShelf: HomeShelf?,
+    singlesShelf: HomeShelf?,
+    artistIsAi: Boolean,
+    onActiveShelfChange: (HomeShelf?) -> Unit,
+    onToggleAiArtist: () -> Unit,
+    onHideArtist: (() -> Unit)?,
+) {
+    ExpandedAnchoredMenu(
+        expanded = expanded,
+        anchorInWindow = anchorInWindow,
+        onDismiss = onDismiss,
+    ) {
+        albumsShelf?.let { shelf ->
+            MenuRow(
+                icon = Icons.Rounded.Album,
+                label = stringResource(R.string.albums),
+                ink = MaterialTheme.colorScheme.onSurface,
+                onClick = {
+                    onDismiss()
+                    onActiveShelfChange(shelf)
+                },
+            )
+        }
+        singlesShelf?.let { shelf ->
+            MenuRow(
+                icon = Icons.Rounded.MusicNote,
+                label = stringResource(R.string.singles_eps),
+                ink = MaterialTheme.colorScheme.onSurface,
+                onClick = {
+                    onDismiss()
+                    onActiveShelfChange(shelf)
+                },
+            )
+        }
+        MenuRow(
+            icon = Icons.Rounded.AutoAwesome,
+            label = stringResource(
+                if (artistIsAi) R.string.remove_ai_mark else R.string.mark_as_ai,
+            ),
+            ink = MaterialTheme.colorScheme.onSurface,
+            onClick = {
+                onDismiss()
+                onToggleAiArtist()
+            },
+        )
+        onHideArtist?.let { hide ->
+            MenuRow(
+                icon = Icons.Rounded.VisibilityOff,
+                label = stringResource(R.string.hide_artist),
+                ink = MaterialTheme.colorScheme.onSurface,
+                onClick = {
+                    onDismiss()
+                    hide()
+                },
             )
         }
     }
