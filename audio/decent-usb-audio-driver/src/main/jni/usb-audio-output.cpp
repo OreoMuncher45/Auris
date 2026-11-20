@@ -996,9 +996,15 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWriteRaw(
 
     // The caller reuses pooled arrays, so only the first [count] bytes are audio.
     jint inputBytes = std::min(count, env->GetArrayLength(pcm));
+    int inputBps = inputBitDepth / 8;
+    if (inputBps <= 0) return;
+    // Whole samples only. The same-depth branches below copy inputBytes into
+    // a buffer sized for whole samples, so a trailing partial sample would
+    // write past it. The Kotlin side passes whole frames; anything else is
+    // dropped here, as the converting branches already do.
+    inputBytes -= inputBytes % inputBps;
     if (inputBytes <= 0) return;
 
-    int inputBps = inputBitDepth / 8;
     int totalSamples = inputBytes / inputBps;
     int totalFrames = totalSamples / ctx->channelCount;
     int outputBytes = totalSamples * ctx->bytesPerSample;
