@@ -277,7 +277,15 @@ class AAudioExclusiveSession(context: Context) : ExclusiveSession {
 
     override fun flush() {
         val current = handle
-        if (current != 0L) runCatching { ExclusiveNative.flush(current) }
+        if (current != 0L) {
+            // A flush that fails leaves the native ring holding pre-seek
+            // audio, which a later start would play: the session is dropped
+            // instead, and recovery opens a fresh one.
+            runCatching { ExclusiveNative.flush(current) }.onFailure { error ->
+                lostDevice = true
+                lastFailureReason = "$pathLabel: flush failed: ${error.message}"
+            }
+        }
         pending = scratch.also { it.clear().limit(0) }
         framesSubmitted = 0
         lastPlayedFrames = 0
