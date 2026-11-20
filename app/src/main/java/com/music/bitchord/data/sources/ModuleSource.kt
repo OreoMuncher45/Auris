@@ -457,6 +457,11 @@ class ModuleSource(
         if (mimeCodec == null || mimeCodec in GENERIC_CONTAINERS) {
             qualityDolby?.let { return it }
             extensionDolby?.let { return it }
+            // Tidal carries segmented FLAC in MP4. The envelope is not AAC,
+            // and treating it as one hides a valid lossless answer from the
+            // upgrade and download walks. The requested lossless tier is the
+            // extension's own payload claim; generic containers yield to it.
+            if (qualityTier(quality.orEmpty()) == LOSSLESS) return "flac"
         }
         mimeCodec?.let { return it }
         qualityDolby?.let { return it }

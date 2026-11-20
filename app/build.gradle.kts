@@ -534,6 +534,9 @@ dependencies {
     implementation("androidx.mediarouter:mediarouter:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for the signed-session JVM tests; the stub android.jar
+    // silently discards fields, which is not a test of the request contract.
+    testImplementation("org.json:json:20240303")
     // A real HTTP server for the addon tests. The addon protocol is entirely
     // "what does this app send, and what does it do with what comes back", and
     // a hand-rolled fake of the client would be a test of the fake. Pinned to
