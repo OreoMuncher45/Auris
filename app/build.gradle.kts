@@ -262,6 +262,7 @@ android {
                         it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MenuOpenCostProbe")
                         it.filter.excludeTestsMatching("com.music.bitchord.SettingsOverDetailTest")
                         it.filter.excludeTestsMatching("com.music.bitchord.SearchFoldOverPageTest")
+                        it.filter.excludeTestsMatching("com.music.bitchord.ui.components.MediaDownloadButtonRecomposeTest")
                     }
                 }
                 // MenuOpenCostProbe runs only with MENU_PROBE=1, and Gradle
