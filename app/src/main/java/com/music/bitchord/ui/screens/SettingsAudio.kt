@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -315,88 +316,43 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
     },
 )
 
-/** The quality options for one connection, with what each costs in data. */
+/**
+ * The streaming-quality picker for one connection, opened on its row: the
+ * best rung first, each with what it costs an hour. Reads the ceiling itself,
+ * so the check follows a choice the moment it's made.
+ *
+ * Writes the one ceiling being edited and nothing else. Which sources a rung
+ * consults is read per stream off the connection in force; see
+ * [AudioQuality.permits].
+ */
 @Composable
-internal fun QualitySheet(
-    target: QualityTarget,
-    selected: AudioQuality,
-    onSelect: (AudioQuality) -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = target.icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.audio_quality),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.audio_quality_connection,
-                        target.localizedTitle().lowercase(Locale.getDefault()),
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        // Scrolls, so the last option stays reachable in a short window or
-        // with large text; the heading above stays put. `fill = false` keeps
-        // a short list from stretching the sheet.
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            // Best first — the option most people want shouldn't be last.
-            AudioQuality.entries.reversed().forEach { quality ->
-                val chosen = quality == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelect(quality)
-                        }
-                        .padding(horizontal = 22.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = quality.localizedLabel(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = stringResource(R.string.quality_hourly, quality.detail, quality.hourly),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (chosen) {
-                        Spacer(Modifier.width(12.dp))
-                        Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+internal fun ColumnScope.QualityMenu(target: QualityTarget, close: () -> Unit) {
+    val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
+    val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
+    val selected = when (target) {
+        QualityTarget.WIFI -> wifiQuality
+        QualityTarget.CELLULAR -> cellularQuality
+    }
+    SettingsChoiceMenu(
+        title = stringResource(R.string.audio_quality),
+        subtitle = stringResource(
+            R.string.audio_quality_connection,
+            target.localizedTitle().lowercase(Locale.getDefault()),
+        ),
+        // Best first — the option most people want shouldn't be last.
+        choices = AudioQuality.entries.reversed().map { quality ->
+            SettingsChoice(
+                label = quality.localizedLabel(),
+                detail = stringResource(R.string.quality_hourly, quality.detail, quality.hourly),
+                selected = quality == selected,
+            ) {
+                when (target) {
+                    QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
+                    QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
                 }
             }
-        }
-    }
+        },
+        close = close,
+    )
 }
+

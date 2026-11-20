@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.ConfirmationAlert
+import com.music.bitchord.util.AppRelaunch
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.ColumnScope
 import android.media.AudioFormat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -315,25 +319,15 @@ internal fun PlaybackSettings(
     }
 
     if (showUnsupportedAtmosWarning) {
-        AlertDialog(
-            onDismissRequest = { showUnsupportedAtmosWarning = false },
-            title = { Text(stringResource(R.string.unsupported_dolby_atmos)) },
-            text = { Text(stringResource(R.string.unsupported_dolby_atmos_warning)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        AppSettings.setUnsupportedDolbyAtmos(true)
-                        showUnsupportedAtmosWarning = false
-                    },
-                ) {
-                    Text(stringResource(R.string.unsupported_dolby_atmos_enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.unsupported_dolby_atmos),
+            description = stringResource(R.string.unsupported_dolby_atmos_warning),
+            confirmLabel = stringResource(R.string.unsupported_dolby_atmos_enable),
+            onConfirm = {
+                AppSettings.setUnsupportedDolbyAtmos(true)
+                showUnsupportedAtmosWarning = false
             },
-            dismissButton = {
-                TextButton(onClick = { showUnsupportedAtmosWarning = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { showUnsupportedAtmosWarning = false },
         )
     }
 }
@@ -357,175 +351,64 @@ internal fun HomeProvider.localizedLabel(): String = stringResource(
 )
 
 /**
- * Catalogue picker: which service's catalogue the homepage and the search
- * come from.
+ * The music-catalogue picker, opened on its row, with the restart it costs
+ * said at the head.
  *
- * Two rows now and room for more, which is why this is a list rather than a
- * switch: a third catalogue is a row and an enum value, not a redesign.
- *
- * The note at the top says the app restarts, and it is not a warning to be
- * scrolled past — it is the mechanism. The page and the search belong to the
- * catalogue they were read from, so the change is applied by starting over
- * rather than by swapping a feed underneath a live session.
+ * Choosing the other catalogue restarts the app. The choice is written
+ * before the restart so the new process reads it, and the restart is what
+ * makes it total: Flow's and Autoplay's learning were trained against the
+ * catalogue being left behind. See [HomeProvider] and [AppRelaunch].
  */
 @Composable
-internal fun HomeProviderSheet(
-    selected: HomeProvider,
-    onSelect: (HomeProvider) -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-        Row(Modifier.padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.home_provider),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(R.string.home_provider_restart),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-        // Scrolls, so the last option stays reachable in a short window or
-        // with large text; the heading above stays put. `fill = false` keeps
-        // a short list from stretching the sheet.
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            HomeProvider.entries.forEach { provider ->
-                val chosen = provider == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelect(provider)
-                        }
-                        .padding(horizontal = 22.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = provider.localizedLabel(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = stringResource(
-                                when (provider) {
-                                    HomeProvider.YOUTUBE -> R.string.home_provider_youtube_subtitle
-                                    HomeProvider.SPOTIFY -> R.string.home_provider_spotify_subtitle
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (chosen) {
-                        Spacer(Modifier.width(12.dp))
-                        Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+internal fun ColumnScope.HomeProviderMenu(close: () -> Unit) {
+    val context = LocalContext.current
+    val selected by AppSettings.homeProvider.collectAsStateWithLifecycle()
+    SettingsChoiceMenu(
+        title = stringResource(R.string.home_provider),
+        subtitle = stringResource(R.string.home_provider_restart),
+        choices = HomeProvider.entries.map { provider ->
+            SettingsChoice(
+                label = provider.localizedLabel(),
+                detail = stringResource(
+                    when (provider) {
+                        HomeProvider.YOUTUBE -> R.string.home_provider_youtube_subtitle
+                        HomeProvider.SPOTIFY -> R.string.home_provider_spotify_subtitle
+                    },
+                ),
+                selected = provider == selected,
+            ) {
+                if (provider != selected) {
+                    AppSettings.setHomeProvider(provider)
+                    AppRelaunch.relaunch(context)
                 }
             }
-        }
-    }
+        },
+        close = close,
+    )
 }
 
-/** CPU budget picker for the background models that prepare Automix. */
+
+/** The Automix performance picker, opened on its row, with its warning kept whole at the head. */
 @Composable
-internal fun AutomixPerformanceSheet(
-    selected: AutomixPerformanceMode,
-    onSelect: (AutomixPerformanceMode) -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Tune,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.automix_performance),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(R.string.automix_performance_warning),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-        // Scrolls, so the last option stays reachable in a short window or
-        // with large text; the heading above stays put. `fill = false` keeps
-        // a short list from stretching the sheet.
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            AutomixPerformanceMode.entries.forEach { mode ->
-                val chosen = mode == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelect(mode)
-                        }
-                        .padding(horizontal = 22.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = mode.localizedLabel(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = stringResource(
-                                when (mode) {
-                                    AutomixPerformanceMode.EFFICIENT -> R.string.automix_mode_efficient_subtitle
-                                    AutomixPerformanceMode.BALANCED -> R.string.automix_mode_balanced_subtitle
-                                    AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance_subtitle
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (chosen) {
-                        Spacer(Modifier.width(12.dp))
-                        Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.selected),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
+internal fun ColumnScope.AutomixPerformanceMenu(close: () -> Unit) {
+    val selected by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
+    SettingsChoiceMenu(
+        title = stringResource(R.string.automix_performance),
+        subtitle = stringResource(R.string.automix_performance_warning),
+        choices = AutomixPerformanceMode.entries.map { mode ->
+            SettingsChoice(
+                label = mode.localizedLabel(),
+                detail = stringResource(
+                    when (mode) {
+                        AutomixPerformanceMode.EFFICIENT -> R.string.automix_mode_efficient_subtitle
+                        AutomixPerformanceMode.BALANCED -> R.string.automix_mode_balanced_subtitle
+                        AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance_subtitle
+                    },
+                ),
+                selected = mode == selected,
+            ) { AppSettings.setAutomixPerformanceMode(mode) }
+        },
+        close = close,
+    )
 }
+

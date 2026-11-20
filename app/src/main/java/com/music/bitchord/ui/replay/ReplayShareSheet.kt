@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.replay
 
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import androidx.compose.runtime.rememberUpdatedState
 import com.music.bitchord.R
 
 import android.content.ContentValues
@@ -86,6 +88,10 @@ fun ReplayShareSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Whether the sheet is still up, read when a share comes back rather than
+    // when it started: the sheet stays composed for its exit, and a share
+    // that finishes after the listener closed it must not open the chooser.
+    val stillOpen by rememberUpdatedState(LocalMenuInteractive.current)
     var poster by remember { mutableStateOf<Bitmap?>(null) }
     var failed by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
@@ -188,6 +194,7 @@ fun ReplayShareSheet(
                 val image = poster ?: return@ShareAction
                 scope.launch {
                     val uri = cacheForSharing(context, image) ?: return@launch
+                    if (!stillOpen) return@launch
                     context.startActivity(
                         Intent.createChooser(sendIntent(uri), context.getString(R.string.share_your_replay)),
                     )

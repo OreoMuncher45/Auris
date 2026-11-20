@@ -84,89 +84,54 @@ fun AppLanguageDialog(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(ALERT_CORNER)
     val currentLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
         ?: Locale.getDefault().language
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SCRIM_COLOR)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss, modifier = modifier) {
         Column(
             modifier = Modifier
-                .width(ALERT_WIDTH)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.app_language),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.W600,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = stringResource(R.string.app_language_description),
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        // Capped and scrolled rather than laid out at full height, same as
+        // [TranslationLanguageDialog] — sixteen rows is short enough not
+        // to need that dialog's filter field, but still taller than the
+        // card should get to stay centred on a phone.
+        LazyColumn(modifier = Modifier.heightIn(max = LANGUAGE_LIST_MAX_HEIGHT)) {
+            items(SUPPORTED_LANGUAGES, key = { it.tag }) { language ->
+                AlertRule()
+                LanguageRow(
+                    language = language,
+                    selected = language.tag == currentLanguage,
+                    onClick = {
+                        AppCompatDelegate.setApplicationLocales(
+                            LocaleListCompat.forLanguageTags(language.tag),
                         )
+                        onDismiss()
                     },
                 )
-                // Swallows the tap before it reaches the scrim behind, so
-                // touching the card itself never dismisses it.
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = {},
-                ),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 19.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = stringResource(R.string.app_language),
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.W600,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    text = stringResource(R.string.app_language_description),
-                    modifier = Modifier.padding(top = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
-                        lineHeight = 17.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-            }
-
-            // Capped and scrolled rather than laid out at full height, same as
-            // [TranslationLanguageDialog] — sixteen rows is short enough not
-            // to need that dialog's filter field, but still taller than the
-            // card should get to stay centred on a phone.
-            LazyColumn(modifier = Modifier.heightIn(max = LANGUAGE_LIST_MAX_HEIGHT)) {
-                items(SUPPORTED_LANGUAGES, key = { it.tag }) { language ->
-                    AlertRule()
-                    LanguageRow(
-                        language = language,
-                        selected = language.tag == currentLanguage,
-                        onClick = {
-                            AppCompatDelegate.setApplicationLocales(
-                                LocaleListCompat.forLanguageTags(language.tag),
-                            )
-                            onDismiss()
-                        },
-                    )
-                }
             }
         }
     }

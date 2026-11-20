@@ -927,7 +927,8 @@ internal fun ActionRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
+            // A sheet on its way out stops answering — see AppSheet.
+            .clickable(enabled = enabled && LocalMenuInteractive.current, onClick = onClick)
             .padding(horizontal = MenuTokens.SheetRowPaddingH, vertical = MenuTokens.SheetRowPaddingV),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -1,5 +1,22 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.music.bitchord.ui.components.menu.ConfirmationPresenter
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menu.LocalInDialogHost
+import com.music.bitchord.ui.components.menu.LocalDialogHost
+import com.music.bitchord.ui.components.menu.HostedDialog
+import androidx.activity.compose.BackHandler
 import com.music.bitchord.R
 
 import androidx.compose.foundation.background
@@ -245,7 +262,7 @@ fun DiscordTokenAlert(
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun TextValueAlert(
-    hazeState: HazeState,
+    hazeState: HazeState? = null,
     title: String,
     message: String,
     placeholder: String,
@@ -257,8 +274,11 @@ fun TextValueAlert(
     saveEnabled: Boolean = true,
     /** A third action between Save and Cancel, for a value that can be cleared. */
     onRemove: (() -> Unit)? = null,
+    /** Hides what is typed — a key, a token. */
+    isPassword: Boolean = false,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -282,8 +302,15 @@ fun TextValueAlert(
                 value = value,
                 onValueChange = onValueChange,
                 placeholder = placeholder,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onSave() }),
+                isPassword = isPassword,
+                // A secret asks for the password keyboard too: no suggestions,
+                // nothing learned from what is typed.
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (isPassword) KeyboardType.Password else KeyboardType.Unspecified,
+                    imeAction = ImeAction.Done,
+                ),
+                // Done on a dialog already going saves nothing — see AlertCard.
+                keyboardActions = KeyboardActions(onDone = { if (interactiveNow) onSave() }),
             )
         }
         AlertRule()
@@ -676,14 +703,17 @@ fun WebDavConflictAlert(
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun ConfirmationAlert(
-    hazeState: HazeState,
+    hazeState: HazeState? = null,
     title: String,
     description: String,
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** The way out's label — "Not yet" where the choice is about timing, not refusal. */
+    dismissLabel: String? = null,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -707,7 +737,7 @@ fun ConfirmationAlert(
         AlertRule()
         AlertAction(label = confirmLabel, emphasised = true, onClick = onConfirm)
         AlertRule()
-        AlertAction(label = stringResource(R.string.cancel), emphasised = false, onClick = onDismiss)
+        AlertAction(label = dismissLabel ?: stringResource(R.string.cancel), emphasised = false, onClick = onDismiss)
     }
 }
 
@@ -733,6 +763,7 @@ fun <T> ChoiceAlert(
     onDismiss: () -> Unit,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -820,22 +851,58 @@ private fun ChoiceRow(
     }
 }
 
-/** The scrim + frosted card frame shared by every UIAlertController-style dialog. */
+/**
+ * The scrim + frosted card frame shared by every dialog in the app — every
+ * confirmation and every name to type.
+ *
+ * Drawn by the root (see [com.music.bitchord.ui.components.menu.DialogHostState])
+ * wherever it is called from, so a dialog asked for from inside Settings or
+ * a sheet still sits over everything and frosts the page with the root's
+ * haze; [hazeState] is only the fallback where there is no host. Back and a
+ * tap on the page dismiss it; mid-exit, nothing on it answers.
+ */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun AlertScaffold(
-    hazeState: HazeState,
+    hazeState: HazeState?,
     onDismiss: () -> Unit,
+    /** Applied to the whole dialog — scrim and card — wherever it is drawn. */
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (LocalDialogHost.current != null && !LocalInDialogHost.current) {
+        HostedDialog { rootHaze -> AlertCard(rootHaze ?: hazeState, onDismiss, modifier, content) }
+        return
+    }
+    AlertCard(hazeState, onDismiss, modifier, content)
+}
+
+@OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalComposeUiApi::class)
+@Composable
+private fun AlertCard(
+    hazeState: HazeState?,
+    onDismiss: () -> Unit,
+    modifier: Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(ALERT_CORNER)
+    val interactive = LocalMenuInteractive.current
+    BackHandler(enabled = interactive, onBack = onDismiss)
+    // The focus comes onto the card as it becomes the dialog that answers —
+    // opened, or uncovered by a newer one going — rather than staying on a
+    // card it covers, which swallows every key. Not when it is already
+    // inside (a field the card focuses itself does so after this).
+    val cardFocus = remember { FocusRequester() }
+    val holdsFocus = remember { BooleanArray(1) }
+    LaunchedEffect(interactive) { if (interactive && !holdsFocus[0]) cardFocus.requestFocus() }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(SCRIM_COLOR)
             .clickable(
+                enabled = interactive,
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onDismiss,
@@ -847,7 +914,7 @@ fun AlertScaffold(
                 .width(ALERT_WIDTH)
                 .clip(shape)
                 .then(
-                    if (reduceDynamicBlur) {
+                    if (reduceDynamicBlur || hazeState == null) {
                         Modifier.background(MaterialTheme.colorScheme.surface)
                     } else {
                         Modifier.optimizedHazeEffect(
@@ -856,12 +923,63 @@ fun AlertScaffold(
                         )
                     },
                 )
+                .onFocusChanged { holdsFocus[0] = it.hasFocus }
+                // Covered or going, nothing on it can take the focus — Tab
+                // from the dialog on top never lands here, where every key
+                // is swallowed and the focus couldn't leave again.
+                .focusProperties { if (!interactive) enter = { FocusRequester.Cancel } }
+                .focusGroup()
+                .focusRequester(cardFocus)
+                .focusProperties { canFocus = interactive }
+                .focusable()
+                // The tap-catcher below isn't a second stop for the keyboard.
+                .focusProperties { canFocus = false }
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = {},
+                )
+                // Mid-exit — or under a newer dialog — nothing in it answers,
+                // whatever its controls are: out of the accessibility tree,
+                // every key swallowed before it reaches a focused row, and
+                // every touch taken by the cover below.
+                .then(
+                    if (interactive) {
+                        Modifier
+                    } else {
+                        Modifier
+                            .clearAndSetSemantics { }
+                            .onPreviewKeyEvent { true }
+                    },
                 ),
             content = content,
         )
+        if (!interactive) Box(Modifier.matchParentSize().pointerInput(Unit) { swallowAllTouches() })
     }
+}
+
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.swallowAllTouches() {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() }
+        }
+    }
+}
+
+/** The app's confirmation card, for the shared screens that ask through [com.music.bitchord.ui.components.menu.LocalConfirmation]. */
+object AppConfirmation : ConfirmationPresenter {
+    @Composable
+    override fun Confirm(
+        title: String,
+        message: String,
+        confirmLabel: String,
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit,
+    ) = ConfirmationAlert(
+        title = title,
+        description = message,
+        confirmLabel = confirmLabel,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
 }
