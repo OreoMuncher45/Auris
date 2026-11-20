@@ -383,7 +383,8 @@ class CanvasVideoSpec(
     val portraitRevealBounds: IntSize,
     val presentationAlpha: () -> Float,
     val onRenderedChanged: (Boolean) -> Unit,
-    val onFrameCaptured: (ImageBitmap) -> Unit,
+    /** Null when the caller reads no frames, which skips the readback entirely. */
+    val onFrameCaptured: ((ImageBitmap) -> Unit)?,
     val refreshFrameEveryMs: Long?,
     val frameCapturePx: Int,
     val onCoverChanged: (Float) -> Unit,
@@ -407,7 +408,7 @@ fun CanvasArtworkPlayer(
     portraitRevealBounds: IntSize = IntSize.Zero,
     presentationAlpha: () -> Float = { 1f },
     onRenderedChanged: (Boolean) -> Unit = {},
-    onFrameCaptured: (ImageBitmap) -> Unit = {},
+    onFrameCaptured: ((ImageBitmap) -> Unit)? = null,
     refreshFrameEveryMs: Long? = null,
     frameCapturePx: Int = CANVAS_FRAME_CAPTURE_PX,
     onCoverChanged: (Float) -> Unit = {},

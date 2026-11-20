@@ -40,6 +40,7 @@ import com.music.bitchord.playback.AudioCache
 internal class SettingsSheets {
     /** The connection whose quality ceiling is being picked, or null. */
     var pickingQuality by mutableStateOf<QualityTarget?>(null)
+    var pickingBitPerfectPath by mutableStateOf(false)
     var pickingDownloadQuality by mutableStateOf(false)
     var pickingAutomixPerformance by mutableStateOf(false)
     var pickingHomeProvider by mutableStateOf(false)
@@ -106,6 +107,11 @@ internal fun SettingsDialogs(
         val target = sheets.pickingQuality ?: return@LaunchedEffect
         menuHost?.open(MenuOrigin.consume()) { close -> QualityMenu(target, close) }
         sheets.pickingQuality = null
+    }
+    LaunchedEffect(sheets.pickingBitPerfectPath) {
+        if (!sheets.pickingBitPerfectPath) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> BitPerfectPathMenu(close) }
+        sheets.pickingBitPerfectPath = false
     }
     LaunchedEffect(sheets.pickingDownloadQuality) {
         if (!sheets.pickingDownloadQuality) return@LaunchedEffect

@@ -109,13 +109,17 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
@@ -362,6 +366,8 @@ import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.PlayerPlatform
+import com.music.bitchord.ui.components.VolumeHud
+import com.music.bitchord.ui.components.VolumeHudOverlay
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import com.music.bitchord.ui.player.PlayerPanelHost
 import androidx.compose.ui.geometry.Offset
@@ -467,11 +473,15 @@ class MainActivity : AppCompatActivity() {
                 else -> null
             }
             if (up != null) {
+                val before = AppSettings.playerVolume.value
                 val level = HardwareVolume.levelForKey(up)
                 if (level != null) {
                     // Through the same door the slider uses, so the bar in the
                     // player and the level on the wire are one level.
                     PlayerPlatform.host.volume.set(level)
+                    // Android's own panel is not shown for a key the app takes,
+                    // so the app shows the level itself.
+                    VolumeHud.pulse(direction = if (up) 1 else -1, atLimit = level == before)
                     return true
                 }
             }
@@ -732,6 +742,7 @@ private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     }
 }
 
+// Internal, not private, for RootRecomposeOnPageAppendTest only.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BitChordApp(
@@ -749,13 +760,16 @@ internal fun BitChordApp(
     windowHeight: Dp,
     appBackdrop: LayerBackdrop,
     viewModel: MainViewModel = viewModel(),
+    // Parameters only so the recomposition probe can open a page; the app
+    // always takes the defaults.
+    nav: RootNav = rememberSaveable(saver = RootNav.Saver) { RootNav() },
+    sheets: RootSheets = remember { RootSheets() },
 ) {
     val context = LocalContext.current
     // Podcasts can be switched off entirely — no tab, no shelves, no search
     // filter. See AppSettings.podcastsEnabled.
     val podcastsEnabledState = AppSettings.podcastsEnabled.collectAsStateWithLifecycle()
     val podcastsEnabled by podcastsEnabledState
-    val nav = rememberSaveable(saver = RootNav.Saver) { RootNav() }
     /**
      * Whether the player's sheet is up. The player is always a full-screen
      * take-over raised over the page, on every window size — the library
@@ -806,7 +820,6 @@ internal fun BitChordApp(
             PlayerDeepLink.handled()
         }
     }
-    val sheets = remember { RootSheets() }
     val audiobookQueryState = rememberSaveable { mutableStateOf("") }
     var audiobookQuery by audiobookQueryState
 
@@ -817,9 +830,15 @@ internal fun BitChordApp(
      */
     val openSongMenu: (Song) -> Unit = { song ->
         sheets.songMenu.fromPlayer = false
+        sheets.songMenu.fromHistory = false
         sheets.songMenu.origin = LongPressOrigin.consume()
         sheets.songMenu.anchor = MenuOrigin.consume()
         sheets.songMenu.song = song
+    }
+    /** Holding a History row: the same menu, plus "Remove from history" when the row can be removed. */
+    val openHistorySongMenu: (Song) -> Unit = { song ->
+        openSongMenu(song)
+        sheets.songMenu.fromHistory = true
     }
     /** An album or playlist's menu: the held card's popup, or hung off the ⋯ that was tapped. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
@@ -828,7 +847,13 @@ internal fun BitChordApp(
         sheets.browseMenu.target = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
-    val partyState by ListenTogether.state.collectAsStateWithLifecycle()
+    // The party as the root sees it (see [PartyHeadPolicy]). The state is
+    // republished for every heartbeat, pong and member sighting while a party
+    // plays, and read whole here each one recomposed this whole composable.
+    val partyStateSource = ListenTogether.state.collectAsStateWithLifecycle()
+    val partyState = remember(partyStateSource) {
+        derivedStateOf(PartyHeadPolicy) { partyStateSource.value }
+    }.value
     // The same answer the playback service acts on, rather than a second one
     // derived here — see [autoplayEnabledFor]. Drawing the local preference in
     // a party made the toggle lie in both directions: a listener whose own
@@ -1143,7 +1168,12 @@ internal fun BitChordApp(
     // on it — and now that the page groups by artist and album, a stale list is
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
-    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    //
+    // Held as a State and never read here: a batch download saves a file every
+    // second or two, and a read in this body re-ran the whole root for each
+    // one. Everything that answers to it reads it where it is drawn, or
+    // through a derived state that changes only when its own answer does.
+    val savedDownloadsState = Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrlState = AppSettings.webdavUrl.collectAsStateWithLifecycle()
@@ -1158,8 +1188,18 @@ internal fun BitChordApp(
     // shelf. Read off both records: the collection record is what says a
     // release was downloaded whole, and what is on disk is what says it still
     // has anything left to open.
-    val downloadedReleases = remember(savedCollections, savedDownloads) {
-        Downloads.savedReleases()
+    //
+    // Derived, and read by the Library page itself: a saved file that is not
+    // in any of them changes nothing on the shelf, and one that is changes the
+    // shelf and not the root.
+    val downloadedReleasesState = remember {
+        derivedStateOf {
+            // Both records, read for their changes; savedReleases reads them
+            // off the store itself.
+            savedCollectionsState.value
+            savedDownloadsState.value
+            Downloads.savedReleases()
+        }
     }
     // Playlists imported without (or instead of) a YouTube Music account live
     // in the app's own store, and sit on the same shelf as the downloaded ones.
@@ -1205,18 +1245,23 @@ internal fun BitChordApp(
     val downloadIdFor: (String?) -> String? = { id ->
         id?.let { Downloads.recordIdOf(it) ?: it }?.takeIf { it in savedCollections }
     }
-    LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
-        val openPage = detailStackState.value.lastOrNull() ?: return@LaunchedEffect
-        val open = openPage.browseId
-        // A downloaded playlist's page is a snapshot of the same folder and goes
-        // stale for the same reasons — and it is the one page a delete can empty
-        // out entirely, which is worth saying rather than leaving rows behind
-        // that play nothing.
-        if (openPage.songs !is UiState.Loading &&
-            (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null ||
-                com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(open) != null)
-        ) {
-            viewModel.reloadLocalDetail(open)
+    // Collected rather than keyed on the record, so a save retakes the page
+    // without recomposing the root. Still once per change of the record, and
+    // once when the open page or the collections change, as when it was keyed.
+    LaunchedEffect(savedCollections, detail?.browseId) {
+        snapshotFlow { savedDownloadsState.value }.collect {
+            val openPage = detailStackState.value.lastOrNull() ?: return@collect
+            val open = openPage.browseId
+            // A downloaded playlist's page is a snapshot of the same folder and goes
+            // stale for the same reasons — and it is the one page a delete can empty
+            // out entirely, which is worth saying rather than leaving rows behind
+            // that play nothing.
+            if (openPage.songs !is UiState.Loading &&
+                (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null ||
+                    com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(open) != null)
+            ) {
+                viewModel.reloadLocalDetail(open)
+            }
         }
     }
     LaunchedEffect(localMusicFolderUri, filterNonMusicAudio) {
@@ -1312,17 +1357,23 @@ internal fun BitChordApp(
     val versions = remember { VersionSwitchState() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
-    // Keyed on the lyric settings too, so turning a source on or off applies to
-    // the track already playing rather than only the next one.
-    val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
-    val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
+    // The lyric settings are watched too, so turning a source on or off,
+    // reordering them or changing the syllable preference applies to the track
+    // already playing rather than only the next one.
     //
-    // The duration is watched inside the effect rather than read as a key: a
-    // key is read in BitChordApp's body, which would then recompose on every
-    // duration the player settles on. collectLatest asks again for each
-    // distinct duration, exactly as restarting the effect on that key did.
-    LaunchedEffect(player.song?.videoId, syncedLyricsEnabled, lyricsSources) {
-        snapshotFlow { player.durationMs }.collectLatest { durationMs ->
+    // The duration and the settings are watched inside the effect rather than
+    // read as keys: a key is read in BitChordApp's body, which would then
+    // recompose on every duration the player settles on and every settings
+    // change. collectLatest asks again for each distinct value, exactly as
+    // restarting the effect on that key did.
+    LaunchedEffect(player.song?.videoId) {
+        combine(
+            AppSettings.syncedLyrics,
+            AppSettings.lyricsSources,
+            AppSettings.lyricsSourceOrder,
+            AppSettings.prioritizeSyllableSync,
+            snapshotFlow { player.durationMs },
+        ) { _, _, _, _, durationMs -> durationMs }.collectLatest { durationMs ->
             player.song?.let {
                 viewModel.loadLyrics(
                     it.videoId,
@@ -1989,11 +2040,15 @@ internal fun BitChordApp(
                     // Keep the current MediaItem itself untouched. Replacing it,
                     // even with the same song, reparses the source at position
                     // zero and audibly stops/restarts the track.
-                    if (currentIndex + 1 < activeController.mediaItemCount) {
-                        activeController.removeMediaItems(currentIndex + 1, activeController.mediaItemCount)
+                    // Station first, old tail after: removing first leaves the
+                    // current track briefly last, and AutoPlay answers that by
+                    // appending this same radio a second time.
+                    activeController.addMediaItems(currentIndex + 1, related.map { it.toMediaItem() })
+                    val oldTail = currentIndex + 1 + related.size
+                    if (oldTail < activeController.mediaItemCount) {
+                        activeController.removeMediaItems(oldTail, activeController.mediaItemCount)
                     }
                     if (currentIndex > 0) activeController.removeMediaItems(0, currentIndex)
-                    activeController.addMediaItems(1, related.map { it.toMediaItem() })
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
@@ -2383,15 +2438,23 @@ internal fun BitChordApp(
      * shows: the row is what fits on a screen, the page is the set.
      */
     val homeQuickPicksItems by viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
-    val quickPicksSongs: List<Song> = remember(homeQuickPicksItems, offlineActive, savedDownloads) {
-        if (offlineActive) {
-            Downloads.snapshotSongs()
-                .filter { it.videoId.isNotBlank() }
-                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
-        } else {
-            // The set behind the arrow, kept whole whether the row is on the
-            // page or not: hiding the row on Home says nothing about the set.
-            homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
+    //
+    // Derived and read by the page, not here: offline it is retaken for every
+    // file a download saves, and that is the Quick Picks page's business, not
+    // the root's.
+    val quickPicksSongsState = remember(homeQuickPicksItems, offlineActive) {
+        derivedStateOf {
+            if (offlineActive) {
+                // Read for its changes: the songs come off the store itself.
+                savedDownloadsState.value
+                Downloads.snapshotSongs()
+                    .filter { it.videoId.isNotBlank() }
+                    .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+            } else {
+                // The set behind the arrow, kept whole whether the row is on the
+                // page or not: hiding the row on Home says nothing about the set.
+                homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
+            }
         }
     }
 
@@ -2403,7 +2466,7 @@ internal fun BitChordApp(
      * a preview.
      */
     val playQuickPicks: (Boolean) -> Unit = { shuffled ->
-        val songs = quickPicksSongs
+        val songs = quickPicksSongsState.value
         if (songs.isNotEmpty()) {
             playRequestGeneration++
             activeRadioSeed = null
@@ -2761,7 +2824,11 @@ internal fun BitChordApp(
         // after this check for the connection to have changed under it. This is
         // the one place that knows the tap was for forty tracks and can say so
         // once, rather than leaving forty identical failed rows to be read.
-        val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow
+        // A copy out of the song cache spends no data, so Wi-Fi only does not
+        // refuse a batch that asked for one — [Downloads.prepare] still refuses
+        // the tracks in it the cache turns out not to hold whole.
+        val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow &&
+            songs.none { Downloads.wantsCachedCopy(it.videoId) }
         // Two refusals, two reasons: blaming the Wi-Fi setting for an offline
         // switch would send the listener to the wrong page.
         val offlineRefusal = AppSettings.effectiveOffline.value
@@ -2857,6 +2924,24 @@ internal fun BitChordApp(
             song
         }
         startDownload(listOf(withDuration), null)
+    }
+    // The Cached songs folder's downloads. The song cache already holds these
+    // tracks, so they are saved from its copy — no data spent, no connection
+    // needed — rather than fetched afresh at the Download quality setting. See
+    // [Downloads.preferCachedCopy]. The folder's own second line ("YouTube ·
+    // 4.2 MB") is the cache's, not the file's, and stays behind.
+    val downloadFromCache: (List<Song>) -> Unit = { songs ->
+        val cleaned = songs.map { it.copy(downloadFormat = null, localDateAddedSeconds = null) }
+        Downloads.preferCachedCopy(cleaned.map { it.videoId })
+        startDownload(cleaned, null)
+    }
+    val removedFromCacheMessage = stringResource(R.string.removed_from_cache)
+    // Takes a track out of the song cache, from its menu. An open Cached songs
+    // folder re-reads itself off [AudioCache.contentsChanged].
+    val removeFromCache: (Song) -> Unit = { song ->
+        scope.launch {
+            if (AudioCache.remove(song.videoId) > 0) showQueueNotice(removedFromCacheMessage)
+        }
     }
 
     // Content padding leaves room for the frosted bar above and the tab bar
@@ -3129,6 +3214,7 @@ internal fun BitChordApp(
             // ids have been resolved.
             onOpenMenu = {
                 sheets.songMenu.fromPlayer = true
+                sheets.songMenu.fromHistory = false
                 sheets.songMenu.origin = null
                 sheets.songMenu.song = song
             },
@@ -3520,6 +3606,11 @@ internal fun BitChordApp(
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
             val fromPlayer = sheets.songMenu.fromPlayer
+            // Whether the record says this track's file is on the device: the
+            // menu answers to its own track's save, not to every save.
+            val onDisk by remember(song.videoId) {
+                derivedStateOf { song.videoId in savedDownloadsState.value }
+            }
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -3647,6 +3738,18 @@ internal fun BitChordApp(
             val openFolder = detail?.browseId
                 ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
                 ?.takeIf { it.isFolder && !fromPlayer }
+            // Asked of the cache's index off the main thread as the menu opens,
+            // so "Remove from cache" is only offered for a track it holds.
+            // Re-asked when the cache changes, which is what drops the row
+            // once the track has gone. One lookup per menu, never per row.
+            val cacheVersion by AudioCache.contentsChanged.collectAsStateWithLifecycle()
+            val inCache by produceState(false, song.videoId, cacheVersion) {
+                value = song.localUri == null &&
+                    withContext(Dispatchers.IO) { AudioCache.holds(song.videoId) }
+            }
+            // A History row carries YouTube's own "remove from history" token,
+            // and only a menu opened there may spend it.
+            val historyToken = song.feedbackToken?.takeIf { sheets.songMenu.fromHistory && !fromPlayer }
             SongActionsSheet(
                 song = song,
                 presentation = presentation,
@@ -3658,7 +3761,15 @@ internal fun BitChordApp(
                 // Stays open: the row it replaces itself with is the
                 // progress, and closing the sheet would hide the only
                 // answer to "did that work?".
-                onDownload = { downloadSong(song) },
+                // From the Cached songs folder, the cache's own copy is the
+                // download — the same as the folder's Download all.
+                onDownload = {
+                    if (!fromPlayer && detail?.browseId == CACHE_FOLDER_BROWSE_ID) {
+                        downloadFromCache(listOf(song))
+                    } else {
+                        downloadSong(song)
+                    }
+                },
                 // The other direction: a device file going up to the
                 // server. Closed first, unlike a download — progress and
                 // the summary notice live outside the sheet.
@@ -3700,6 +3811,24 @@ internal fun BitChordApp(
                     {
                         sheets.songMenu.song = null
                         viewModel.removeFromPlaylist(it.browseId, song)
+                    }
+                },
+                onRemoveFromCache = if (inCache) {
+                    {
+                        sheets.songMenu.song = null
+                        removeFromCache(song)
+                    }
+                } else {
+                    null
+                },
+                // The list is left alone until YouTube confirms; a refusal
+                // says so and changes nothing — see [MainViewModel.removeFromHistory].
+                onRemoveFromHistory = historyToken?.let { token ->
+                    {
+                        sheets.songMenu.song = null
+                        viewModel.removeFromHistory(token) {
+                            Toast.makeText(context, R.string.remove_from_history_failed, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 // The folders are the listener's own, so these are offered
@@ -3801,7 +3930,7 @@ internal fun BitChordApp(
                             // download finished — arrives without it. The
                             // record is what says the file is on the device,
                             // and it is pruned when the file goes away.
-                            song.localUri != null || song.videoId in savedDownloads
+                            song.localUri != null || onDisk
                         )
                 ) {
                     {
@@ -4019,6 +4148,7 @@ internal fun BitChordApp(
             playOfflineLibrary = playOfflineLibrary,
             onSongSwipe = onSongSwipe,
             openSongMenu = openSongMenu,
+            openHistorySongMenu = openHistorySongMenu,
             openBrowseMenu = openBrowseMenu,
             onBrowseLongPress = onBrowseLongPress,
             onShelfLongPress = onShelfLongPress,
@@ -4052,13 +4182,13 @@ internal fun BitChordApp(
             replay = replay,
             pageActions = pageActions,
             detailListStates = detailListStates,
-            downloadedReleases = downloadedReleases,
+            downloadedReleasesState = downloadedReleasesState,
             flowTile = flowTile,
             folderItems = folderItems,
             homeFlowLeading = homeFlowLeading,
             listPadding = listPadding,
             localPlaylistItems = localPlaylistItems,
-            quickPicksSongs = quickPicksSongs,
+            quickPicksSongsState = quickPicksSongsState,
             radioSeeds = radioSeeds,
             replayCards = replayCards,
             songSort = songSort,
@@ -4142,6 +4272,7 @@ internal fun BitChordApp(
         val pageHiddenByPlayer by remember(pageCoveredByPlayer, playerDock) {
             derivedStateOf { pageCoveredByPlayer && playerDock.attached && playerDock.openFraction() >= 1f }
         }
+        val pageHiddenQuery: () -> Boolean = remember(pageCoveredByPlayer, playerDock) { { pageHiddenByPlayer } }
         Row(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -4171,6 +4302,10 @@ internal fun BitChordApp(
                         if (!pageHiddenByPlayer) drawContent()
                     },
             ) {
+                // Clips on the page hold still while it is hidden — see
+                // [LocalPageHidden]. The flag, not the fraction, so the page
+                // hears it twice per open and close rather than every frame.
+                CompositionLocalProvider(LocalPageHidden provides pageHiddenQuery) {
                 // [pageKey] is which page is on screen, as one name. The
                 // transition runs on the difference between two of these.
                 // A page change moves the content the glass samples. The
@@ -4866,6 +5001,7 @@ internal fun BitChordApp(
                         )
                     }
                 }
+                } // LocalPageHidden
             }
 
         }
@@ -4941,6 +5077,10 @@ internal fun BitChordApp(
         // The iPod used to return before reaching them, which is why its
         // three-dot menu set state nothing rendered.
 
+        // The player's own volume bar shows the level while it is up.
+        SideEffect { VolumeHud.suppressed = showNowPlaying }
+        VolumeHudOverlay()
+
         RootOverlays(
             sheets = sheets,
             viewModel = viewModel,
@@ -4970,6 +5110,7 @@ internal fun BitChordApp(
                 addToQueue = addSongsToQueue,
                 playNext = playSongsNext,
                 download = startDownload,
+                downloadFromCache = downloadFromCache,
                 withBrowseSongs = withBrowseSongs,
             ),
             smartDownloadPodcast = ::smartDownloadPodcast,
@@ -5064,6 +5205,7 @@ private fun RootPage(
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
     val historyState by viewModel.history.collectAsStateWithLifecycle()
+    val historyRemovalFailed by viewModel.historyRemovalFailed.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
@@ -5102,13 +5244,14 @@ private fun RootPage(
     if (key == "history") {
         HistoryScreen(
             state = historyState,
+            removalFailure = historyRemovalFailed,
             listState = scroll.history,
             currentSong = player.song,
             isPlaying = player.isPlaying,
             onSongClick = { songs, index ->
                 pageActions.playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
             },
-            onSongLongPress = pageActions.openSongMenu,
+            onSongLongPress = pageActions.openHistorySongMenu,
             onSongSwipe = pageActions.onSongSwipe,
             onRetry = viewModel::loadHistory,
             contentPadding = listPadding,
@@ -5173,7 +5316,7 @@ private fun RootPage(
         )
     } else if (key == "quick_picks") {
         QuickPicksScreen(
-            songs = inputs.quickPicksSongs,
+            songs = inputs.quickPicksSongsState.value,
             offline = offlineActive,
             onPlay = { song ->
                 val source = QueueSource(inputs.quickPicksLabel, PlaybackSourceType.HOME)
@@ -6170,7 +6313,7 @@ private fun RootPage(
             links = libraryLinks(),
             // Each list remembered against what it is built from, so an
             // unchanged Library is handed the same instances and can skip.
-            deviceItems = libraryDeviceItems(inputs.downloadedReleases).let { downloaded ->
+            deviceItems = libraryDeviceItems(inputs.downloadedReleasesState.value).let { downloaded ->
                 remember(downloaded, inputs.localPlaylistItems) { downloaded + inputs.localPlaylistItems }
             },
             podcastShelves = remember(podcastsEnabled, podcastLikedShelf, podcastLaterShelf) {
@@ -6216,6 +6359,30 @@ private object DetailHeadPolicy : SnapshotMutationPolicy<DetailPage?> {
                 a.title == b.title &&
                 a.type == b.type &&
                 a.thumbnailUrl == b.thumbnailUrl
+            )
+}
+
+/**
+ * When two party states are the same to the app root: the same membership
+ * and lock, and the same track started by the same member with the same
+ * AutoPlay setting. That is all [BitChordApp] reads off the party. The
+ * playhead, the clock and when each member was last seen change with every
+ * frame the server sends, and the player reads those for itself.
+ */
+private object PartyHeadPolicy : SnapshotMutationPolicy<ListenTogether.State> {
+    override fun equivalent(a: ListenTogether.State, b: ListenTogether.State): Boolean =
+        a === b || (
+            a.inParty == b.inParty &&
+                a.controlsLocked == b.controlsLocked &&
+                a.playback.autoplayEnabled == b.playback.autoplayEnabled &&
+                a.playback.track?.videoId == b.playback.track?.videoId &&
+                a.playback.startedBy == b.playback.startedBy &&
+                a.playback.startedByName == b.playback.startedByName &&
+                a.members.size == b.members.size &&
+                a.members.indices.all {
+                    a.members[it].memberId == b.members[it].memberId &&
+                        a.members[it].displayName == b.members[it].displayName
+                }
             )
 }
 
@@ -6274,13 +6441,13 @@ private data class PageInputs(
     val replay: com.music.bitchord.ui.replay.ReplayState,
     val pageActions: PageActions,
     val detailListStates: DetailListStates,
-    val downloadedReleases: List<com.music.bitchord.download.SavedCollection>,
+    val downloadedReleasesState: androidx.compose.runtime.State<List<com.music.bitchord.download.SavedCollection>>,
     val flowTile: ShelfItem?,
     val folderItems: List<ShelfItem>,
     val homeFlowLeading: ShelfItem?,
     val listPadding: PaddingValues,
     val localPlaylistItems: List<ShelfItem>,
-    val quickPicksSongs: List<Song>,
+    val quickPicksSongsState: androidx.compose.runtime.State<List<Song>>,
     val radioSeeds: List<ShelfItem>,
     val replayCards: List<com.music.bitchord.ui.replay.ReplayHeroCard>,
     val songSort: SongSort,
@@ -6369,6 +6536,7 @@ private data class PageActions(
     val playOfflineLibrary: (Song, QueueSource) -> Unit,
     val onSongSwipe: (Song) -> Unit,
     val openSongMenu: (Song) -> Unit,
+    val openHistorySongMenu: (Song) -> Unit,
     val openBrowseMenu: (BrowseTarget) -> Unit,
     val onBrowseLongPress: (ShelfItem) -> Unit,
     val onShelfLongPress: (ShelfItem) -> Unit,
@@ -6400,6 +6568,8 @@ private data class TrackListActions(
     val addToQueue: (List<Song>) -> Unit,
     val playNext: (List<Song>) -> Unit,
     val download: (List<Song>, DownloadTarget?) -> Unit,
+    /** The Cached songs folder's download: the cache's own copies, saved from disk. */
+    val downloadFromCache: (List<Song>) -> Unit,
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
 )
 
@@ -6874,22 +7044,29 @@ private fun RootOverlays(
             // What the target carries that the tracks don't is the
             // release's own name and cover, which is exactly what the
             // record wants.
-            onDownloadAll = act { songs ->
-                tracks.download(
-                    songs,
-                    target.browseId
-                        ?.takeIf { target.type != BrowseType.ARTIST }
-                        ?.let { id ->
-                            DownloadTarget(
-                                id = id,
-                                title = target.title,
-                                subtitle = target.subtitle,
-                                thumbnailUrl = target.thumbnailUrl,
-                                playlist = target.type == BrowseType.PLAYLIST,
-                            )
-                        },
-                )
-            }.takeIf { remote },
+            // The Cached songs folder is the one local page with a Download
+            // all: its tracks are not on the device as files yet, only in the
+            // song cache, and saving them from there needs no network.
+            onDownloadAll = if (target.browseId == CACHE_FOLDER_BROWSE_ID) {
+                act { songs -> tracks.downloadFromCache(songs) }
+            } else {
+                act { songs ->
+                    tracks.download(
+                        songs,
+                        target.browseId
+                            ?.takeIf { target.type != BrowseType.ARTIST }
+                            ?.let { id ->
+                                DownloadTarget(
+                                    id = id,
+                                    title = target.title,
+                                    subtitle = target.subtitle,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    playlist = target.type == BrowseType.PLAYLIST,
+                                )
+                            },
+                    )
+                }.takeIf { remote }
+            },
             // The same link a share off YouTube Music's own overflow
             // gives — built from the browse id rather than fetched,
             // since nothing about it depends on the tracks or the
@@ -8085,6 +8262,12 @@ internal class RootSheets {
          */
         var fromPlayer by mutableStateOf(false)
         /**
+         * Whether the menu was opened from the History screen — the one place
+         * "Remove from history" means anything. Set by the History screen's
+         * opener after the ordinary one has cleared it.
+         */
+        var fromHistory by mutableStateOf(false)
+        /**
          * The row or card that was held to open the track menu, or null when it
          * was opened any other way. Non-null lifts that item into
          * [HeldContextMenu]; null hangs the menu off [anchor] instead — which is
@@ -8482,7 +8665,7 @@ private const val PAGE_FADE_MS = 200
 private const val TAB_HOME = 0
 private const val TAB_PODCASTS = 1
 private const val TAB_RADIO = 2
-private const val TAB_LIBRARY = 3
+internal const val TAB_LIBRARY = 3
 private const val TAB_SEARCH = 4
 
 /**

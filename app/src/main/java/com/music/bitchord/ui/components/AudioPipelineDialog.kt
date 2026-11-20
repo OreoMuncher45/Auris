@@ -543,8 +543,7 @@ fun AudioPipelineDialog(
                         dspBypassed = outputStatus.dspBypassed,
                         mixerBitPerfect = outputStatus.bitPerfectMixer?.active == true ||
                             outputStatus.directPlaybackActual ||
-                            outputStatus.transportType ==
-                            com.music.bitchord.playback.audio.TransportType.DIRECT_USB,
+                            outputStatus.transportType.bypassesMixer,
                         volumeApplication = outputStatus.volumeApplication,
                         volumeGain = outputStatus.volumeGain,
                     ),
@@ -596,7 +595,10 @@ fun AudioPipelineDialog(
 
                 if (outputStatus.exclusiveUsbActive || outputStatus.exclusiveUsbDetail != null) {
                     PipelineRow(
-                        "USB exclusive",
+                        when (outputStatus.exclusiveTransport) {
+                            com.music.bitchord.playback.audio.TransportType.AAUDIO_EXCLUSIVE -> "AAudio exclusive"
+                            else -> "USB exclusive"
+                        },
                         if (outputStatus.exclusiveUsbActive) {
                             "Active — ${outputStatus.exclusiveUsbDetail ?: "usbdevfs"}".trim()
                         } else {
@@ -608,6 +610,8 @@ fun AudioPipelineDialog(
                 val directStatusText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                         "Active (Direct Userspace USB)"
+                    outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.AAUDIO_EXCLUSIVE ->
+                        "Active (AAudio exclusive, bypasses mixer)"
                     outputStatus.directPlaybackActual ->
                         "Active (Direct AudioTrack, Bypasses Mixer)"
                     outputStatus.directPlaybackRejected ->
@@ -621,7 +625,7 @@ fun AudioPipelineDialog(
                 PipelineRow("AudioTrack", audioTrackText)
 
                 val mixerText = when {
-                    outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                    outputStatus.transportType.bypassesMixer ->
                         "Direct (Bypasses System Mixer)"
                     outputStatus.directPlaybackActual ->
                         "Direct path active; endpoint format not independently verified"
@@ -651,8 +655,7 @@ fun AudioPipelineDialog(
                         "Bit-perfect mixer",
                         when {
                             outputStatus.directPlaybackActual ||
-                                outputStatus.transportType ==
-                                com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                                outputStatus.transportType.bypassesMixer ->
                                 "Not needed (direct path already bypasses it)"
                             else -> mixer.detail
                         },

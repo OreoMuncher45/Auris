@@ -19,7 +19,9 @@ import androidx.media3.common.MimeTypes
 import com.decent.usbaudio.UsbAudioDevice
 import com.decent.usbaudio.UsbAudioStream
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.ExclusiveSession
 import com.music.bitchord.playback.audio.ListenerVolumePolicy
+import com.music.bitchord.playback.audio.TransportType
 import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import java.nio.ByteBuffer
@@ -44,7 +46,12 @@ import kotlin.concurrent.withLock
  */
 class ExclusiveUsbOutput(
     context: Context,
-) {
+) : ExclusiveSession {
+
+    override val pathLabel: String = "USB exclusive"
+    override val pathDetail: String = "via usbdevfs, AudioFlinger not in the path"
+    override val transport: TransportType = TransportType.DIRECT_USB
+
     private val appContext = context.applicationContext
     /**
      * Guards the session. A lock rather than a monitor so the writer thread
@@ -122,7 +129,7 @@ class ExclusiveUsbOutput(
     private var volumeReceiverRegistered = false
     /** Last exclusive open failure, for the signal-path dialog. Cleared on
      *  the next successful start so a stale reason never shows. */
-    @Volatile var lastFailureReason: String? = null
+    @Volatile override var lastFailureReason: String? = null
         private set
     /** True when retrying the open could plausibly succeed (device/permission). */
     @Volatile private var lastFailureRetryable = false
@@ -182,7 +189,7 @@ class ExclusiveUsbOutput(
      * Callers use this to avoid tearing down the working AudioTrack path for
      * an attempt that cannot get past the permission check.
      */
-    fun canOpen(): Boolean {
+    override fun canOpen(): Boolean {
         val manager = appContext.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return false
         val device = manager.deviceList.values.firstOrNull { dev ->
             (0 until dev.interfaceCount).any {
@@ -233,15 +240,15 @@ class ExclusiveUsbOutput(
     fun isClockMatched(): Boolean = active && clockMatched
 
     /** Whether the last open failure is worth retrying at the next track. */
-    fun failureIsRetryable(): Boolean = lastFailureRetryable
+    override fun failureIsRetryable(): Boolean = lastFailureRetryable
 
-    fun usesHardwareVolume(): Boolean = active && hardwareVolume
+    override fun usesHardwareVolume(): Boolean = active && hardwareVolume
 
     /**
      * PCM software gain for exclusive output. 1 when the DAC's own control
      * carries the level; otherwise the listener's level as a sample gain.
      */
-    fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
+    override fun softwareGain(): Float = if (!active || (hardwareVolume && !forceSoftwareVolume)) 1f else softwareGainValue
 
     /**
      * The absolute level the DAC's own volume control is at, in dB.
@@ -252,16 +259,26 @@ class ExclusiveUsbOutput(
      * when its level cannot be read: then there is no absolute level to
      * name, and the app is scaling the samples instead.
      */
-    fun hardwareOutputLevelDb(): Double? {
+    override fun hardwareOutputLevelDb(): Double? {
         if (!active || !hardwareVolume || forceSoftwareVolume) return null
         val written = lastWrittenDb
         if (written != null) return written
         return dacCurrentDb
     }
 
-    fun currentRateHz(): Int = if (active) configuredRateHz else 0
+    /**
+     * The DAC's clock rates as last read from it, else the standard list; the
+     * alt-setting search at open settles the depth.
+     */
+    override fun dacOffers(format: Format): Map<Int, Set<Int>> {
+        val rates = runCatching { usbAudio.querySupportedSampleRates() }.getOrDefault(emptyList())
+            .ifEmpty { com.music.bitchord.playback.audio.bitperfect.BitPerfectPcm.STANDARD_RATES }
+        return rates.associateWith { setOf(16, 24) }
+    }
 
-    fun activeWireBits(): Int = if (active) activeWireBits else 0
+    override fun currentRateHz(): Int = if (active) configuredRateHz else 0
+
+    override fun activeWireBits(): Int = if (active) activeWireBits else 0
 
     fun lastHardwareRateHz(): Int = lastHardwareRate
 
@@ -269,14 +286,14 @@ class ExclusiveUsbOutput(
 
     fun framesWritten(): Long = stream?.framesWritten ?: 0L
 
-    fun isPaused(): Boolean = paused
+    override fun isPaused(): Boolean = paused
 
     /**
      * Pause/resume ISO writes without tearing down the USB session or
      * discarding already-decoded PCM in [pcmQueue]. [flush] clears the queue
      * on explicit seek/stop.
      */
-    fun setPaused(value: Boolean) {
+    override fun setPaused(value: Boolean) {
         if (!value) revalidateClockOnResume()
         paused = value
         if (value) {
@@ -308,7 +325,7 @@ class ExclusiveUsbOutput(
     }
 
     /** True while the isochronous stream is still accepting PCM. */
-    fun isStreamAlive(): Boolean = active && stream?.isAlive == true
+    override fun isStreamAlive(): Boolean = active && stream?.isAlive == true
 
     /**
      * True while PCM is actively queued/writing to the DAC or a USB write
@@ -366,9 +383,9 @@ class ExclusiveUsbOutput(
      * The open fails closed instead, and the sink falls back to AudioTrack,
      * which does resample properly.
      */
-    fun configure(
+    override fun configure(
         format: Format,
-        bitDepthHint: Int? = null,
+        bitDepthHint: Int?,
     ): Boolean {
         if (!wanted) return false
         if (format.sampleMimeType != MimeTypes.AUDIO_RAW ||
@@ -404,10 +421,10 @@ class ExclusiveUsbOutput(
         }
     }
 
-    fun write(
+    override fun write(
         buffer: ByteBuffer,
         presentationTimeUs: Long,
-        isFloatBuffer: Boolean = useFloatWrite,
+        isFloatBuffer: Boolean,
     ): Boolean {
         if (!buffer.hasRemaining()) return true
         if (paused) return false
@@ -427,26 +444,35 @@ class ExclusiveUsbOutput(
             startMediaTimeNeedsInit = false
         }
         val gain = softwareGain()
+        // Chunks come from a small pool and go back to it once the writer has
+        // sent them: a new array for every Media3 buffer was steady garbage on
+        // the playback thread for as long as music played.
         val chunk = if (isFloatBuffer) {
-            val floats = FloatArray(size / Float.SIZE_BYTES)
-            buffer.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(floats)
+            val count = size / Float.SIZE_BYTES
+            val pooled = obtainChunk(floatSamples = count, rawBytes = 0)
+            val floats = pooled.floats!!
+            buffer.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(floats, 0, count)
             buffer.position(buffer.limit())
-            ExclusivePcmGain.apply(floats, gain)
-            QueuedPcm(floats, null, 0, size)
+            ExclusivePcmGain.apply(floats, gain, count)
+            pooled.set(encoding = 0, byteSize = size, count = count)
         } else {
             val encoding = writeRawEncoding(sourceEncoding)
             if (encoding < 0) return false
-            val bytes = ByteArray(size)
-            buffer.get(bytes)
+            val pooled = obtainChunk(floatSamples = 0, rawBytes = size)
+            val bytes = pooled.raw!!
+            buffer.get(bytes, 0, size)
             if (gain < 1f - 1e-6f && gain >= 0f) {
-                scalePcmBytes(bytes, encoding, gain)
+                scalePcmBytes(bytes, encoding, gain, size)
             }
-            QueuedPcm(null, bytes, encoding, size)
+            pooled.set(encoding = encoding, byteSize = size, count = size)
         }
         synchronized(pcmLock) {
             // A pause that lands mid-copy must not drop a buffer the caller
             // already handed over; the writer waits while paused anyway.
-            if (writerStop) return false
+            if (writerStop) {
+                recycleLocked(chunk)
+                return false
+            }
             pcmQueue.addLast(chunk)
             queuedBytes += size
             pcmLock.notifyAll()
@@ -454,7 +480,7 @@ class ExclusiveUsbOutput(
         return true
     }
 
-    fun getCurrentPositionUs(): Long {
+    override fun getCurrentPositionUs(): Long {
         val running = stream ?: return androidx.media3.exoplayer.audio.AudioSink.CURRENT_POSITION_NOT_SET
         if (!active || configuredRateHz <= 0 || startMediaTimeNeedsInit) {
             return androidx.media3.exoplayer.audio.AudioSink.CURRENT_POSITION_NOT_SET
@@ -473,12 +499,12 @@ class ExclusiveUsbOutput(
      * BUFFERING between DASH chunks. While exclusive USB is playing, the
      * isochronous pipeline is that pending audio.
      */
-    fun hasPendingData(): Boolean =
+    override fun hasPendingData(): Boolean =
         active && (queuedBytes > 0 || (!paused && stream?.isAlive == true))
 
-    fun flush() {
+    override fun flush() {
         synchronized(pcmLock) {
-            pcmQueue.clear()
+            recycleQueueLocked()
             queuedBytes = 0
             flushRequested = true
             lastWriteElapsedMs = 0L
@@ -497,7 +523,7 @@ class ExclusiveUsbOutput(
      * leftover URBs and marks it running again. [start] would zero the DAC
      * clock and make the sink position jump back to the beginning.
      */
-    fun restartIfStopped(): Boolean {
+    override fun restartIfStopped(): Boolean {
         val running = stream ?: return false
         // A session parked by the clock watchdog (or by teardown) is not a
         // stream to re-arm; restarting it would write the same bytes at the
@@ -513,7 +539,7 @@ class ExclusiveUsbOutput(
         return true
     }
 
-    fun handleDiscontinuity() {
+    override fun handleDiscontinuity() {
         // A DASH segment boundary is not a seek. Resetting the sink clock
         // here made ExoPlayer wait forever after the first ~5s chunk
         // ("keeps loading") while the DAC had already stopped.
@@ -524,9 +550,9 @@ class ExclusiveUsbOutput(
      * configure can reuse the stream instead of closeDevice + Feature Unit
      * re-probe (seconds of control-transfer timeouts).
      */
-    fun prepareForNextItem() {
+    override fun prepareForNextItem() {
         synchronized(pcmLock) {
-            pcmQueue.clear()
+            recycleQueueLocked()
             queuedBytes = 0
             flushRequested = true
             paused = false
@@ -544,13 +570,13 @@ class ExclusiveUsbOutput(
         mediaTimeBaseFrames = stream?.framesWritten ?: 0L
     }
 
-    fun reset() {
+    override fun reset() {
         lock.withLock {
             teardownLocked(closeDevice = true)
         }
     }
 
-    fun release() {
+    override fun release() {
         lock.withLock {
             wanted = false
             teardownLocked(closeDevice = true)
@@ -572,7 +598,7 @@ class ExclusiveUsbOutput(
      * so they happen on the writer thread, never on the audio thread that
      * calls this.
      */
-    fun setListenerLevel(level: Float) {
+    override fun setListenerLevel(level: Float) {
         val normalized = level.coerceIn(0f, 1f)
         lock.withLock {
             if (listenerLevel == normalized && !volumeDirty) return
@@ -974,7 +1000,7 @@ class ExclusiveUsbOutput(
     private fun stopWriterLocked() {
         writerStop = true
         synchronized(pcmLock) {
-            pcmQueue.clear()
+            recycleQueueLocked()
             queuedBytes = 0
             pcmLock.notifyAll()
         }
@@ -983,10 +1009,20 @@ class ExclusiveUsbOutput(
     }
 
     private fun writeLoop(target: UsbAudioStream) {
+        // Pumps since the pause began. A paused ring has drained (80 URBs,
+        // 80 ms) within a few of them; after that there is nothing left to
+        // reap, and waking every 20 ms for the length of a pause was 50
+        // wakeups a second for nothing. Every state change (resume, a write,
+        // a flush, a stop) notifies the lock, so a longer wait costs no
+        // responsiveness.
+        var pausedPumps = 0
         while (!writerStop) {
             val next = synchronized(pcmLock) {
                 if (!writerStop && !flushRequested && (paused || pcmQueue.isEmpty())) {
-                    pcmLock.wait(20)
+                    if (paused) pausedPumps++ else pausedPumps = 0
+                    pcmLock.wait(if (pausedPumps > PAUSED_PUMPS_BEFORE_PARKING) PARKED_WAIT_MS else 20L)
+                } else {
+                    pausedPumps = 0
                 }
                 if (writerStop) return@synchronized null
                 if (flushRequested) {
@@ -1014,11 +1050,14 @@ class ExclusiveUsbOutput(
             writingInProgress = true
             lastWriteElapsedMs = SystemClock.elapsedRealtime()
             try {
-                if (next.floats != null) target.write(next.floats)
-                else if (next.raw != null) target.writeRaw(next.raw, next.encoding)
+                val floats = next.floats
+                val raw = next.raw
+                if (floats != null && next.encoding == 0) target.write(floats, next.count)
+                else if (raw != null) target.writeRaw(raw, next.encoding, next.count)
             } finally {
                 writingInProgress = false
                 lastWriteElapsedMs = SystemClock.elapsedRealtime()
+                synchronized(pcmLock) { recycleLocked(next) }
             }
         }
     }
@@ -1098,6 +1137,29 @@ class ExclusiveUsbOutput(
         return false
     }
 
+    /**
+     * Hands the DAC back at the level its own knob had before the session.
+     *
+     * The phone's slider is applied as an offset written into the DAC's
+     * Feature Unit, so a session that ends without undoing it leaves the DAC
+     * quieter than the listener set it — for the system mixer, another app or
+     * the next session alike. Worse, the next session reads that attenuated
+     * level back as its new base and offsets from it again, so each reopen
+     * stacked another cut on top. Only a level this session actually changed
+     * is written back.
+     */
+    private fun restoreDacLevelLocked() {
+        val control = featureVolume ?: return
+        if (!dacBaseKnown) return
+        val written = lastWrittenDb ?: return
+        val base = dacBaseDb
+        if (kotlin.math.abs(written - base) <= 0.05) return
+        if (runCatching { control.setDb(base) }.getOrDefault(false)) {
+            lastWrittenDb = base
+            Log.i(TAG, "DAC level returned to ${base}dB on close")
+        }
+    }
+
     private fun stopStreamLocked() {
         val running = stream
         // Stop the native stream FIRST. This flips running=false so a write()
@@ -1118,6 +1180,7 @@ class ExclusiveUsbOutput(
     }
 
     private fun teardownLocked(closeDevice: Boolean) {
+        restoreDacLevelLocked()
         stopStreamLocked()
         if (closeDevice) {
             runCatching { usbAudio.closeDevice() }
@@ -1145,12 +1208,67 @@ class ExclusiveUsbOutput(
         if (closeDevice) unregisterVolumeObserverLocked()
     }
 
+    /**
+     * One buffer of PCM on its way to the writer. Reused: [floats] or [raw]
+     * keeps its capacity across uses, and [count] says how much of it is audio
+     * this time.
+     */
     private class QueuedPcm(
         val floats: FloatArray?,
         val raw: ByteArray?,
-        val encoding: Int,
-        val byteSize: Int,
-    )
+        var encoding: Int,
+        var byteSize: Int,
+        var count: Int = 0,
+    ) {
+        fun set(encoding: Int, byteSize: Int, count: Int): QueuedPcm {
+            this.encoding = encoding
+            this.byteSize = byteSize
+            this.count = count
+            return this
+        }
+    }
+
+    /** Spare chunks, under [pcmLock]. Bounded, so a burst cannot pin memory. */
+    private val freeChunks = ArrayDeque<QueuedPcm>()
+
+    /**
+     * A chunk whose array can hold [floatSamples] floats or [rawBytes] bytes.
+     * Media3 hands over buffers of a near-constant size, so after the first
+     * few this is always a hit.
+     */
+    private fun obtainChunk(floatSamples: Int, rawBytes: Int): QueuedPcm {
+        synchronized(pcmLock) {
+            val iterator = freeChunks.iterator()
+            while (iterator.hasNext()) {
+                val candidate = iterator.next()
+                val fits = if (floatSamples > 0) {
+                    (candidate.floats?.size ?: -1) >= floatSamples
+                } else {
+                    (candidate.raw?.size ?: -1) >= rawBytes
+                }
+                if (fits) {
+                    iterator.remove()
+                    return candidate
+                }
+            }
+        }
+        return if (floatSamples > 0) {
+            QueuedPcm(FloatArray(floatSamples), null, 0, 0)
+        } else {
+            QueuedPcm(null, ByteArray(rawBytes), 0, 0)
+        }
+    }
+
+    /** Returns [chunk] to the pool. Markers are not pooled. Caller holds [pcmLock]. */
+    private fun recycleLocked(chunk: QueuedPcm) {
+        if (chunk === FLUSH_MARKER || chunk === IDLE_MARKER) return
+        if (freeChunks.size < MAX_POOLED_CHUNKS) freeChunks.addLast(chunk)
+    }
+
+    /** Empties the queue into the pool. Caller holds [pcmLock]. */
+    private fun recycleQueueLocked() {
+        while (pcmQueue.isNotEmpty()) recycleLocked(pcmQueue.removeFirst())
+    }
 
     private fun failLocked(reason: String, retryable: Boolean = false): Boolean {
         Log.w(TAG, "Exclusive USB fail-open: $reason")
@@ -1175,6 +1293,12 @@ class ExclusiveUsbOutput(
         const val RAW_PCM24 = 0x15
         const val RAW_PCM32 = 0x16
         const val MAX_QUEUED_BYTES = 512 * 1024
+        /** Enough for a full queue of typical Media3 buffers, with a little slack. */
+        const val MAX_POOLED_CHUNKS = 48
+        /** 10 × 20 ms covers the 80 ms ring draining after a pause. */
+        const val PAUSED_PUMPS_BEFORE_PARKING = 10
+        /** A safety net only; resume and every write notify the lock. */
+        const val PARKED_WAIT_MS = 1_000L
         val FLUSH_MARKER = QueuedPcm(null, null, -1, 0)
         val IDLE_MARKER = QueuedPcm(null, null, -2, 0)
 
@@ -1206,15 +1330,15 @@ class ExclusiveUsbOutput(
             else -> -1
         }
 
-        private fun scalePcmBytes(bytes: ByteArray, rawEncoding: Int, gain: Float) {
+        private fun scalePcmBytes(bytes: ByteArray, rawEncoding: Int, gain: Float, length: Int) {
             if (gain <= 0f) {
-                bytes.fill(0)
+                bytes.fill(0, 0, length)
                 return
             }
             when (rawEncoding) {
                 RAW_PCM16 -> {
                     var i = 0
-                    while (i + 1 < bytes.size) {
+                    while (i + 1 < length) {
                         val sample = ((bytes[i].toInt() and 0xFF) or (bytes[i + 1].toInt() shl 8))
                             .toShort().toInt()
                         val scaled = (sample * gain + if (sample >= 0) 0.5f else -0.5f).toInt()
@@ -1226,7 +1350,7 @@ class ExclusiveUsbOutput(
                 }
                 RAW_PCM24 -> {
                     var i = 0
-                    while (i + 2 < bytes.size) {
+                    while (i + 2 < length) {
                         val b0 = bytes[i].toInt() and 0xFF
                         val b1 = bytes[i + 1].toInt() and 0xFF
                         val b2 = bytes[i + 2].toInt()
@@ -1242,7 +1366,7 @@ class ExclusiveUsbOutput(
                 }
                 RAW_PCM32 -> {
                     var i = 0
-                    while (i + 3 < bytes.size) {
+                    while (i + 3 < length) {
                         val b0 = bytes[i].toInt() and 0xFF
                         val b1 = bytes[i + 1].toInt() and 0xFF
                         val b2 = bytes[i + 2].toInt() and 0xFF

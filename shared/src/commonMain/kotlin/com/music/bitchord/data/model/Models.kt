@@ -143,6 +143,12 @@ data class Song(    val videoId: String,
      * from an artist name, title or genre.
      */
     val genAi: GenAiDisclosure = GenAiDisclosure.NONE,
+    /**
+     * YouTube's "Remove from history" feedback token, read off a History row's
+     * own menu. Null on every row that is not a History row the account can
+     * remove — see [com.music.bitchord.data.innertube.InnertubeParser].
+     */
+    val feedbackToken: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY

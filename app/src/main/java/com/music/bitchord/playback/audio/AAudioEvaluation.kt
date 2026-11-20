@@ -54,13 +54,19 @@ package com.music.bitchord.playback.audio
  *      is automatically assigned to that direct, unmixed profile by AudioPolicyManager.
  *
  * ARCHITECTURAL DECISION:
- * - AAudio is REJECTED as an internal playback transport.
+ * - AAudio is REJECTED as the transport for USB DACs and as a general playback
+ *   transport, for the reasons above.
+ * - The one exception is a built-in DAC (a DAP's headphone or line output),
+ *   whose HAL does offer MMAP exclusive streams: there an AAudio exclusive
+ *   stream is the only mixer-free path, and it is opt-in as the "Built-in
+ *   DAC" bit-perfect path ([com.music.bitchord.playback.audio.bitperfect.AAudioExclusiveSession]).
+ *   A stream Android returns as shared is refused, never used.
  * - BitChord achieves maximum output quality and hardware stability by combining:
  *   1. Canonical Float32 DSP in [PrecisionAudioSink].
  *   2. Dynamic runtime direct-playback detection via [DirectAudioProbe].
  *   3. Authoritative route negotiation via [OutputNegotiator].
  *   4. Rock-solid, glitch-free output via [androidx.media3.exoplayer.audio.DefaultAudioSink] and [android.media.AudioTrack].
- *   5. Isolated direct USB probe and transport via [com.music.bitchord.playback.audio.usb.UsbDirectManager].
+ *   5. Direct USB through the exclusive usbdevfs session in [com.music.bitchord.playback.usb.ExclusiveUsbOutput].
  */
 object AAudioEvaluation {
     const val IS_INTEGRATED: Boolean = false

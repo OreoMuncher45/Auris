@@ -20,7 +20,7 @@ at once.
 
 | Category | Identifier prefix | What is in it |
 |---|---|---|
-| Account & social | `account` | Sign-in, integrations, Listen Together |
+| Account & social | `account` | Sign-in, integrations, Listen Together, community links |
 | Audio quality | `audio` | Sources, streaming ceilings, output precision, DSP |
 | Playback | `playback` | How a track plays and what follows it |
 | Downloads | `downloads` | What is kept offline, and how it is fetched |
@@ -40,6 +40,8 @@ at once.
 ### Account & social
 - [x] `account.integrations` — Account & integrations
 - [x] `account.listen_together` — Listen Together
+- [x] `account.community_discord` — Discord (community link)
+- [x] `account.community_reddit` — Reddit (community link)
 
 ### Audio quality
 - [x] `audio.source` — Sources

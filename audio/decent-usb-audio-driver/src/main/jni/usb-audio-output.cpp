@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <poll.h>
 #include <linux/usbdevice_fs.h>
 #include <linux/usb/ch9.h>
 
@@ -36,6 +37,12 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // ── Float → PCM conversion ──────────────────────────────────────────
+
+static inline int64_t nowMs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
 
 static inline float clampf(float v) { return v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v); }
 
@@ -303,9 +310,13 @@ static int submitRingUrb(UsbAudioContext *ctx, const int *pktSizes, int numPacke
 static int reapOldestUrb(UsbAudioContext *ctx, int timeoutMs) {
     struct usbdevfs_urb *c = nullptr;
 
-    // Poll with 125µs interval matching USB high-speed microframe timing.
-    int iterations = timeoutMs * 8;  // 8 iterations per ms (125µs each)
-    for (int i = 0; i < iterations; i++) {
+    // Sleep in poll() until usbdevfs has a completed URB to hand back: it
+    // raises POLLOUT on the fd exactly then. The old loop slept 125 µs at a
+    // time and asked again, which woke the CPU up to 8000 times a second
+    // whenever the ring was full — i.e. for the whole of steady playback.
+    // Now the thread wakes once per completion (one URB = 1 ms of audio).
+    const int64_t deadline = nowMs() + timeoutMs;
+    for (;;) {
         int ret = ioctl(ctx->fd, USBDEVFS_REAPURBNDELAY, &c);
         if (ret == 0 && c != nullptr) {
             // Check if this is a feedback URB (not an audio URB)
@@ -323,9 +334,22 @@ static int reapOldestUrb(UsbAudioContext *ctx, int timeoutMs) {
             LOGE("reapOldestUrb: error errno=%d (%s)", errno, strerror(errno));
             return -1;
         }
-        usleep(125);  // 125µs = 1 USB microframe
+        const int64_t remaining = deadline - nowMs();
+        if (remaining <= 0) return -2;  // timeout
+        struct pollfd pfd = {ctx->fd, POLLOUT, 0};
+        const int ready = poll(&pfd, 1, static_cast<int>(remaining));
+        if (ready < 0 && errno != EINTR) {
+            LOGE("reapOldestUrb: poll errno=%d (%s)", errno, strerror(errno));
+            return -1;
+        }
+        // A detached device raises POLLERR/POLLHUP. With nothing left to
+        // reap, polling again would return at once and spin until the
+        // deadline, so give up now.
+        if (ready > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) && !(pfd.revents & POLLOUT)) {
+            LOGE("reapOldestUrb: device gone (revents=0x%x)", pfd.revents);
+            return -1;
+        }
     }
-    return -2;  // timeout
 }
 
 /**
@@ -462,6 +486,8 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioCreate(
     ctx->running.store(false);
     ctx->transferBuffer = nullptr;
     ctx->transferBufferCapacity = 0;
+    ctx->mergeBuffer = nullptr;
+    ctx->mergeBufferCapacity = 0;
     ctx->framesWritten = 0;
     ctx->interfaceClaimed = true;
     ctx->submitIdx = 0;
@@ -567,11 +593,12 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioStart(
 
 JNIEXPORT void JNICALL
 Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWrite(
-        JNIEnv *env, jobject, jlong h, jfloatArray pcm) {
+        JNIEnv *env, jobject, jlong h, jfloatArray pcm, jint count) {
     auto *ctx = reinterpret_cast<UsbAudioContext *>(h);
     if (!ctx || !ctx->running.load()) return;
 
-    jint totalSamples = env->GetArrayLength(pcm);
+    // The caller reuses pooled arrays, so only the first [count] samples are audio.
+    jint totalSamples = std::min(count, env->GetArrayLength(pcm));
     if (totalSamples <= 0) return;
     int totalFrames = totalSamples / ctx->channelCount;
     int totalBytes = totalSamples * ctx->bytesPerSample;
@@ -589,15 +616,17 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWrite(
     writeCallCount++;
 
     // Convert float PCM to target bit depth
-    jfloat *f = env->GetFloatArrayElements(pcm, nullptr);
+    // Critical access: no copy of the array, and the section is only the
+    // conversion loop — nothing in it blocks or calls back into the VM.
+    auto *f = static_cast<jfloat *>(env->GetPrimitiveArrayCritical(pcm, nullptr));
     if (!f) return;
     switch (ctx->bitDepth) {
         case 16: convertFloatToInt16(f, ctx->transferBuffer, totalSamples); break;
         case 24: convertFloatToInt24(f, ctx->transferBuffer, totalSamples); break;
         case 32: convertFloatToInt32(f, ctx->transferBuffer, totalSamples); break;
-        default: env->ReleaseFloatArrayElements(pcm, f, JNI_ABORT); return;
+        default: env->ReleasePrimitiveArrayCritical(pcm, f, JNI_ABORT); return;
     }
-    env->ReleaseFloatArrayElements(pcm, f, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(pcm, f, JNI_ABORT);
 
     // Submit converted PCM to USB pipeline (shared with raw path)
     submitPcmToUrbs(ctx, ctx->transferBuffer, totalBytes);
@@ -691,6 +720,7 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioDestroy(
     free(ctx->feedbackUrb);
     ctx->feedbackUrb = nullptr;
     free(ctx->transferBuffer);
+    free(ctx->mergeBuffer);
     LOGI("Destroy: %lld frames total", (long long)ctx->framesWritten);
     delete ctx;
 }
@@ -839,11 +869,16 @@ void submitPcmToUrbs(UsbAudioContext *ctx, const uint8_t *pcmData, int totalByte
     // micro-discontinuities (pops) at buffer boundaries.
     const uint8_t *data = pcmData;
     int dataLen = totalBytes;
-    uint8_t *mergedBuf = nullptr;
-
     if (ctx->residualBytes > 0 && totalBytes > 0) {
         dataLen = ctx->residualBytes + totalBytes;
-        mergedBuf = (uint8_t *)malloc(dataLen);
+        // Grown once and kept: this ran on nearly every write, and a malloc
+        // plus free per buffer on the streaming thread is pure churn.
+        if (ctx->mergeBufferCapacity < dataLen) {
+            free(ctx->mergeBuffer);
+            ctx->mergeBuffer = (uint8_t *)malloc(dataLen);
+            ctx->mergeBufferCapacity = ctx->mergeBuffer ? dataLen : 0;
+        }
+        uint8_t *mergedBuf = ctx->mergeBuffer;
         if (mergedBuf) {
             memcpy(mergedBuf, ctx->residualBuffer, ctx->residualBytes);
             memcpy(mergedBuf + ctx->residualBytes, pcmData, totalBytes);
@@ -925,7 +960,6 @@ void submitPcmToUrbs(UsbAudioContext *ctx, const uint8_t *pcmData, int totalByte
                 continue;
             } else if (result < 0) {
                 ctx->running.store(false);
-                free(mergedBuf);
                 return;
             }
         }
@@ -936,7 +970,6 @@ void submitPcmToUrbs(UsbAudioContext *ctx, const uint8_t *pcmData, int totalByte
         if (submitRingUrb(ctx, pktSizes, numPackets, urbBytes) < 0) {
             LOGE("submitPcmToUrbs: submit failed, stopping stream");
             ctx->running.store(false);
-            free(mergedBuf);
             return;
         }
         offset += urbBytes;
@@ -949,8 +982,6 @@ void submitPcmToUrbs(UsbAudioContext *ctx, const uint8_t *pcmData, int totalByte
         memcpy(ctx->residualBuffer, data + offset, leftover);
         ctx->residualBytes = leftover;
     }
-
-    free(mergedBuf);
 }
 
 // ── Raw bytes write (no float, for libFLAC integer path) ────────────
@@ -959,11 +990,12 @@ extern "C" {  // resume JNI functions
 
 JNIEXPORT void JNICALL
 Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWriteRaw(
-        JNIEnv *env, jobject, jlong h, jbyteArray pcm, jint inputBitDepth) {
+        JNIEnv *env, jobject, jlong h, jbyteArray pcm, jint count, jint inputBitDepth) {
     auto *ctx = reinterpret_cast<UsbAudioContext *>(h);
     if (!ctx || !ctx->running.load()) return;
 
-    jint inputBytes = env->GetArrayLength(pcm);
+    // The caller reuses pooled arrays, so only the first [count] bytes are audio.
+    jint inputBytes = std::min(count, env->GetArrayLength(pcm));
     if (inputBytes <= 0) return;
 
     int inputBps = inputBitDepth / 8;
@@ -978,7 +1010,7 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWriteRaw(
         ctx->transferBufferCapacity = outputBytes;
     }
 
-    jbyte *rawData = env->GetByteArrayElements(pcm, nullptr);
+    auto *rawData = static_cast<jbyte *>(env->GetPrimitiveArrayCritical(pcm, nullptr));
     if (!rawData) return;
 
     // Bit-depth matching: pad/pack input to DAC's bit depth (lossless integer ops)
@@ -1005,11 +1037,11 @@ Java_com_decent_usbaudio_UsbAudioStream_nativeUsbAudioWriteRaw(
         packInt32ToInt16((uint8_t *)rawData, ctx->transferBuffer, totalSamples);
     } else {
         LOGE("WriteRaw: unsupported bit-depth conversion %d → %d", inputBitDepth, ctx->bitDepth);
-        env->ReleaseByteArrayElements(pcm, rawData, JNI_ABORT);
+        env->ReleasePrimitiveArrayCritical(pcm, rawData, JNI_ABORT);
         return;
     }
 
-    env->ReleaseByteArrayElements(pcm, rawData, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(pcm, rawData, JNI_ABORT);
 
     // Submit to USB pipeline
     submitPcmToUrbs(ctx, ctx->transferBuffer, outputBytes);

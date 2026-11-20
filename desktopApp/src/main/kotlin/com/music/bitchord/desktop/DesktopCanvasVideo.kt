@@ -121,11 +121,11 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
     // clip — another every so often.
     LaunchedEffect(rendered, spec.refreshFrameEveryMs) {
         if (!rendered) return@LaunchedEffect
-        frame?.let(reportFrame)
+        frame?.let { reportFrame?.invoke(it) }
         val interval = spec.refreshFrameEveryMs ?: return@LaunchedEffect
         while (isActive) {
             delay(interval)
-            frame?.let(reportFrame)
+            frame?.let { reportFrame?.invoke(it) }
         }
     }
 

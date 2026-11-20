@@ -1563,4 +1563,9 @@
     <string name="podcasts_enabled_subtitle">Turn off the tab, the shelves and the search filter. Downloads already on the device stay.</string>
     <string name="hide_status_bar_in_player">Hide status bar in player</string>
     <string name="hide_status_bar_in_player_subtitle">Hides the clock, battery and notification icons while the main player is open</string>
+    <string name="cached_song_partial">Parziale</string>
+    <string name="remove_from_cache">Rimuovi dalla cache</string>
+    <string name="removed_from_cache">Rimosso dalla cache dei brani</string>
+    <string name="remove_from_history">Rimuovi dalla cronologia</string>
+    <string name="remove_from_history_failed">Impossibile rimuovere dalla cronologia</string>
 </resources>

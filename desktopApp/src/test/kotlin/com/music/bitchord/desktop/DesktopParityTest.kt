@@ -52,4 +52,63 @@ class DesktopParityTest {
 
         assertEquals(null, DesktopTrackMatcher.best(listOf(cover), target))
     }
+
+    @Test
+    fun continuationTokenUnwrapsCommandExecutorCommand() {
+        val json = kotlinx.serialization.json.Json.parseToJsonElement(
+            """
+            {
+              "musicPlaylistShelfRenderer": {
+                "contents": [
+                  {
+                    "continuationItemRenderer": {
+                      "trigger": "CONTINUATION_TRIGGER_ON_ITEM_PRESCAN_VISIBLE",
+                      "continuationEndpoint": {
+                        "commandExecutorCommand": {
+                          "commands": [
+                            { "playlistVotingRefreshPopupCommand": {} },
+                            {
+                              "continuationCommand": {
+                                "token": "TOKEN_IN_EXECUTOR",
+                                "request": "CONTINUATION_REQUEST_TYPE_BROWSE"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+        val token = com.music.bitchord.data.innertube.InnertubeParser.continuationToken(json)
+        assertEquals("TOKEN_IN_EXECUTOR", token)
+    }
+
+    @Test
+    fun continuationTokenIgnoresLaterShelfRenderers() {
+        val json = kotlinx.serialization.json.Json.parseToJsonElement(
+            """
+            {
+              "contents": [
+                { "continuationItemRenderer": { "button": {} } },
+                {
+                  "continuationItemRenderer": {
+                    "continuationEndpoint": {
+                      "continuationCommand": { "token": "OTHER_SHELF" }
+                    }
+                  }
+                }
+              ],
+              "continuations": [
+                { "nextContinuationData": { "continuation": "PAGE_MORE" } }
+              ]
+            }
+            """.trimIndent()
+        )
+        val token = com.music.bitchord.data.innertube.InnertubeParser.continuationToken(json)
+        assertEquals("PAGE_MORE", token)
+    }
 }
