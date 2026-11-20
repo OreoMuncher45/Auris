@@ -1180,8 +1180,11 @@ class ExclusiveUsbOutput(
     }
 
     private fun teardownLocked(closeDevice: Boolean) {
-        restoreDacLevelLocked()
+        // The stream stops and the writer is joined first: lifting the DAC's
+        // attenuation while queued PCM still plays would play it that much
+        // louder. The device is still open, so the level can go back after.
         stopStreamLocked()
+        restoreDacLevelLocked()
         if (closeDevice) {
             runCatching { usbAudio.closeDevice() }
             connection = null
