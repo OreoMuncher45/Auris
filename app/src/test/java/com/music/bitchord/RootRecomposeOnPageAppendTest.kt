@@ -307,6 +307,31 @@ class RootRecomposeOnPageAppendTest {
     private fun seedOneSave() = save(0)
 
     /**
+     * Waits for the home page to stop arriving. The app loads it on its own at
+     * start — from its cache, then from the network — and the root reads it,
+     * so one landing inside the measured window would be billed to whatever
+     * the test publishes. Quiet for [HOME_QUIET_MS] and no longer loading, or
+     * [HOME_SETTLE_MS] gone, whichever comes first.
+     */
+    private fun settleHome(viewModel: MainViewModel) {
+        val deadline = System.currentTimeMillis() + HOME_SETTLE_MS
+        var last: Any? = viewModel.home.value
+        var quietSince = System.currentTimeMillis()
+        while (System.currentTimeMillis() < deadline) {
+            compose.mainClock.advanceTimeByFrame()
+            Thread.sleep(10)
+            val now = viewModel.home.value
+            if (now !== last) {
+                last = now
+                quietSince = System.currentTimeMillis()
+            } else if (now !is UiState.Loading && System.currentTimeMillis() - quietSince >= HOME_QUIET_MS) {
+                break
+            }
+        }
+        compose.waitForIdle()
+    }
+
+    /**
      * Sets the app up with [setUp], then runs each of [publishes] a frame
      * apart and counts what recomposed.
      */
@@ -350,6 +375,7 @@ class RootRecomposeOnPageAppendTest {
         setUp(viewModel)
         repeat(30) { compose.mainClock.advanceTimeByFrame() }
         compose.waitForIdle()
+        settleHome(viewModel)
 
         val handles = mutableListOf<CompositionObserverHandle>()
         val reg = recomposer!!.observe(object : CompositionRegistrationObserver {
@@ -551,6 +577,8 @@ class RootRecomposeOnPageAppendTest {
 
     private companion object {
         const val SAVES = 8
+        const val HOME_QUIET_MS = 1_500L
+        const val HOME_SETTLE_MS = 15_000L
         const val BATCH_ID = "PLbatch"
         const val HEARTBEATS = 9
         const val PAGES = 5
