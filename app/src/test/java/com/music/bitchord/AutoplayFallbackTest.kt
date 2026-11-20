@@ -31,4 +31,14 @@ class AutoplayFallbackTest {
         assertFalse(autoplayQueueNeedsRefresh(true, true, 0, 1, false))
         assertFalse(autoplayQueueNeedsRefresh(true, false, -1, 0, false))
     }
+
+    @Test
+    fun `an edit that shrinks AutoPlay's tail refreshes even with tracks left`() {
+        assertTrue(autoplayQueueNeedsRefresh(true, false, 1, 6, false, autoplayAhead = 4, autoplayAheadBefore = 7))
+        // Unchanged or grown tails, a full tail, and an active load do not.
+        assertFalse(autoplayQueueNeedsRefresh(true, false, 1, 6, false, autoplayAhead = 4, autoplayAheadBefore = 4))
+        assertFalse(autoplayQueueNeedsRefresh(true, false, 1, 13, false, autoplayAhead = 10, autoplayAheadBefore = 11))
+        assertFalse(autoplayQueueNeedsRefresh(true, false, 1, 6, true, autoplayAhead = 4, autoplayAheadBefore = 7))
+        assertFalse(autoplayQueueNeedsRefresh(true, true, 1, 6, false, autoplayAhead = 4, autoplayAheadBefore = 7))
+    }
 }

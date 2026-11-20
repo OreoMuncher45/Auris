@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.sources.DolbyAudio
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.StreamFormat
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -126,6 +127,10 @@ object NerdStats {
             get() = isDolbyAtmosMime(mimeType) ||
                 (mimeType == null && claimed?.isDolbyAtmos == true)
 
+        /** Any measured Dolby family; TrueHD/MLP do not need to pretend to be Atmos. */
+        val isDolby: Boolean
+            get() = isDolbyMime(mimeType) || (mimeType == null && claimed?.isDolby == true)
+
         /**
          * Whether this is better than CD quality — the line Tidal, Deezer and
          * Apple Music all draw it at: past 16-bit or past 48kHz, not merely
@@ -193,7 +198,7 @@ object NerdStats {
      * `audio/raw` is here because that is how Media3 names PCM — a WAV stream
      * reaches the renderer as raw samples, not as `audio/wav`.
      */
-    private val LOSSLESS_CODEC_SUFFIXES = listOf("flac", "alac", "raw")
+    private val LOSSLESS_CODEC_SUFFIXES = listOf("flac", "alac", "raw", "truehd", "mlp")
 
     /**
      * Whether [mimeType] names a bit-exact codec.
@@ -221,20 +226,18 @@ object NerdStats {
     /**
      * Whether [mimeType] is the decoder being handed a Dolby mix.
      *
-     * The AC-3/E-AC-3 family, not only JOC. A DASH manifest routinely states
-     * `ec-3` and leaves the object coding to a supplemental property, so the
-     * decoder's input is `audio/eac3` on a stream that is genuinely Atmos; the
-     * FFmpeg bed fallback reports the same. Matching only the exact
-     * `audio/eac3-joc` suffix hid the badge on precisely the paths that were
-     * playing the mix at all. This is the same test another player uses: the
-     * decoder mime contains `eac3`, `ec-3`, `ac-3` or `ac3`, whatever the case
-     * and whatever parameters a container appended.
+     * AC-4 and AC-3/E-AC-3 (including JOC) use the app's Atmos path. A DASH
+     * manifest routinely states `ec-3` and leaves object coding to a
+     * supplemental property; Amazon's AC-4 arrives in a generic MP4 container
+     * before Media3 identifies `audio/ac4`. The shared [DolbyAudio] aliases
+     * make the decoder agree with the source instead of waiting for another
+     * upgrade pass to discover what is already playing. TrueHD/MLP and MAT
+     * remain [isDolbyMime] without making an Atmos claim on codec alone.
      */
-    fun isDolbyAtmosMime(mimeType: String?): Boolean {
-        if (mimeType == null) return false
-        val bare = mimeType.substringBefore(';').trim().lowercase(java.util.Locale.ROOT)
-        return "eac3" in bare || "ec-3" in bare || "ac-3" in bare || "ac3" in bare
-    }
+    fun isDolbyAtmosMime(mimeType: String?): Boolean = DolbyAudio.isAtmos(mimeType)
+
+    /** Any Dolby coding, including lossless TrueHD/MLP and MAT carriage. */
+    fun isDolbyMime(mimeType: String?): Boolean = DolbyAudio.codec(mimeType) != null
 
     fun isRawPcm(mimeType: String?): Boolean =
         mimeType != null && (mimeType == "audio/raw" || mimeType.endsWith("wav", ignoreCase = true) || mimeType == "audio/x-wav")
@@ -267,8 +270,12 @@ object NerdStats {
             mimeType.endsWith("raw", ignoreCase = true) -> "PCM"
             mimeType.startsWith("audio/dsd", ignoreCase = true) -> mimeType.substringAfter('/').uppercase()
             mimeType.endsWith("vorbis", ignoreCase = true) -> "Vorbis"
-            mimeType.endsWith("eac3-joc", ignoreCase = true) -> "E-AC-3 JOC"
-            mimeType.endsWith("eac3", ignoreCase = true) -> "E-AC-3"
+            DolbyAudio.codec(mimeType) == "ac4" -> "AC-4"
+            DolbyAudio.codec(mimeType) == "eac3-joc" -> "E-AC-3 JOC"
+            DolbyAudio.codec(mimeType) == "eac3" -> "E-AC-3"
+            DolbyAudio.codec(mimeType) == "ac3" -> "AC-3"
+            DolbyAudio.codec(mimeType) == "truehd" -> "Dolby TrueHD"
+            DolbyAudio.codec(mimeType) == "mat" -> "Dolby MAT"
             mimeType.contains("/") -> mimeType.substringAfterLast("/").uppercase()
             else -> mimeType.uppercase()
         }
@@ -417,6 +424,26 @@ object NerdStats {
     }
 
     fun pickedBitrateKbps(videoId: String?): Int? = videoId?.let { picked[it] }
+
+    /**
+     * The resolver's bitrate for the stream behind [mediaId], for when neither
+     * the decoder nor a measurement has one. Only ever a lossy figure: a
+     * lossless claim states the master's PCM rate, not the encoded one.
+     *
+     * A declared format that names its stream is the stream the player was
+     * handed, so YouTube's [picked] figure for the same id describes the one
+     * it replaced — how an addon's AAC that stated no bitrate read as the
+     * Opus 160 it stood in for. The pick is used only when nothing was
+     * declared, or the declaration is the empty one a plain YouTube resolve
+     * leaves.
+     */
+    fun resolverBitrateKbps(mediaId: String?): Int? {
+        val declared = declaredFormat(mediaId)
+        if (declared != null && (declared.codec != null || declared.kbps != null)) {
+            return declared.kbps?.takeIf { declared.isLossless != true }
+        }
+        return pickedBitrateKbps(mediaId)
+    }
 
     /**
      * Undoes [onSourceStream] for [trackId].

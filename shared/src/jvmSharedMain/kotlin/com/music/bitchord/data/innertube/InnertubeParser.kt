@@ -624,12 +624,45 @@ object InnertubeParser {
         // batch rather than paging it (see its "Refresh" button, wired to a
         // `reloadContinuationData` token). Only the playlist shelf's own
         // continuation means more real tracks.
-        val token = playlistScope?.let { playlist ->
-            collectRenderers(playlist, "continuationItemRenderer").firstOrNull()
-                .o("continuationEndpoint").o("continuationCommand").s("token")
-                ?: collectRenderers(playlist, "nextContinuationData").firstOrNull().s("continuation")
-        }
+        val token = playlistScope?.let { continuationToken(it) }
         return PlaylistShelfPage(songs, suggested, token)
+    }
+
+    /**
+     * A playlist continuation page, read from its own item list, or null when
+     * the response isn't in that shape and needs the general walk.
+     *
+     * Later pages of a playlist come back as
+     * `onResponseReceivedActions → appendContinuationItemsAction →
+     * continuationItems`: about a hundred track rows and, last, the
+     * `continuationItemRenderer` for the next page. That is all there is.
+     * A continuation has no header, no library state and no description, so
+     * the general first-page reading ([parsePlaylistShelf] failing over to
+     * [collectSongsDeep], [continuationToken], [parseBrowseHeader],
+     * [parseLibraryState], [parseDescription]) walked the whole ~1 MB tree about
+     * a dozen times per page to find nothing on most of those walks. It cost
+     * about 16 ms a page on a warm desktop JVM, several times that on a phone,
+     * and it sits between one request and the next.
+     *
+     * Strict on purpose: any item that isn't a track row or the continuation
+     * renderer (a podcast episode, a "Suggestions" shelf) returns null, so
+     * those pages keep the reading that knows about them.
+     */
+    fun parsePlaylistContinuation(root: JsonElement): PlaylistShelfPage? {
+        val items = root.a("onResponseReceivedActions")
+            ?.firstNotNullOfOrNull { it.o("appendContinuationItemsAction").a("continuationItems") }
+            ?: return null
+        val out = LinkedHashMap<String, Song>()
+        var token: String? = null
+        for (item in items) {
+            val row = item.o("musicResponsiveListItemRenderer")
+            when {
+                row != null -> parseResponsiveListItem(row, NO_CREDIT)?.let { out[it.videoId] = it }
+                item.o("continuationItemRenderer") != null -> token = token ?: continuationToken(item)
+                else -> return null
+            }
+        }
+        return PlaylistShelfPage(out.values.toList(), emptyList(), token)
     }
 
     /** One page of saved library cards, plus the token for the next page. */
@@ -662,12 +695,29 @@ object InnertubeParser {
 
     /**
      * Token for the next page of a paged response, or null once it has run out.
+     *
+     * Two token formats are in circulation. The older one:
+     *   continuationItemRenderer → continuationEndpoint → continuationCommand → token
+     *
+     * The newer one, where YouTube wraps the command in a commandExecutorCommand
+     * alongside a playlist-voting popup command:
+     *   continuationItemRenderer → continuationEndpoint → commandExecutorCommand
+     *     → commands[n] → continuationCommand → token
+     *
      * Both the modern `continuationItemRenderer` and the older `continuations`
-     * array are in circulation, sometimes within the same account.
+     * array are also in circulation at the same time.
+     *
+     * Only the first renderer's endpoint is read, at exactly those two depths.
+     * A page with several shelves can carry several renderers, and a token
+     * found anywhere deeper may page a different shelf than the one asked for.
      */
     fun continuationToken(root: JsonElement): String? {
-        collectRenderers(root, "continuationItemRenderer").firstOrNull()
-            .o("continuationEndpoint").o("continuationCommand").s("token")
+        val endpoint = collectRenderers(root, "continuationItemRenderer").firstOrNull()
+            .o("continuationEndpoint")
+        (endpoint.o("continuationCommand")
+            ?: endpoint.o("commandExecutorCommand").a("commands")
+                ?.firstNotNullOfOrNull { it.o("continuationCommand") })
+            .s("token")
             ?.let { return it }
         return collectRenderers(root, "nextContinuationData").firstOrNull().s("continuation")
     }
@@ -689,6 +739,8 @@ object InnertubeParser {
                 .o("musicPlayButtonRenderer").o("playNavigationEndpoint")
                 .o("watchEndpoint").s("videoId")
             ?: return null
+
+        if (renderer.isPrivateUpload()) UploadedTracks.mark(videoId)
 
         val columns = renderer.a("flexColumns").orEmpty()
         val title = columns.getOrNull(0)
@@ -762,8 +814,25 @@ object InnertubeParser {
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer.hasExplicitBadge(),
             genAi = renderer.detectGenAi(),
+            // Only a History row's menu carries one; see [historyRemovalToken].
+            feedbackToken = historyRemovalToken(renderer),
         )
     }
+
+    /**
+     * The "Remove from history" feedback token on a History row's menu, or
+     * null. The same plain menu items also carry other feedback actions —
+     * "Don't recommend this", for one — so only the item wearing the DELETE
+     * icon is taken; sending another item's token would quietly do something
+     * else to the account.
+     */
+    private fun historyRemovalToken(renderer: JsonObject): String? =
+        renderer.o("menu").o("menuRenderer").a("items")
+            ?.firstNotNullOfOrNull { item ->
+                val service = item.o("menuServiceItemRenderer") ?: return@firstNotNullOfOrNull null
+                if (service.o("icon").s("iconType") != "DELETE") return@firstNotNullOfOrNull null
+                service.o("serviceEndpoint").o("feedbackEndpoint").s("feedbackToken")
+            }
 
     /**
      * The promoted result at the top of an unfiltered search is a
@@ -908,6 +977,9 @@ object InnertubeParser {
         val albumId: String? = null,
         val albumName: String? = null,
     )
+
+    /** What a page with no header credits its rows with: nothing. See [pageCredit]. */
+    private val NO_CREDIT = Credits()
 
     /**
      * The artist and album a run list links out to, and every credited artist.
@@ -1598,6 +1670,18 @@ private fun JsonElement?.findString(key: String): String? = when (this) {
     is JsonArray -> firstNotNullOfOrNull { it.findString(key) }
     else -> null
 }
+
+/** Whether [key] appears as an object key anywhere in the subtree. */
+private fun JsonElement?.hasKey(key: String): Boolean = when (this) {
+    is JsonObject -> containsKey(key) || values.any { it.hasKey(key) }
+    is JsonArray -> any { it.hasKey(key) }
+    else -> false
+}
+
+/** Whether a track row is one of the signed-in user's own uploads. */
+private fun JsonObject.isPrivateUpload(): Boolean =
+    hasKey("musicDeletePrivatelyOwnedEntityCommand") ||
+        findString("musicVideoType")?.contains("PRIVATELY_OWNED", ignoreCase = true) == true
 
 private fun JsonElement?.runs(): String =
     this.a("runs")?.joinToString("") { it.s("text").orEmpty() }.orEmpty()

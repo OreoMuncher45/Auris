@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.MenuChoiceRow
+import com.music.bitchord.ui.components.menu.MenuRow
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import com.music.bitchord.ui.components.rememberMenuButtonOrigin
 import com.music.bitchord.ui.components.menuOriginOf
 import android.os.Build
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +47,8 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import com.music.bitchord.ui.components.LazyContent
 import com.music.bitchord.ui.components.rememberShelfKeys
 import com.music.bitchord.ui.components.uniqueKeys
+import com.music.bitchord.ui.components.ROW_REMOVAL_FADE_OUT
+import com.music.bitchord.ui.components.ROW_REMOVAL_PLACEMENT
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -97,6 +103,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -427,6 +434,17 @@ fun DetailScreen(
     // list. When no filter is active, matches contains the full running order
     // and plays the complete release/playlist from the tapped position.
     val queue = remember(matches) { matches.map { it.value } }
+    // One key per row from what the row is — its track, and which copy of it
+    // when a playlist repeats one — rather than where it sits. Keyed on the
+    // position, a row taken out of the middle renamed every row below it, and
+    // the list disposed and rebuilt each of them instead of moving them up.
+    val rowKeys = remember(queue) { uniqueKeys(queue) { it.videoId } }
+    val cacheFolder = page.browseId == CACHE_FOLDER_BROWSE_ID
+    // Read at tap time, so a row's click lambda captures only its own key and
+    // stays equal when the rows around it change; see [rowKeys].
+    val currentQueue by rememberUpdatedState(queue)
+    val currentRowKeys by rememberUpdatedState(rowKeys)
+    val currentOnSongClick by rememberUpdatedState(onSongClick)
     val suggested = remember(page.suggestedSongs, query) {
         page.suggestedSongs.matching(query).map { it.value }
     }
@@ -555,17 +573,27 @@ fun DetailScreen(
 
             if (isArtist) {
                 item(key = "artist-meta") {
+                    val menuHost = LocalMenuHost.current
                     ArtistMetaRow(
                         page = page,
                         palette = palette,
-                        albumsShelf = albumsShelf,
-                        singlesShelf = singlesShelf,
                         spotifyStats = spotifyStats,
                         isAiArtist = artistIsAi,
-                        onOpenShelf = onActiveShelfChange,
-                        onHideArtist = onHideArtist,
-                        onToggleAiArtist = {
-                            AppSettings.toggleArtistAi(page.browseId, page.title)
+                        // The artist's own menu, hung off the ⋮ like every other menu.
+                        onOpenMenu = { anchor ->
+                            menuHost?.open(anchor) { close ->
+                                ArtistOverflowRows(
+                                    albumsShelf = albumsShelf,
+                                    singlesShelf = singlesShelf,
+                                    artistIsAi = artistIsAi,
+                                    onOpenShelf = onActiveShelfChange,
+                                    onToggleAiArtist = {
+                                        AppSettings.toggleArtistAi(page.browseId, page.title)
+                                    },
+                                    onHideArtist = onHideArtist,
+                                    close = close,
+                                )
+                            }
                         },
                     )
                 }
@@ -713,10 +741,11 @@ fun DetailScreen(
                     }
                     itemsIndexed(
                         items = matches,
-                        key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                        key = { position, _ -> rowKeys[position] },
                         contentType = { _, _ -> LazyContent.SONG_ROW },
                     ) { position, entry ->
                         val song = entry.value
+                        val rowKey = rowKeys[position]
                         val isCurrent = song.isSameTrackAs(currentSong)
                         // Made once per row rather than on every recomposition of
                         // it: a fresh copy each time is a new Song for the row to
@@ -728,32 +757,51 @@ fun DetailScreen(
                                 song.copy(thumbnailUrl = page.thumbnailUrl)
                             }
                         }
-                        SongRow(
-                            song = rowSong,
-                            onClick = {
-                                onSongClick(queue, position)
-                            },
-                            onLongPress = { onSongLongPress(song) },
-                            onSwipeToQueue = { onSongSwipe(song) },
-                            rowBackground = Color.Transparent,
-                            // The track's place on the release, not its place in
-                            // what the filter — or a sort — left standing.
-                            trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
-                            subtitleColor = palette.onBackgroundVariant,
-                            downloadedTint = downloadedTint,
-                            isCurrent = isCurrent,
-                            isPlaying = isCurrent && isPlaying,
-                            activeTint = palette.accent,
-                            searchPlayingStyle = true,
-                        )
-                        if (position < matches.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(
-                                    start = if (numbered) NUMBERED_ROW_DIVIDER_INSET else ROW_DIVIDER_INSET,
-                                ),
-                                thickness = 0.5.dp,
-                                color = palette.divider,
+                        val row: @Composable () -> Unit = {
+                            SongRow(
+                                song = rowSong,
+                                onClick = {
+                                    val at = currentRowKeys.indexOf(rowKey)
+                                    if (at >= 0) currentOnSongClick(currentQueue, at)
+                                },
+                                onLongPress = { onSongLongPress(song) },
+                                onSwipeToQueue = { onSongSwipe(song) },
+                                rowBackground = Color.Transparent,
+                                // The track's place on the release, not its place in
+                                // what the filter — or a sort — left standing.
+                                trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
+                                subtitleColor = palette.onBackgroundVariant,
+                                downloadedTint = downloadedTint,
+                                isCurrent = isCurrent,
+                                isPlaying = isCurrent && isPlaying,
+                                activeTint = palette.accent,
+                                searchPlayingStyle = true,
                             )
+                            if (position < matches.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(
+                                        start = if (numbered) NUMBERED_ROW_DIVIDER_INSET else ROW_DIVIDER_INSET,
+                                    ),
+                                    thickness = 0.5.dp,
+                                    color = palette.divider,
+                                )
+                            }
+                        }
+                        // The Cached songs folder is the one detail page a
+                        // row is taken off in front of the listener, from the
+                        // song menu's Remove from cache, so it is the one that
+                        // animates the removal — the same motion as History.
+                        // Every other page keeps its rows as they were.
+                        if (cacheFolder) {
+                            Column(
+                                Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = ROW_REMOVAL_FADE_OUT,
+                                    placementSpec = ROW_REMOVAL_PLACEMENT,
+                                ),
+                            ) { row() }
+                        } else {
+                            row()
                         }
                     }
                 }
@@ -1712,23 +1760,14 @@ private fun ArtistStatsRow(
  * the act from the rest of the app.
  */
 @Composable
-private fun ArtistMetaRow(
+internal fun ArtistMetaRow(
     page: DetailPage,
     palette: ArtworkPalette,
-    albumsShelf: HomeShelf?,
-    singlesShelf: HomeShelf?,
     spotifyStats: SpotifyArtistStats?,
     isAiArtist: Boolean,
-    onOpenShelf: (HomeShelf) -> Unit,
-    onHideArtist: (() -> Unit)?,
-    onToggleAiArtist: (() -> Unit)?,
+    /** Opens the artist's menu ([ArtistOverflowRows]) hung off the ⋮ at this anchor. */
+    onOpenMenu: (anchorInWindow: Rect?) -> Unit,
 ) {
-    if (page.subscriberCountText == null && page.monthlyListenerCount == null &&
-        albumsShelf == null && singlesShelf == null && onHideArtist == null &&
-        spotifyStats == null && !isAiArtist && onToggleAiArtist == null
-    ) return
-
-    var expanded by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1769,73 +1808,64 @@ private fun ArtistMetaRow(
                 palette = palette,
             )
         }
-        // A DropdownMenu anchors to its parent, so the button and its menu
-        // share a box of their own: in the header's box the menu hung off the
-        // whole header and opened at its start edge, across the page from the ⋮.
-        Box(
+        val origin = rememberMenuButtonOrigin()
+        IconButton(
+            onClick = { onOpenMenu(origin.boundsInWindow()) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = ARTIST_CONTENT_GUTTER),
+                .padding(end = ARTIST_CONTENT_GUTTER)
+                .menuOriginOf(origin),
         ) {
-            IconButton(
-                onClick = { expanded = true },
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
-                    tint = palette.onBackgroundVariant,
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                albumsShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.albums)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                singlesShelf?.let { shelf ->
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.singles_eps)) },
-                        onClick = {
-                            expanded = false
-                            onOpenShelf(shelf)
-                        },
-                    )
-                }
-                if (onToggleAiArtist != null) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (isAiArtist) R.string.remove_ai_mark else R.string.mark_as_ai,
-                                ),
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onToggleAiArtist()
-                        },
-                    )
-                }
-                if (onHideArtist != null) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.hide_artist)) },
-                        leadingIcon = {
-                            Icon(Icons.Rounded.VisibilityOff, contentDescription = null)
-                        },
-                        onClick = {
-                            expanded = false
-                            onHideArtist()
-                        },
-                    )
-                }
-            }
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.more),
+                tint = palette.onBackgroundVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The artist page's overflow rows, in the order Albums, Singles & EPs, the AI
+ * mark and Hide. One composable for the root's shared menu host and the
+ * interaction tests alike, so the tests exercise the real rows and callbacks.
+ * Each row closes the menu before it acts.
+ */
+@Composable
+internal fun ColumnScope.ArtistOverflowRows(
+    albumsShelf: HomeShelf?,
+    singlesShelf: HomeShelf?,
+    artistIsAi: Boolean,
+    onOpenShelf: (HomeShelf) -> Unit,
+    onToggleAiArtist: () -> Unit,
+    onHideArtist: (() -> Unit)?,
+    close: () -> Unit,
+) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    albumsShelf?.let { shelf ->
+        MenuRow(icon = null, label = stringResource(R.string.albums), ink = ink) {
+            close()
+            onOpenShelf(shelf)
+        }
+    }
+    singlesShelf?.let { shelf ->
+        MenuRow(icon = null, label = stringResource(R.string.singles_eps), ink = ink) {
+            close()
+            onOpenShelf(shelf)
+        }
+    }
+    MenuRow(
+        icon = Icons.Rounded.AutoAwesome,
+        label = stringResource(if (artistIsAi) R.string.remove_ai_mark else R.string.mark_as_ai),
+        ink = ink,
+    ) {
+        close()
+        onToggleAiArtist()
+    }
+    onHideArtist?.let { hide ->
+        MenuRow(icon = Icons.Rounded.VisibilityOff, label = stringResource(R.string.hide_artist), ink = ink) {
+            close()
+            hide()
         }
     }
 }
@@ -2353,7 +2383,6 @@ private fun ShelfSortRow(
     selected: ShelfSort,
     onSelect: (ShelfSort) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2365,44 +2394,45 @@ private fun ShelfSortRow(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(palette.elevated)
-                    .clickable { expanded = true }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = selected.localizedLabel(),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = palette.onBackground,
-                )
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Rounded.Sort,
-                    contentDescription = stringResource(R.string.sort_music),
-                    tint = palette.onBackgroundVariant,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ShelfSort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.localizedLabel()) },
-                        leadingIcon = {
-                            if (option == selected) {
-                                Icon(Icons.Rounded.Check, contentDescription = null)
+        val menuHost = LocalMenuHost.current
+        val sortOrigin = rememberMenuButtonOrigin()
+        Row(
+            modifier = Modifier
+                .menuOriginOf(sortOrigin)
+                .clip(RoundedCornerShape(50))
+                .background(palette.elevated)
+                .clickable {
+                    menuHost?.open(sortOrigin.boundsInWindow()) { close ->
+                        val selectedLabel = stringResource(R.string.selected)
+                        ShelfSort.entries.forEach { option ->
+                            MenuChoiceRow(
+                                label = option.localizedLabel(),
+                                selected = option == selected,
+                                ink = MaterialTheme.colorScheme.onSurface,
+                                accent = MaterialTheme.colorScheme.primary,
+                                selectedDescription = selectedLabel,
+                            ) {
+                                close()
+                                onSelect(option)
                             }
-                        },
-                        onClick = {
-                            expanded = false
-                            onSelect(option)
-                        },
-                    )
+                        }
+                    }
                 }
-            }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selected.localizedLabel(),
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.onBackground,
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Rounded.Sort,
+                contentDescription = stringResource(R.string.sort_music),
+                tint = palette.onBackgroundVariant,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

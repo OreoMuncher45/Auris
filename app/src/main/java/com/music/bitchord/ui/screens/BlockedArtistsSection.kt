@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
+import com.music.bitchord.ui.components.menu.HostedSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -52,10 +54,7 @@ fun BlockedArtistsSheet(onDismiss: () -> Unit) {
             .sortedBy { it.second.lowercase(Locale.ROOT) }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    HostedSheet(onDismiss = onDismiss) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -114,7 +113,11 @@ fun BlockedArtistsSheet(onDismiss: () -> Unit) {
                                 .weight(1f)
                                 .padding(vertical = 12.dp),
                         )
-                        TextButton(onClick = { AppSettings.unblockArtist(entry) }) {
+                        TextButton(
+                            onClick = { AppSettings.unblockArtist(entry) },
+                            // A sheet on its way out stops answering — see AppSheet.
+                            enabled = LocalMenuInteractive.current,
+                        ) {
                             Text(stringResource(R.string.unblock))
                         }
                     }

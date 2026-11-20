@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components.menu
 
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
@@ -16,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -134,12 +138,13 @@ fun AnchoredMenu(
      */
     hostOffsetInWindow: () -> IntOffset = { IntOffset.Zero },
     /**
-     * Set for a menu over a page of rows: how much its glass frosts what is
-     * behind it ([MenuTokens.PageFrost]), and, with glass off, a plate that
-     * all but covers it ([MenuTokens.PagePlateAlpha]). Null for the player's
-     * menu, whose glass and plate are meant to show the artwork.
+     * Set for a menu over a page of rows: with glass off, use a plate that all
+     * but covers them ([MenuTokens.PagePlateAlpha]). Glass always keeps the
+     * app's configured Liquid/Frosted material, including its blur radius.
      */
-    frost: Dp? = null,
+    pagePlate: Boolean = false,
+    /** Forces dark (true) or light (false) colours; null follows the theme. */
+    dark: Boolean? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceMotion = rememberReduceMenuMotion()
@@ -148,10 +153,10 @@ fun AnchoredMenu(
 
     BackHandler(enabled = expanded, onBack = onDismiss)
 
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val colors = menuColors(dark, reduceDynamicBlur)
+    val isDark = dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)
+    val colors = menuColors(isDark, reduceDynamicBlur)
     // A menu over a page covers the rows behind it — see MenuTokens.PagePlateAlpha.
-    val plate = if (frost != null) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
+    val plate = if (pagePlate) colors.plate.copy(alpha = MenuTokens.PagePlateAlpha) else colors.plate
     val shape = RoundedCornerShape(MenuTokens.Radius)
     val progress = presence.animation.progress
 
@@ -259,7 +264,7 @@ fun AnchoredMenu(
                         translationY = (1f - p) * if (below) -MenuMotion.TRAVEL_PX else MenuMotion.TRAVEL_PX
                     }
                 }
-                .heldMenuSurface(shape, plate, colors.hairline, reduceDynamicBlur, frost?.value),
+                .heldMenuSurface(shape, plate, colors.hairline, reduceDynamicBlur),
         ) {
             // A row activated while the menu is already on its way out would
             // run its action twice. Three ways in, three guards: the rows read
@@ -267,12 +272,22 @@ fun AnchoredMenu(
             // a press that began before the close, and keyboard activation);
             // the closing panel leaves the accessibility tree; and a sibling
             // drawn over the rows takes any new touch first.
+            // With a keyboard, the menu takes the focus as it opens, so its
+            // rows are reachable from whatever opened it — a sheet's row,
+            // whose own trap gives way while a menu is up.
+            val menuFocus = remember { FocusRequester() }
+            val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+            LaunchedEffect(expanded, keyboard) {
+                if (expanded && keyboard) runCatching { menuFocus.requestFocus() }
+            }
             CompositionLocalProvider(LocalMenuInteractive provides expanded) {
                 // No verticalScroll here: the rows bring their own, and a
                 // scrollable inside a scrollable is measured with infinite
                 // height and crashes. The cap above is what lets theirs work.
                 Column(
                     Modifier
+                        .focusRequester(menuFocus)
+                        .focusGroup()
                         .then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })
                         .padding(vertical = MenuTokens.PanelPadding),
                     content = content,
@@ -282,12 +297,6 @@ fun AnchoredMenu(
         }
     }
 }
-
-/**
- * False while the menu around a row is closing. A row that can be activated
- * reads it so that it can't be once its menu has been dismissed.
- */
-internal val LocalMenuInteractive = compositionLocalOf { true }
 
 /** Which side of the button the menu opened on — see [AnchoredMenu]. */
 private class MenuSide {

@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.ConfirmationAlert
+import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -36,6 +40,7 @@ import com.music.bitchord.playback.AudioCache
 internal class SettingsSheets {
     /** The connection whose quality ceiling is being picked, or null. */
     var pickingQuality by mutableStateOf<QualityTarget?>(null)
+    var pickingBitPerfectPath by mutableStateOf(false)
     var pickingDownloadQuality by mutableStateOf(false)
     var pickingAutomixPerformance by mutableStateOf(false)
     var pickingHomeProvider by mutableStateOf(false)
@@ -92,95 +97,49 @@ internal fun SettingsDialogs(
         JamesDspSheet(onDismiss = { sheets.showJamesDsp = false })
     }
 
-    sheets.pickingQuality?.let { target ->
-        val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
-        val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingQuality = null },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            QualitySheet(
-                target = target,
-                selected = when (target) {
-                    QualityTarget.WIFI -> wifiQuality
-                    QualityTarget.CELLULAR -> cellularQuality
-                },
-                // Writes the one ceiling that was being edited and nothing
-                // else. There used to be a `SourceRegistry.applyQualityPreset`
-                // call here that flipped the module and JioSaavn switches to
-                // match — which meant budgeting *mobile data* switched those
-                // sources off while sitting on Wi-Fi, and coming back to Wi-Fi
-                // never switched them on again. Which sources a rung consults
-                // is now read per stream off the connection in force; see
-                // [AudioQuality.permits].
-                onSelect = { quality ->
-                    when (target) {
-                        QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
-                        QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
-                    }
-                    sheets.pickingQuality = null
-                },
-            )
-        }
+    // The option pickers open on the row that asked for them, in the app's
+    // anchored menu, drawn over everything by the root's menu host. Each
+    // flag is only the request: handed to the host here and cleared at once,
+    // the host owns the menu from then on. The row recorded where it is as
+    // it was tapped (see SettingsRow).
+    val menuHost = LocalMenuHost.current
+    LaunchedEffect(sheets.pickingQuality) {
+        val target = sheets.pickingQuality ?: return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> QualityMenu(target, close) }
+        sheets.pickingQuality = null
     }
-
-    if (sheets.pickingDownloadQuality) {
-        val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingDownloadQuality = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            DownloadQualitySheet(
-                selected = downloadQuality,
-                onSelect = { quality ->
-                    AppSettings.setDownloadQuality(quality)
-                    sheets.pickingDownloadQuality = false
-                },
-            )
-        }
+    LaunchedEffect(sheets.pickingBitPerfectPath) {
+        if (!sheets.pickingBitPerfectPath) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> BitPerfectPathMenu(close) }
+        sheets.pickingBitPerfectPath = false
     }
-
+    LaunchedEffect(sheets.pickingDownloadQuality) {
+        if (!sheets.pickingDownloadQuality) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> DownloadQualityMenu(close) }
+        sheets.pickingDownloadQuality = false
+    }
     if (sheets.pickingHomeProvider) {
         HomeProviderPicker(onDismiss = { sheets.pickingHomeProvider = false })
     }
-
-    if (sheets.pickingAutomixPerformance) {
-        val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
-        ModalBottomSheet(
-            onDismissRequest = { sheets.pickingAutomixPerformance = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            AutomixPerformanceSheet(
-                selected = automixPerformance,
-                onSelect = { mode ->
-                    AppSettings.setAutomixPerformanceMode(mode)
-                    sheets.pickingAutomixPerformance = false
-                },
-            )
-        }
+    LaunchedEffect(sheets.pickingAutomixPerformance) {
+        if (!sheets.pickingAutomixPerformance) return@LaunchedEffect
+        menuHost?.open(MenuOrigin.consume()) { close -> AutomixPerformanceMenu(close) }
+        sheets.pickingAutomixPerformance = false
     }
 
     // Everything in the Cached songs folder goes with it, so say so first.
     if (sheets.confirmClearSongCache) {
-        AlertDialog(
-            onDismissRequest = { sheets.confirmClearSongCache = false },
-            title = { Text(stringResource(R.string.clear_song_cache_title)) },
-            text = { Text(stringResource(R.string.clear_song_cache_warning)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    sheets.confirmClearSongCache = false
-                    AudioCache.clear {
-                        Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text(stringResource(R.string.clear))
+        ConfirmationAlert(
+            title = stringResource(R.string.clear_song_cache_title),
+            description = stringResource(R.string.clear_song_cache_warning),
+            confirmLabel = stringResource(R.string.clear),
+            onConfirm = {
+                sheets.confirmClearSongCache = false
+                AudioCache.clear {
+                    Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.confirmClearSongCache = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.confirmClearSongCache = false },
         )
     }
 
@@ -188,100 +147,62 @@ internal fun SettingsDialogs(
     // thing being confirmed is that this device's own history is about to be
     // thrown away, and that is true whichever file gets picked.
     if (sheets.confirmImport) {
-        AlertDialog(
-            onDismissRequest = { sheets.confirmImport = false },
-            title = { Text(stringResource(R.string.import_backup_title)) },
-            text = {
-                Text(stringResource(R.string.import_backup_warning))
+        ConfirmationAlert(
+            title = stringResource(R.string.import_backup_title),
+            description = stringResource(R.string.import_backup_warning),
+            confirmLabel = stringResource(R.string.choose_file),
+            onConfirm = {
+                sheets.confirmImport = false
+                importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    sheets.confirmImport = false
-                    importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
-                }) {
-                    Text(stringResource(R.string.choose_file))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { sheets.confirmImport = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.confirmImport = false },
         )
     }
 
     if (sheets.showPerformanceWarning) {
-        AlertDialog(
-            onDismissRequest = { sheets.showPerformanceWarning = false },
-            title = { Text(stringResource(R.string.high_performance_before_enabling)) },
-            text = { Text(stringResource(R.string.high_performance_battery_warning)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showPerformanceWarning = false
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
-                        }
-                        val settingsIntent = intent.takeIf {
-                            it.resolveActivity(context.packageManager) != null
-                        } ?: Intent(Settings.ACTION_SETTINGS)
-                        batterySettingsLauncher.launch(settingsIntent)
-                    },
-                ) {
-                    Text(stringResource(R.string.open_battery_settings))
+        ConfirmationAlert(
+            title = stringResource(R.string.high_performance_before_enabling),
+            description = stringResource(R.string.high_performance_battery_warning),
+            confirmLabel = stringResource(R.string.open_battery_settings),
+            onConfirm = {
+                sheets.showPerformanceWarning = false
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
                 }
+                val settingsIntent = intent.takeIf {
+                    it.resolveActivity(context.packageManager) != null
+                } ?: Intent(Settings.ACTION_SETTINGS)
+                batterySettingsLauncher.launch(settingsIntent)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showPerformanceWarning = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            onDismiss = { sheets.showPerformanceWarning = false },
         )
     }
 
     if (sheets.showPerformanceConfirmation) {
-        AlertDialog(
-            onDismissRequest = { sheets.showPerformanceConfirmation = false },
-            title = { Text(stringResource(R.string.enable_high_performance_title)) },
-            text = { Text(stringResource(R.string.enable_high_performance_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showPerformanceConfirmation = false
-                        AppSettings.setHighPerformanceMode(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.enable_high_performance_title),
+            description = stringResource(R.string.enable_high_performance_confirmation),
+            confirmLabel = stringResource(R.string.enable),
+            dismissLabel = stringResource(R.string.not_yet),
+            onConfirm = {
+                sheets.showPerformanceConfirmation = false
+                AppSettings.setHighPerformanceMode(true)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showPerformanceConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
+            onDismiss = { sheets.showPerformanceConfirmation = false },
         )
     }
 
     if (sheets.showSeamlessUpgradeConfirmation) {
-        AlertDialog(
-            onDismissRequest = { sheets.showSeamlessUpgradeConfirmation = false },
-            title = { Text(stringResource(R.string.enable_seamless_upgrades_title)) },
-            text = { Text(stringResource(R.string.enable_seamless_upgrades_confirmation)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sheets.showSeamlessUpgradeConfirmation = false
-                        AppSettings.setSeamlessQualityUpgrade(true)
-                    },
-                ) {
-                    Text(stringResource(R.string.enable))
-                }
+        ConfirmationAlert(
+            title = stringResource(R.string.enable_seamless_upgrades_title),
+            description = stringResource(R.string.enable_seamless_upgrades_confirmation),
+            confirmLabel = stringResource(R.string.enable),
+            dismissLabel = stringResource(R.string.not_yet),
+            onConfirm = {
+                sheets.showSeamlessUpgradeConfirmation = false
+                AppSettings.setSeamlessQualityUpgrade(true)
             },
-            dismissButton = {
-                TextButton(onClick = { sheets.showSeamlessUpgradeConfirmation = false }) {
-                    Text(stringResource(R.string.not_yet))
-                }
-            },
+            onDismiss = { sheets.showSeamlessUpgradeConfirmation = false },
         )
     }
 }

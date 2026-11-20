@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
@@ -163,6 +164,17 @@ fun SongActionsSheet(
      * hides the row.
      */
     onRemoveFromFolder: (() -> Unit)? = null,
+    /**
+     * Takes this track out of the song cache. Null hides the row — the caller
+     * passes one only while the cache actually holds some of it.
+     */
+    onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — passed only for a menu opened on the History screen, for a row
+     * YouTube gave a removal token.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -370,7 +382,23 @@ fun SongActionsSheet(
             )
         }
 
+        onRemoveFromHistory?.let {
+            ActionRow(
+                icon = Icons.Rounded.History,
+                label = stringResource(R.string.remove_from_history),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         DownloadRow(song, palette, isOffline, onDownload)
+        onRemoveFromCache?.let {
+            ActionRow(
+                icon = Icons.Rounded.DeleteSweep,
+                label = stringResource(R.string.remove_from_cache),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
@@ -927,7 +955,8 @@ internal fun ActionRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
+            // A sheet on its way out stops answering — see AppSheet.
+            .clickable(enabled = enabled && LocalMenuInteractive.current, onClick = onClick)
             .padding(horizontal = MenuTokens.SheetRowPaddingH, vertical = MenuTokens.SheetRowPaddingV),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -92,6 +92,15 @@ class DownloadStoreTest {
     }
 
     @Test
+    fun `AC4 Atmos is filed as MP4 instead of falling back to YouTube`() {
+        listOf("ac4", "ac-4", "AC4").forEach { codec ->
+            val stored = DownloadStore.storable(codec)
+            assertEquals("m4a", stored?.extension)
+            assertEquals("audio/mp4", stored?.mimeType)
+        }
+    }
+
+    @Test
     fun `codecs are matched however a source spells them`() {
         assertEquals("flac", DownloadStore.storable("FLAC")?.extension)
         assertEquals("flac", DownloadStore.storable(" x-flac ")?.extension)

@@ -207,6 +207,35 @@ class AnchoredItemMenuTest {
         assertTrue("…against the end edge", row.right > 360.dp)
     }
 
+    @Test
+    fun expandedStateMenusUseTheSameAnchoredHost() {
+        var expanded by mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    ExpandedAnchoredMenu(
+                        expanded = expanded,
+                        anchorInWindow = { Rect(900f, 200f, 1000f, 300f) },
+                        onDismiss = { expanded = false },
+                    ) {
+                        MenuRow(
+                            icon = Icons.Rounded.Check,
+                            label = "Shared sort row",
+                            ink = Color.White,
+                            modifier = Modifier.testTag(ROW),
+                            onClick = { expanded = false },
+                        )
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag(ROW).assertExists().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertDoesNotExist()
+    }
+
     private companion object {
         const val ITEM = "Glass Harbour"
         const val BUTTON = "button"

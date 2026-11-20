@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.onboarding
 
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -26,7 +29,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -189,7 +191,10 @@ internal fun OnboardingPage(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
+                    // Above the keyboard as well as the navigation bar: the
+                    // page above shrinks with it, so a field being typed in
+                    // is scrolled into the room that is left, not under it.
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = side)
                     .padding(top = 8.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -385,7 +390,9 @@ internal fun OnbField(
         ),
         cursorBrush = SolidColor(Onb.Title),
         keyboardOptions = KeyboardOptions(imeAction = imeAction),
-        modifier = modifier,
+        // A layer of its own: each letter and each blink of the cursor
+        // re-records this field alone, not the whole sheet it sits on.
+        modifier = modifier.graphicsLayer(),
         decorationBox = { inner ->
             Row(
                 modifier = Modifier

@@ -116,6 +116,7 @@ class SettingsCatalogTest {
         val required = listOf(
             "pass.card",
             "account.integrations", "account.listen_together",
+            "account.community_discord", "account.community_reddit",
             "audio.source", "audio.offline_mode", "audio.wifi", "audio.mobile_data",
             "audio.output_precision", "audio.bit_perfect", "audio.prefer_usb_dac",
             "audio.loudness_normalization", "audio.loudness_off_on_speaker",

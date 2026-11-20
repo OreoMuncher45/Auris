@@ -15,15 +15,17 @@ import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputPolicy
 import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
-import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 
 /**
  * Output transport mechanism selected by the universal best-path engine.
  */
-enum class TransportType(val label: String) {
+enum class TransportType(val label: String, val bypassesMixer: Boolean = false) {
     AUDIO_TRACK("AudioTrack"),
     AUDIO_TRACK_DIRECT("AudioTrack (Direct)"),
-    DIRECT_USB("Direct USB"),
+    DIRECT_USB("Direct USB", bypassesMixer = true),
+
+    /** A built-in DAC opened through an AAudio exclusive (MMAP) stream. */
+    AAUDIO_EXCLUSIVE("AAudio exclusive", bypassesMixer = true),
 }
 
 /**
@@ -35,7 +37,6 @@ enum class FallbackReason(val label: String) {
     UNSUPPORTED_FORMAT("Unsupported source format"),
     ROUTE_LIMITATION("Route limitation (device profile)"),
     OS_LIMITATION("OS limitation (system audio policy)"),
-    DIRECT_USB_UNAVAILABLE("Direct USB unavailable"),
     DECODER_LIMITATION("Decoder limitation"),
 }
 
@@ -62,7 +63,6 @@ data class DspDescriptor(
 data class RouteDescriptor(
     val kind: AudioRouting.Kind,
     val deviceName: String,
-    val isDirectUsbCapable: Boolean = false,
     val advertisedEncodings: List<Int> = emptyList(),
     val advertisedSampleRates: List<Int> = emptyList(),
     val directSupport: DirectAudioProbe.DirectSupport = DirectAudioProbe.DirectSupport.NONE,
@@ -126,7 +126,6 @@ object OutputNegotiator {
         advertisedEncodings: List<Int>,
         advertisedSampleRates: List<Int>,
         requestedMode: OutputPcmMode,
-        directUsbProbe: DirectUsbProbeResult? = null,
         directSupport: DirectAudioProbe.DirectSupport = DirectAudioProbe.DirectSupport.NONE,
         bluetoothTelemetry: BluetoothTelemetry? = null,
         delegateSupportsFloat: Boolean = true,
@@ -149,7 +148,6 @@ object OutputNegotiator {
         val route = RouteDescriptor(
             kind = routeKind,
             deviceName = deviceName,
-            isDirectUsbCapable = directUsbProbe?.isViable == true,
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
             directSupport = directSupport,
@@ -165,7 +163,6 @@ object OutputNegotiator {
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
             requestedMode = requestedMode,
-            directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = bluetoothTelemetry,
             delegateSupportsFloat = delegateSupportsFloat,
@@ -190,7 +187,6 @@ object OutputNegotiator {
         advertisedEncodings: List<Int>,
         advertisedSampleRates: List<Int>,
         requestedMode: OutputPcmMode,
-        directUsbProbe: DirectUsbProbeResult?,
         directSupport: DirectAudioProbe.DirectSupport,
         bluetoothTelemetry: BluetoothTelemetry?,
         delegateSupportsFloat: Boolean,
@@ -223,20 +219,10 @@ object OutputNegotiator {
             )
         }
 
-        // 2. Direct USB Priority: userspace USB streaming if authorized and viable
-        val isDirectUsbViable = routeKind == AudioRouting.Kind.USB && directUsbProbe?.isViable == true
-        if (isDirectUsbViable) {
-            return OutputDescriptor(
-                transport = TransportType.DIRECT_USB,
-                encoding = PcmEncoding.PCM_FLOAT,
-                sampleRateHz = sampleRateHz,
-                channelCount = channelCount,
-                isDirect = true,
-                systemMixerRateHz = null, // Bypasses Android AudioFlinger entirely
-                fallbackReason = FallbackReason.NONE,
-                fallbackDetail = null,
-            )
-        }
+        // 2. Direct USB is not negotiated here: a descriptor probe cannot say
+        // whether the exclusive session will open, and calling a DAC with
+        // permission "Direct USB" before it had was a false label. The
+        // session publishes the DIRECT_USB transport itself once it is live.
 
         // 3. Android DIRECT Playback Evaluation (API 33+)
         // Priority 3A: Direct Float32
@@ -354,16 +340,10 @@ object OutputNegotiator {
         val (reason, detail) = when {
             // 16-bit is what was asked for, so nothing was given up.
             requestedMode == OutputPcmMode.PCM_16 -> Pair(FallbackReason.NONE, null)
-            routeKind == AudioRouting.Kind.USB -> {
-                val r = if (directUsbProbe?.isViable == false) {
-                    FallbackReason.DIRECT_USB_UNAVAILABLE
-                } else {
-                    FallbackReason.ROUTE_LIMITATION
-                }
-                val d = directUsbProbe?.diagnosticReason
-                    ?: "USB output could not open a float AudioTrack"
-                Pair(r, d)
-            }
+            routeKind == AudioRouting.Kind.USB -> Pair(
+                FallbackReason.ROUTE_LIMITATION,
+                "USB output could not open a float AudioTrack",
+            )
             routeKind == AudioRouting.Kind.BLUETOOTH -> {
                 val btSummary = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
                 Pair(

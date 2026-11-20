@@ -22,7 +22,6 @@ import com.music.bitchord.playback.audio.PcmEncoding
 import com.music.bitchord.playback.audio.TransportType
 import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
-import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -106,7 +105,13 @@ object AudioOutputStatus {
         val exclusiveUsbActive: Boolean = false,
         /** Rate/bit depth on the wire, or why the session is not running. */
         val exclusiveUsbDetail: String? = null,
-        val directUsbProbe: DirectUsbProbeResult? = null,
+        /** Which mixer-free path [exclusiveUsbActive] and [exclusiveUsbDetail] describe. */
+        val exclusiveTransport: TransportType = TransportType.DIRECT_USB,
+        /**
+         * Non-null while the exclusive output carries the track converted to the
+         * DAC's best format ("convert for lower-spec DACs"): what it was fitted to.
+         */
+        val dacConversion: String? = null,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
         val directPlaybackSelected: Boolean = false,
@@ -207,7 +212,8 @@ object AudioOutputStatus {
                 bitPerfectMixer == other.bitPerfectMixer &&
                 exclusiveUsbActive == other.exclusiveUsbActive &&
                 exclusiveUsbDetail == other.exclusiveUsbDetail &&
-                directUsbProbe == other.directUsbProbe &&
+                exclusiveTransport == other.exclusiveTransport &&
+                dacConversion == other.dacConversion &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
                 directPlaybackSelected == other.directPlaybackSelected &&
@@ -256,7 +262,8 @@ object AudioOutputStatus {
             result = 31 * result + (bitPerfectMixer?.hashCode() ?: 0)
             result = 31 * result + exclusiveUsbActive.hashCode()
             result = 31 * result + (exclusiveUsbDetail?.hashCode() ?: 0)
-            result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
+            result = 31 * result + exclusiveTransport.hashCode()
+            result = 31 * result + (dacConversion?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
             result = 31 * result + directPlaybackSelected.hashCode()
@@ -289,7 +296,6 @@ object AudioOutputStatus {
         preferred: AudioDeviceInfo?,
         floatEnabled: Boolean,
         routeKind: AudioRouting.Kind? = null,
-        directUsbProbe: DirectUsbProbeResult? = null,
         directSupport: DirectAudioProbe.DirectSupport? = null,
         bluetoothTelemetry: BluetoothTelemetry? = null,
         systemMixerRateHz: Int? = null,
@@ -333,24 +339,20 @@ object AudioOutputStatus {
             else -> null
         }
 
-        val isDirectUsbViable = directUsbProbe?.isViable == true && isUsbDevice
+        // The DIRECT_USB transport is published by the exclusive session once
+        // it is actually open (see publishExclusiveUsb), never inferred here.
         val isDirectAudioTrack = directSupport?.isDirectSupported == true && computedRouteKind != AudioRouting.Kind.PHONE
         val transport = when {
-            isDirectUsbViable -> TransportType.DIRECT_USB
             isDirectAudioTrack -> TransportType.AUDIO_TRACK_DIRECT
             else -> TransportType.AUDIO_TRACK
         }
 
         val fallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled
         val (reason, detail) = when {
-            isDirectUsbViable -> Pair(FallbackReason.NONE, null)
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
                 Pair(FallbackReason.ROUTE_LIMITATION, "Speaker output capped at 16-bit to avoid OEM mixer distortion")
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
-                Pair(
-                    if (directUsbProbe?.isViable == false) FallbackReason.DIRECT_USB_UNAVAILABLE else FallbackReason.ROUTE_LIMITATION,
-                    directUsbProbe?.diagnosticReason ?: "USB route does not advertise Float32 output",
-                )
+                Pair(FallbackReason.ROUTE_LIMITATION, "USB route does not advertise Float32 output")
             computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
                 val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
                 Pair(FallbackReason.ROUTE_LIMITATION, "Bluetooth route$btCode does not advertise Float32 output")
@@ -376,7 +378,6 @@ object AudioOutputStatus {
             fallbackReason = reason,
             fallbackDetail = detail,
             systemMixerRateHz = systemMixerRateHz,
-            directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             directPlaybackSupported = directSupport?.isDirectSupported == true,
             directPlaybackSelected = isDirectAudioTrack,
@@ -471,6 +472,11 @@ object AudioOutputStatus {
     }
 
     /** The Android 14 bit-perfect mixer request, or null when bit-perfect is off. */
+    fun publishDacConversion(label: String?) {
+        if (current.value.dacConversion == label) return
+        current.value = current.value.copy(dacConversion = label)
+    }
+
     fun publishBitPerfectMixer(state: BitPerfectMixer.State?) {
         current.value = current.value.copy(bitPerfectMixer = state)
     }
@@ -480,9 +486,18 @@ object AudioOutputStatus {
      * sink that owns the endpoint; a non-null [detail] with `active = false`
      * names why the mixer is still in the path (permission, clock, channels).
      */
-    fun publishExclusiveUsb(active: Boolean, detail: String?) {
+    fun publishExclusiveUsb(
+        active: Boolean,
+        detail: String?,
+        transport: TransportType = TransportType.DIRECT_USB,
+    ) {
         val snapshot = current.value
-        if (snapshot.exclusiveUsbActive == active && snapshot.exclusiveUsbDetail == detail) return
+        if (snapshot.exclusiveUsbActive == active &&
+            snapshot.exclusiveUsbDetail == detail &&
+            snapshot.exclusiveTransport == transport
+        ) {
+            return
+        }
         // Deactivation must drop the DIRECT_USB transport the session forced,
         // or the old values would make evaluateActualPath keep claiming a
         // direct path after it is gone. A session that was never active must
@@ -498,7 +513,7 @@ object AudioOutputStatus {
             snapshot
         }
         current.value = evaluateActualPath(
-            base.copy(exclusiveUsbActive = active, exclusiveUsbDetail = detail),
+            base.copy(exclusiveUsbActive = active, exclusiveUsbDetail = detail, exclusiveTransport = transport),
         )
     }
 
@@ -567,8 +582,8 @@ object AudioOutputStatus {
         // system mixer cannot resample what it never receives.
         if (snapshot.exclusiveUsbActive) {
             return snapshot.copy(
-                transportType = TransportType.DIRECT_USB,
-                requestedTransportType = TransportType.DIRECT_USB,
+                transportType = snapshot.exclusiveTransport,
+                requestedTransportType = snapshot.exclusiveTransport,
                 directPlaybackRequested = true,
                 directPlaybackActual = true,
                 directPlaybackRejected = false,

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.menu.LocalConfirmation
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
@@ -681,9 +682,15 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
     // recomposed the marker — and sized three boxes again — on every frame of
     // the animation; read in [drawBehind] a frame costs one redraw of the
     // marker's own layer and nothing else.
+    //
+    // They settle too while the page is hidden behind the player — see
+    // [com.music.bitchord.ui.LocalPageHidden]. Play a song from a list and open
+    // the player, and the row's marker went on asking for a frame every vsync
+    // underneath it.
     val reduceAnimation by com.music.bitchord.ui.player.PlayerSettings.reduceAnimation
         .collectAsStateWithLifecycle()
-    val heights: List<State<Float>> = if (reduceAnimation) {
+    val pageHidden = com.music.bitchord.ui.rememberPageHidden()
+    val heights: List<State<Float>> = if (reduceAnimation || pageHidden) {
         STILL_BAR_HEIGHTS
     } else {
         listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
@@ -862,7 +869,20 @@ fun SignInBanner(
             }
         }
     }
-    if (showWarning && onDismiss != null) {
+    val confirmation = LocalConfirmation.current
+    if (showWarning && onDismiss != null && confirmation != null) {
+        // The app's own confirmation card, where the app provides one.
+        confirmation.Confirm(
+            title = stringResource(Res.string.sign_in_dismiss_title),
+            message = stringResource(Res.string.sign_in_dismiss_message),
+            confirmLabel = stringResource(Res.string.dismiss),
+            onConfirm = {
+                showWarning = false
+                onDismiss()
+            },
+            onDismiss = { showWarning = false },
+        )
+    } else if (showWarning && onDismiss != null) {
         AlertDialog(
             onDismissRequest = { showWarning = false },
             title = { Text(stringResource(Res.string.sign_in_dismiss_title)) },

@@ -71,7 +71,8 @@ object PlaybackTracker {
     private val VIDEO_ID = Regex("""[A-Za-z0-9_-]{11}""")
 
     private class Session(
-        val videoId: String,
+        /** Renamed by [onVersionSwapped]; the tracking block stays the original's. */
+        @Volatile var videoId: String,
         val cpn: String,
         val tracking: Innertube.PlaybackTracking,
     ) {
@@ -106,6 +107,13 @@ object PlaybackTracker {
     private var opening: String? = null
 
     /**
+     * Set by [onVersionSwapped] when the swap lands while [opening] is still in
+     * flight: the session it opens is renamed to the second id as it lands.
+     */
+    @Volatile
+    private var swappedWhileOpening: Pair<String, String>? = null
+
+    /**
      * Call when [videoId] becomes audible — both on play/resume and when the
      * queue moves on. A no-op while the same track is already being tracked, so
      * a pause/resume does not register a second play.
@@ -123,7 +131,9 @@ object PlaybackTracker {
         // whichever surface reads local listening history.
         if (AppSettings.meteredConnection.value == null) return
         if (session?.videoId == videoId || opening == videoId) return
+        swappedWhileOpening?.let { (from, to) -> if (to == videoId && opening == from) return }
         opening = videoId
+        swappedWhileOpening = null
         scope.launch(TrackLog.about(videoId)) {
             try {
                 openWithRetries(videoId)
@@ -131,6 +141,18 @@ object PlaybackTracker {
                 if (opening == videoId) opening = null
             }
         }
+    }
+
+    /**
+     * The playing track became its other video/audio version mid-play. It is
+     * the same listen, so the session already open (or opening) carries over
+     * to [toVideoId] instead of a second history entry being registered.
+     */
+    fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
+        session?.takeIf { it.videoId == fromVideoId }?.videoId = toVideoId
+        // Left as it is, so the open under way still counts as current; it
+        // takes the new id as it lands instead.
+        if (opening == fromVideoId) swappedWhileOpening = fromVideoId to toVideoId
     }
 
     /**
@@ -250,7 +272,8 @@ object PlaybackTracker {
             // gets the same answer.
             return@withLock true
         }
-        val fresh = Session(videoId, Innertube.newCpn(), tracking)
+        val renamed = swappedWhileOpening?.takeIf { it.first == videoId }?.second
+        val fresh = Session(renamed ?: videoId, Innertube.newCpn(), tracking)
         val status = Innertube.pingPlayback(tracking.playbackUrl, fresh.cpn)
         session = fresh
         _registeredPlays.value++

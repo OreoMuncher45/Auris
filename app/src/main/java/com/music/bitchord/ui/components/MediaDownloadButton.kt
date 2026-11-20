@@ -12,7 +12,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -33,6 +35,10 @@ import com.music.bitchord.download.Downloads
  * The state is read where it is drawn rather than threaded in: a download
  * changes while the screen is open, and the row that started it is not the
  * only one that has to know.
+ *
+ * Read for this one recording, though, not whole: a podcast page draws a
+ * button per episode, and the queue is republished for every progress step of
+ * every download. Each button now recomposes only when its own entry changes.
  */
 @Composable
 fun MediaDownloadButton(
@@ -40,10 +46,12 @@ fun MediaDownloadButton(
     onDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val active by Downloads.active.collectAsStateWithLifecycle()
-    val saved by Downloads.saved.collectAsStateWithLifecycle()
+    val activeState = Downloads.active.collectAsStateWithLifecycle()
+    val savedState = Downloads.saved.collectAsStateWithLifecycle()
+    val entry by remember(videoId) { derivedStateOf { activeState.value[videoId] } }
+    val isSaved by remember(videoId) { derivedStateOf { savedState.value[videoId] != null } }
 
-    when (val state = active[videoId]) {
+    when (val state = entry) {
         is DownloadState.Queued -> IconButton(onClick = { Downloads.cancel(videoId) }, modifier = modifier) {
             Icon(
                 imageVector = Icons.Rounded.Downloading,
@@ -79,7 +87,7 @@ fun MediaDownloadButton(
             )
         }
 
-        null -> if (saved[videoId] != null) {
+        null -> if (isSaved) {
             IconButton(onClick = {}, modifier = modifier) {
                 Icon(
                     imageVector = Icons.Rounded.DownloadDone,

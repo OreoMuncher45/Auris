@@ -57,96 +57,61 @@ fun AnnouncementDialog(
     onOpenUrl: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(ALERT_CORNER)
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SCRIM_COLOR)
-            // Informational, so backing out is always allowed; the link is an
-            // invitation, never a requirement.
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss, modifier = modifier) {
         Column(
             modifier = Modifier
-                .width(ALERT_WIDTH)
-                .clip(shape)
-                .then(
-                    if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else {
-                        Modifier.optimizedHazeEffect(
-                            state = hazeState,
-                            style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
-                        )
-                    },
-                )
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = {},
-                ),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.W600,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 19.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(top = 6.dp)
+                    .heightIn(max = ANNOUNCEMENT_MAX_HEIGHT)
+                    .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.W600,
+                    text = body,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
-                Box(
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .heightIn(max = ANNOUNCEMENT_MAX_HEIGHT)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    Text(
-                        text = body,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                    )
-                }
             }
+        }
 
+        AlertRule()
+        if (url != null) {
+            AlertAction(
+                label = actionLabel
+                    ?: stringResource(R.string.announcement_learn_more),
+                emphasised = true,
+                onClick = onOpenUrl,
+            )
             AlertRule()
-            if (url != null) {
-                AlertAction(
-                    label = actionLabel
-                        ?: stringResource(R.string.announcement_learn_more),
-                    emphasised = true,
-                    onClick = onOpenUrl,
-                )
-                AlertRule()
-                AlertAction(
-                    label = stringResource(R.string.announcement_ok),
-                    emphasised = false,
-                    onClick = onDismiss,
-                )
-            } else {
-                AlertAction(
-                    label = stringResource(R.string.announcement_ok),
-                    emphasised = true,
-                    onClick = onDismiss,
-                )
-            }
+            AlertAction(
+                label = stringResource(R.string.announcement_ok),
+                emphasised = false,
+                onClick = onDismiss,
+            )
+        } else {
+            AlertAction(
+                label = stringResource(R.string.announcement_ok),
+                emphasised = true,
+                onClick = onDismiss,
+            )
         }
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaDataSource
 import android.net.Uri
 import android.os.SystemClock
+import com.music.bitchord.R
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.ANALYSIS_HEAD_SECONDS
 import com.music.bitchord.playback.smart.ANALYSIS_TAIL_SECONDS
@@ -41,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -866,6 +868,12 @@ object AudioCache {
         val bytes: Long,
         /** When any of those bytes were last read or written, epoch millis. */
         val lastUsedMs: Long,
+        /**
+         * Whether one of those renditions is on disk from first byte to last —
+         * what playing it with no connection, and saving it to Downloads
+         * straight from the cache, both need. See [completeCopyOf].
+         */
+        val complete: Boolean,
     )
 
     private val _contentsChanged = MutableStateFlow(0)
@@ -1064,7 +1072,15 @@ object AudioCache {
      */
     suspend fun cachedSongs(): List<CachedSong> = withContext(Dispatchers.IO) {
         if (!::cache.isInitialized) return@withContext emptyList()
-        class Entry(val origin: Origin, val meta: ContentMetadata, val bytes: Long, val touched: Long)
+        class Entry(
+            val origin: Origin,
+            val meta: ContentMetadata,
+            val bytes: Long,
+            val touched: Long,
+            val complete: Boolean,
+        )
+        // Read once per scan rather than per row.
+        val partialLabel = appContext?.getString(R.string.cached_song_partial)
         val byTrack = LinkedHashMap<String, MutableList<Entry>>()
         for (key in cache.keys) {
             val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: continue
@@ -1078,7 +1094,11 @@ object AudioCache {
             val bytes = spans.sumOf { it.length }
             if (bytes <= 0L) continue
             val touched = spans.maxOf { it.lastTouchTimestamp }
-            byTrack.getOrPut(mediaId) { mutableListOf() } += Entry(origin, meta, bytes, touched)
+            // An in-memory index lookup, contiguous from byte 0: the same test
+            // playback and [completeCopyOf] rely on.
+            val length = ContentMetadata.getContentLength(meta)
+            val complete = length > 0 && bytes >= length && cache.isCached(key, 0, length)
+            byTrack.getOrPut(mediaId) { mutableListOf() } += Entry(origin, meta, bytes, touched, complete)
         }
         byTrack.map { (mediaId, entries) ->
             fun field(name: String): String? =
@@ -1086,6 +1106,7 @@ object AudioCache {
             val bytes = entries.sumOf { it.bytes }
             val lastUsed = entries.maxOf { it.touched }
             val origin = entries.maxBy { it.bytes }.origin
+            val complete = entries.any { it.complete }
             val noted = notedSongs[mediaId]
             val art = field(META_ART) ?: noted?.thumbnailUrl
                 ?: mediaId.takeIf { SourceRegistry.parseTrackKey(it) == null }
@@ -1098,16 +1119,168 @@ object AudioCache {
                     thumbnailUrl = art,
                     durationText = field(META_DURATION) ?: noted?.durationText,
                     albumName = field(META_ALBUM) ?: noted?.albumName,
-                    // The row's second line: where the copy came from and
-                    // what it costs on disk.
-                    downloadFormat = "${origin.label} · ${formatBytes(bytes)}",
+                    // The row's second line: where the copy came from, what
+                    // it costs on disk, and — when only part of it is there —
+                    // that it will need a connection to play to the end.
+                    downloadFormat = listOfNotNull(
+                        origin.label,
+                        formatBytes(bytes),
+                        partialLabel.takeUnless { complete },
+                    ).joinToString(" · "),
                     localDateAddedSeconds = lastUsed / 1000,
                 ),
                 origin = origin,
                 bytes = bytes,
                 lastUsedMs = lastUsed,
+                complete = complete,
             )
         }.sortedByDescending { it.lastUsedMs }
+    }
+
+    /** Every cache key holding a rendition of [mediaId]; see [keyFactory]. */
+    private fun keysOf(mediaId: String): List<String> {
+        val base = cacheKeyBaseOf(mediaId)
+        return cache.keys.filter { key ->
+            key == base || key.startsWith("$base#") ||
+                runCatching { cache.getContentMetadata(key).get(META_MEDIA_ID, null as String?) }
+                    .getOrNull() == mediaId
+        }
+    }
+
+    /**
+     * Whether the cache holds any bytes of [mediaId] — what decides whether a
+     * song's menu offers to remove it from the cache. Reads the index, so call
+     * it off the main thread.
+     */
+    fun holds(mediaId: String): Boolean {
+        if (!::cache.isInitialized || mediaId.isBlank()) return false
+        return keysOf(mediaId).any { key -> cache.getCachedSpans(key).any { it.isCached } }
+    }
+
+    /**
+     * Takes every rendition of [mediaId] off disk, and with it the track's row
+     * in the Cached songs folder. The listener asked, from a song's menu.
+     *
+     * A track that is playing right now keeps playing: a key its reader still
+     * holds cannot be removed, and that throw is caught. It is forgotten as
+     * played, though, so whatever is written back after this comes back as
+     * ordinary cache the folder does not list, rather than undoing the removal
+     * in front of the listener.
+     *
+     * @return how many entries went.
+     */
+    suspend fun remove(mediaId: String): Int = withContext(Dispatchers.IO) {
+        if (!::cache.isInitialized || mediaId.isBlank()) return@withContext 0
+        playedIds.remove(mediaId)
+        // The same per-track bookkeeping [clear] drops for every track, and
+        // for the same reason: it describes bytes that are about to be gone.
+        analysisHeads.remove(mediaId)
+        analysisHeadRounds.remove(mediaId)
+        analysisHeadWant.remove(mediaId)
+        analysisTails.remove(mediaId)
+        renditionKeys.remove(mediaId)
+        var removed = 0
+        keysOf(mediaId).forEach { key ->
+            runCatching { cache.removeResource(key) }
+                .onSuccess { removed++ }
+                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+        }
+        TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
+        if (removed > 0) _contentsChanged.value++
+        removed
+    }
+
+    /**
+     * One rendition of a track that is on disk in full, ready to be copied out
+     * by [copyOut] — see [completeCopyOf].
+     */
+    class CompleteCopy(
+        internal val key: String,
+        val length: Long,
+        /** The file extension its container is saved under: `webm`, `m4a` or `flac`. */
+        val extension: String,
+        val mimeType: String,
+    )
+
+    /**
+     * The best complete copy of [mediaId] the cache holds, or null when none
+     * is whole or its container is not one a download can be filed as.
+     *
+     * This is what lets the Cached songs folder save a track to Downloads
+     * without the network — the bytes are already here. The largest complete
+     * rendition is taken, which across one track's renditions is the highest
+     * quality. A copy made for the watch is never offered: it is capped below
+     * what the phone would keep.
+     *
+     * The container is read off the file's own first bytes rather than
+     * inferred from where it came from: a substituted rendition can be any of
+     * several, and a manifest cached by mistake must not become a `.flac`.
+     */
+    fun completeCopyOf(mediaId: String): CompleteCopy? {
+        if (!::cache.isInitialized || mediaId.isBlank()) return null
+        return keysOf(mediaId)
+            .filterNot { it.endsWith("#watch") }
+            .mapNotNull { key ->
+                val length = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }
+                    .getOrDefault(C.LENGTH_UNSET.toLong())
+                if (length <= 0 || !cache.isCached(key, 0, length)) return@mapNotNull null
+                val (extension, mime) = containerOf(key) ?: return@mapNotNull null
+                CompleteCopy(key, length, extension, mime)
+            }
+            .maxByOrNull { it.length }
+    }
+
+    /** The container of the entry [key], from the magic at its very start. */
+    private fun containerOf(key: String): Pair<String, String>? {
+        val head = cache.getCachedSpans(key)
+            .firstOrNull { it.position == 0L && it.isCached }
+            ?.file
+            ?.takeIf { it.exists() }
+            ?: return null
+        val magic = ByteArray(CONTAINER_MAGIC_BYTES)
+        val read = runCatching { head.inputStream().use { it.read(magic) } }.getOrDefault(-1)
+        if (read < magic.size) return null
+        return cachedContainerOf(magic)
+    }
+
+    /**
+     * Writes [copy] to [sink] from disk alone, never the network.
+     *
+     * Read through a [CacheDataSource] with no upstream at all, so a span that
+     * has gone missing since [completeCopyOf] looked fails the copy instead of
+     * being quietly filled from a stream that may be a different file. One
+     * buffer for the whole copy; progress is reported per buffer.
+     */
+    suspend fun copyOut(
+        copy: CompleteCopy,
+        sink: java.io.OutputStream,
+        onProgress: (written: Long, total: Long) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val source = CacheDataSource.Factory().setCache(cache).createDataSource()
+        val spec = DataSpec.Builder()
+            .setUri(Uri.parse("bitchord://cache"))
+            .setKey(copy.key)
+            .setPosition(0)
+            .setLength(copy.length)
+            .build()
+        try {
+            source.open(spec)
+            val buffer = ByteArray(COPY_BUFFER_BYTES)
+            var written = 0L
+            while (written < copy.length) {
+                ensureActive()
+                val read = source.read(buffer, 0, buffer.size)
+                if (read == C.RESULT_END_OF_INPUT) break
+                sink.write(buffer, 0, read)
+                written += read
+                onProgress(written, copy.length)
+            }
+            if (written < copy.length) {
+                throw IOException("cached copy ended at $written of ${copy.length} bytes")
+            }
+        } finally {
+            source.close()
+        }
     }
 
     /**
@@ -1242,6 +1415,7 @@ object AudioCache {
     /** The resolved URL's manifest MIME, or empty for ordinary progressive audio. */
     private const val META_TRANSPORT = "bc_transport"
     private const val MAX_NOTED_SONGS = 256
+    private const val COPY_BUFFER_BYTES = 64 * 1024
 
     private const val CACHE_STATE_PREFS = "audio_cache_state"
     private const val CACHE_DIR_NAME = "audio_cache"
@@ -1301,6 +1475,13 @@ object AudioCache {
      * through, and anything already there is served without a request.
      * Local files and resolved manifests bypass disk caching: one must not be
      * copied, the other is not contiguous audio.
+     *
+     * So does a live broadcast. Its HLS playlist is fetched again every target
+     * duration from the same URL, and the cache would answer every refresh
+     * with the first copy: the player would see no new segments and stall,
+     * while refreshing at Media3's unchanged-playlist cadence (half the target
+     * duration) for nothing. Its segments are never played twice, so writing
+     * them is disk wear and battery with no reader. See [isLiveDelivery].
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
         // What this one request was lent, kept for its whole life — every
@@ -1322,7 +1503,7 @@ object AudioCache {
             }
 
             override fun open(dataSpec: DataSpec): Long {
-                if (bypassesPlaybackCache(dataSpec)) {
+                if (bypassesPlaybackCache(dataSpec) || isLiveDelivery(dataSpec.uri)) {
                     activeDs = upstreamDs
                     return upstreamDs.open(dataSpec)
                 }
@@ -1365,6 +1546,17 @@ object AudioCache {
                 }
             }
         }
+
+    /**
+     * Whether [uri] reads part of a live broadcast: the track's own virtual URI
+     * once its id resolved live (the master playlist), or a googlevideo
+     * playlist or segment of one. Cheap enough for every segment open.
+     */
+    private fun isLiveDelivery(uri: Uri): Boolean = when (uri.scheme) {
+        "bitchord" -> uri.getQueryParameter("v")?.let(StreamResolver::isKnownLive) == true
+        "https" -> StreamResolver.isLiveDeliveryUrl(uri.toString())
+        else -> false
+    }
 
     /** [upstream] arrives already [counted] (or is [NoUpstream], which needs no counting). */
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
@@ -4270,5 +4462,26 @@ object AudioCache {
                 about = about,
             )
         }
+    }
+}
+
+/** How many leading bytes [cachedContainerOf] needs to tell the containers apart. */
+internal const val CONTAINER_MAGIC_BYTES = 12
+
+/**
+ * The file extension and MIME type a download of a cached file is filed under,
+ * from the file's first [CONTAINER_MAGIC_BYTES] — or null for anything that is
+ * not WebM, MP4 or FLAC, which a download made from the cache refuses rather
+ * than misnames. See [AudioCache.completeCopyOf].
+ */
+internal fun cachedContainerOf(magic: ByteArray): Pair<String, String>? {
+    if (magic.size < CONTAINER_MAGIC_BYTES) return null
+    fun ascii(from: Int, to: Int) = String(magic, from, to - from, Charsets.US_ASCII)
+    return when {
+        magic[0] == 0x1A.toByte() && magic[1] == 0x45.toByte() &&
+            magic[2] == 0xDF.toByte() && magic[3] == 0xA3.toByte() -> "webm" to "audio/webm"
+        ascii(4, 8) == "ftyp" -> "m4a" to "audio/mp4"
+        ascii(0, 4) == "fLaC" -> "flac" to "audio/flac"
+        else -> null
     }
 }

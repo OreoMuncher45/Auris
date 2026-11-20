@@ -424,6 +424,15 @@ class SflxHost(
         prepared: String?,
     ): Result<ModuleStreamResponse> {
         val extensionId = installed.id
+        // A provider seen down a moment ago is not asked again yet: each ask
+        // of a dead server waits out its timeout, and the player is preparing
+        // the next tracks too, so every one of them sat behind the same wait.
+        downUntil[extensionId]?.let { until ->
+            if (System.nanoTime() / 1_000_000 < until) {
+                return Result.failure(SflxException("$extensionId's provider was down a moment ago; not asked again yet"))
+            }
+            downUntil.remove(extensionId, until)
+        }
         val requested = SflxQuality.forTier(installed.manifest, quality, wantsAtmos)
         // The extension is asked for the wanted tier, and then for the ones
         // below it, and the first answer that carries a URL wins.
@@ -449,6 +458,31 @@ class SflxHost(
         // to the next, which may well be clear. If every tier fails and the
         // reason is a signed session that is not in order, [streamUrl]
         // replaces the raw error with the advice that fixes it.
+        // A provider that never answers is down as surely as one that says
+        // so: the resolver stops waiting on it at its own deadline and
+        // cancels this, and without counting that here, the next track
+        // waited the whole deadline out again.
+        val startedAt = System.nanoTime() / 1_000_000
+        try {
+            return askLadder(installed, trackId, prepared, requested, wantsAtmos, tiers, extensionId)
+        } catch (cancelled: CancellationException) {
+            if (System.nanoTime() / 1_000_000 - startedAt >= SLOW_TIER_FAILURE_MS) {
+                Log.w(TAG, "sflx[$extensionId] stopped waiting after the deadline; the provider looks down '$trackId'")
+                downUntil[extensionId] = System.nanoTime() / 1_000_000 + PROVIDER_DOWN_MS
+            }
+            throw cancelled
+        }
+    }
+
+    private suspend fun askLadder(
+        installed: InstalledSflx,
+        trackId: String,
+        prepared: String?,
+        requested: String,
+        wantsAtmos: Boolean,
+        tiers: List<String>,
+        extensionId: String,
+    ): Result<ModuleStreamResponse> {
         return ladder(
             tiers = tiers,
             ask = { tier ->
@@ -460,11 +494,15 @@ class SflxHost(
             },
             build = { tier, raw -> playable(installed, trackId, prepared, requested, tier, raw) },
             log = { message -> Log.w(TAG, "sflx[$extensionId] $message '$trackId'") },
-        )
+            onProviderDown = { downUntil[extensionId] = System.nanoTime() / 1_000_000 + PROVIDER_DOWN_MS },
+        ).onSuccess { downUntil.remove(extensionId) }
     }
 
-    /** One tier's answer as something the player can open, or why it cannot be. */
-    private fun playable(
+    /** Extensions whose provider was seen down, and until when they are left alone. */
+    private val downUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** One tier's answer as something the player can open, or why it cannot be. Internal for tests. */
+    internal fun playable(
         installed: InstalledSflx,
         trackId: String,
         prepared: String?,
@@ -479,8 +517,22 @@ class SflxHost(
             return localAnswer(installed, trackId, path, raw)
         }
         val url = SflxAnswer.streamUrl(raw)
+        // A file of the extension's own comes back as `localFile`, above, and
+        // is checked against its folder there. A URL is only ever a network
+        // one: a file:// here could name any of this app's private files, and
+        // the downloader would copy it out.
+        fun network(link: String) =
+            link.startsWith("https://", ignoreCase = true) || link.startsWith("http://", ignoreCase = true)
+        if (url != null && !network(url)) {
+            throw SflxException("the extension answered with a non-network URL")
+        }
         val headers = SflxAnswer.headers(raw)
         val segments = SflxAnswer.segments(raw)
+        // The same rule for every part of a segmented answer: each one goes into
+        // the playlist the player reads.
+        if (segments.any { it.url.isNotBlank() && !network(it.url) }) {
+            throw SflxException("the extension answered with a non-network segment URL")
+        }
         if (url == null && segments.isEmpty()) {
             val why = SflxAnswer.error(raw) ?: "the extension returned no stream URL"
             throw SflxException(why)
@@ -861,6 +913,8 @@ class SflxHost(
                 unload(installed.id)
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
+                // And its signed-session client is built from the new manifest.
+                sessions.remove(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
@@ -872,6 +926,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
+            sessions.remove(id)
         }
         removed
     }
@@ -1079,15 +1134,26 @@ class SflxHost(
          * The tier ladder: each tier asked in turn, and the first answer that
          * carries a stream *and* [build]s into something playable wins. An
          * answer [build] refuses is a failed tier, and the next is asked.
+         *
+         * Except when the way a tier failed says the provider itself is down:
+         * an outage answer ("temporarily unavailable", every provider failed,
+         * a timeout) or a refusal that took [SLOW_TIER_FAILURE_MS] to arrive.
+         * A lower tier goes to the same server and waits out the same
+         * timeout, so a dead server held the track at 0:00 for most of a
+         * minute per tier before the next source was tried. The ladder stops
+         * there and the next source is asked instead.
          */
         internal suspend fun <T> ladder(
             tiers: List<String>,
             ask: suspend (String) -> Result<String>,
             build: (tier: String, raw: String) -> T,
             log: (String) -> Unit = {},
+            nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+            onProviderDown: () -> Unit = {},
         ): Result<T> {
             var failure: Throwable = SflxException("the extension returned no stream URL")
             for (tier in tiers) {
+                val askedAt = nowMs()
                 val answer = ask(tier)
                 val raw = answer.getOrNull()
                 if (raw != null && SflxAnswer.carriesStream(raw)) {
@@ -1106,9 +1172,43 @@ class SflxHost(
                     .ifBlank { "the extension returned no stream URL" }
                 failure = answer.exceptionOrNull() ?: SflxException(why)
                 log("$tier did not resolve ($why):")
+                val slow = nowMs() - askedAt >= SLOW_TIER_FAILURE_MS
+                if (slow || isOutage(why)) {
+                    log("the provider looks down (${if (slow) "slow failure" else "outage answer"}); not asking its other tiers:")
+                    onProviderDown()
+                    break
+                }
             }
             return Result.failure(failure)
         }
+
+        /** How long an extension whose provider is down is left alone before it is asked again. */
+        internal const val PROVIDER_DOWN_MS = 120_000L
+
+        /** How long a tier may take to fail before the provider is taken to be down. */
+        internal const val SLOW_TIER_FAILURE_MS = 15_000L
+
+        /**
+         * Whether a tier's failure is about the provider rather than the track
+         * or the quality: words an extension uses when its server, or every
+         * server behind it, cannot answer at all. "Not available" alone is not
+         * one — that is a track missing at a quality, which a lower tier can fix.
+         */
+        internal fun isOutage(why: String): Boolean {
+            val text = why.lowercase(Locale.ROOT)
+            return OUTAGE_PHRASES.any { it in text } || OUTAGE_STATUS.containsMatchIn(text)
+        }
+
+        private val OUTAGE_PHRASES = listOf(
+            "temporarily unavailable",
+            "service unavailable",
+            "providers failed",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "unable to resolve host",
+        )
+        private val OUTAGE_STATUS = Regex("\\bhttp 50[234]\\b")
 
         /** The start every stream key of one extension shares, so its answers can be dropped together. */
         internal fun streamKeyPrefix(extensionId: String): String = "stream|${extensionId.length}:$extensionId"
@@ -1370,7 +1470,8 @@ internal object SflxQuality {
             text.contains("lossless") || text.contains("flac") || text.contains("alac") ||
                 text.contains("24-bit") || text.contains("16-bit") || token == "hi_res" ->
                 "lossless"
-            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ->
+            token == "high" || token == "low" || text.contains("mp3") || text.contains("aac") ||
+                text.contains("opus") || text.contains("vorbis") ->
                 "lossy"
             else -> ""
         }
@@ -1401,11 +1502,17 @@ object SflxDownloads {
                 if (declared > MAX_PACKAGE_BYTES) {
                     throw SflxException("that file is ${declared / 1024 / 1024} MB, which is too large to be an extension")
                 }
-                val bytes = response.body?.bytes() ?: throw SflxException("the server sent nothing")
-                if (bytes.size > MAX_PACKAGE_BYTES) {
-                    throw SflxException("that file is too large to be an extension")
+                val body = response.body ?: throw SflxException("the server sent nothing")
+                // Read in bounded steps: with no Content-Length, the size is
+                // only known once it has been read, so stop at the ceiling.
+                val buffer = okio.Buffer()
+                val source = body.source()
+                while (source.read(buffer, 64 * 1024L) != -1L) {
+                    if (buffer.size > MAX_PACKAGE_BYTES) {
+                        throw SflxException("that file is too large to be an extension")
+                    }
                 }
-                bytes
+                buffer.readByteArray()
             }
         }.onFailure { Log.w(TAG, "sflx fetch failed for $url: ${it.message}") }
     }

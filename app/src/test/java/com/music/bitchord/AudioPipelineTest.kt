@@ -2,8 +2,14 @@ package com.music.bitchord
 
 import android.media.AudioFormat
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.sources.SourceConfig
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.PlaybackStreamResolver
+import com.music.bitchord.playback.StreamChoice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -147,6 +153,11 @@ class AudioPipelineTest {
         assertEquals("Vorbis", NerdStats.codecLabel("audio/vorbis"))
         assertEquals("E-AC-3 JOC", NerdStats.codecLabel("audio/eac3-joc"))
         assertEquals("E-AC-3", NerdStats.codecLabel("audio/eac3"))
+        assertEquals("AC-4", NerdStats.codecLabel("audio/ac4"))
+        assertEquals("AC-4", NerdStats.codecLabel("audio/ac-4"))
+        assertEquals("AC-3", NerdStats.codecLabel("audio/ac3"))
+        assertEquals("Dolby TrueHD", NerdStats.codecLabel("audio/truehd"))
+        assertEquals("Dolby MAT", NerdStats.codecLabel("audio/vnd.dolby.mat"))
         assertNull(NerdStats.codecLabel(null))
     }
 
@@ -168,12 +179,104 @@ class AudioPipelineTest {
         assertTrue(NerdStats.isDolbyAtmosMime("audio/ac3"))
         assertTrue(NerdStats.isDolbyAtmosMime("audio/eac3;codecs=ec-3"))
         assertTrue(NerdStats.isDolbyAtmosMime("AUDIO/EAC3-JOC"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/ac4"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/ac-4"))
+        assertTrue(NerdStats.isDolbyAtmosMime("AUDIO/AC4"))
+        assertTrue(NerdStats.isDolbyAtmosMime("audio/mp4;codecs=ac-4"))
         assertFalse(NerdStats.isDolbyAtmosMime("audio/mp4a-latm"))
         assertFalse(NerdStats.isDolbyAtmosMime("audio/opus"))
+        assertFalse(NerdStats.isDolbyAtmosMime("audio/truehd"))
         assertFalse(NerdStats.isDolbyAtmosMime(null))
+
+        assertTrue(NerdStats.isDolbyMime("audio/truehd"))
+        assertTrue(NerdStats.isDolbyMime("audio/vnd.dolby.mlp"))
+        assertTrue(NerdStats.isDolbyMime("audio/vnd.dolby.mat"))
+        assertTrue(NerdStats.isLosslessMime("audio/truehd"))
+        assertTrue(NerdStats.isLosslessMime("audio/vnd.dolby.mlp"))
     }
 
+    @Test
+    fun `AC4 is Atmos immediately and after decoding without another upgrade`() {
+        val claimed = NerdStats.Snapshot(
+            mimeType = null,
+            bitrateKbps = 259,
+            sampleRateHz = 48000,
+            channels = 2,
+            claimed = StreamFormat(codec = "ac4", kbps = 259),
+        )
+        assertTrue(claimed.isDolbyAtmos)
+
+        val decoded = claimed.copyForTest(mimeType = "audio/ac4")
+        assertTrue(decoded.isDolbyAtmos)
+        assertTrue(decoded.isHiQuality)
+
+        // Once the decoder names a different payload, a stale source claim
+        // cannot keep the Atmos badge alive.
+        val opus = claimed.copyForTest(mimeType = "audio/opus")
+        assertFalse(opus.isDolbyAtmos)
+    }
+
+    private fun NerdStats.Snapshot.copyForTest(mimeType: String): NerdStats.Snapshot =
+        NerdStats.Snapshot(
+            mimeType = mimeType,
+            bitrateKbps = bitrateKbps,
+            sampleRateHz = sampleRateHz,
+            channels = channels,
+            claimed = claimed,
+        )
+
     // ── Authoritative Source Tracking ──────────────────────────────────────
+
+    @Test
+    fun `a losing YouTube candidate cannot relabel the pinned source`() {
+        val id = "pipeline-pinned-source"
+        val previousConfigs = SourceRegistry.configs.value
+        val resolver = PlaybackStreamResolver { _, _ -> error("no race needed") }
+        StreamChoice.forget(id)
+        try {
+            SourceRegistry.configs.value = listOf(
+                SourceConfig(id = "tidal-config", kind = SourceKind.MODULE, label = "Tidal"),
+            )
+            val tidal = SourceStream(
+                url = "https://tidal.example.com/track.flac",
+                format = StreamFormat(codec = "flac"),
+                sourceConfigId = "tidal-config",
+            )
+            StreamChoice.remember(id, tidal, substituted = true)
+
+            val serving = resolver.pinOrPinned(
+                id,
+                SourceStream("https://youtube.example.com/track.webm"),
+                substituted = false,
+            )
+            resolver.recordServingSource(id, serving)
+
+            assertEquals(tidal.url, serving.url)
+            assertEquals("Tidal", NerdStats.exactSourceFor(id))
+        } finally {
+            StreamChoice.forget(id)
+            SourceRegistry.configs.value = previousConfigs
+        }
+    }
+
+    @Test
+    fun `an actual YouTube pin still records YouTube`() {
+        val id = "pipeline-youtube-control"
+        val resolver = PlaybackStreamResolver { _, _ -> error("no race needed") }
+        StreamChoice.forget(id)
+        try {
+            val serving = resolver.pinOrPinned(
+                id,
+                SourceStream("https://youtube.example.com/track.webm"),
+                substituted = false,
+            )
+            resolver.recordServingSource(id, serving)
+
+            assertEquals("YouTube", NerdStats.exactSourceFor(id))
+        } finally {
+            StreamChoice.forget(id)
+        }
+    }
 
     @Test
     fun `authoritative sources are recorded and retrieved across track identifiers`() {

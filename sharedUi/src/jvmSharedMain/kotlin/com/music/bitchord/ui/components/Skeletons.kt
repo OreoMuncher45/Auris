@@ -70,7 +70,12 @@ fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = BlockShape) {
     val highlight = MaterialTheme.colorScheme.onSurfaceVariant
         .copy(alpha = 0.16f)
         .compositeOver(base)
-    val sweep: State<Float> = if (reduceAnimation) {
+    // Still, too, while the page is hidden behind the player — see
+    // [com.music.bitchord.ui.LocalPageHidden]. A page left loading under the
+    // player (offline, say) otherwise asked for a frame on every vsync for a
+    // sweep nobody could see.
+    val pageHidden = com.music.bitchord.ui.rememberPageHidden()
+    val sweep: State<Float> = if (reduceAnimation || pageHidden) {
         // Still a block on a loading page, but without a full-width gradient
         // travelling it on every frame until the network answers.
         remember { mutableFloatStateOf(0.5f) }

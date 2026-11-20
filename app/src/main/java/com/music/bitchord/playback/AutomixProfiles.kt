@@ -58,7 +58,9 @@ object AutomixProfiles {
     /** Forgets [trackId]'s choice, leaving the planner to decide again. */
     fun clear(trackId: String) {
         if (trackId.isBlank()) return
-        known.remove(trackId)
+        // Kept as NONE rather than dropped: the file is deleted later, and a
+        // read in between would otherwise load the old choice back off disk.
+        known[trackId] = AutomixOverride.NONE
         writer.execute {
             store?.clear(trackId)
         }

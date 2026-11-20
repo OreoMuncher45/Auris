@@ -700,7 +700,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * than leaving the last answer sitting on a player that would now find a
      * different one.
      */
-    private var lyricsFor: Pair<String, Set<LyricsSource>>? = null
+    private var lyricsFor: LyricsLookupKey? = null
 
     /**
      * Called as the playing track changes; cheap no-op when already loaded.
@@ -725,7 +725,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             emptySet()
         }
-        val key = videoId to sources
+        val key = LyricsLookupKey(
+            videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+        )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
@@ -2342,12 +2344,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun refreshHomeRecents() {
         if (!_signedIn.value) return
+        // YouTube's Recents belong on YouTube's home; Spotify's page never
+        // fetches them, so a refresh mustn't add them to it either.
+        if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return
         val identity = listenerKey()
         val generation = homeLoadGeneration.get()
         viewModelScope.launch {
             YtMusicRepository.homeRecentlyPlayed().onSuccess { shelf ->
                 // A full load that started meanwhile fetches Recents itself.
                 if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                // Checked again on arrival: the home may have become Spotify's meanwhile.
+                if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) return@onSuccess
                 shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
             }
         }
@@ -2913,8 +2920,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // whole, header and all — even a page that is all header.
             homeCachedRaw = null
             _homeShowingCached.value = false
-            publishHomeShelves(outcome.shelves)
-            if (outcome.shelves.isEmpty()) publishHeaderOnlyHome()
+            // Judged after the blocked-artist filter: a page whose every shelf
+            // is blocked must not leave the cached page up under the new header.
+            val visible = outcome.shelves.withoutBlockedArtists()
+            // Replaces the page whole, as a refresh does: nothing added while it
+            // loaded (Recents after a play, say) stays under Spotify's shelves.
+            homeSeenTitles.clear()
+            _homeRaw.value = emptyList()
+            if (visible.isEmpty()) publishHeaderOnlyHome() else publishHomeShelves(visible)
             keepHomeCache(identity, generation, cacheOwner)
         }
     }
@@ -3234,6 +3247,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onFailure = { UiState.Error(it.friendly()) },
             )
             if (identity == listenerKey()) _history.value = next
+        }
+    }
+
+    /**
+     * Removes one play from the account's listening history, by the token its
+     * History row carries — see [Song.feedbackToken].
+     *
+     * Nothing changes until YouTube confirms. On success only the row wearing
+     * that token leaves [history]: one emission of the list minus that key, so
+     * the History screen animates that row out and every other row is left
+     * where it is. The listener snapshot is brought in line in the same step,
+     * so switching account and back cannot bring the row back. On failure the
+     * list is left exactly as it was — not replaced with an error — and
+     * [onFailure] says so.
+     */
+    /**
+     * The last History removal YouTube refused: which row, and a count that
+     * makes a second refusal of the same row a new event. Read by the History
+     * screen to pulse that one row — see [removeFromHistory].
+     */
+    data class HistoryRemovalFailure(val token: String, val seq: Int)
+
+    private val _historyRemovalFailed = MutableStateFlow<HistoryRemovalFailure?>(null)
+    val historyRemovalFailed: StateFlow<HistoryRemovalFailure?> = _historyRemovalFailed.asStateFlow()
+
+    fun removeFromHistory(token: String, onFailure: () -> Unit) {
+        val identity = listenerKey()
+        viewModelScope.launch {
+            YtMusicRepository.removeFromHistory(token)
+                .onSuccess {
+                    if (identity != listenerKey()) return@onSuccess
+                    val current = _history.value as? UiState.Success ?: return@onSuccess
+                    val index = current.data.indexOfFirst { it.feedbackToken == token }
+                    if (index < 0) return@onSuccess
+                    val remaining = current.data.toMutableList().apply { removeAt(index) }
+                    _history.value = if (remaining.isEmpty()) {
+                        UiState.Error(text(R.string.history_empty))
+                    } else {
+                        UiState.Success(remaining)
+                    }
+                    identity?.let { key ->
+                        listenerCache[key]?.let { listenerCache[key] = it.copy(history = _history.value) }
+                    }
+                }
+                .onFailure {
+                    com.music.bitchord.data.TrackLog.w("BitChord", "removeFromHistory failed: ${it.message}")
+                    _historyRemovalFailed.value = HistoryRemovalFailure(
+                        token,
+                        (_historyRemovalFailed.value?.seq ?: 0) + 1,
+                    )
+                    onFailure()
+                }
         }
     }
 
@@ -4456,10 +4521,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         tracks: List<SpotifyTrack>,
         setSongs: (UiState<List<Song>>) -> Unit,
     ) {
-        setSongs(UiState.Success(tracks.map { it.asPendingSong() }))
+        // Rows matched earlier this session go up matched, in the same publish
+        // as the rest, and are never searched again. A reopened playlist used
+        // to search every row again, and swap each one in one publish at a time.
+        val remembered = tracks.map { track ->
+            SpotifyImporter.cachedMatch(track)?.let { it.copy(thumbnailUrl = it.thumbnailUrl ?: track.imageUrl) }
+        }
+        setSongs(UiState.Success(tracks.mapIndexed { index, track -> remembered[index] ?: track.asPendingSong() }))
         val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
         coroutineScope {
             tracks.forEachIndexed { index, track ->
+                if (remembered[index] != null) return@forEachIndexed
                 launch {
                     gate.withPermit {
                         // The page may have been closed while the search was
@@ -4641,6 +4713,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * for. A page that adds nothing new (below) is the other exit, for a feed
      * that loops back on itself instead of running dry.
      *
+     * The next page is asked for as soon as this one's token is read, not
+     * after Main has merged and published it — see [followContinuations]. The
+     * chain is still one request at a time; only the gaps are gone.
+     *
      * An endless mix — a Super Mix, an artist radio — has no last page, so
      * following its continuation here would fetch one page after another for
      * as long as the app is alive. Its next page is kept on the page instead
@@ -4648,53 +4724,74 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * [loadMoreDetail].
      */
     private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
+        val endless = browseId.isEndlessMix()
+        // Every id the chain has produced so far, first page included, for the
+        // loop guard below. Only the request side touches it, one page at a time.
+        // Real tracks and suggestions apart, as the publish below keeps them:
+        // a real track that first showed up as a suggestion is still new.
+        val seen = HashSet<String>()
+        val seenSuggested = HashSet<String>()
+        _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
+            (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
+            page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
+        }
         viewModelScope.launch {
-            // Publish and draw the first response before spending the shared
-            // connection on page two. On a long playlist the continuation can
-            // otherwise start in the same main-loop turn as the state update,
-            // making a ready first screen feel as if it were still loading.
-            delay(150)
-            var next: String? = token
-            while (next != null) {
-                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
+            followContinuations(
+                token = token,
+                fetch = { next -> YtMusicRepository.moreSongs(next).getOrNull() },
+                nextToken = { fetched ->
+                    // A page with nothing new on it means the feed has looped
+                    // back rather than run dry with a token still attached.
+                    // An endless mix hands its next page to the screen instead
+                    // (below), so it never asks for a second one here.
+                    val fresh = fetched.songs.count { seen.add(it.videoId) } +
+                        fetched.suggested.count { it.videoId !in seen && seenSuggested.add(it.videoId) }
+                    fetched.continuation.takeIf { fresh > 0 && !endless }
+                },
+                // Publish and draw the first response before page two lands on
+                // it. Only the publish waits: the request is already out, so
+                // this no longer adds to the time the full list takes.
+                holdFirstMillis = 150,
+            ) { batch ->
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
-                if (index < 0) return@launch
+                if (index < 0) return@followContinuations false
                 val current = stack[index]
-                val existing = (current.songs as? UiState.Success)?.data ?: return@launch
+                val existing = (current.songs as? UiState.Success)?.data ?: return@followContinuations false
                 val known = existing.mapTo(HashSet()) { it.videoId }
-                val rawAdded = fetched.songs.filter { known.add(it.videoId) }
-                val added = rawAdded.withoutBlockedArtists().withArtwork(artworkFallback)
+                val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
+                val added = ArrayList<Song>()
+                val addedSuggested = ArrayList<Song>()
+                var anyNew = false
+                for (fetched in batch) {
+                    val rawAdded = fetched.songs.filter { known.add(it.videoId) }
+                    // Suggestions can arrive on a later page than the real
+                    // tracks, once the playlist's own continuation runs dry —
+                    // see parsePlaylistShelf — so they're tracked separately
+                    // rather than folded into [known].
+                    val rawSuggested = fetched.suggested
+                        .filter { it.videoId !in known && knownSuggested.add(it.videoId) }
+                    anyNew = anyNew || rawAdded.isNotEmpty() || rawSuggested.isNotEmpty()
+                    added += rawAdded.withoutBlockedArtists().withArtwork(artworkFallback)
+                    addedSuggested += rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
+                }
                 if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
                     LikedCache.mergeBottom(listenerKey(), added)
                 }
-                // Suggestions can arrive on a later page than the real
-                // tracks, once the playlist's own continuation runs dry —
-                // see parsePlaylistShelf — so they're tracked separately
-                // rather than folded into [known].
-                val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
-                val rawSuggested = fetched.suggested
-                    .filter { it.videoId !in known && knownSuggested.add(it.videoId) }
-                val addedSuggested = rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
-                // A page with nothing new on it means the feed has looped back
-                // rather than run dry with a token still attached.
-                if (rawAdded.isEmpty() && rawSuggested.isEmpty()) return@launch
-                _detailStack.value = stack.toMutableList().also {
-                    it[index] = current.copy(
-                        songs = UiState.Success(existing + added),
-                        suggestedSongs = current.suggestedSongs + addedSuggested,
-                    )
-                }
-                next = fetched.continuation
-                if (browseId.isEndlessMix()) {
-                    // Hand the next page to the screen instead of taking it
-                    // here: the mix grows when the listener reaches the end of
-                    // the list, and not one request at a time in the dark.
-                    _detailStack.value = _detailStack.value.map { page ->
-                        if (page.browseId == browseId) page.copy(continuation = next) else page
+                if (anyNew) {
+                    _detailStack.value = stack.toMutableList().also {
+                        it[index] = current.copy(
+                            songs = UiState.Success(existing + added),
+                            suggestedSongs = current.suggestedSongs + addedSuggested,
+                            // Hand the next page to the screen instead of taking
+                            // it here: the mix grows when the listener reaches
+                            // the end of the list, and not one request at a time
+                            // in the dark. See [loadMoreDetail].
+                            continuation = if (endless) batch.last().continuation else current.continuation,
+                        )
                     }
-                    return@launch
                 }
+                true
             }
         }
     }
@@ -5636,3 +5733,15 @@ private const val FLOW_MOOD_POOL_SIZE = 240
  * what was never played.
  */
 private const val FLOW_RECENT_LIMIT = 50
+
+/**
+ * What one lyrics lookup for the playing track was made under. The order and
+ * the syllable preference pick a different answer from the same providers, so
+ * a change in either is a new lookup, as switching a source on or off is.
+ */
+internal data class LyricsLookupKey(
+    val videoId: String,
+    val sources: Set<LyricsSource>,
+    val order: List<LyricsSource>,
+    val prioritizeSyllableSync: Boolean,
+)

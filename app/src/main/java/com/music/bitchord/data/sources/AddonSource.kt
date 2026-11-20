@@ -483,21 +483,19 @@ class AddonSource(
         val extension = normalizedCodec(
             url.substringBefore('?').substringAfterLast('.').takeIf { it.isNotEmpty() },
         )
+        val qualityDolby = DolbyAudio.codec(answer.qualityText)
 
         val codec = when {
-            // An answer the addon flags as immersive *is* E-AC-3 with joint
-            // object coding, and that outranks anything that only names the
-            // envelope. This chain used to run codec -> container -> mime
-            // first, so an addon stating `codec: "eac3"` or `"mp4"` — or a
-            // generic `audio/mp4` — won before the Atmos hint was ever
-            // consulted, and a stream the listener asked to hear as Atmos was
-            // ranked, badged and refused as an ordinary lossy file. A codec
-            // that names a different, specific payload is still trusted: FLAC
-            // is a more specific claim than a quality label, and a stream that
-            // truly says FLAC is not made immersive by one.
+            // Explicit immersive quality metadata outranks a generic envelope;
+            // preserve AC-4 when named, otherwise use the JOC fallback. This
+            // chain used to run codec -> container -> mime first, so an addon
+            // stating `codec: "eac3"` or `"mp4"` — or generic `audio/mp4` —
+            // won before the Atmos hint was consulted. A different specific
+            // payload remains authoritative: FLAC is not made immersive by a
+            // contradictory quality label.
             answer.isDolbyAtmos &&
                 (stated == null || stated == DOLBY_ATMOS || stated == "eac3" || stated in CONTAINERS) ->
-                DOLBY_ATMOS
+                qualityDolby ?: DOLBY_ATMOS
             stated != null -> stated
             container != null -> container
             mime != null -> mime
@@ -526,17 +524,14 @@ class AddonSource(
     /**
      * One codec id from whichever spelling an addon used.
      *
-     * The Dolby family is the reason this exists. The same payload arrives as
-     * `eac3_joc`, `eac3-joc`, `ec-3`, `ec3`, `eac3`, `ac-3` or `ac3` depending
-     * on the backend, and [StreamFormat.isDolbyAtmos] compares against one
-     * hyphenated spelling. Passing the raw field through is what made the
-     * underscore payload the tests carry depend on a fallback branch; anything
-     * else — a plain `eac3`, say — fell straight into the lossy ladder and
-     * never reached the Atmos label at all. Normalising here makes every
-     * spelling one codec before anything decides what it is.
+     * The Dolby family is the reason this exists. AC-4, E-AC-3/JOC, AC-3,
+     * TrueHD/MLP and MAT arrive with MIME, hyphen and underscore variations.
+     * [DolbyAudio] canonicalises those before the resolver, badge and quality
+     * ladder see them; AC-4 stays AC-4 rather than collapsing into JOC.
      */
     private fun normalizedCodec(raw: String?): String? {
         val value = raw?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return null
+        DolbyAudio.codec(value)?.let { return it }
         return when (value) {
             in JOC_CODECS -> DOLBY_ATMOS
             in EAC3_CODECS -> "eac3"
@@ -610,9 +605,10 @@ class AddonSource(
         val AUDIO_CODECS = setOf(
             "flac", "alac", "wav", "aiff", "mp3", "aac", "he-aac", "m4a", "mp4",
             "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc", "eac3", "ac3",
+            "ac4", "ac-4", "truehd", "mlp", "mat",
         )
 
-        /** The codec id every immersive answer is recorded as. */
+        /** Fallback when an answer says Atmos but names no more specific codec. */
         const val DOLBY_ATMOS = "eac3-joc"
 
         /** Joint-object-coding spellings, all of which mean the Atmos mix. */

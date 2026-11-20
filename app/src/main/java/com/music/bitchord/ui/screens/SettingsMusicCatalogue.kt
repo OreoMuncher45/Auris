@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.components.MenuOrigin
+import com.music.bitchord.ui.components.menu.LocalMenuHost
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
@@ -88,30 +91,16 @@ internal fun MusicCatalogueSettings(
  * The catalogue picker in its sheet, with the restart that applies a change.
  *
  * Shared by Settings and the account sheet, so both open the same
- * [HomeProviderSheet] and both restart the same way.
+ * [HomeProviderMenu] and both restart the same way.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun HomeProviderPicker(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val homeProvider by AppSettings.homeProvider.collectAsStateWithLifecycle()
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
-        HomeProviderSheet(
-            selected = homeProvider,
-            onSelect = { provider ->
-                onDismiss()
-                if (provider != homeProvider) {
-                    // Written before the restart so the new process reads it,
-                    // and the restart is what makes it total: Flow's and
-                    // Autoplay's learning were trained against the provider
-                    // being left behind. See [HomeProvider] and [AppRelaunch].
-                    AppSettings.setHomeProvider(provider)
-                    AppRelaunch.relaunch(context)
-                }
-            },
-        )
+    // Opened on the row that asked — Settings', or the account menu's —
+    // through the root's menu host; the caller's flag is cleared at once,
+    // because the host owns the menu from here.
+    val menuHost = LocalMenuHost.current
+    LaunchedEffect(Unit) {
+        menuHost?.open(MenuOrigin.consume()) { close -> HomeProviderMenu(close) }
+        onDismiss()
     }
 }

@@ -229,6 +229,7 @@ class UnreadableDirectoryTest(unittest.TestCase):
                     self.assertEqual(status, 1, main.__module__)
                     self.assertIn("cannot be listed", out)
 
+    @unittest.skipIf(os.name != "posix", "chmod cannot take away listing rights on Windows")
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can list any directory")
     def test_directory_without_permission_fails(self):
         files = (("a/Ok.class", class_bytes([])), ("locked/B.class", class_bytes([])))

@@ -13,7 +13,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,7 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /** Which surface a [MenuRow] sits on: the compact anchored menu, or a sheet's roomier list. */
-internal enum class MenuDensity { Menu, Sheet }
+enum class MenuDensity { Menu, Sheet }
 
 /**
  * One row of any menu or sheet: the glyph leading, the label, and an optional
@@ -38,8 +41,9 @@ internal enum class MenuDensity { Menu, Sheet }
  * the variant's.
  */
 @Composable
-internal fun MenuRow(
-    icon: ImageVector,
+fun MenuRow(
+    /** The row's glyph, or null for a row that never had one — no glyph is added. */
+    icon: ImageVector?,
     label: String,
     ink: Color,
     modifier: Modifier = Modifier,
@@ -71,13 +75,15 @@ internal fun MenuRow(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = (iconTint ?: ink).copy(alpha = alpha),
-            modifier = Modifier.size(if (menu) MenuTokens.MenuIcon else MenuTokens.SheetIcon),
-        )
-        Spacer(Modifier.width(MenuTokens.IconGap))
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = (iconTint ?: ink).copy(alpha = alpha),
+                modifier = Modifier.size(if (menu) MenuTokens.MenuIcon else MenuTokens.SheetIcon),
+            )
+            Spacer(Modifier.width(MenuTokens.IconGap))
+        }
         Text(
             text = label,
             // A menu sits on glass; semi-bold keeps the label legible over a
@@ -107,7 +113,7 @@ internal fun MenuRow(
 
 /** The break between groups of rows: one hairline, inset in a menu, full width on a sheet. */
 @Composable
-internal fun MenuDivider(color: Color, density: MenuDensity = MenuDensity.Menu) {
+fun MenuDivider(color: Color, density: MenuDensity = MenuDensity.Menu) {
     HorizontalDivider(
         modifier = if (density == MenuDensity.Menu) {
             Modifier.padding(horizontal = MenuTokens.DividerInset, vertical = 4.dp)
@@ -128,9 +134,11 @@ internal fun MenuDivider(color: Color, density: MenuDensity = MenuDensity.Menu) 
  * while a long menu scrolls under it.
  */
 @Composable
-internal fun MenuHeader(
+fun MenuHeader(
     title: String,
     subtitle: String?,
+    /** More than one for a subtitle that is a warning, not a credit, and must stay whole. */
+    subtitleMaxLines: Int = 1,
     ink: Color = MaterialTheme.colorScheme.onSurface,
     mutedInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     dividerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
@@ -153,10 +161,78 @@ internal fun MenuHeader(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = mutedInk,
-                maxLines = 1,
+                maxLines = subtitleMaxLines,
                 overflow = TextOverflow.Ellipsis,
             )
         }
     }
     MenuDivider(dividerColor)
 }
+
+/**
+ * One choice of several, in a menu: the label, and a check against the one
+ * that is chosen. No glyph — the choices are values of one setting, not
+ * actions, and the check is what says which.
+ *
+ * The check is announced through [selectedDescription] (the caller's own
+ * string, since this module keeps none), so a screen reader hears which
+ * option is current.
+ */
+@Composable
+fun MenuChoiceRow(
+    label: String,
+    selected: Boolean,
+    ink: Color,
+    accent: Color,
+    selectedDescription: String?,
+    modifier: Modifier = Modifier,
+    /** What the choice costs or means, under its label — a bitrate, a data use. */
+    detail: String? = null,
+    detailInk: Color = ink.copy(alpha = 0.6f),
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(enabled = LocalMenuInteractive.current, onClick = onClick)
+            .heightIn(min = MenuTokens.MenuRowMinHeight)
+            .padding(horizontal = MenuTokens.MenuRowPaddingH, vertical = MenuTokens.MenuRowPaddingV),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+                color = ink,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (detail != null) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = detailInk,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (selected) {
+            Spacer(Modifier.width(12.dp))
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = selectedDescription,
+                tint = accent,
+                modifier = Modifier.size(MenuTokens.MenuIcon),
+            )
+        }
+    }
+}
+
+/**
+ * False while the menu around a row is closing. A row that can be activated
+ * reads it so that it can't be once its menu has been dismissed.
+ */
+val LocalMenuInteractive = compositionLocalOf { true }

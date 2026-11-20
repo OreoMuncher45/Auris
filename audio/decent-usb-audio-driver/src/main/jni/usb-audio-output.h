@@ -88,6 +88,10 @@ struct UsbAudioContext {
     uint8_t *transferBuffer;
     int32_t transferBufferCapacity;
 
+    /** Residual + new PCM, joined before splitting into URBs. Grown, never shrunk. */
+    uint8_t *mergeBuffer;
+    int32_t mergeBufferCapacity;
+
     int64_t framesWritten;
     bool interfaceClaimed;
 

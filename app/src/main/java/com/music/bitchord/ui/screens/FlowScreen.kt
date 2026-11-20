@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.TextValueAlert
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
@@ -824,25 +825,14 @@ fun FlowSaveDialog(
     onConfirm: (String) -> Unit,
 ) {
     var name by remember(initial) { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.flow_save_title)) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text(stringResource(R.string.playlist_name)) },
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(name.trim()) },
-                enabled = name.isNotBlank(),
-            ) { Text(stringResource(R.string.save)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-        },
+    TextValueAlert(
+        title = stringResource(R.string.flow_save_title),
+        message = "",
+        placeholder = stringResource(R.string.playlist_name),
+        value = name,
+        onValueChange = { name = it },
+        onSave = { if (name.isNotBlank()) onConfirm(name.trim()) },
+        onDismiss = onDismiss,
+        saveEnabled = name.isNotBlank(),
     )
 }

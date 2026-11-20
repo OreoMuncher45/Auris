@@ -68,6 +68,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.mornye.SflxCatalog
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.components.SflxInstallDialog
 import com.music.bitchord.ui.player.MeshGradientBackground
@@ -113,6 +114,10 @@ fun SetupWizard(
 
     var step by rememberSaveable { mutableIntStateOf(0) }
     var name by rememberSaveable { mutableStateOf(OnboardingState.name(context)) }
+    // Handed to the name page unread, so a keystroke does not recompose the
+    // flow's pages, rail and footer — only the field and the card read it.
+    val nameRead = remember { { name } }
+    val onName = remember { { typed: String -> name = typed } }
     var editing by remember { mutableIntStateOf(0) }
     var wifi by remember { mutableStateOf(AppSettings.audioQualityWifi.value) }
     var cellular by remember { mutableStateOf(AppSettings.audioQualityCellular.value) }
@@ -332,8 +337,8 @@ fun SetupWizard(
                     }
                     when (current) {
                         NAME_STEP -> NameStep(
-                            name = name,
-                            onName = { name = it },
+                            name = nameRead,
+                            onName = onName,
                             footer = footer,
                         )
                         SOUND_STEP -> SoundStep(
@@ -419,8 +424,14 @@ fun SetupWizard(
 
         if (installing) {
             SflxInstallDialog(
-                onDismiss = { installing = false },
-                onInstalled = { installing = false },
+                onDismiss = {
+                    installing = false
+                    SflxCatalog.clearInstallState()
+                },
+                onInstalled = {
+                    installing = false
+                    SflxCatalog.clearInstallState()
+                },
             )
         }
     }

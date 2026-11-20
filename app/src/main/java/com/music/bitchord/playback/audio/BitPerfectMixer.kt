@@ -102,6 +102,85 @@ object BitPerfectMixer {
         return applyApi34(manager, device, sampleRateHz, channelCount, sinkEncoding, audioAttributes)
     }
 
+    /**
+     * The integer depths (16, 24, 32) [device] offers a bit-perfect mix in at
+     * exactly [sampleRateHz] and [channelCount]. Empty below Android 14, off
+     * USB, or when the device has none.
+     */
+    fun bitPerfectIntegerBits(
+        manager: AudioManager?,
+        device: AudioDeviceInfo?,
+        sampleRateHz: Int,
+        channelCount: Int,
+    ): Set<Int> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return emptySet()
+        if (manager == null || device == null || !device.isUsb) return emptySet()
+        return bitPerfectIntegerBitsApi34(manager, device, sampleRateHz, channelCount)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun bitPerfectIntegerBitsApi34(
+        manager: AudioManager,
+        device: AudioDeviceInfo,
+        sampleRateHz: Int,
+        channelCount: Int,
+    ): Set<Int> {
+        val supported = runCatching { manager.getSupportedMixerAttributes(device) }.getOrDefault(emptyList())
+        return supported.asSequence()
+            .filter { it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT }
+            .filter { it.format.sampleRate == sampleRateHz && Integer.bitCount(it.format.channelMask) == channelCount }
+            .mapNotNull { integerBits(it.format.encoding) }
+            .toSet()
+    }
+
+    /** Every rate [device] offers a bit-perfect mix at for [channelCount], to the integer depths there. */
+    fun bitPerfectIntegerFormats(
+        manager: AudioManager?,
+        device: AudioDeviceInfo?,
+        channelCount: Int,
+    ): Map<Int, Set<Int>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return emptyMap()
+        if (manager == null || device == null || !device.isUsb) return emptyMap()
+        return bitPerfectIntegerFormatsApi34(manager, device, channelCount)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun bitPerfectIntegerFormatsApi34(
+        manager: AudioManager,
+        device: AudioDeviceInfo,
+        channelCount: Int,
+    ): Map<Int, Set<Int>> {
+        val supported = runCatching { manager.getSupportedMixerAttributes(device) }.getOrDefault(emptyList())
+        val offers = HashMap<Int, MutableSet<Int>>()
+        for (attributes in supported) {
+            if (attributes.mixerBehavior != AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT) continue
+            if (Integer.bitCount(attributes.format.channelMask) != channelCount) continue
+            val bits = integerBits(attributes.format.encoding) ?: continue
+            offers.getOrPut(attributes.format.sampleRate) { HashSet() }.add(bits)
+        }
+        return offers
+    }
+
+    /** The integer depth of a framework PCM encoding, or null for float and the rest. */
+    fun integerBits(encoding: Int): Int? = when (encoding) {
+        AudioFormat.ENCODING_PCM_16BIT -> 16
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+        AudioFormat.ENCODING_PCM_32BIT -> 32
+        else -> null
+    }
+
+    /** The framework PCM encoding for an integer depth. */
+    fun integerEncoding(bits: Int): Int = when (bits) {
+        16 -> AudioFormat.ENCODING_PCM_16BIT
+        24 -> AudioFormat.ENCODING_PCM_24BIT_PACKED
+        else -> AudioFormat.ENCODING_PCM_32BIT
+    }
+
+    /** The first USB output Android currently lists, if any. */
+    fun usbOutput(manager: AudioManager?): AudioDeviceInfo? =
+        runCatching { manager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull()
+            ?.firstOrNull { it.isUsb }
+
     /** Withdraws the request so a later app is not left with a preconfigured device. */
     fun clear(manager: AudioManager?) {
         val previous = applied ?: return

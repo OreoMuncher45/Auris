@@ -8,19 +8,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,84 +56,6 @@ object SupportDonations {
         clipboard?.setPrimaryClip(ClipData.newPlainText("donation address", address))
         Toast.makeText(context, context.getString(R.string.address_copied), Toast.LENGTH_SHORT).show()
     }
-
-    private const val FILE = "bitchord_support"
-    private const val KEY_SEEN = "support_popup_seen"
-
-    fun isSeen(context: Context): Boolean =
-        runCatching {
-            context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_SEEN, false)
-        }.getOrDefault(true)
-
-    fun markSeen(context: Context) {
-        runCatching {
-            context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_SEEN, true).apply()
-        }
-    }
-}
-
-/**
- * First-launch popup: this app is free, who built what, and where
- * donations go. Shown once; reopenable from Settings → Support.
- */
-@Composable
-fun SupportPopup(
-    onDismiss: () -> Unit,
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.support_popup_title)) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Text(
-                    text = stringResource(R.string.support_popup_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                SupportDonations.rails.forEach { rail ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "${rail.label} · ${rail.note}",
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                            Text(
-                                text = rail.address,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.MiddleEllipsis,
-                            )
-                        }
-                        IconButton(onClick = { SupportDonations.copyAddress(context, rail.address) }) {
-                            Icon(
-                                Icons.Rounded.ContentCopy,
-                                contentDescription = stringResource(R.string.copy_address),
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.close))
-            }
-        },
-    )
 }
 
 /** One truncated address row for Settings → Support (tap copies). */

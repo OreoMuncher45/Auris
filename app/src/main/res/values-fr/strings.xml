@@ -1516,8 +1516,6 @@
     <string name="flow_personal">Personal</string>
     <string name="flow_adventurous">Adventurous</string>
     <string name="support">Support</string>
-    <string name="support_popup_title">Auris is free</string>
-    <string name="support_popup_body">Built by kushagra — credit for the original app goes to him. Auris adds Flow, Classipod, lossless addons and more, and is maintained by OreoMuncher45. Donations keep the project alive:</string>
     <string name="support_kushagra_kofi">Tip kushagra on Ko-fi</string>
     <string name="support_kushagra_subtitle">The original author, whose app Auris is built on</string>
     <string name="support_donate_subtitle">Tap an address to copy it</string>
@@ -1625,4 +1623,28 @@
     <string name="podcasts_enabled_subtitle">Turn off the tab, the shelves and the search filter. Downloads already on the device stay.</string>
     <string name="hide_status_bar_in_player">Hide status bar in player</string>
     <string name="hide_status_bar_in_player_subtitle">Hides the clock, battery and notification icons while the main player is open</string>
+    <string name="cached_song_partial">Partiel</string>
+    <string name="remove_from_cache">Retirer du cache</string>
+    <string name="removed_from_cache">Retiré du cache des titres</string>
+    <string name="remove_from_history">Retirer de l\'historique</string>
+    <string name="remove_from_history_failed">Impossible de retirer de l\'historique</string>
+    <string name="bit_perfect_active">Active</string>
+    <string name="bit_perfect_ready">Ready</string>
+    <string name="bit_perfect_converted">Converted</string>
+    <string name="bit_perfect_waiting">Waiting for a lossless track on a supported output</string>
+    <string name="bit_perfect_path">Path</string>
+    <string name="bit_perfect_path_sheet_subtitle">How bit-perfect output reaches the DAC</string>
+    <string name="bit_perfect_path_auto">Automatic</string>
+    <string name="bit_perfect_path_auto_subtitle">USB DAC: direct driver, then Android 14 mixer</string>
+    <string name="bit_perfect_path_built_in">Built-in DAC</string>
+    <string name="bit_perfect_path_built_in_subtitle">Headphone output opened exclusively (AAudio)</string>
+    <string name="dac_volume">DAC volume</string>
+    <string name="dac_volume_subtitle">Set on the DAC itself; the music is not scaled</string>
+    <string name="convert_for_limited_dac">Convert for lower-spec DACs</string>
+    <string name="convert_for_limited_dac_subtitle">Tracks above the DAC\'s limit play at its best format. Not bit-perfect; marked when used.</string>
+    <string name="bit_perfect_bypassed_footer">Bit-perfect output is ready, so the faded settings are bypassed. They work again when the DAC is unplugged or bit-perfect is off.</string>
+    <string name="community_header">Community</string>
+    <string name="community_discord">Discord</string>
+    <string name="community_discord_subtitle">Bugs, features, beta builds</string>
+    <string name="community_reddit_subtitle">r/BitChordNext</string>
 </resources>

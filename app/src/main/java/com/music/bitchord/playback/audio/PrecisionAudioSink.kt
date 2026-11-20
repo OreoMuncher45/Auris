@@ -13,8 +13,7 @@ import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
-import com.music.bitchord.playback.audio.usb.DirectAudioOutput
-import com.music.bitchord.playback.usb.ExclusiveUsbOutput
+import com.music.bitchord.playback.audio.bitperfect.DacFit
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -70,7 +69,6 @@ class PrecisionAudioSink(
     private val delegate: AudioSink,
     val dspChain: DspChain,
     private val enableFloatOutput: Boolean,
-    val directAudioOutput: DirectAudioOutput? = null,
     private val preferredOutputEncodingProvider: ((Format) -> PcmEncoding?)? = null,
     /**
      * Whether this sink is the one the listener can currently hear.
@@ -91,13 +89,14 @@ class PrecisionAudioSink(
      */
     private val bitPerfect: () -> Boolean = { false },
     /**
-     * The userspace usbdevfs session, when the listener has granted USB access
-     * and the DAC is attached. Ported from LastWave: it writes isochronous
-     * URBs straight to the endpoint, so AudioFlinger and the system mixer are
-     * not in the path at all — the part [BitPerfectMixer] can only ask the
-     * Android 14 mixer to do.
+     * The mixer-free output the service has picked for bit-perfect playback
+     * right now: the userspace usbdevfs session when the listener has granted
+     * USB access (ported from LastWave), the Android 14 bit-perfect mixer at
+     * integer precision, or an AAudio exclusive stream on a built-in DAC.
+     * Null when none applies. Asked again at each open, so a path that changes
+     * between tracks is followed.
      */
-    private val exclusiveUsb: ExclusiveUsbOutput? = null,
+    private val exclusiveSession: () -> ExclusiveSession? = { null },
     /** The level last handed to the DAC, so it is only sent when it changes. */
     @Volatile private var exclusiveLevelApplied: Float = Float.NaN,
     /**
@@ -153,6 +152,23 @@ class PrecisionAudioSink(
      * dropout — and would fix nothing.
      */
     private var exclusiveAdoptionSuppressed = false
+
+    /**
+     * The session this sink opened, held while [exclusiveActive] so that a
+     * path switch mid-track still closes the session that is actually open.
+     */
+    @Volatile private var boundSession: ExclusiveSession? = null
+
+    /**
+     * Set while the open session carries this track converted to the DAC's
+     * best format ("convert for lower-spec DACs"); null when it carries the
+     * track untouched.
+     */
+    private var dacFit: DacFit? = null
+
+    /** The open session, or the one the service would use next. */
+    private val exclusiveUsb: ExclusiveSession?
+        get() = boundSession ?: exclusiveSession()
 
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
     private var configuredSampleRate: Int = 0
@@ -376,10 +392,11 @@ class PrecisionAudioSink(
      */
     private fun startExclusiveIfWanted(format: Format): Boolean {
         exclusiveActive = false
+        boundSession = null
         // The crossfade standby must never claim the endpoint: its configure
         // runs while the outgoing track still owns the DAC.
         if (!isAudible()) return false
-        val session = exclusiveUsb ?: return false
+        val session = exclusiveSession() ?: return false
         if (!exclusiveWanted() || !bitPerfect()) return false
         if (format.channelCount !in 1..MAX_CHANNELS) {
             publishExclusiveUnavailable(
@@ -397,17 +414,38 @@ class PrecisionAudioSink(
         // LastWave's order: release the mixer's claim before opening usbdevfs.
         runCatching { delegate.pause() }
         runCatching { delegate.flush() }
-        val started = runCatching {
+        dacFit = null
+        var started = runCatching {
             session.configure(format, bitDepthHint = bitDepthHint())
         }.getOrDefault(false)
         // A DAC that latched a different clock would get source-rate bytes fed
-        // to the wrong rate. This sink has no resampler, so the honest answer
-        // is the mixer fallback rather than a pitch-shifted stream.
+        // to the wrong rate. The untouched path has no resampler, so the
+        // honest answer is the mixer fallback rather than a pitch-shifted
+        // stream — unless the listener asked for conversion, below.
+        var latched = 0
         if (started && session.currentRateHz() != format.sampleRate) {
-            val latched = session.currentRateHz()
+            latched = session.currentRateHz()
             runCatching { session.reset() }
+            started = false
+        }
+        // "Convert for lower-spec DACs": the DAC's best format instead of the
+        // mixer. Never reported as bit-perfect. A few formats at most, since
+        // every attempt opens the device.
+        if (!started && AppSettings.convertForLimitedDac.value) {
+            for ((rate, bits) in DacFit.candidates(format, runCatching { session.dacOffers(format) }.getOrDefault(emptyMap()))) {
+                val target = DacFit.targetFormat(format, rate, bits)
+                val opened = runCatching { session.configure(target, bitDepthHint = bits) }.getOrDefault(false)
+                if (opened && session.currentRateHz() == rate) {
+                    dacFit = DacFit(format, target, bits)
+                    started = true
+                    break
+                }
+                if (opened) runCatching { session.reset() }
+            }
+        }
+        if (!started && latched > 0) {
             publishExclusiveUnavailable(
-                "DAC clock ${latched} Hz for a ${format.sampleRate} Hz track; no resampling in bit-perfect",
+                "DAC clock $latched Hz for a ${format.sampleRate} Hz track; no resampling in bit-perfect",
             )
             if (playing) runCatching { delegate.play() }
             return true
@@ -418,29 +456,33 @@ class PrecisionAudioSink(
             return !session.failureIsRetryable()
         }
         exclusiveActive = true
+        boundSession = session
         exclusiveEnded = false
         if (isAudible()) {
             val bits = session.activeWireBits()
             val rate = session.currentRateHz()
             val wire = if (bits > 0) "$bits-bit" else "PCM"
+            val fit = dacFit
             AudioOutputStatus.publishOutputExactness(
-                exact = true,
-                detail = "USB exclusive: $wire / $rate Hz direct to the DAC",
+                exact = fit == null,
+                detail = if (fit == null) {
+                    "${session.pathLabel}: $wire / $rate Hz direct to the DAC"
+                } else {
+                    "${session.pathLabel}: DAC max ${fit.label}"
+                },
             )
+            AudioOutputStatus.publishDacConversion(fit?.label)
             AudioOutputStatus.publishDsp(
                 decoderOutputEncoding = inputPcmEncoding?.let { encodingLabel(mapFromPcmEncoding(it)) },
                 dspFormat = "Float32 (bypassed)",
                 dspAvailable = true,
                 dspBypassed = true,
             )
-            AudioOutputStatus.publishExclusiveUsb(
-                active = true,
-                detail = "$wire / $rate Hz via usbdevfs, AudioFlinger not in the path",
-            )
+            session.publishActive(wire, rate)
         }
         Log.i(
             TAG,
-            "exclusive USB active rate=${session.currentRateHz()}Hz wireBits=${session.activeWireBits()} " +
+            "${session.pathLabel} active rate=${session.currentRateHz()}Hz wireBits=${session.activeWireBits()} " +
                 "enc=$inputPcmEncoding ch=${format.channelCount} AudioTrack=idle",
         )
         return false
@@ -451,6 +493,9 @@ class PrecisionAudioSink(
         exclusiveActive = false
         exclusiveEnded = false
         runCatching { exclusiveUsb?.reset() }
+        boundSession = null
+        dacFit = null
+        AudioOutputStatus.publishDacConversion(null)
         val input = inputPcmEncoding
         val output = targetOutputEncoding
         if (input != null && output != null) publishTelemetry(input, output)
@@ -459,10 +504,12 @@ class PrecisionAudioSink(
 
     private fun publishExclusiveUnavailable(reason: String?) {
         if (!isAudible()) return
+        val session = exclusiveUsb
         AudioOutputStatus.publishExclusiveUsb(
             active = false,
             detail = reason?.takeIf { it.isNotBlank() }
-                ?: "USB exclusive unavailable; the Android mixer stays in the path",
+                ?: "${session?.pathLabel ?: "Exclusive output"} unavailable; the Android mixer stays in the path",
+            transport = session?.transport ?: TransportType.DIRECT_USB,
         )
     }
 
@@ -521,10 +568,11 @@ class PrecisionAudioSink(
         presentationTimeUs: Long,
     ): ExclusiveOutcome {
         val session = exclusiveUsb ?: return ExclusiveOutcome.FALL_THROUGH
-        // The switch, the DAC or the permission can go away mid-track. Leave
-        // the endpoint and hand this buffer to the delegate instead of writing
-        // to a session the service has already torn down.
-        if (!exclusiveWanted()) {
+        // The switch, the DAC or the permission can go away mid-track, and the
+        // service can move to another path. Leave the endpoint and hand this
+        // buffer to the delegate instead of writing to a session the service
+        // has already torn down or replaced.
+        if (!exclusiveWanted() || exclusiveSession() !== session) {
             leaveExclusiveUsb(resume = true)
             return ExclusiveOutcome.FALL_THROUGH
         }
@@ -554,7 +602,13 @@ class PrecisionAudioSink(
             session.hardwareOutputLevelDb(),
         )
         val encoding = inputPcmEncoding ?: return ExclusiveOutcome.FALL_THROUGH
-        if (session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)) {
+        val fit = dacFit
+        val taken = if (fit != null) {
+            fit.write(session, buffer, presentationTimeUs)
+        } else {
+            session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)
+        }
+        if (taken) {
             exclusiveEnded = false
             return ExclusiveOutcome.CONSUMED
         }
@@ -857,6 +911,7 @@ class PrecisionAudioSink(
             // Drop the URBs already queued for the pre-seek position. The
             // delegate is already idle and flushed from configure.
             runCatching { exclusiveUsb?.flush() }
+            dacFit?.reset()
         }
         if (isPrecisionActive) {
             dspChain.flush()
@@ -868,12 +923,16 @@ class PrecisionAudioSink(
         // Keep the claimed endpoint between items when the switch is still
         // on: closing it would put the DAC back behind snd-usb-audio and the
         // next configure would pay the Feature Unit re-probe again.
-        if (exclusiveActive && exclusiveWanted()) {
+        // A session the service no longer picks is closed rather than kept:
+        // the next configure only ever looks at the one it picks now.
+        if (exclusiveActive && exclusiveWanted() && boundSession === exclusiveSession()) {
             runCatching { exclusiveUsb?.prepareForNextItem() }
         } else if (isAudible()) {
             runCatching { exclusiveUsb?.reset() }
         }
         exclusiveActive = false
+        boundSession = null
+        dacFit = null
         exclusiveEnded = false
         processedEndUs = C.TIME_UNSET
         dspChain.transition.leadUs = 0L
@@ -1002,6 +1061,7 @@ class PrecisionAudioSink(
         // endpoint from there would cut the track that is still playing.
         if (isAudible()) runCatching { exclusiveUsb?.release() }
         exclusiveActive = false
+        boundSession = null
         exclusiveEnded = false
         super.release()
     }
