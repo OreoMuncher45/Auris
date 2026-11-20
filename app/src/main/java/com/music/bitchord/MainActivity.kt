@@ -2437,14 +2437,18 @@ internal fun BitChordApp(
      * Offline the list is the whole library, not the twenty the Home row
      * shows: the row is what fits on a screen, the page is the set.
      */
-    val homeQuickPicksItems by viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
+    val homeQuickPicksItemsState = viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
     //
     // Derived and read by the page, not here: offline it is retaken for every
     // file a download saves, and that is the Quick Picks page's business, not
     // the root's.
-    val quickPicksSongsState = remember(homeQuickPicksItems, offlineActive) {
+    //
+    // Both inputs are read inside, not keyed on: the home's quick picks land
+    // whenever the home loads (from its cache, then from the network), and
+    // that is the Quick Picks page's business too, not the root's.
+    val quickPicksSongsState = remember(offlineActiveState, homeQuickPicksItemsState) {
         derivedStateOf {
-            if (offlineActive) {
+            if (offlineActiveState.value) {
                 // Read for its changes: the songs come off the store itself.
                 savedDownloadsState.value
                 Downloads.snapshotSongs()
@@ -2453,7 +2457,7 @@ internal fun BitChordApp(
             } else {
                 // The set behind the arrow, kept whole whether the row is on the
                 // page or not: hiding the row on Home says nothing about the set.
-                homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
+                homeQuickPicksItemsState.value.mapNotNull { item -> shelfSong(item) }
             }
         }
     }
