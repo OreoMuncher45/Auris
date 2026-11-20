@@ -1606,4 +1606,23 @@
     <string name="removed_from_cache">已从歌曲缓存中移除</string>
     <string name="remove_from_history">从历史记录中移除</string>
     <string name="remove_from_history_failed">无法从历史记录中移除</string>
+    <string name="bit_perfect_active">Active</string>
+    <string name="bit_perfect_ready">Ready</string>
+    <string name="bit_perfect_converted">Converted</string>
+    <string name="bit_perfect_waiting">Waiting for a lossless track on a supported output</string>
+    <string name="bit_perfect_path">Path</string>
+    <string name="bit_perfect_path_sheet_subtitle">How bit-perfect output reaches the DAC</string>
+    <string name="bit_perfect_path_auto">Automatic</string>
+    <string name="bit_perfect_path_auto_subtitle">USB DAC: direct driver, then Android 14 mixer</string>
+    <string name="bit_perfect_path_built_in">Built-in DAC</string>
+    <string name="bit_perfect_path_built_in_subtitle">Headphone output opened exclusively (AAudio)</string>
+    <string name="dac_volume">DAC volume</string>
+    <string name="dac_volume_subtitle">Set on the DAC itself; the music is not scaled</string>
+    <string name="convert_for_limited_dac">Convert for lower-spec DACs</string>
+    <string name="convert_for_limited_dac_subtitle">Tracks above the DAC\'s limit play at its best format. Not bit-perfect; marked when used.</string>
+    <string name="bit_perfect_bypassed_footer">Bit-perfect output is ready, so the faded settings are bypassed. They work again when the DAC is unplugged or bit-perfect is off.</string>
+    <string name="community_header">Community</string>
+    <string name="community_discord">Discord</string>
+    <string name="community_discord_subtitle">Bugs, features, beta builds</string>
+    <string name="community_reddit_subtitle">r/BitChordNext</string>
 </resources>
