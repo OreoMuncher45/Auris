@@ -44,6 +44,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -350,7 +352,14 @@ fun <T : Any> AppSheet(
                 .pointerInput(Unit) {}
                 .then(if (dragFromContent) Modifier.nestedScroll(pull) else Modifier),
         ) {
-            CompositionLocalProvider(LocalMenuInteractive provides expanded) {
+            // The sheet's own content colour, as a Material sheet provides:
+            // text and icons that name no colour of their own — a dialog's
+            // title, an icon button — read on the sheet instead of falling
+            // back to black, which on a black sheet draws nothing at all.
+            CompositionLocalProvider(
+                LocalMenuInteractive provides expanded,
+                LocalContentColor provides contentColorFor(containerColor),
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()

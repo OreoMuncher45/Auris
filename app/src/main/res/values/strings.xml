@@ -1294,8 +1294,6 @@
     <string name="flow_personal">Personal</string>
     <string name="flow_adventurous">Adventurous</string>
     <string name="support">Support</string>
-    <string name="support_popup_title">Auris is free</string>
-    <string name="support_popup_body">Built by kushagra — credit for the original app goes to him. Auris adds Flow, Classipod, lossless addons and more, and is maintained by OreoMuncher45. Donations keep the project alive:</string>
     <string name="support_kushagra_kofi">Tip kushagra on Ko-fi</string>
     <string name="support_kushagra_subtitle">The original author, whose app Auris is built on</string>
     <string name="support_donate_subtitle">Tap an address to copy it</string>

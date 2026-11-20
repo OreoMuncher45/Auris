@@ -656,6 +656,7 @@ class MainActivity : AppCompatActivity() {
                             windowWidth = windowWidth,
                             windowHeight = windowHeight,
                             appBackdrop = appBackdrop,
+                            setupUp = showOnboarding,
                         )
                     }
                     if (showOnboarding) {
@@ -754,6 +755,12 @@ internal fun BitChordApp(
      */
     windowHeight: Dp,
     appBackdrop: LayerBackdrop,
+    /**
+     * Whether the setup flow is up over the app. The launch popups wait for
+     * it: they are drawn in this window, under the flow, and a sheet up there
+     * keeps the focus, so the flow's own fields could not take it.
+     */
+    setupUp: Boolean = false,
     viewModel: MainViewModel = viewModel(),
     // Parameters only so the recomposition probe can open a page; the app
     // always takes the defaults.
@@ -918,11 +925,6 @@ internal fun BitChordApp(
     // rides out configuration changes on rememberSaveable so a rotation
     // doesn't bring it back — only a fresh launch does.
     var updateDialogShown by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (!com.music.bitchord.ui.components.SupportDonations.isSeen(context)) {
-            sheets.showSupportPopup = true
-        }
-    }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
 
     /**
@@ -940,14 +942,14 @@ internal fun BitChordApp(
     // The announcement key is here as well as in the effect below: if the
     // slower check lands while a notice is on screen, the update waits its
     // turn instead of stacking a second scrim on top of the first.
-    LaunchedEffect(updateNotice, sheets.showAnnouncementDialog) {
-        if (updateNotice != null && !updateDialogShown && !sheets.showAnnouncementDialog) {
+    LaunchedEffect(updateNotice, sheets.showAnnouncementDialog, setupUp) {
+        if (!setupUp && updateNotice != null && !updateDialogShown && !sheets.showAnnouncementDialog) {
             updateDialogShown = true
             sheets.showUpdateDialog = true
         }
     }
-    LaunchedEffect(announcement, sheets.showUpdateDialog) {
-        if (announcement != null && !sheets.showUpdateDialog && !announcementShown) {
+    LaunchedEffect(announcement, sheets.showUpdateDialog, setupUp) {
+        if (!setupUp && announcement != null && !sheets.showUpdateDialog && !announcementShown) {
             announcementShown = true
             sheets.showAnnouncementDialog = true
         }
@@ -7241,16 +7243,6 @@ private fun RootOverlays(
         onSignedIn = onSignedIn,
     )
 
-    // ---- Support popup (once ever) ----
-    if (sheets.showSupportPopup) {
-        com.music.bitchord.ui.components.SupportPopup(
-            onDismiss = {
-                com.music.bitchord.ui.components.SupportDonations.markSeen(context)
-                sheets.showSupportPopup = false
-            },
-        )
-    }
-
     // ---- Update available (once per launch) ----
     if (sheets.showUpdateDialog) {
         updateNotice?.let { update ->
@@ -8270,8 +8262,6 @@ internal class RootSheets {
     var showFlowSave by mutableStateOf(false)
     var flowSaveName by mutableStateOf("")
     var showUpdateDialog by mutableStateOf(false)
-    // Free-app credit popup: once ever, reopenable from Settings → Support.
-    var showSupportPopup by mutableStateOf(false)
     var showAnnouncementDialog by mutableStateOf(false)
 
     /** The track menu: which track it is open on, and how it was opened. */
