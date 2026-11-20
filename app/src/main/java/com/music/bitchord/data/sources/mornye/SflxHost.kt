@@ -458,6 +458,31 @@ class SflxHost(
         // to the next, which may well be clear. If every tier fails and the
         // reason is a signed session that is not in order, [streamUrl]
         // replaces the raw error with the advice that fixes it.
+        // A provider that never answers is down as surely as one that says
+        // so: the resolver stops waiting on it at its own deadline and
+        // cancels this, and without counting that here, the next track
+        // waited the whole deadline out again.
+        val startedAt = System.nanoTime() / 1_000_000
+        try {
+            return askLadder(installed, trackId, prepared, requested, wantsAtmos, tiers, extensionId)
+        } catch (cancelled: CancellationException) {
+            if (System.nanoTime() / 1_000_000 - startedAt >= SLOW_TIER_FAILURE_MS) {
+                Log.w(TAG, "sflx[$extensionId] stopped waiting after the deadline; the provider looks down '$trackId'")
+                downUntil[extensionId] = System.nanoTime() / 1_000_000 + PROVIDER_DOWN_MS
+            }
+            throw cancelled
+        }
+    }
+
+    private suspend fun askLadder(
+        installed: InstalledSflx,
+        trackId: String,
+        prepared: String?,
+        requested: String,
+        wantsAtmos: Boolean,
+        tiers: List<String>,
+        extensionId: String,
+    ): Result<ModuleStreamResponse> {
         return ladder(
             tiers = tiers,
             ask = { tier ->
