@@ -407,6 +407,37 @@ sealed interface SearchResult {
     data class Browse(val item: BrowseItem) : SearchResult
 }
 
+/**
+ * The rows with every repeat of one recording after the first taken out.
+ *
+ * A search can list one recording more than once under different ids: the
+ * album cut and the single, the original album and a compilation, or two
+ * Spotify releases of the same master. Ids are already distinct by the time
+ * rows reach here, so this is the other half — a row is a repeat when its
+ * title, credit and length all match an earlier one, compared without regard
+ * to case or surrounding space. A row that states no length is always kept,
+ * since two different cuts can share a name and credit; so is a row whose
+ * credit differs, which is what a film song's dubbed versions look like.
+ *
+ * The promoted top result is never removed, only remembered, so a plain row
+ * repeating it goes instead. Browse rows pass through untouched. One pass and
+ * one set, linear in the page; callers run it off the main thread.
+ */
+fun List<SearchResult>.withoutRepeatedRecordings(): List<SearchResult> {
+    val seen = HashSet<String>(size)
+    return filter { row ->
+        val song = row.songOrNull() ?: return@filter true
+        val length = song.durationText?.trim()?.takeIf { it.isNotEmpty() } ?: return@filter true
+        val key = buildString {
+            append(song.title.trim().lowercase()).append('\u0001')
+            append(song.artist.trim().lowercase()).append('\u0001')
+            append(length).append('\u0001')
+            append(song.isVideo)
+        }
+        seen.add(key) || row is SearchResult.TopTrack
+    }
+}
+
 /** The song carried by a search row, whether it is promoted or ordinary. */
 fun SearchResult.songOrNull(): Song? = when (this) {
     is SearchResult.TopTrack -> song

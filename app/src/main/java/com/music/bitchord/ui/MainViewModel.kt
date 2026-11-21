@@ -77,6 +77,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.withoutRepeatedRecordings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
@@ -3696,11 +3697,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (stillCurrent) {
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows).distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
-                    searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
-                    searchSession = session.copy(continuation = page.continuation)
-                    _results.value = UiState.Success(merged)
+                    // Off the main thread: a long scroll is a few hundred rows.
+                    val merged = withContext(Dispatchers.Default) {
+                        (current + page.rows).distinctBy(::searchResultKey)
+                            .withoutRepeatedRecordings()
+                            .withoutBlockedArtists()
+                    }
+                    // The merge suspended; a search started meanwhile owns the list now.
+                    if (searchSession == session && session.requestId == newestRequestId.get()) {
+                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
+                        searchSession = session.copy(continuation = page.continuation)
+                        _results.value = UiState.Success(merged)
+                    }
                 }
                 _searchLoadingMore.value = false
             }
@@ -3729,12 +3737,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (stillCurrent) {
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows)
-                        .distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
-                    searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
-                    searchSession = session.copy(nextOffset = page.nextOffset)
-                    _results.value = UiState.Success(merged)
+                    val merged = withContext(Dispatchers.Default) {
+                        (current + page.rows)
+                            .distinctBy(::searchResultKey)
+                            .withoutRepeatedRecordings()
+                            .withoutBlockedArtists()
+                    }
+                    // The merge suspended; a search started meanwhile owns the list now.
+                    if (searchSession == session && session.requestId == newestRequestId.get()) {
+                        searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
+                        searchSession = session.copy(nextOffset = page.nextOffset)
+                        _results.value = UiState.Success(merged)
+                    }
                 }
                 _searchLoadingMore.value = false
             }
