@@ -126,4 +126,78 @@ class SflxHostSessionReplaceTest {
         }
         assertEquals(imported, recordFile(installed).readText())
     }
+
+    @Test
+    fun aRefreshThroughTheEnginesCallbackPersistsAfterAnImport() {
+        val server = okhttp3.mockwebserver.MockWebServer().apply { start() }
+        try {
+            val gateway = server.url("/v2/").toString().replaceFirst("http://", "https://")
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    when (request.requestUrl?.encodedPath) {
+                        "/v2/refresh" -> okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody(
+                            JSONObject()
+                                .put("session_id", "refreshed")
+                                .put("session_secret", "refreshed-secret")
+                                .put("expires_at", java.time.Instant.now().plusSeconds(7_200).toString())
+                                .toString(),
+                        )
+                        else -> okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody("""{"ok":true}""")
+                    }
+            }
+            val refreshing = JSONObject(manifest).apply {
+                put(
+                    "signedSession",
+                    JSONObject()
+                        .put("namespace", "demo")
+                        .put("baseUrl", gateway)
+                        .put("endpoints", JSONObject().put("refresh", "/refresh")),
+                )
+            }.toString()
+            val store = SflxStore(File(temp.root, "store"))
+            val installed = store.restore(
+                "demo",
+                mapOf(SflxStore.MANIFEST_FILE to refreshing.toByteArray(), SflxStore.SCRIPT_FILE to "//".toByteArray()),
+            )
+            val sessionsDir = File(temp.root, "sessions").apply { mkdirs() }
+            val host = SflxHost(
+                store,
+                "3.4",
+                sessionsDir,
+                sessionClient = okhttp3.OkHttpClient.Builder()
+                    .addInterceptor { chain ->
+                        // Loopback only: the HTTPS URL production requires, onto MockWebServer's socket.
+                        val request = chain.request()
+                        chain.proceed(request.newBuilder().url(request.url.newBuilder().scheme("http").build()).build())
+                    }
+                    .build(),
+            )
+            // What the engine was loaded with, before the import.
+            val engineCall = host.sessionCallFor(installed)!!
+            val config = SignedSessionConfig.from(installed.manifest)!!
+            val record = File(sessionsDir, config.fileName())
+
+            // Restore a session that is inside its refresh window, leaving the package alone.
+            val imported = JSONObject()
+                .put("install_id", "imported")
+                .put("session_id", "imported-session")
+                .put("session_secret", "imported-secret")
+                .put("expires_at", java.time.Instant.now().plusSeconds(600).toString())
+                .put("namespace", config.namespace)
+                .put("base_url", config.baseUrl)
+                .put("app_version", config.appVersion)
+                .put("platform", config.platform)
+                .toString()
+            host.replaceSessionRecords { record.writeText(imported) }
+
+            // The engine's next signed call refreshes, and the refreshed credentials reach disk.
+            val answer = JSONObject(engineCall("signedFetch", """["GET","/stream"]"""))
+            org.junit.Assert.assertTrue(answer.toString(), answer.optBoolean("ok"))
+            val saved = JSONObject(record.readText())
+            assertEquals("refreshed", saved.getString("session_id"))
+            assertEquals("imported", saved.getString("install_id"))
+        } finally {
+            server.shutdown()
+        }
+    }
 }

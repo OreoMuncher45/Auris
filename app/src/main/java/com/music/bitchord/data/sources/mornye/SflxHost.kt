@@ -67,6 +67,8 @@ class SflxHost(
     private val filesDirectory: File? = null,
     /** The client their downloads go through; a test brings one that trusts its own server. */
     private val filesClient: okhttp3.OkHttpClient? = null,
+    /** The client signed-session calls go through; null is the app's own. A test brings one for its mock gateway. */
+    private val sessionClient: okhttp3.OkHttpClient? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
@@ -121,6 +123,7 @@ class SflxHost(
                             SflxVerify.open(installed.id, installed.manifest.displayName, url)
                         }
                     },
+                    httpClient = sessionClient ?: com.music.bitchord.data.Http.client,
                 ).also { client ->
                     // Brand new, so its lock is free: this never waits.
                     if (replacing) client.retire()
