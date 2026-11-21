@@ -36,6 +36,13 @@ class JamInviteLinkTest {
     }
 
     @Test
+    fun `an uppercase link resolves to the same code as the shared parser`() {
+        val link = "HTTPS://BITCHORD.KUSHAGRASINGH.IN/INVITE/ABC123"
+        assertEquals("ABC123", JamInviteLink.parse(link))
+        assertEquals(com.music.bitchord.data.listentogether.JamInvite.parse(link), JamInviteLink.parse(link))
+    }
+
+    @Test
     fun `rejects other hosts schemes paths and malformed codes`() {
         assertNull(JamInviteLink.parse("http://bitchord.kushagrasingh.in/invite/ABC123"))
         assertNull(JamInviteLink.parse("https://example.com/invite/ABC123"))
