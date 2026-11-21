@@ -201,6 +201,7 @@ class TrackMatcherWrongRecordingTest {
         accepted(song("Be By You (DJ-Mix)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (Mixed)", "River Lane", 210))
         refused(song("Be By You", "River Lane", "3:30", album = "Club Night DJ-Mix"), studio)
         refused(song("Be By You (DJ-Mix)", "River Lane", "3:30"), studio)
+        refused(song("Be By You DJ-Mix", "River Lane", "3:30"), studio)
         // Generic names stay neutral.
         accepted(song("Be By You", "River Lane", "3:30", album = "Party Mix 2024"), studio)
         accepted(song("Be By You", "River Lane", "3:30", album = "Let Me Live"), studio)

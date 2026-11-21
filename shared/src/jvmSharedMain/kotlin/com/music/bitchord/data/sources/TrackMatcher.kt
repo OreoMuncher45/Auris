@@ -250,7 +250,7 @@ object TrackMatcher {
         // "Be By You" and is a DJ set. The words one side has over the other
         // must not be the words that mark a different recording.
         else -> differingWords(wanted.words, got.words)
-            .none { it in VERSION_WORDS || it in IMITATION_WORDS }
+            .none { it in VERSION_WORDS || it in IMITATION_WORDS || it in DJ_MIX_TOKENS }
     }
 
     /**
