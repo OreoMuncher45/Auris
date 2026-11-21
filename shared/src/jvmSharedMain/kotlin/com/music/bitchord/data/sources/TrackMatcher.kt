@@ -110,6 +110,7 @@ object TrackMatcher {
 
     /** Whether both credits name at least one of the same artists. */
     fun sharesArtist(wanted: String, got: String): Boolean {
+        if (isImitationCredit(wanted, got)) return false
         val want = artistNames(wanted)
         val have = artistNames(got)
         return want.isNotEmpty() && have.isNotEmpty() &&
@@ -235,12 +236,27 @@ object TrackMatcher {
             .sortedByDescending { it.second }
             .map { it.first }
 
-    /** Whether two parsed title cores name the same song; see [score]. */
-    private fun titleCoresMatch(wanted: String, got: String): Boolean = when {
-        wanted == got -> true
-        romajiOf(wanted) == romajiOf(got) -> true
-        wanted.length <= 3 || got.length <= 3 -> false
-        else -> wanted.contains(got) || got.contains(wanted)
+    /** Whether two parsed title cores are the same title outright, in either script. */
+    private fun titleCoresEqual(wanted: String, got: String): Boolean =
+        wanted == got || romajiOf(wanted) == romajiOf(got)
+
+    /** Whether two parsed titles name the same song; see [score]. */
+    private fun titleCoresMatch(wanted: TitleParts, got: TitleParts): Boolean = when {
+        titleCoresEqual(wanted.core, got.core) -> true
+        wanted.core.length <= 3 || got.core.length <= 3 -> false
+        !(wanted.core.contains(got.core) || got.core.contains(wanted.core)) -> false
+        // Containment absorbs punctuation and spacing, not a different take
+        // printed without brackets: "Be By You Live DJ Mix" contains
+        // "Be By You" and is a DJ set. The words one side has over the other
+        // must not be the words that mark a different recording.
+        else -> differingWords(wanted.words, got.words)
+            .none { it in VERSION_WORDS || it in IMITATION_WORDS }
+    }
+
+    private fun differingWords(a: List<String>, b: List<String>): List<String> {
+        val inA = a.toSet()
+        val inB = b.toSet()
+        return a.filter { it !in inB } + b.filter { it !in inA }
     }
 
     /**
@@ -260,7 +276,7 @@ object TrackMatcher {
         // romaji tail instead, and English loans like ドア/door don't
         // transliterate to each other either). Past that, a guarded
         // containment absorbs minor punctuation and symbol differences.
-        if (!titleCoresMatch(wanted.core, got.core)) return null
+        if (!titleCoresMatch(wanted, got)) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
         // the album cut. Markers living on the release rather than the row come
@@ -275,10 +291,16 @@ object TrackMatcher {
         // Only markers the request asked for are taken from the album: the
         // rest of an album name ("Song (Remixes)", "MTV Unplugged") describes
         // the release, and adding it would refuse the right row.
+        // Live and DJ-mixed releases behave like the no-vocal ones: a
+        // plain-titled row on "Club Night (DJ Mix)" or "Pulse (Live)" is that
+        // take whatever its own title says. Read off the request's release
+        // too, so the row from the very live album being played still meets.
         val albumMarks = albumVersionMarkers(candidate.albumName)
+        val wantedVersions = wanted.versions +
+            (albumVersionMarkers(target.album) intersect RELEASE_TAKES)
         val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
-            (albumMarks intersect wanted.versions)
-        if (wanted.versions != effectiveVersions) return null
+            (albumMarks intersect RELEASE_TAKES) + (albumMarks intersect wantedVersions)
+        if (wantedVersions != effectiveVersions) return null
 
         val creditedArtist = artistScore(target.artist, candidate.artist)
         val duration = durationScore(
@@ -318,8 +340,15 @@ object TrackMatcher {
         // vouch for a catalogue row credited to completely different
         // people. This exact exception is what admitted the 3:30 Lovely
         // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
+        // The override is for the *exact* title only. Containment is what let
+        // "Bohemian Rhapsody Kit0" by KitO stand in for Queen's master on a
+        // runtime that agreed to the second: a re-upload carries the master's
+        // length and the uploader's tag in its title. And a tribute act is
+        // never the original's other credit, however close its runtime.
             ?: CREDITS_DISAGREE.takeIf {
-                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
+                !target.isVideo && titleCoresEqual(wanted.core, got.core) &&
+                    !isImitationCredit(target.artist, candidate.artist) &&
+                    withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
             }
             ?: return null
         val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return null
@@ -556,7 +585,13 @@ object TrackMatcher {
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
-        val marks = words.filter { it in VERSION_WORDS }
+        val marks = words.filter { it in VERSION_WORDS }.toMutableList()
+        // "(DJ Mix)", "(Mixed)", "(Continuous Mix)": a track cut out of a mixed
+        // set and crossfaded into its neighbours. One marker for every
+        // spelling, so [score]'s release rule can read it off an album.
+        if ("mixed" in words || "continuous" in words || "nonstop" in words ||
+            words.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
+        ) marks += "mixed"
         if (marks.isNotEmpty()) {
             versions += marks
             return
@@ -707,6 +742,7 @@ object TrackMatcher {
      * nothing to disagree with, and the title has already had to match exactly.
      */
     private fun artistScore(wanted: String, got: String): Int? {
+        if (isImitationCredit(wanted, got)) return null
         val want = artistNames(wanted)
         val have = artistNames(got)
         if (want.isEmpty() || have.isEmpty()) return 0
@@ -714,6 +750,25 @@ object TrackMatcher {
         if (!shared) return null
         return if (want == have) ARTIST_EXACT else ARTIST_SHARED
     }
+
+    /**
+     * Whether [got] credits a tribute, karaoke or sound-alike act that [wanted]
+     * does not. Whole-name containment is how "Dolly Parton- Experience ®
+     * Tribute Show" shared a credit with Dolly Parton: the act is named after
+     * the artist it imitates. The words have to be new on [got]'s side, so an
+     * act genuinely called "... Cover ..." still matches itself.
+     */
+    internal fun isImitationCredit(wanted: String, got: String): Boolean {
+        val have = normalize(got)
+        if (have.isBlank()) return false
+        val want = normalize(wanted)
+        val wantWords = creditWords(want)
+        if (creditWords(have).any { it in IMITATION_WORDS && it !in wantWords }) return true
+        return IMITATION_PHRASES.any { it.containsMatchIn(have) && !it.containsMatchIn(want) }
+    }
+
+    private fun creditWords(normalized: String): Set<String> =
+        normalized.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }.toSet()
 
     /**
      * The credited artists, each as its own list of words.
@@ -952,6 +1007,9 @@ object TrackMatcher {
         "version", "mix", "dub", "vip", "session", "sessions",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
+        // Fan edits and imitations: "choosin texas (kylino blend)" is a fan's
+        // blend, "(Mixed)" a DJ set's cut, "(Tribute)" someone else singing.
+        "blend", "mixed", "megamix", "tribute", "parody",
         // Non-Latin spellings of the same takes. Without these a `カバー` or
         // `カラオケ` row carries no version marker and scores as the original.
         "カバー", "カラオケ", "リミックス", "ライブ", "アコースティック",
@@ -981,6 +1039,25 @@ object TrackMatcher {
      */
     private val NOVOCAL_TAKES = setOf(
         "instrumental", "karaoke", "acapella", "acappella", "backing", "stems", "stem",
+    )
+
+    /**
+     * Takes a *release* declares for every track on it: a live album, a DJ mix.
+     * Like [NOVOCAL_TAKES] these apply from the album in both directions —
+     * "Be By You" on "… (DJ Mix)" is the mix's crossfaded cut, not the single.
+     */
+    private val RELEASE_TAKES = setOf("live", "concert", "unplugged", "mixed")
+
+    /** Credit words that make an act an imitation of the artist it names; see [isImitationCredit]. */
+    private val IMITATION_WORDS = setOf(
+        "tribute", "tributes", "karaoke", "cover", "covers", "impersonator", "impersonators",
+        "soundalike", "soundalikes", "salute", "homage",
+    )
+    private val IMITATION_PHRASES = listOf(
+        Regex("""\bin the style of\b"""),
+        Regex("""\bmade famous by\b"""),
+        Regex("""\boriginally performed by\b"""),
+        Regex("""\bsound[\s-]alike\b"""),
     )
 
     /**
