@@ -394,15 +394,26 @@ object SflxCatalog {
         val staging = runCatching { File.createTempFile(".session", ".tmp", directory) }.getOrNull() ?: return false
         return try {
             staging.writeBytes(bytes)
-            val target = File(directory, name)
-            if (!staging.renameTo(target)) target.writeBytes(bytes)
-            true
+            // Atomic or nothing: when the rename fails, the existing record is left
+            // exactly as it was rather than overwritten in place.
+            staging.renameTo(File(directory, name))
         } catch (e: Exception) {
             false
         } finally {
-            // Gone after a successful rename; removed here after a fallback write or a failure.
+            // Gone after a successful rename; removed here after any failure.
             staging.delete()
         }
+    }
+
+    /**
+     * Writes session records from a backup with no running client able to
+     * write a stale record over them (see [SflxHost.replaceSessionRecords]).
+     * Returns how many could not be written.
+     */
+    internal fun restoreSessions(records: Map<String, ByteArray>): Int {
+        if (records.isEmpty()) return 0
+        val write = { records.count { (name, bytes) -> !restoreSession(name, bytes) } }
+        return hostRef?.replaceSessionRecords(write) ?: write()
     }
 
     /** Writes a package from a backup. Call [snapshotAfterRestore] once every package is written. */

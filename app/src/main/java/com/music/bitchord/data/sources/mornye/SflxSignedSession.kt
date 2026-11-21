@@ -71,6 +71,21 @@ class SflxSignedSession(
 
     private val lock = Any()
 
+    /**
+     * Set when an add-ons import replaces this client's record on disk. A
+     * retired client never writes again, so a refresh that read the old
+     * record can't overwrite the imported one. See [retire].
+     */
+    @Volatile
+    private var retired = false
+
+    /**
+     * Stops this client writing its record. Takes [lock], so a save already
+     * in progress (record read, network call, write, all under the lock)
+     * finishes first, and every later save is skipped.
+     */
+    fun retire() = synchronized(lock) { retired = true }
+
     /** A challenge the listener has been sent to, so the grant can be matched. */
     @Volatile
     private var pending: Pending? = null
@@ -792,6 +807,8 @@ class SflxSignedSession(
     }
 
     private fun save(record: Record) {
+        // An import has replaced this record; writing now would put the old one back.
+        if (retired) return
         val root = JSONObject()
             .put("install_id", record.installId)
             .put("session_id", record.sessionId)

@@ -944,6 +944,27 @@ class SflxHost(
      */
     fun reloadSessions() = synchronized(lifecycle) { sessions.clear() }
 
+    /**
+     * Runs [write], which replaces signed-session records on disk, so that no
+     * client can write a stale record over it.
+     *
+     * Every installed extension first gets a client in the map, and every
+     * client is retired, which waits out any save in progress. While [write]
+     * runs, callers get those retired clients: they read the disk as usual but
+     * never save. A fresh client can't be created mid-write and read the old
+     * record. Afterwards the map is cleared, so the next call builds clients
+     * that read the restored records.
+     */
+    fun <T> replaceSessionRecords(write: () -> T): T = synchronized(lifecycle) {
+        runCatching { store.list() }.getOrDefault(emptyList()).forEach { sessionFor(it) }
+        sessions.values.forEach { it.retire() }
+        try {
+            write()
+        } finally {
+            sessions.clear()
+        }
+    }
+
     fun remove(id: String): Boolean = synchronized(lifecycle) {
         // All of it under the lock: a reinstall between deleting the package
         // and clearing its folder would otherwise lose the new folder.

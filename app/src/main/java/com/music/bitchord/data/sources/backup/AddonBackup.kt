@@ -201,9 +201,9 @@ object AddonBackup {
         var packageFailures = 0
         val restored = withContext(Dispatchers.IO) {
             // Sessions first, so a package written below builds its session client from the restored record.
-            plan.sessions.forEach { name ->
-                contents.sessionFiles[name]?.let { if (!SflxCatalog.restoreSession(name, it)) sessionFailures++ }
-            }
+            sessionFailures = SflxCatalog.restoreSessions(
+                plan.sessions.mapNotNull { name -> contents.sessionFiles[name]?.let { name to it } }.toMap(),
+            )
             plan.extensions.filter { id ->
                 val files = contents.extensionFiles[id] ?: return@filter false
                 SflxCatalog.restorePackage(id, files).isSuccess.also { if (!it) packageFailures++ }
