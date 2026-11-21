@@ -89,7 +89,8 @@ object BiniLyrics {
             LrcRed.Hit(isrc = it.isrc, title = it.trackName, artist = it.artistName, duration = it.duration?.toDouble())
         }
         val match = LrcRed.best(asLrcRed, title, artist, durationMs) ?: return null
-        return results.firstOrNull { it.isrc == match.isrc }
+        // By position, not ISRC: two hits can share one, and only this one passed the checks.
+        return results.getOrNull(asLrcRed.indexOfFirst { it === match })
     }
 
     /**

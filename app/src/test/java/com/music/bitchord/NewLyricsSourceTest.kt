@@ -68,6 +68,13 @@ class NewLyricsSourceTest {
     }
 
     @Test
+    fun `of two hits sharing an isrc, the one that matched is returned`() {
+        val wrong = BiniLyrics.Hit(trackName = "Something Else", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = "wrong")
+        val right = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = "right")
+        assertEquals("right", BiniLyrics.best(listOf(wrong, right), "golden hour", "JVKE", 209_000)?.lyricsUrl)
+    }
+
+    @Test
     fun `a binilyrics hit with the same title, artist and length is taken`() {
         val results = lyricsJson.decodeFromString<BiniLyrics.Response>(biniSearch).results!!
         assertEquals("GBKPL2204171", BiniLyrics.best(results, "golden hour", "JVKE", 209_000)?.isrc)
