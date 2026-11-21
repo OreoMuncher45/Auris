@@ -5837,6 +5837,14 @@ private fun RootPage(
             },
             onSongLongPress = { pageActions.openSongMenu(withAlbum(it)) },
             onSongSwipe = pageActions.onSongSwipe,
+            onPlay = { songs ->
+                if (songs.isNotEmpty()) {
+                    // Play is the release in order, so a shuffle left on
+                    // from the last queue goes off before this one is built.
+                    QueueShuffle.disableForNextQueue()
+                    pageActions.playBrowsePage(page, songs, 0)
+                }
+            },
             onShuffle = { songs ->
                 pageActions.playBrowsePageShuffled(page, songs)
             },
@@ -7045,7 +7053,10 @@ private fun RootOverlays(
             },
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
-            onPlay = act { songs -> tracks.play(songs, 0) }.takeIf { target.fromCard },
+            onPlay = act { songs ->
+                QueueShuffle.disableForNextQueue()
+                tracks.play(songs, 0)
+            }.takeIf { target.fromCard },
             onShuffle = act { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played

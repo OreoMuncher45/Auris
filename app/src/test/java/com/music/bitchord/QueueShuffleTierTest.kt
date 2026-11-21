@@ -6,6 +6,7 @@ import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.queueEntryId
 import com.music.bitchord.playback.toMediaItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class QueueShuffleTierTest {
@@ -22,6 +23,17 @@ class QueueShuffleTierTest {
         queueTier = tier,
         queueEntryId = entryId,
     )
+
+    @Test
+    fun `header play button builds the next queue in order with shuffle left on`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue() // shuffle left on from the last queue
+
+        QueueShuffle.disableForNextQueue()
+
+        // playSongs reads this flag for the queue it is about to build (PlayerConnection).
+        assertFalse(QueueShuffle.enabled.value)
+    }
 
     @Test
     fun `startingOrder preserves USER_QUEUE items at front and shuffles context`() {
@@ -63,21 +75,7 @@ class QueueShuffleTierTest {
 
     @Test
     fun `reproduce album alternating skip and shuffle toggle`() {
-        val editor = java.lang.reflect.Proxy.newProxyInstance(
-            android.content.SharedPreferences.Editor::class.java.classLoader,
-            arrayOf(android.content.SharedPreferences.Editor::class.java),
-        ) { proxy, method, args ->
-            if (method.returnType == android.content.SharedPreferences.Editor::class.java) proxy else null
-        }
-        val prefs = java.lang.reflect.Proxy.newProxyInstance(
-            android.content.SharedPreferences::class.java.classLoader,
-            arrayOf(android.content.SharedPreferences::class.java),
-        ) { _, method, _ ->
-            if (method.name == "edit") editor else null
-        } as android.content.SharedPreferences
-        val field = com.music.bitchord.data.settings.AppSettings::class.java.getDeclaredField("prefs")
-        field.isAccessible = true
-        field.set(com.music.bitchord.data.settings.AppSettings, prefs)
+        installDiscardingPrefs()
 
         val albumSongs = (1..10).map { testSong("track-$it", QueueTier.CONTEXT, "entry-$it") }
         val items = albumSongs.map { it.toMediaItem() }.toMutableList()
@@ -131,5 +129,23 @@ class QueueShuffleTierTest {
             assertEquals("All queue entry IDs must remain unique at step $step", items.size, entryIds.toSet().size)
         }
     }
-}
 
+    /** AppSettings writes through to prefs; these tests only read the flows, so writes go nowhere. */
+    private fun installDiscardingPrefs() {
+        val editor = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences.Editor::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences.Editor::class.java),
+        ) { proxy, method, args ->
+            if (method.returnType == android.content.SharedPreferences.Editor::class.java) proxy else null
+        }
+        val prefs = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences::class.java),
+        ) { _, method, _ ->
+            if (method.name == "edit") editor else null
+        } as android.content.SharedPreferences
+        val field = com.music.bitchord.data.settings.AppSettings::class.java.getDeclaredField("prefs")
+        field.isAccessible = true
+        field.set(com.music.bitchord.data.settings.AppSettings, prefs)
+    }
+}
