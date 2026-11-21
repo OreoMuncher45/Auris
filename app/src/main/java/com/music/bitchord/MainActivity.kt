@@ -3015,7 +3015,8 @@ internal fun BitChordApp(
     // See [rememberReplayState].
     val replayOpen = nav.showReplay || nav.replayStory != null || nav.showReplayShare ||
         (libraryReplayVisible && nav.selectedTab == TAB_LIBRARY && detail == null && !nav.showSettings)
-    val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
+    val replayPageOpen = nav.showReplay || nav.replayStory != null || nav.showReplayShare
+    val (replay, setReplayPeriod) = rememberReplayState(replayOpen, replayPageOpen)
     val replayCards = remember(replay.summary) {
         replay.summary?.takeUnless { it.isEmpty }?.cards(context).orEmpty()
     }
