@@ -2060,27 +2060,6 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             },
-            // The panel's demand: the same work, asked for at the listener's
-            // request rather than the tick's, and with the cache's one-round
-            // guard set aside. The bytes go out even if a fetch for the same
-            // track is already in the air, because the lane the listener is
-            // looking at is worth a second fetch.
-            forceAnalysisFor = { item, durationMs, outgoing ->
-                if (com.music.bitchord.perf.AppAwake.isAwake()) {
-                    item.localConfiguration?.uri?.let { uri ->
-                        trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0, outgoing)
-                    }
-                }
-            },
-            // How far each track's analysis fetch has got. The panel's
-            // progress line: without it, "waiting" and "fetching" are the
-            // same word, and a fetch that takes several seconds over a slow
-            // connection looks like a hang.
-            analysisProgressFor = { item ->
-                item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.analysisProgress(uri)
-                } ?: 0f
-            },
             // "Incoming" and "outgoing" here are session roles, not players:
             // the session player's sink and the spare's. The controller maps
             // its two tracks onto them according to which side of the
@@ -2119,10 +2098,6 @@ class PlaybackService : MediaLibraryService() {
                     spareFilter.setEq(centerHz, gainDb)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
-            // Whether the result came from the track's opening only. The panel
-            // marks such an analysis as partial rather than showing it as the
-            // whole answer.
-            analysisProvisionalFor = { item -> trackAnalyzer.isProvisional(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
@@ -2134,18 +2109,7 @@ class PlaybackService : MediaLibraryService() {
                 loudnessB.setBlendTrim(trim)
             },
             versionSwapActive = { versionSwapJob?.isActive == true || upgradeFadeActive },
-        ).also { controller ->
-            // The Automix panel's preview. Installed here rather than at the
-            // call site so that the handler always belongs to the controller
-            // that is actually playing, whichever one that is.
-            AutomixPreview.install { start -> controller.previewAutomix(start) }
-            // The panel's other request: the analysis it is waiting on, now.
-            // The engine already analyses the pair in the background, on its
-            // own schedule; this is the listener asking for the bytes to be
-            // on their way the moment they open the panel, because both lanes
-            // are on screen and they are looking at them.
-            AutomixAnalysisDemand.install { controller.forceAnalysis() }
-        }
+        )
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
@@ -9405,15 +9369,6 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(discordIdleObserver)
-        // The panel's preview has no engine behind it once this service is
-        // gone, and a request that reached a dead controller would be a
-        // request against a player that no longer exists.
-        AutomixPreview.clear()
-        // The same for the panel's demand for the analysis: with the engine
-        // gone there is nothing to fetch or measure, and a request that
-        // reached a dead controller would be a request against a player that
-        // no longer exists.
-        AutomixAnalysisDemand.clear()
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.

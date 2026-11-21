@@ -1368,8 +1368,6 @@ fun NowPlayingScreen(
      * seekbar's long-press have to agree about whether the panel is already
      * showing.
      */
-    automixPanelOpen: Boolean = false,
-    onAutomixPanelOpenChange: (Boolean) -> Unit = {},
     /** Opens the Sing vocal-level sheet. A no-op on hosts without one. */
     onOpenSing: () -> Unit = {},
     /** Whether the vocal cut is currently engaged, for the lyrics mic disc. */
@@ -1661,8 +1659,6 @@ fun NowPlayingScreen(
         overlays = overlays,
         lyricsOffsetOpen = lyricsOffsetOpen,
         onDismissLyricsOffset = onDismissLyricsOffset,
-        automixPanelOpen = automixPanelOpen,
-        onAutomixPanelOpenChange = onAutomixPanelOpenChange,
         lyricPicker = lyricPicker,
     )
 
@@ -2110,8 +2106,6 @@ fun NowPlayingScreen(
             onSelectLyricsProvider = onSelectLyricsProvider,
             lyricsOffsetOpen = lyricsOffsetOpen,
             onDismissLyricsOffset = onDismissLyricsOffset,
-            automixPanelOpen = automixPanelOpen,
-            onAutomixPanelOpenChange = onAutomixPanelOpenChange,
             onAddToQueue = onAddToQueue,
             onPlayNext = onPlayNext,
         )
@@ -2462,8 +2456,6 @@ fun NowPlayingScreen(
                 onOpenArtist = onOpenArtist,
                 lyrics = lyrics,
                 lyricsUnavailable = lyricsUnavailable,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 playerHaze = playerHaze,
                 overlays = overlays,
                 controlsLocked = controlsLocked,
@@ -3404,8 +3396,6 @@ fun NowPlayingScreen(
                 versionSwitching = versionSwitching,
                 mixing = mixing,
                 scrub = scrub,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
                 isLoading = isLoading,

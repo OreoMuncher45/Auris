@@ -91,7 +91,6 @@ object SettingsCatalog {
             "playback.prefer_music_only",
             "playback.crossfade",
             "playback.automix",
-            "playback.automix_engine",
             "playback.automix_performance",
             "playback.skip_silence",
             "playback.spatial_audio",

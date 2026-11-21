@@ -11,15 +11,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.settings.AutomixPanelState
-import com.music.bitchord.data.settings.AutomixPlanDigest
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.SmartTrackFacts
-import com.music.bitchord.data.settings.TrackAnalysisDigest
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
-import com.music.bitchord.playback.smart.AutomixOverride
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.FILTER_ECHO_AT
 import com.music.bitchord.playback.smart.FilterTransitionVariant
@@ -29,14 +25,9 @@ import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
 import com.music.bitchord.playback.smart.TransitionVolumeShape
-import com.music.bitchord.playback.smart.AutomixPreviewState
 import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
-import com.music.bitchord.playback.smart.keysCompatible
-import com.music.bitchord.playback.smart.panelEnergyCurve
-import com.music.bitchord.playback.smart.panelPeakCurve
 import com.music.bitchord.playback.smart.planTransition
-import com.music.bitchord.playback.smart.tempoRatio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -161,26 +152,6 @@ class CrossfadeController(
      */
     private val requestAnalysis: (MediaItem, Long, Boolean) -> Unit = { _, _, _ -> },
     /**
-     * Asks for a media item's analysis *now*, rather than at the next tick's
-     * noticing.
-     *
-     * The ordinary [requestAnalysis] is a poll — it looks at what is on disk
-     * and asks for what is missing, and its guards are there to stop the same
-     * work being done twice on a 250 ms tick. That is right for background
-     * work and wrong for the Automix panel opening, which is the one moment
-     * the listener is looking at the answer and waiting for it.
-     *
-     * Used by [forceAnalysis], which the panel asks for when it opens.
-     */
-    private val forceAnalysisFor: (MediaItem, Long, Boolean) -> Unit = { _, _, _ -> },
-    /**
-     * How far the fetch of a media item's analysis bytes has got, 0..1.
-     *
-     * The panel's progress line: without it, "waiting" and "fetching" are the
-     * same word, and a fetch that takes several seconds looks like a hang.
-     */
-    private val analysisProgressFor: (MediaItem) -> Float = { 0f },
-    /**
      * The low-pass and high-pass riding each side of a transition. This is what
      * makes a plan's
      * [com.music.bitchord.playback.smart.TransitionPlan.transitionStyle] audible
@@ -194,15 +165,6 @@ class CrossfadeController(
      * Only feeds the stats line — nothing about a transition waits on it.
      */
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
-    /**
-     * Whether a media item's analysis came from the track's opening only.
-     *
-     * A head pass measures the first part of a track and knows nothing of its
-     * outro. Its numbers are good enough to plan a transition and not good
-     * enough to be shown as the track's whole analysis, so the Automix panel
-     * marks them as partial rather than presenting them as complete.
-     */
-    private val analysisProvisionalFor: (MediaItem) -> Boolean = { false },
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -555,67 +517,6 @@ class CrossfadeController(
     private var plannedBars = 0
     private var plannedStyle = ""
 
-    /**
-     * The plan the last tick produced, for the Automix panel.
-     *
-     * Kept rather than rebuilt, because the panel wants the plan *as it is* —
-     * the size, the cue, the filter shape and the reasons — and rebuilding it
-     * on the UI thread would mean planning twice for every tick.
-     */
-    private var lastPlan: TransitionPlan? = null
-
-    /**
-     * Each track's analysis, turned into the shape the panel draws.
-     *
-     * Cached against the analysis object it was built from: the curves are
-     * resampled into buckets, which is not free, and the analysis itself is
-     * immutable — so a new analysis object is the only thing that should
-     * rebuild the digest.
-     *
-     * Bounded, and the bound is load-bearing. Each entry holds the analysis it
-     * was built from, waveform included — about a quarter of a megabyte — and
-     * an unbounded map kept one for every track played this session. That
-     * pinned exactly the waveforms [com.music.bitchord.playback.smart.TrackAnalyzer]
-     * trims out of its own cache, so its bound did nothing: a long evening
-     * left tens of megabytes of curves reachable from here. Only the outgoing
-     * and incoming tracks are ever drawn, so a handful of entries covers a
-     * skip back and forth without rebuilding.
-     */
-    private val digestCache = java.util.Collections.synchronizedMap(
-        object : LinkedHashMap<String, Pair<TrackAnalysis, TrackAnalysisDigest>>(
-            DIGEST_CACHE_ENTRIES, 0.75f, true,
-        ) {
-            override fun removeEldestEntry(
-                eldest: MutableMap.MutableEntry<String, Pair<TrackAnalysis, TrackAnalysisDigest>>,
-            ) = size > DIGEST_CACHE_ENTRIES
-        },
-    )
-
-    // ---- Preview ------------------------------------------------------------
-
-    /**
-     * Whether the listener is hearing a preview of the transition rather than
-     * listening to the song.
-     *
-     * A preview plays the handoff and nothing else: the outgoing track from a
-     * moment or two before the blend, the blend itself, and the arriving track
-     * for as long as the blend lasts. When it is over the song goes back to
-     * where it was, paused, so the transition has not been consumed by hearing
-     * it.
-     */
-    private var previewing = false
-
-    /**
-     * Where the song was when the preview started, so it can be put back.
-     *
-     * The queue index as well as the position: the preview hands the session
-     * over to the *incoming* track, and the song being previewed is the one
-     * before it in the queue.
-     */
-    private var previewHome: PreviewHome? = null
-
-    private data class PreviewHome(val index: Int, val positionMs: Long)
-
     // ---- Phase lock (Advanced Automix) --------------------------------------
 
     /** When the speed nudge in flight ends, from [SystemClock.elapsedRealtime]; 0 when none is. */
@@ -885,91 +786,6 @@ class CrossfadeController(
         if (phase != Phase.IDLE) bail()
     }
 
-    /**
-     * Asks for both sides of the next transition to be measured *now*.
-     *
-     * The Automix panel opens on a pair of lanes, and a lane with nothing in
-     * it is a lane the listener cannot set a handoff on. The ordinary
-     * analysis is a background poll: it notices what is on disk, asks for
-     * what is missing, and gets there in its own time — which is the right
-     * behaviour for work nobody is waiting on and the wrong one for the
-     * moment someone opens the panel and looks at it.
-     *
-     * So the panel asks for this when it opens, and both the track that is
-     * playing and the one that is coming are asked for at once. The bytes go
-     * out even if a fetch for the same track is already in the air, because
-     * the lane the listener is looking at is worth a second fetch.
-     *
-     * Cheap to call repeatedly, and harmless when there is nothing to do: the
-     * analyser and the cache each keep their own guards against repeating
-     * work that has already been done.
-     */
-    fun forceAnalysis() {
-        val player = active()
-        val current = player.currentMediaItem ?: return
-        val duration = playbackDurationMs(
-            player.duration,
-            current.claimedDurationMs() ?: 0L,
-        )
-        forceAnalysisOf(current, duration, outgoing = true)
-        player.nextItemOrNull()?.let { next ->
-            forceAnalysisOf(next, nextItemDurationMs(next), outgoing = false)
-        }
-    }
-
-    /**
-     * Asks for one item's analysis, if it is one that can be measured.
-     *
-     * The same eligibility rule the planner uses: a music video is not
-     * measured, because there is no beat grid in a video to measure, and a
-     * converted video-origin track is measured like any other audio.
-     */
-    private fun forceAnalysisOf(item: MediaItem, durationMs: Long, outgoing: Boolean) {
-        if (!automixEligible(item.isVideo, item.isVideoOrigin)) return
-        forceAnalysisFor(item, durationMs, outgoing)
-    }
-
-    /**
-     * Plays the transition that is planned, and nothing else.
-     *
-     * The Automix panel's own preview: the outgoing track from a moment or two
-     * before the handoff, the handoff itself, and the arriving track for as
-     * long as the blend runs. It is the *real* transition — the same plan, the
-     * same renderer, the same two players — so what the listener hears is what
-     * the app will do, not an imitation of it.
-     *
-     * When the blend is over the song goes back to where it was and waits:
-     * hearing a transition must not consume it. The listener can press play
-     * and have it happen for real when they reach it.
-     *
-     * Stopping is the other half of the same button: the blend is dropped and
-     * the song is left paused where the preview had reached.
-     */
-    fun previewAutomix(start: Boolean) {
-        if (!start) {
-            previewing = false
-            previewHome = null
-            AutomixPreviewState.setPlaying(false)
-            if (phase != Phase.IDLE) bail()
-            active().pause()
-            return
-        }
-        val plan = lastPlan ?: return
-        if (plan.blocked || plan.transitionStart <= 0.0) return
-        val player = active()
-        val home = PreviewHome(player.currentMediaItemIndex, player.currentPosition)
-        // A moment or two before the handoff: long enough to hear where the
-        // music is going, short enough that the preview is a preview.
-        val at = ((plan.transitionStart - PREVIEW_LEAD_SECONDS) * 1000.0)
-            .roundToLong()
-            .coerceIn(0L, player.duration.coerceAtLeast(0L))
-        previewHome = home
-        previewing = true
-        AutomixPreviewState.setPlaying(true)
-        player.seekTo(at)
-        player.play()
-    }
-
     // ---- Ticker -------------------------------------------------------------
 
     private fun tick() {
@@ -1171,7 +987,6 @@ class CrossfadeController(
         ) {
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
-            lastPlan = null
             return
         }
         val nextDuration = nextItemDurationMs(nextItem)
@@ -1192,10 +1007,6 @@ class CrossfadeController(
         val nextAnalysis = analysisFor(nextItem)
         // The DJ planner is Automix now; there is no separate mode switch.
         val advanced = true
-        // What the listener has chosen for the track that is playing. Kept
-        // with the song, so "this one always hands over like this" is a thing
-        // that means the same thing every time it plays.
-        val profile = AutomixProfiles.profileFor(currentItem.mediaId)
 
         val plan = planTransition(
             analysis = currentAnalysis,
@@ -1207,7 +1018,6 @@ class CrossfadeController(
             fadeSeconds = fallbackSeconds,
             mode = CrossfadeMode.SMART,
             advanced = advanced,
-            override = profile,
         )
         // One line per distinct verdict rather than one per 250ms tick, so the
         // log says what the planner decided for this pair without burying it.
@@ -1220,10 +1030,6 @@ class CrossfadeController(
         // overlap to describe, so it describes none.
         plannedBars = if (plan.blocked) 0 else plan.transitionBars
         plannedStyle = if (plan.blocked) "" else plan.transitionStyle.name
-        // The plan itself, for the panel. Held even when it is blocked, so the
-        // panel can say *why* nothing is going to be blended rather than
-        // showing an empty plan.
-        lastPlan = plan
         if (verdict != lastPlanVerdict) {
             lastPlanVerdict = verdict
             // The app's own log, not logcat: this line is the answer to "why
@@ -1386,242 +1192,6 @@ class CrossfadeController(
             nextFacts = factsOf(nextAnalysis, nextState),
             plannedBars = plannedBars,
             style = plannedStyle,
-        )
-        publishPanelState(currentItem, nextItem, currentAnalysis, nextAnalysis)
-    }
-
-    /**
-     * Everything the Automix panel shows, published for the pair that is
-     * playing.
-     *
-     * Published here rather than from the panel itself: the controller is the
-     * only thing that knows which two tracks the next transition is between,
-     * what the planner made of them, and what the listener has chosen for the
-     * track that is playing.
-     */
-    private fun publishPanelState(
-        currentItem: MediaItem?,
-        nextItem: MediaItem?,
-        currentAnalysis: TrackAnalysis?,
-        nextAnalysis: TrackAnalysis?,
-    ) {
-        val trackId = currentItem?.mediaId.orEmpty()
-        val current = currentItem?.let { item ->
-            val analysis = currentAnalysis ?: TrackAnalysis()
-            digestOf(item, analysis, stateOf(item, analysis))
-        } ?: TrackAnalysisDigest()
-        val next = nextItem?.let { item ->
-            val analysis = nextAnalysis ?: TrackAnalysis()
-            digestOf(item, analysis, stateOf(item, analysis))
-        } ?: TrackAnalysisDigest()
-        val profile = if (trackId.isBlank()) AutomixOverride.NONE else AutomixProfiles.profileFor(trackId)
-        val panelState = AutomixPanelState(
-            trackId = trackId,
-            title = currentItem?.mediaMetadata?.title?.toString().orEmpty(),
-            artist = currentItem?.mediaMetadata?.artist?.toString().orEmpty(),
-            nextTitle = nextItem?.mediaMetadata?.title?.toString().orEmpty(),
-            current = current,
-            next = next,
-            plan = planDigest(currentAnalysis, nextAnalysis),
-            profile = profile,
-        )
-        // Published only when it actually changed.
-        //
-        // This runs on every tick of the playback clock, and a fresh object
-        // every time would recompose the whole Automix panel several times a
-        // second — the panel is a graph, and a graph that redraws on a clock
-        // it did not ask for is a graph that costs the battery. The digests
-        // are cached objects and the plan is rebuilt from the same numbers, so
-        // an unchanged plan compares equal and nothing is published.
-        if (AppSettings.automixPanel.value != panelState) {
-            AppSettings.automixPanel.value = panelState
-        }
-    }
-
-    /**
-     * One side of the pair, in the shape the panel draws.
-     *
-     * The heavy part — resampling the energy and vocal curves into buckets —
-     * is done once per analysis and kept, because the panel redraws far more
-     * often than the analysis changes.
-     */
-    private fun digestOf(
-        item: MediaItem,
-        analysis: TrackAnalysis,
-        state: TrackAnalysisState,
-    ): TrackAnalysisDigest {
-        val cached = digestCache[item.mediaId]
-        val digest = if (cached != null && cached.first === analysis) {
-            cached.second
-        } else {
-            buildDigest(analysis, analysisProvisionalFor(item))
-                .also { digestCache[item.mediaId] = analysis to it }
-        }
-        // The progress is not part of the cached digest: it moves while the
-        // bytes arrive, and the digest is cached against the *analysis*, which
-        // does not. Rounded to a whole per cent so a fast fetch does not
-        // republish the panel four times a second.
-        val progress = (analysisProgressFor(item).coerceIn(0f, 1f) * 100f).toInt() / 100f
-        return if (digest.state == state && digest.progress == progress) {
-            digest
-        } else {
-            digest.copy(state = state, progress = progress)
-        }
-    }
-
-    /**
-     * The analysis, told as the panel wants it: the numbers, and the curves
-     * behind them.
-     */
-    private fun buildDigest(analysis: TrackAnalysis, provisional: Boolean): TrackAnalysisDigest {
-        // The panel's own envelope: the whole track when it has been measured,
-        // and otherwise the two windows that have — the opening from a head pass
-        // and the ending from a tail pass. See [panelEnergyCurve], which owns
-        // that choice and the reasoning behind it.
-        //
-        // A partial pass keeps its curve out of `energyCurve` on purpose,
-        // because the policy counts audible seconds from that one and a curve
-        // covering a single window would describe a whole track from it. The
-        // panel is not the policy: it draws a lane, the outgoing track is drawn
-        // across the *end* of its own timeline, and an opening-only curve lands
-        // entirely off-screen — which is what made the upper lane read as empty
-        // on every streamed track.
-        val curve = analysis.panelEnergyCurve
-        val energy = curve.map { it.energy }
-        val peak = energy.filter { it.isFinite() }.maxOrNull() ?: 0.0
-        // The waveform's own curve: the measured peaks where there are any,
-        // and the energy curve where there are not.
-        //
-        // The peaks are the panel's own data — the loudest instant in each
-        // twenty milliseconds of the decoded audio — and the energy curve is
-        // an RMS average over a quarter of a second. Drawn, the second reads
-        // as a bar chart: flat-topped blocks on the analyser grid, with the
-        // transients nowhere in it. That was the "ugly bits".
-        //
-        // A restored analysis carries no peaks, because they are not worth
-        // persisting; the energy curve stands in for it, which is coarse but
-        // honest.
-        val waveformCurve = analysis.panelPeakCurve.ifEmpty { curve }
-        val waveformScale = peakScaleOf(waveformCurve.map { it.energy })
-        return TrackAnalysisDigest(
-            bpm = analysis.bpm,
-            key = analysis.key.trim(),
-            keyConfidence = analysis.keyConfidence.coerceIn(0.0, 1.0),
-            beatConfidence = analysis.beatConfidence.coerceIn(0.0, 1.0),
-            firstBeat = analysis.firstBeat,
-            beatInterval = analysis.beatInterval,
-            downbeats = analysis.downbeats.size,
-            // The whole grid, not a sample of it. The panel draws the beats it
-            // found *and* snaps the handoff to them, and a sampled grid would
-            // snap the handoff to places the track has no beat in.
-            downbeatTimes = analysis.downbeats,
-            phrases = analysis.phraseBoundaries.size,
-            audibleStart = analysis.audibleStartTime ?: 0.0,
-            pickup = analysis.pickupTime ?: 0.0,
-            introEnd = analysis.introEndTime,
-            contentEnd = analysis.contentEndTime.takeIf { it > 0.0 }
-                // A pass that has not measured the ending leaves this at zero,
-                // and zero is not "the track ends at the start" — the panel
-                // builds its viewport around this number and would open on the
-                // opening of a track the listener is hearing the end of. The
-                // duration is the honest answer until the tail pass arrives: it
-                // is where the transition window is drawn either way.
-                ?: if (analysis.isUsable) analysis.duration else 0.0,
-            duration = analysis.duration,
-            vocals = bucketize(analysis.vocalActivityMask, PANEL_BUCKETS, 1.0),
-            energy = bucketize(energy, PANEL_BUCKETS, peak),
-            waveform = waveformCurve.map { sample ->
-                val value = if (sample.energy.isFinite()) sample.energy else 0.0
-                (value.coerceAtLeast(0.0) / waveformScale).toFloat().coerceIn(0f, 1f)
-            },
-            waveformTimes = waveformCurve.map { it.time },
-            provisional = provisional,
-        )
-    }
-
-    /**
-     * The scale a curve of peaks is drawn against.
-     *
-     * The loudest peak, unless one peak stands far above the rest — a click, a
-     * splice, a decode artefact — in which case almost everything else would be
-     * drawn flat against the floor and the lane would read as a line with a
-     * spike in it. The ninety-eighth percentile is the loudest moment of the
-     * *music* rather than of the file.
-     */
-    private fun peakScaleOf(values: List<Double>): Double {
-        val finite = values.filter { it.isFinite() && it > 0.0 }.sorted()
-        if (finite.isEmpty()) return 1.0
-        val percentile = finite[minOf(finite.size - 1, (finite.size * 0.98).toInt())]
-        val loudest = finite.last()
-        return if (loudest > percentile * 2.5 && percentile > 0.0) percentile else loudest
-    }
-
-    /**
-     * A curve, folded down to [buckets] numbers between 0 and 1.
-     *
-     * Folded rather than sampled: a bucket takes the mean of the samples that
-     * fall into it, so a curve with more samples than buckets shows the shape
-     * of the track rather than a slice of it. [peak] normalises the scale,
-     * because the analyser reports energy in whatever units it measured.
-     */
-    private fun bucketize(values: List<Double>, buckets: Int, peak: Double): List<Float> {
-        if (values.isEmpty() || buckets <= 0) return emptyList()
-        val sums = DoubleArray(buckets)
-        val counts = IntArray(buckets)
-        for (index in values.indices) {
-            val raw = values[index]
-            val value = if (raw.isFinite()) raw.coerceAtLeast(0.0) else 0.0
-            val bucket = ((index.toLong() * buckets) / values.size).toInt().coerceIn(0, buckets - 1)
-            sums[bucket] += value
-            counts[bucket] += 1
-        }
-        val scale = if (peak > 1.0) peak else 1.0
-        return List(buckets) { bucket ->
-            if (counts[bucket] == 0) 0f
-            else ((sums[bucket] / counts[bucket]) / scale).toFloat().coerceIn(0f, 1f)
-        }
-    }
-
-    /**
-     * What Automix has planned, in the panel's terms.
-     *
-     * The plan as it is — not the request. A listener who asked for sixteen
-     * bars and got eight has been given eight, and saying so is the only
-     * honest way to show it.
-     */
-    private fun planDigest(
-        currentAnalysis: TrackAnalysis?,
-        nextAnalysis: TrackAnalysis?,
-    ): AutomixPlanDigest {
-        val plan = lastPlan ?: return AutomixPlanDigest()
-        if (plan.blocked) return AutomixPlanDigest(reasons = plan.policyReasons)
-        val currentBpm = currentAnalysis?.bpm ?: 0.0
-        val nextBpm = nextAnalysis?.bpm ?: 0.0
-        return AutomixPlanDigest(
-            bars = plan.transitionBars,
-            maxBars = plan.maxTransitionBars,
-            style = plan.transitionStyle.name,
-            filter = if (plan.filterVariant == FilterTransitionVariant.SWEEP) {
-                ""
-            } else {
-                plan.filterVariant.name
-            },
-            eq = plan.eqShape?.name.orEmpty(),
-            volume = plan.volumeShape.name,
-            transitionStart = plan.transitionStart,
-            transitionEnd = plan.transitionEnd,
-            echoSeconds = plan.echoSeconds,
-            filterSweep = plan.filterSweep,
-            overlapSeconds = plan.fadeSeconds,
-            cueSeconds = plan.incomingCueTime,
-            handoffSeconds = plan.incomingHandoffTime,
-            incomingRate = plan.incomingPlaybackRate,
-            outgoingRate = plan.outgoingPlaybackRate,
-            vocalOverlap = plan.vocalOverlap,
-            tempoRatio = tempoRatio(currentBpm, nextBpm),
-            keyCompatible = keysCompatible(currentAnalysis?.key.orEmpty(), nextAnalysis?.key.orEmpty()),
-            reasons = plan.policyReasons,
-            reason = plan.reason,
         )
     }
 
@@ -2443,28 +2013,6 @@ class CrossfadeController(
         outgoingAnalysis = TrackAnalysis()
         incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
-
-        // A preview puts the song back where it was.
-        //
-        // Hearing a transition is not the same as having one: the blend that
-        // just ran was a demonstration, and the song itself was interrupted by
-        // it. So the playhead goes back to the track it was on, at the place it
-        // was, and waits — paused, because a preview that carried on playing
-        // would run the transition a second time, for real, a moment later.
-        val home = if (previewing) previewHome else null
-        previewing = false
-        previewHome = null
-        // The panel's button goes back to "play" the moment the preview is
-        // over, whoever ended it — the listener pressing stop, or the blend
-        // simply finishing.
-        AutomixPreviewState.setPlaying(false)
-        if (home != null) {
-            val session = active()
-            if (home.index >= 0 && home.index < session.mediaItemCount) {
-                session.seekTo(home.index, home.positionMs)
-            }
-            session.pause()
-        }
     }
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
@@ -3310,15 +2858,6 @@ class CrossfadeController(
         const val TAG = "BitChordCrossfade"
 
         /**
-         * How many points the panel's curves are drawn from.
-         *
-         * Enough to show the shape of a track's energy and vocals, few enough
-         * that the graph stays readable on a phone and the digest stays cheap
-         * to build.
-         */
-        const val PANEL_BUCKETS = 48
-
-        /**
          * The centre a "no shaping" band is parked at.
          *
          * The frequency is irrelevant when the gain is zero, but a filter
@@ -3364,14 +2903,6 @@ class CrossfadeController(
          */
         const val FALLBACK_SINK_LEAD_MS = 6_000L
 
-        /**
-         * How far before the handoff a preview starts.
-         *
-         * Long enough to hear the music arriving, short enough that the
-         * preview is a preview: the listener asked to hear the transition, not
-         * the run-up to it.
-         */
-        const val PREVIEW_LEAD_SECONDS = 2.0
 
         /**
          * States in which a track is measured well enough to be *entered* on.
@@ -3736,9 +3267,6 @@ class CrossfadeController(
 
         /** Relative tempo change worth re-publishing; beatmatch rates are fixed per blend. */
         const val TEMPO_TOLERANCE = 0.005f
-
-        /** Panel digests kept; see [digestCache]. Two are drawn, the rest cover skipping back. */
-        const val DIGEST_CACHE_ENTRIES = 4
 
         const val IDLE_STEP_MS = 250L
 
