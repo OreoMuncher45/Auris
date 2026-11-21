@@ -17,12 +17,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
@@ -120,18 +118,6 @@ fun Modifier.lightweightLiquidGlass(
             },
         )
         .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
-}
-
-/**
- * The glass rim alone — the same [Highlight] a glass surface draws round its
- * own edge — for glass whose edge is drawn apart from its capture: the player
- * panel's, captured at the window's size and clipped to the moving panel.
- * Re-recorded only when [shape]'s outline changes, as a 0.5dp stroke.
- */
-@Composable
-internal fun Modifier.glassRim(shape: Shape): Modifier {
-    val shapeProvider = remember(shape) { ShapeProvider { shape } }
-    return then(HighlightElement(shapeProvider = shapeProvider, highlight = { Highlight.Default }))
 }
 
 /**

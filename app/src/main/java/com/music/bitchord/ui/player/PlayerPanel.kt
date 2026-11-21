@@ -6,6 +6,7 @@ package com.music.bitchord.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -322,10 +324,15 @@ internal fun PlayerPanel(
 /**
  * Placed off the panel while [shown] is false: out of sight, out of reach of
  * a finger (the panel clips, so nothing off it is hit) and with nothing to
- * draw. Read in placement, so a flip costs a re-placement, not a composition.
+ * draw — and out of a keyboard's reach too, which placement alone would not
+ * be: Tab may not enter it, so a hidden skip button cannot be pressed. Read in
+ * placement and at focus time, so a flip costs a re-placement, not a
+ * composition.
  */
-private fun Modifier.hiddenUnless(shown: State<Boolean>): Modifier =
-    layout { measurable, constraints ->
+private fun Modifier.hiddenUnless(shown: State<Boolean>): Modifier = this
+    .focusProperties { onEnter = { if (!shown.value) cancelFocusChange() } }
+    .focusGroup()
+    .layout { measurable, constraints ->
         val placeable = measurable.measure(constraints)
         layout(placeable.width, placeable.height) {
             if (shown.value) placeable.place(0, 0) else placeable.place(0, OFF_PANEL_PX)
