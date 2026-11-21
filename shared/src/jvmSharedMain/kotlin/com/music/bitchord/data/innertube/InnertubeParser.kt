@@ -139,6 +139,17 @@ object InnertubeParser {
             }
             .distinct()
 
+    /**
+     * The songs, artists and albums a `music/get_search_suggestions` response
+     * lists under its query strings — YouTube Music's own live cards for a
+     * half-typed query. Asked signed in, YouTube ranks them by what the
+     * account listens to, and the call is not filed in the account's search
+     * history the way a `search` is. Music videos are left out, as on the
+     * All tab.
+     */
+    fun parseSearchSuggestionEntities(response: JsonObject): List<SearchResult> =
+        parseSearchPage(response).rows
+
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
         val out = mutableListOf<JsonObject>()

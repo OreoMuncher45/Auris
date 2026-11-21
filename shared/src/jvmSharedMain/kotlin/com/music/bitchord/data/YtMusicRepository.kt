@@ -27,6 +27,9 @@ import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -347,23 +350,62 @@ object YtMusicRepository {
      */
     suspend fun searchSuggestions(input: String): Result<List<String>> =
         call("suggest") {
-            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+            InnertubeParser.parseSearchSuggestions(rawSuggestions(input))
         }
 
     /**
-     * Live media results for the typeahead phase — a lightweight search that
-     * returns tracks, artists, and albums so the dropdown can show playable
-     * cards alongside text completions. Uses the ALL filter to get mixed
-     * results quickly; callers may want to limit how many they display.
+     * One `get_search_suggestions` answer per typed input, shared by the
+     * dropdown's text completions ([searchSuggestions]) and its live cards
+     * ([searchTypeahead]): both read the same response, so a keystroke asks
+     * YouTube once rather than twice. Only the latest input is kept — the
+     * field never goes back to an older one without it being typed again.
+     * Run on its own scope so one reader moving on doesn't cancel the other's
+     * answer; a failure isn't kept, so the next ask tries again.
+     */
+    private suspend fun rawSuggestions(input: String): JsonObject {
+        val pending = synchronized(suggestionsLock) {
+            lastSuggestions?.takeIf { it.first == input && !it.second.isCancelled }?.second
+                ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
+                    .also { lastSuggestions = input to it }
+        }
+        return try {
+            pending.await()
+        } catch (failure: Throwable) {
+            if (failure !is CancellationException || pending.isCancelled) {
+                synchronized(suggestionsLock) {
+                    if (lastSuggestions?.second === pending) lastSuggestions = null
+                }
+            }
+            throw failure
+        }
+    }
+
+    private val suggestionsLock = Any()
+    private var lastSuggestions: Pair<String, Deferred<JsonObject>>? = null
+    private val suggestionsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Live media results for the typeahead phase: tracks, artists and albums
+     * so the dropdown can show playable cards alongside text completions.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
-     * session cookie so YouTube Music does not log each debounced keystroke
-     * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) still use the normal authenticated
-     * [searchPage] path and are recorded properly.
+     * Read from the suggestions endpoint first, signed in, the way YouTube
+     * Music's own search box does it. That is the only way to get cards
+     * ranked by the account's listening without filing every debounced
+     * keystroke in its search history: a signed-in `search` records the
+     * query, and an anonymous one answers with what is popular rather than
+     * what this listener plays — which is how the cards came to be full of
+     * songs the user never listens to.
+     *
+     * Only when the suggestions carry no cards (some short or odd prefixes)
+     * does it fall back to [Innertube.searchTypeahead], the anonymous search,
+     * so the dropdown still has something to play.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
+            val cards = InnertubeParser.parseSearchSuggestionEntities(rawSuggestions(input))
+                .distinctBy { it.identityKey() }
+                .withoutRepeatedRecordings()
+            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
