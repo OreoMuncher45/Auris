@@ -168,6 +168,37 @@ class TrackMatcherWrongRecordingTest {
     }
 
     @Test
+    fun `an extra take word is not absorbed by a repeated title word`() {
+        val target = TrackMatcher.Target("Live Forever", "Oasis", 276)
+        refused(song("Live Forever Live", "Oasis", "4:36"), target)
+        accepted(song("Live Forever", "Oasis", "4:36"), target)
+    }
+
+    @Test
+    fun `unbracketed DJ-mix and live album labels are release takes`() {
+        val studio = TrackMatcher.Target("Be By You", "River Lane", 210)
+        refused(song("Be By You", "River Lane", "3:30", album = "Club Night DJ Mix"), studio)
+        refused(song("Be By You", "River Lane", "3:30", album = "Summer Sessions Mixed by Someone"), studio)
+        refused(song("Be By You", "River Lane", "3:30", album = "Live at Wembley"), studio)
+        // The matching request still meets them.
+        accepted(
+            song("Be By You", "River Lane", "3:30", album = "Club Night DJ Mix"),
+            TrackMatcher.Target("Be By You (DJ Mix)", "River Lane", 210),
+        )
+        accepted(
+            song("Be By You", "River Lane", "3:30", album = "Live at Wembley"),
+            TrackMatcher.Target("Be By You (Live)", "River Lane", 210),
+        )
+        accepted(
+            song("Be By You", "River Lane", "3:30", album = "Live at Wembley"),
+            TrackMatcher.Target("Be By You", "River Lane", 210, album = "Live at Wembley"),
+        )
+        // Generic names stay neutral.
+        accepted(song("Be By You", "River Lane", "3:30", album = "Party Mix 2024"), studio)
+        accepted(song("Be By You", "River Lane", "3:30", album = "Let Me Live"), studio)
+    }
+
+    @Test
     fun `an act genuinely named with an imitation word still matches itself`() {
         accepted(
             song("Lost", "Cover Drive", "3:30"),

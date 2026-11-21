@@ -253,10 +253,18 @@ object TrackMatcher {
             .none { it in VERSION_WORDS || it in IMITATION_WORDS }
     }
 
+    /**
+     * The words one title has over the other, counted: "Live Forever Live"
+     * has one "live" more than "Live Forever", and that extra one is the take.
+     */
     private fun differingWords(a: List<String>, b: List<String>): List<String> {
-        val inA = a.toSet()
-        val inB = b.toSet()
-        return a.filter { it !in inB } + b.filter { it !in inA }
+        val left = a.groupingBy { it }.eachCount().toMutableMap()
+        val extraB = mutableListOf<String>()
+        for (word in b) {
+            val n = left[word] ?: 0
+            if (n > 0) left[word] = n - 1 else extraB += word
+        }
+        return left.flatMap { (word, n) -> List(n) { word } } + extraB
     }
 
     /**
@@ -859,8 +867,24 @@ object TrackMatcher {
      * (Remix)" as the album of a plain-titled "KALYANI"). Read with the same
      * parser, so the same version vocabulary applies on both sides.
      */
-    internal fun albumVersionMarkers(album: String?): Set<String> =
-        if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
+    internal fun albumVersionMarkers(album: String?): Set<String> {
+        if (album.isNullOrBlank()) return emptySet()
+        val marks = parseTitle(album).versions
+        // Release labels printed without a bracket or dash to hang them on:
+        // "Club Night DJ Mix", "Mixed by …", "Live at Wembley". Only these
+        // phrasings: a bare trailing "Live" is as often the title ("Let Me
+        // Live") and "Party Mix 2024" is a compilation, not a DJ set.
+        val text = normalize(album)
+        val extra = buildSet {
+            if (DJ_MIX_ALBUM.containsMatchIn(text)) add("mixed")
+            if (LIVE_ALBUM.containsMatchIn(text)) add("live")
+        }
+        return if (extra.isEmpty()) marks else marks + extra
+    }
+
+    private val DJ_MIX_ALBUM =
+        Regex("""(?:\bdj[\s-]?mix(?:ed)?|\bcontinuous mix|\bnon-?stop mix|\bmixed)\W*$|\bmixed by\b""")
+    private val LIVE_ALBUM = Regex("""\blive (?:at|in|from)\b""")
 
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
     private fun albumKey(value: String?): String? {
