@@ -110,10 +110,16 @@ fun MeshGradientBackground(
      */
     blackWash: () -> Float = { 0f },
     whiteWash: () -> Float = { 0f },
+    /**
+     * Dark theme: the four colours are brought down the way the artwork mesh's
+     * cells are — see [darkThemeMeshCell]. Only the player passes it; Home and
+     * the Replay cards keep their colours.
+     */
+    darkTheme: Boolean = false,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
-    val tuned = palette.drawnColors()
+    val tuned = remember(palette, darkTheme) { palette.drawnColors(darkTheme) }
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
@@ -333,8 +339,14 @@ private fun Color.hsl(): FloatArray =
 
 /** Boost saturation and clamp lightness so any artwork yields a rich, non-muddy mesh. */
 /** The four colours [MeshGradientBackground] actually paints for [this] palette. */
-private fun MeshPalette.drawnColors(): List<Color> =
-    (colors.ifEmpty { FallbackColors } + FallbackColors).take(4).map { it.tuned() }
+private fun MeshPalette.drawnColors(darkTheme: Boolean = false): List<Color> =
+    (colors.ifEmpty { FallbackColors } + FallbackColors).take(4).map {
+        val tuned = it.tuned()
+        // HSL lightness 0.58 is still a bright colour when it is saturated —
+        // cyan or yellow there is around 0.7 luminance — so dark theme tones
+        // these the same way as the artwork mesh.
+        if (darkTheme) Color(darkThemeMeshCell(tuned.toArgb())) else tuned
+    }
 
 private const val LEGACY_SCRIM_TOP = 0.10f
 private const val LEGACY_SCRIM_BOTTOM = 0.38f
@@ -349,8 +361,8 @@ private const val BLOB_ALPHA = 0.85f
  * band the ink has to hold over — at the scrim's lightest for light ink, at
  * its darkest for dark.
  */
-internal fun legacyMeshInkSurface(palette: MeshPalette): InkSurface {
-    val drawn = palette.drawnColors()
+internal fun legacyMeshInkSurface(palette: MeshPalette, darkTheme: Boolean = false): InkSurface {
+    val drawn = palette.drawnColors(darkTheme)
     val base = drawn.first().dimmed().toArgb()
     val shown = IntArray(drawn.size + 1) { i ->
         if (i == drawn.size) base else blendArgb(drawn[i].toArgb(), base, BLOB_ALPHA)

@@ -146,6 +146,7 @@ internal fun BoxScope.PortraitBackdrop(
             inkSurfaces = inkSurfaces,
             inkBlackWash = inkBlackWash,
             inkWhiteWash = inkWhiteWash,
+            darkTheme = darkTheme,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
         // Not drawn once the full-cover blur has taken the screen: a
@@ -409,6 +410,7 @@ private fun LegacyMeshBackdrop(
     inkSurfaces: PlayerInkSurfaces,
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
+    darkTheme: Boolean,
 ) {
     // One frame at a time: the legacy backdrop takes a picture, not a stream.
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -418,7 +420,7 @@ private fun LegacyMeshBackdrop(
     val palette = rememberArtworkColors(imageUrl, frame)
     // The blobs' own colours, published for the ink — four colours and a
     // base, so cheap enough to read wherever the palette lands.
-    LaunchedEffect(palette) { inkSurfaces.main = legacyMeshInkSurface(palette) }
+    LaunchedEffect(palette, darkTheme) { inkSurfaces.main = legacyMeshInkSurface(palette, darkTheme) }
     // No cover band is read here; the header keeps the player's own ink.
     LaunchedEffect(Unit) { inkSurfaces.header = null }
     MeshGradientBackground(
@@ -427,5 +429,6 @@ private fun LegacyMeshBackdrop(
         modifier = modifier,
         blackWash = inkBlackWash,
         whiteWash = inkWhiteWash,
+        darkTheme = darkTheme,
     )
 }

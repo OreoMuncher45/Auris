@@ -128,6 +128,70 @@ class PlayerDarkThemeTest {
         assertEquals(mid, darkThemeMeshCell(mid))
     }
 
+    // --- A bright, saturated cover ------------------------------------------
+
+    /** Cyan, magenta, yellow and white: an '80s-dance style sleeve. */
+    private val saturatedCover = intArrayOf(
+        rgb(0x00D5D5), rgb(0xFF00FF), rgb(0xFFF000), rgb(0xFFFFFF), rgb(0x2EC4E0), rgb(0x3A3FD0),
+    )
+
+    private val saturatedSleeve: NowPlayingPalette = computeNowPlayingPalette(
+        List(450) { rgb(0x00D5D5) } + List(250) { rgb(0xFF00FF) } + List(150) { rgb(0xFFF000) } +
+            List(100) { rgb(0xFFFFFF) } + List(50) { rgb(0x3A3FD0) },
+    )
+
+    @Test
+    fun saturatedCoverInDarkThemeStaysDarkWithLightInk() {
+        val cells = meshCells(saturatedCover, darkTheme = true)
+        cells.forEach { cell ->
+            assertTrue(wcagLuminance(cell) < 0.22f, "cell ${Integer.toHexString(cell)} is not dark")
+        }
+        val surface = surfaceOf(cells)
+        surface.light.forEach { shown ->
+            assertTrue(wcagLuminance(shown) < 0.16f, "drawn ${Integer.toHexString(shown)} is not dark")
+        }
+        val choice = resolveInk(saturatedSleeve.accent, surface, saturatedSleeve.alphas, allowDark = false)
+        assertFalse(choice.dark)
+        assertTrue(choice.wash <= 0.35f, "grade ${choice.wash}")
+        // And whatever it settles on is light ink, not a dark one that happens to hold.
+        assertTrue(choice.fg.isLightInk(), "ink ${Integer.toHexString(choice.fg.toArgb())} is not light")
+    }
+
+    @Test
+    fun saturatedBlurInDarkThemeIsDarkWithLightInk() {
+        val toned = saturatedCover.copyOf().darkThemeToned()
+        toned.forEach { pixel ->
+            assertTrue(wcagLuminance(pixel) < 0.22f, "blur pixel ${Integer.toHexString(pixel)} is not dark")
+        }
+        val surface = fullBlurInkSurface(BandBounds(toned.copyOfRange(0, 3), toned.copyOfRange(3, 6)))
+        val choice = resolveInk(saturatedSleeve.accent, surface, saturatedSleeve.alphas, allowDark = false)
+        assertFalse(choice.dark)
+        assertTrue(choice.fg.isLightInk())
+    }
+
+    @Test
+    fun saturatedCoverOnTheClassicBackdropIsDarkInDarkTheme() {
+        // The classic blobs clamp HSL lightness to 0.58, which for a saturated
+        // cyan or yellow is still a bright colour.
+        val palette = MeshPalette(saturatedCover.take(4).map { androidx.compose.ui.graphics.Color(it) })
+        val old = legacyMeshInkSurface(palette)
+        assertTrue(old.light.any { wcagLuminance(it) > 0.4f }, "precondition: the classic blobs were bright")
+        val dark = legacyMeshInkSurface(palette, darkTheme = true)
+        dark.light.forEach { shown ->
+            assertTrue(wcagLuminance(shown) < 0.16f, "classic blob ${Integer.toHexString(shown)} is not dark")
+        }
+        val choice = resolveInk(saturatedSleeve.accent, dark, saturatedSleeve.alphas, allowDark = false)
+        assertFalse(choice.dark)
+        assertTrue(choice.wash <= 0.35f, "grade ${choice.wash}")
+        // Light theme keeps the classic blobs exactly as they were.
+        assertTrue(old.light.contentEquals(legacyMeshInkSurface(palette, darkTheme = false).light))
+    }
+
+    @Test
+    fun saturatedCoverInLightThemeIsUnchanged() {
+        saturatedCover.forEach { assertEquals(it.lifted(), it.lifted(darkTheme = false)) }
+    }
+
     // --- The full-cover blur behind lyrics and the queue -------------------
 
     @Test
