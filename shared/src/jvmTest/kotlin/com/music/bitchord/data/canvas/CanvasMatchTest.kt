@@ -118,6 +118,23 @@ class CanvasMatchTest {
     }
 
     @Test
+    fun `accents come off Latin letters only`() {
+        assertEquals("beyonce", "Beyoncé".normalizeForMatch())
+        // й is и plus a combining breve; they are different letters.
+        assertNotEquals("й".normalizeForMatch(), "и".normalizeForMatch())
+        assertFalse(clip("Мой", "Artist").matches("Мои", "Artist", null))
+    }
+
+    @Test
+    fun `a band whose name has separators in it matches when credited intact`() {
+        assertTrue(canvasTrackMatches("September", listOf("Earth, Wind & Fire"), "September", "Earth, Wind & Fire"))
+        assertTrue(clip("September", "Earth, Wind & Fire").matches("September", "Earth, Wind & Fire", null))
+        // A collaboration still needs every member.
+        assertFalse(canvasTrackMatches("Song", listOf("A"), "Song", "A & B"))
+        assertTrue(canvasTrackMatches("Song", listOf("B", "A"), "Song", "A & B"))
+    }
+
+    @Test
     fun `a blank request never matches`() {
         assertFalse(canvasTrackMatches("", listOf("Ramya Behara"), "", "Ramya Behara"))
         assertFalse(canvasTrackMatches("!!", listOf("Ramya Behara"), "??", "Ramya Behara"))

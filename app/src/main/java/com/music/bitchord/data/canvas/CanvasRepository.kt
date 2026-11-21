@@ -166,10 +166,12 @@ object CanvasRepository {
      * The track's id plus the title and artist the search is made from. The id
      * alone is not enough: an id that is blank, or one that two catalogues
      * both use, would hand one song's clip to every other song sharing it.
-     * Raw strings rather than [cleaned] ones, so [cached] stays a plain
-     * concatenation on the main thread.
+     * Each field but the last is length-prefixed, so a "|" inside a title
+     * can't make two songs' keys collide. Raw strings rather than [cleaned]
+     * ones, so [cached] stays a plain concatenation on the main thread.
      */
-    private fun songKey(song: Song): String = "song|${song.videoId}|${song.title}|${song.artist}"
+    private fun songKey(song: Song): String =
+        "song|${song.videoId.length}:${song.videoId}|${song.title.length}:${song.title}|${song.artist}"
 
     /** Priority is part of the question, so a toggle never reuses the other order's answer. */
     private fun cacheKey(
