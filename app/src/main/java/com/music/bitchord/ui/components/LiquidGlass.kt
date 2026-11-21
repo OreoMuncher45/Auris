@@ -170,6 +170,13 @@ fun Modifier.liquidGlass(
      * behind it rather than show it. Null keeps the provider's.
      */
     blurRadiusDp: Float? = null,
+    /**
+     * The lens, the rim and the drop shadow — everything drawn off the
+     * surface's own edge. Off for glass whose edge is not where its node is:
+     * the player panel's, captured at the window's fixed size and clipped to
+     * the moving panel (see `PanelMaterial`), whose edge is drawn there.
+     */
+    edgeEffects: Boolean = true,
 ): Modifier {
     // The provider's flag is read here in composition and closed over, not
     // read inside the lambda: CompositionLocals belong to composition, and
@@ -185,6 +192,7 @@ fun Modifier.liquidGlass(
         // dead-control failure mode.
         LocalGlassEffectConfig.current,
         shape,
+        applyEdgeEffects = edgeEffects,
         blurRadiusDp = blurRadiusDp ?: LocalGlassEffectConfig.current.blurRadius,
         frozen = {
             GlassMotion.sheet.frozen() ||

@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -143,6 +144,14 @@ internal fun Modifier.playerDockHost(
                     // be, or it arrives as the right words at the wrong size.
                     val ratio = creditsTitleRatio()
                     val size = 1f + (ratio - 1f) * travel
+                    // Rendered once into a texture of its own and scaled as
+                    // that texture. Drawn as text under a scale that moves on
+                    // every frame, each frame's size was a new glyph strike:
+                    // the whole title rasterised again and uploaded to the
+                    // glyph atlas, dozens of uploads a trip on the render
+                    // thread. The same layer also makes the handover's alpha
+                    // a composite of that texture rather than a save-layer.
+                    creditsLayer.compositingStrategy = CompositingStrategy.Offscreen
                     creditsLayer.alpha = creditsHandoverAlpha(progress)
                     translate(at.x, at.y) {
                         scale(size, size, pivot = Offset.Zero) { drawLayer(creditsLayer) }
