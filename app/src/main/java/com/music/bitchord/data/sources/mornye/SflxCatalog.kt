@@ -358,8 +358,11 @@ object SflxCatalog {
     /** Every installed package's files by id, in install order. Disk reads, so never on the main thread. */
     internal fun backupPackages(): Map<String, Map<String, ByteArray>> {
         val store = store ?: return emptyMap()
+        val host = hostRef ?: return emptyMap()
+        // Each package is read under the host's lifecycle lock, so an install
+        // or removal running at the same moment can't leave a half-read copy.
         return runCatching { store.list() }.getOrDefault(emptyList())
-            .mapNotNull { installed -> store.exportFiles(installed.id)?.let { installed.id to it } }
+            .mapNotNull { installed -> host.exportFiles(installed.id)?.let { installed.id to it } }
             .toMap()
     }
 
@@ -397,17 +400,47 @@ object SflxCatalog {
         }.getOrDefault(false)
     }
 
-    /** Writes a package from a backup. Call [finishRestore] once every package is written. */
+    /** Writes a package from a backup. Call [snapshotAfterRestore] once every package is written. */
     internal fun restorePackage(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
         hostRef?.restore(id, files) ?: Result.failure(SflxException("the extension host is not ready"))
 
+    /** What [refresh] reads from disk, gathered off the main thread for [publishRestore]. */
+    internal class RestoreSnapshot(
+        val packages: List<InstalledSflx>,
+        val statuses: Map<String, SflxSignedSession.Snapshot>,
+        val lyricsLabel: String?,
+        val lyricsSetup: LyricsRepository.ExtensionSetup?,
+    )
+
     /**
-     * Puts the restored packages on the sources list and makes running
-     * extensions read their new sessions, all without a restart.
+     * The disk half of finishing a restore: makes running extensions forget
+     * their session clients, then reads the packages and session statuses.
+     * File I/O, so call it on [kotlinx.coroutines.Dispatchers.IO].
      */
-    internal fun finishRestore() {
-        hostRef?.reloadSessions()
-        refresh()
+    internal fun snapshotAfterRestore(): RestoreSnapshot? {
+        val store = store ?: return null
+        val host = hostRef ?: return null
+        host.reloadSessions()
+        val packages = runCatching { store.list() }.getOrDefault(emptyList())
+        val lyrics = packages.filter { it.manifest.isLyricsProvider }
+        return RestoreSnapshot(
+            packages = packages,
+            statuses = runCatching { host.sessionStatuses() }.getOrDefault(emptyMap()),
+            lyricsLabel = lyrics.firstOrNull()?.manifest?.displayName,
+            lyricsSetup = lyrics.firstNotNullOfOrNull { missingLyricsSetup(it) },
+        )
+    }
+
+    /**
+     * The main-thread half: puts the restored packages on the sources list,
+     * all without a restart. Does no file I/O.
+     */
+    internal fun publishRestore(snapshot: RestoreSnapshot) {
+        _installed.value = snapshot.packages
+        syncSources(snapshot.packages)
+        LyricsRepository.extensionLabel = snapshot.lyricsLabel
+        LyricsRepository.extensionSetup = snapshot.lyricsSetup
+        _statuses.value = snapshot.statuses
     }
 
     // ── Sources list ─────────────────────────────────────────────────────

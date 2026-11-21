@@ -99,8 +99,8 @@ object AddonBackupArchive {
     /** The only files an extension's directory contributes. Its cache never travels. */
     val EXTENSION_FILES: Set<String> = SflxStore.BACKUP_FILES.toSet()
 
-    private const val MAX_ENTRIES = 2_000
-    private const val MAX_UNPACKED_BYTES = 64L * 1024 * 1024
+    internal const val MAX_ENTRIES = 2_000
+    internal const val MAX_UNPACKED_BYTES = 64L * 1024 * 1024
 
     private val SESSION_NAME = Regex("[a-z0-9][a-z0-9._-]{0,127}\\.json")
 
@@ -109,24 +109,34 @@ object AddonBackupArchive {
     /** Whether [name] is a safe file name for a signed-session record. */
     fun isSessionName(name: String): Boolean = SESSION_NAME.matches(name) && !name.contains("..")
 
+    /**
+     * Packs [contents].
+     *
+     * Applies the same entry-count and unpacked-size caps as [read], so every
+     * archive this writes can be read back.
+     *
+     * @throws AddonBackupException TOO_LARGE when either cap would be passed.
+     */
     fun write(contents: AddonBackupContents): ByteArray {
-        val out = ByteArrayOutputStream()
-        ZipOutputStream(out).use { zip ->
-            zip.putNextEntry(ZipEntry(INDEX_ENTRY))
-            zip.write(json.encodeToString(AddonBackupIndex.serializer(), contents.index).toByteArray())
-            zip.closeEntry()
+        val entries = buildList {
+            add(INDEX_ENTRY to json.encodeToString(AddonBackupIndex.serializer(), contents.index).toByteArray())
             contents.extensionFiles.forEach { (id, files) ->
                 require(SflxStore.isSafeId(id)) { "unsafe extension id" }
                 files.forEach { (name, bytes) ->
-                    if (name !in EXTENSION_FILES) return@forEach
-                    zip.putNextEntry(ZipEntry("$EXTENSIONS_DIR$id/$name"))
-                    zip.write(bytes)
-                    zip.closeEntry()
+                    if (name in EXTENSION_FILES) add("$EXTENSIONS_DIR$id/$name" to bytes)
                 }
             }
             contents.sessionFiles.forEach { (name, bytes) ->
-                if (!isSessionName(name)) return@forEach
-                zip.putNextEntry(ZipEntry("$SESSIONS_DIR$name"))
+                if (isSessionName(name)) add("$SESSIONS_DIR$name" to bytes)
+            }
+        }
+        if (entries.size > MAX_ENTRIES || entries.sumOf { it.second.size.toLong() } > MAX_UNPACKED_BYTES) {
+            throw AddonBackupException(AddonBackupFailure.TOO_LARGE)
+        }
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            entries.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
                 zip.write(bytes)
                 zip.closeEntry()
             }
@@ -151,7 +161,12 @@ object AddonBackupArchive {
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     if (++entries > MAX_ENTRIES) throw AddonBackupException(AddonBackupFailure.TOO_LARGE)
-                    if (entry.isDirectory) continue
+                    // Every entry is drained through the cap, directories too: skipping one
+                    // would let the next nextEntry() inflate its payload with no limit.
+                    if (entry.isDirectory) {
+                        total += discardCapped(zip, MAX_UNPACKED_BYTES - total)
+                        continue
+                    }
                     val data = readCapped(zip, MAX_UNPACKED_BYTES - total)
                     total += data.size
                     val name = entry.name
@@ -193,6 +208,19 @@ object AddonBackupArchive {
         }
         if (decoded.schema > SCHEMA) throw AddonBackupException(AddonBackupFailure.NEWER_VERSION)
         return decoded
+    }
+
+    /** Reads and drops an entry's bytes, counting them against [remaining]. Returns how many there were. */
+    private fun discardCapped(zip: ZipInputStream, remaining: Long): Long {
+        val buffer = ByteArray(16 * 1024)
+        var read = 0L
+        while (true) {
+            val n = zip.read(buffer)
+            if (n < 0) break
+            read += n
+            if (read > remaining) throw AddonBackupException(AddonBackupFailure.TOO_LARGE)
+        }
+        return read
     }
 
     private fun readCapped(zip: ZipInputStream, remaining: Long): ByteArray {

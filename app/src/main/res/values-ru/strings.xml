@@ -1728,4 +1728,6 @@
     <string name="addon_backup_too_large_message">This is far bigger than any add-ons backup, so it wasn\'t opened.</string>
     <string name="addon_backup_read_failed_title">Couldn\'t open the file</string>
     <string name="addon_backup_read_failed_message">Check the file is still there and try again.</string>
+    <string name="addon_backup_restore_signins">Restore sign-ins</string>
+    <string name="addon_backup_export_too_large">These add-ons are too large for one backup file.</string>
 </resources>

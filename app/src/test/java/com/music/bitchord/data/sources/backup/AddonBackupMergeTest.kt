@@ -143,6 +143,25 @@ class AddonBackupMergeTest {
     }
 
     @Test
+    fun addressPathsStayCaseSensitiveWhileHostAndSchemeDoNot() {
+        val module = SourceConfig(kind = SourceKind.CUSTOM_MODULE, baseUrl = "https://modules.test/Module.json")
+        val plan = AddonBackupMerge.plan(
+            contents(
+                sources = listOf(
+                    BackedUpSource("CUSTOM_MODULE", baseUrl = "HTTPS://MODULES.test/Module.json"),
+                    BackedUpSource("CUSTOM_MODULE", baseUrl = "https://modules.test/module.json"),
+                ),
+            ),
+            current = listOf(module),
+            installedExtensions = emptySet(),
+            existingSessions = emptySet(),
+            mode = AddonMergeMode.SKIP_EXISTING,
+        )
+        assertEquals(1, plan.skipped)
+        assertEquals(listOf("https://modules.test/module.json"), plan.addSources.map { it.baseUrl })
+    }
+
+    @Test
     fun previewMarksWhatIsAlreadyHere() {
         val items = AddonBackupMerge.preview(
             contents(

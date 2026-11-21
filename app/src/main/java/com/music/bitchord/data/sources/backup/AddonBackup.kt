@@ -49,7 +49,14 @@ object AddonBackup {
     data class Summary(val addons: Int, val extensions: Int)
 
     /** An unlocked backup, ready to preview and apply. */
-    class Unlocked internal constructor(val contents: AddonBackupContents) {
+    class Unlocked internal constructor(
+        val contents: AddonBackupContents,
+        /**
+         * Session records in the file that this device doesn't have yet. An
+         * import that would only restore these is still worth running.
+         */
+        val missingSessions: Int = 0,
+    ) {
         val exportedAt: Long get() = contents.index.exportedAt
         override fun toString() = "Unlocked($contents)"
     }
@@ -106,6 +113,8 @@ object AddonBackup {
                 val sealed = withContext(Dispatchers.Default) {
                     AddonBackupCrypto.seal(AddonBackupArchive.write(contents), password)
                 }
+                // Never write a file that read() would refuse: an export has to come back.
+                if (sealed.size > MAX_FILE_BYTES) throw AddonBackupException(AddonBackupFailure.TOO_LARGE)
                 withContext(Dispatchers.IO) {
                     val stream = context.contentResolver.openOutputStream(target, "wt")
                         ?: error("could not open the destination")
@@ -147,7 +156,11 @@ object AddonBackup {
     suspend fun unlock(sealed: ByteArray, password: CharArray): kotlin.Result<Unlocked> =
         try {
             withContext(Dispatchers.Default) {
-                runCatching { Unlocked(AddonBackupArchive.read(AddonBackupCrypto.open(sealed, password))) }
+                runCatching {
+                    val contents = AddonBackupArchive.read(AddonBackupCrypto.open(sealed, password))
+                    val present = withContext(Dispatchers.IO) { SflxCatalog.sessionNames() }
+                    Unlocked(contents, missingSessions = contents.sessionFiles.keys.count { it !in present })
+                }
                     .onFailure { Log.w(TAG, "add-ons unlock failed: ${reasonOf(it)}") }
             }
         } finally {
@@ -184,20 +197,22 @@ object AddonBackup {
             plan.addSources.forEach(SourceRegistry::add)
             plan.replaceSources.forEach(SourceRegistry::update)
         }
-        val (restored, failed) = withContext(Dispatchers.IO) {
-            var failures = 0
+        var sessionFailures = 0
+        var packageFailures = 0
+        val restored = withContext(Dispatchers.IO) {
             // Sessions first, so a package written below builds its session client from the restored record.
             plan.sessions.forEach { name ->
-                contents.sessionFiles[name]?.let { if (!SflxCatalog.restoreSession(name, it)) failures++ }
+                contents.sessionFiles[name]?.let { if (!SflxCatalog.restoreSession(name, it)) sessionFailures++ }
             }
-            val written = plan.extensions.filter { id ->
+            plan.extensions.filter { id ->
                 val files = contents.extensionFiles[id] ?: return@filter false
-                SflxCatalog.restorePackage(id, files).isSuccess.also { if (!it) failures++ }
+                SflxCatalog.restorePackage(id, files).isSuccess.also { if (!it) packageFailures++ }
             }
-            written to failures
         }
+        // Disk reads for the refresh happen here, off the main thread; only publishing runs on Main.
+        val snapshot = withContext(Dispatchers.IO) { SflxCatalog.snapshotAfterRestore() }
         withContext(Dispatchers.Main) {
-            SflxCatalog.finishRestore()
+            snapshot?.let(SflxCatalog::publishRestore)
             // The rows exist now. Apply the file's on/off state and order to what was restored.
             restored.forEach { id ->
                 plan.extensionEnabled[id]?.let { on -> SourceRegistry.setEnabled(SflxCatalog.configIdOf(id), on) }
@@ -208,7 +223,10 @@ object AddonBackup {
                 SourceRegistry.reorderExtensions(fileOrder.filter { it in current } + current.filterNot { it in fileOrder })
             }
         }
-        return Result(imported = plan.imported - failed, skipped = plan.skipped, failed = failed).also {
+        // `imported` counts sources and packages only, so only package failures come off it.
+        // Session failures still show in the failure total.
+        val failed = packageFailures + sessionFailures
+        return Result(imported = plan.imported - packageFailures, skipped = plan.skipped, failed = failed).also {
             Log.d(TAG, "add-ons imported: ${it.imported}, skipped ${it.skipped}, failed ${it.failed}")
         }
     }

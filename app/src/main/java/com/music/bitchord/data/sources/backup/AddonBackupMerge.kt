@@ -140,9 +140,27 @@ object AddonBackupMerge {
         return current.firstOrNull { it.kind == kind && identity(it.kind, it.baseUrl) == key }
     }
 
+    /**
+     * The matching key for an address. Only the scheme and host are
+     * case-insensitive (RFC 3986), so only they are lowercased. Path and
+     * query keep their case, and `/Module.json` and `/module.json` stay two
+     * different sources.
+     */
     private fun identity(kind: SourceKind, baseUrl: String): String {
         val base = if (kind == SourceKind.ADDON) AddonClient.normalizeBase(baseUrl) else baseUrl.trim().trimEnd('/')
-        return "${kind.name}|${base.lowercase()}"
+        return "${kind.name}|${lowercaseSchemeAndHost(base)}"
+    }
+
+    private fun lowercaseSchemeAndHost(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd <= 0) return url
+        val authorityStart = schemeEnd + 3
+        val authorityEnd = url.indexOfAny(charArrayOf('/', '?', '#'), authorityStart).let { if (it < 0) url.length else it }
+        val authority = url.substring(authorityStart, authorityEnd)
+        // User info, when present, is case-sensitive; only the host after '@' is folded.
+        val at = authority.lastIndexOf('@')
+        val folded = if (at < 0) authority.lowercase() else authority.substring(0, at + 1) + authority.substring(at + 1).lowercase()
+        return url.substring(0, schemeEnd).lowercase() + "://" + folded + url.substring(authorityEnd)
     }
 
     private fun displayName(source: BackedUpSource): String =

@@ -47,6 +47,15 @@ class SflxStoreRestoreTest {
         assertFalse(File(temp.root, "demo.restoring").exists())
     }
 
+    @Test
+    fun restoreLeavesAPackageNamedLikeItsStagingFolderAlone() {
+        val store = SflxStore(temp.root)
+        store.restore("demo.restoring", files(id = "demo.restoring"))
+        store.restore("demo", files())
+        assertTrue(store.find("demo.restoring") != null)
+        assertTrue(store.find("demo") != null)
+    }
+
     @Test(expected = SflxException::class)
     fun manifestNamingAnotherIdIsRefused() {
         SflxStore(temp.root).restore("demo", files(id = "other"))

@@ -934,6 +934,9 @@ class SflxHost(
             }
         }.onFailure { Log.w(TAG, "sflx restore failed: ${it.message}") }
 
+    /** [id]'s package files for a backup, read under the lock install and removal take. */
+    fun exportFiles(id: String): Map<String, ByteArray>? = synchronized(lifecycle) { store.exportFiles(id) }
+
     /**
      * Drops every signed-session client, so the next signed call reads its
      * record from disk again. Used after an import writes session records

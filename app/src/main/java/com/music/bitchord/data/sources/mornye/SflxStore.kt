@@ -154,7 +154,9 @@ class SflxStore(private val root: File) {
         if (manifest.id != id) throw SflxException("the backed-up manifest names '${manifest.id}', not '$id'")
 
         val target = directoryOf(id)
-        val staging = File(root, "$id.restoring")
+        // A leading dot keeps the staging folder out of the id namespace
+        // (isSafeId rejects it), so it can never be an installed package.
+        val staging = File(root, ".$id.restoring")
         staging.deleteRecursively()
         if (!staging.mkdirs()) throw SflxException("could not create $staging")
         runCatching {

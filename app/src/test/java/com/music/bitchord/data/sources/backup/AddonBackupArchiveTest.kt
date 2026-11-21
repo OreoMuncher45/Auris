@@ -147,6 +147,29 @@ class AddonBackupArchiveTest {
     }
 
     @Test
+    fun writeRefusesWhatReadWouldRefuse() {
+        val tooMany = AddonBackupContents(
+            index = AddonBackupIndex(),
+            sessionFiles = (0 until AddonBackupArchive.MAX_ENTRIES).associate { "s$it.json" to byteArrayOf(1) },
+        )
+        assertEquals(AddonBackupFailure.TOO_LARGE, failure { AddonBackupArchive.write(tooMany) })
+        // One under the cap (index + sessions) still writes and reads back.
+        val fits = AddonBackupContents(
+            index = AddonBackupIndex(),
+            sessionFiles = (0 until AddonBackupArchive.MAX_ENTRIES - 1).associate { "s$it.json" to byteArrayOf(1) },
+        )
+        assertEquals(AddonBackupArchive.MAX_ENTRIES - 1, AddonBackupArchive.read(AddonBackupArchive.write(fits)).sessionFiles.size)
+    }
+
+    @Test
+    fun directoryEntryPayloadIsDrainedNotSkipped() {
+        // A directory entry carrying data is read through the cap and dropped; the rest still reads.
+        val bytes = zip("payload/" to "x".repeat(10_000), "addons.json" to "{}", "extensions/demo/manifest.json" to manifest, "extensions/demo/index.js" to "ok")
+        val read = AddonBackupArchive.read(bytes)
+        assertEquals(setOf("demo"), read.extensionFiles.keys)
+    }
+
+    @Test
     fun toStringsCarryNoSecrets() {
         val c = contents()
         listOf(c.toString(), c.index.toString(), c.index.sources.single().toString()).forEach {

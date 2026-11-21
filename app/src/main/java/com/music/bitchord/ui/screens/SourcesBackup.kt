@@ -36,8 +36,12 @@ private sealed interface BackupStep {
     data object Idle : BackupStep
 
     /** The password dialog. [working] once the file is chosen and encryption is running. */
-    data class Export(val summary: AddonBackup.Summary, val working: Boolean = false, val failed: Boolean = false) :
-        BackupStep
+    data class Export(
+        val summary: AddonBackup.Summary,
+        val working: Boolean = false,
+        val failed: Boolean = false,
+        val tooLarge: Boolean = false,
+    ) : BackupStep
 
     data class Unlock(
         val sealed: ByteArray,
@@ -83,6 +87,9 @@ internal fun AddonBackupGroup() {
     var importStatus by remember { mutableStateOf<String?>(null) }
     // Held only between the password dialog and the Save dialog's answer, then cleared.
     var pendingPassword by remember { mutableStateOf<CharArray?>(null) }
+    // Bumped by every file pick and every dialog change, so a slow read that
+    // finishes late can tell it is stale and leave the newer dialog alone.
+    var generation by remember { mutableStateOf(0) }
 
     val res = context.resources
 
@@ -104,15 +111,25 @@ internal fun AddonBackupGroup() {
                     exportStatus = res.getString(R.string.addon_backup_exported, summary.addons + summary.extensions)
                     step = BackupStep.Idle
                 }
-                .onFailure { step = current.copy(working = false, failed = true) }
+                .onFailure { error ->
+                    step = current.copy(
+                        working = false,
+                        failed = true,
+                        tooLarge = AddonBackup.reasonOf(error) == AddonBackupFailure.TOO_LARGE,
+                    )
+                }
         }
     }
 
     val openPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val mine = ++generation
         scope.launch {
             val name = withContext(Dispatchers.IO) { displayName(context, uri) } ?: AddonBackup.suggestedName()
-            AddonBackup.read(context, uri)
+            val result = AddonBackup.read(context, uri)
+            // Another pick, or another dialog, came along while this file was read.
+            if (mine != generation || step != BackupStep.Idle) return@launch
+            result
                 .onSuccess { step = BackupStep.Unlock(it, name) }
                 .onFailure { step = BackupStep.Failed(AddonBackup.reasonOf(it)) }
         }
@@ -127,6 +144,7 @@ internal fun AddonBackupGroup() {
             title = stringResource(R.string.export_addons),
             subtitle = exportStatus ?: stringResource(R.string.export_addons_subtitle),
             onClick = {
+                generation++
                 val summary = AddonBackup.summary()
                 step = if (summary.addons + summary.extensions == 0) {
                     BackupStep.NothingToExport
@@ -151,7 +169,11 @@ internal fun AddonBackupGroup() {
         is BackupStep.Export -> AddonExportAlert(
             summary = current.summary,
             working = current.working,
-            error = if (current.failed) stringResource(R.string.addon_backup_export_failed) else null,
+            error = when {
+                current.tooLarge -> stringResource(R.string.addon_backup_export_too_large)
+                current.failed -> stringResource(R.string.addon_backup_export_failed)
+                else -> null
+            },
             onExport = { password ->
                 pendingPassword?.fill('\u0000')
                 pendingPassword = password
@@ -184,6 +206,7 @@ internal fun AddonBackupGroup() {
         )
         is BackupStep.Preview -> AddonImportPreviewAlert(
             items = current.items,
+            missingSessions = current.unlocked.missingSessions,
             savedOn = current.unlocked.exportedAt.takeIf { it > 0 }
                 ?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) },
             working = current.working,

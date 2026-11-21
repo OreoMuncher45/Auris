@@ -36,6 +36,7 @@ import com.music.bitchord.data.sources.backup.AddonBackup
 import com.music.bitchord.data.sources.backup.AddonBackupFailure
 import com.music.bitchord.data.sources.backup.AddonMergeMode
 import com.music.bitchord.data.sources.backup.AddonPreviewItem
+import com.music.bitchord.ui.components.menu.LocalMenuInteractive
 
 /*
  * The add-ons backup dialogs. Each one is the shared frosted alert
@@ -152,6 +153,9 @@ fun AddonExportAlert(
     }
     val hintIsError = !working && (error != null || (confirm.isNotEmpty() && !matches))
     AlertScaffold(hazeState = null, onDismiss = { if (!working) onDismiss() }) {
+        // Read where the dialog is drawn: a closing or covered dialog ignores the IME's Done too,
+        // the way AlertAction already ignores taps.
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 19.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -177,7 +181,7 @@ fun AddonExportAlert(
                 onToggleShown = null,
                 enabled = !working,
                 last = true,
-                onDone = submit,
+                onDone = { if (interactiveNow) submit() },
             )
             Text(
                 text = stringResource(R.string.addon_backup_password_help),
@@ -217,6 +221,9 @@ fun AddonUnlockAlert(
     val canSubmit = password.isNotEmpty() && !working
     val submit = { if (canSubmit) onUnlock(password.toCharArray()) }
     AlertScaffold(hazeState = null, onDismiss = { if (!working) onDismiss() }) {
+        // Read where the dialog is drawn: a closing or covered dialog ignores the IME's Done too,
+        // the way AlertAction already ignores taps.
+        val interactiveNow = LocalMenuInteractive.current
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 19.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -240,7 +247,7 @@ fun AddonUnlockAlert(
                 onToggleShown = { shown = !shown },
                 enabled = !working,
                 last = true,
-                onDone = submit,
+                onDone = { if (interactiveNow) submit() },
             )
         }
         AlertRule()
@@ -268,6 +275,8 @@ fun AddonUnlockAlert(
 fun AddonImportPreviewAlert(
     items: List<AddonPreviewItem>,
     savedOn: String?,
+    /** Session records in the file this device lacks: restored in either mode. */
+    missingSessions: Int,
     working: Boolean,
     onImport: (AddonMergeMode) -> Unit,
     onDismiss: () -> Unit,
@@ -343,14 +352,15 @@ fun AddonImportPreviewAlert(
         }
         AlertRule()
         AlertAction(
-            label = if (importCount > 0) {
-                stringResource(R.string.addon_backup_import_action, importCount)
-            } else {
-                stringResource(R.string.addon_backup_nothing_new)
+            label = when {
+                importCount > 0 -> stringResource(R.string.addon_backup_import_action, importCount)
+                // Everything is already here, but a sign-in this device lost can still come back.
+                missingSessions > 0 -> stringResource(R.string.addon_backup_restore_signins)
+                else -> stringResource(R.string.addon_backup_nothing_new)
             },
             emphasised = true,
             onClick = { onImport(mode) },
-            enabled = importCount > 0 && !working,
+            enabled = (importCount > 0 || missingSessions > 0) && !working,
         )
         AlertRule()
         AlertAction(
