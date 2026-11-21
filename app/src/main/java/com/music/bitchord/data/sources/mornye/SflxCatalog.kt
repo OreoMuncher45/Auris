@@ -386,7 +386,8 @@ object SflxCatalog {
      */
     internal fun restoreSession(name: String, bytes: ByteArray): Boolean {
         val directory = sessionsDirectory ?: return false
-        if (name.contains('/') || name.contains('\\') || name.contains("..") || !name.endsWith(".json")) return false
+        // Same rule as the archive: one plain segment, so no separators and no leading dot.
+        if (!com.music.bitchord.data.sources.backup.AddonBackupArchive.isSessionName(name)) return false
         return runCatching {
             if (!directory.isDirectory) directory.mkdirs()
             val staging = File(directory, "$name.tmp")

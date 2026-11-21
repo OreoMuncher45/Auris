@@ -132,6 +132,15 @@ class AddonBackupArchiveTest {
     }
 
     @Test
+    fun sessionWithConsecutiveDotsRoundTrips() {
+        val name = "foo..bar-0123456789abcdef.json"
+        val read = AddonBackupArchive.read(
+            AddonBackupArchive.write(AddonBackupContents(AddonBackupIndex(), sessionFiles = mapOf(name to "{}".toByteArray()))),
+        )
+        assertEquals(setOf(name), read.sessionFiles.keys)
+    }
+
+    @Test
     fun extensionWithoutScriptIsDropped() {
         val bytes = zip("addons.json" to "{}", "extensions/demo/manifest.json" to manifest)
         assertTrue(AddonBackupArchive.read(bytes).extensionFiles.isEmpty())
@@ -141,6 +150,9 @@ class AddonBackupArchiveTest {
     fun sessionNamesAreChecked() {
         assertTrue(AddonBackupArchive.isSessionName("spotiflac-0123abcd.json"))
         assertFalse(AddonBackupArchive.isSessionName("../x.json"))
+        assertFalse(AddonBackupArchive.isSessionName("..json"))
+        // A namespace may keep consecutive dots; inside one segment they are harmless.
+        assertTrue(AddonBackupArchive.isSessionName("foo..bar-0123456789abcdef.json"))
         assertFalse(AddonBackupArchive.isSessionName("a/b.json"))
         assertFalse(AddonBackupArchive.isSessionName("x.json.tmp"))
         assertFalse(AddonBackupArchive.isSessionName(".json"))

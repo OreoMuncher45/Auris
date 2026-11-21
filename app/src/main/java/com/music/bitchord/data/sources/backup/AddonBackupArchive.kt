@@ -111,15 +111,16 @@ object AddonBackupArchive {
      * namespace of any letters or digits (Unicode included) plus `.`, `_` and
      * `-`, then a hash and `.json`. The only other limit is the filesystem's
      * 255-byte name cap, so no record the store writes is left out of a backup.
-     * Still one plain path segment: no separators, no `..`, no leading dot.
+     * Still one plain path segment: no separators and no leading dot. Interior
+     * dots, consecutive ones included (`foo..bar`), are safe inside a single
+     * segment and are allowed, since a namespace can keep them.
      */
     fun isSessionName(name: String): Boolean =
         name.endsWith(".json") &&
             name.length > ".json".length &&
             name.encodeToByteArray().size <= 255 &&
             name.first().isLetterOrDigit() &&
-            name.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' } &&
-            !name.contains("..")
+            name.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
 
     /**
      * Packs [contents].
