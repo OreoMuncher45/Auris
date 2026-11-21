@@ -6,7 +6,9 @@ import com.music.bitchord.data.spotify.SpotifyGraphQLException
 import com.music.bitchord.data.spotify.SpotifyHomeFeedParser
 import com.music.bitchord.data.spotify.SpotifyOps
 import com.music.bitchord.data.spotify.SpotifyPages
+import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.data.spotify.browseIdOf
+import com.music.bitchord.data.spotify.item
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -171,6 +173,44 @@ class SpotifyHomeTest {
         assertEquals("spotify:playlist:liked", cards.first { it.title == "Liked Songs" }.browseIdOf())
         assertEquals("spotify:artist:abc", cards.first { it.title == "The Artist" }.browseIdOf())
         assertEquals("spotify:album:xyz", cards.first { it.title == "The Album" }.browseIdOf())
+    }
+
+    @Test
+    fun aTrackCardIsPlayableAndEveryOtherCardStillOpensItsPage() {
+        // A signed-out home leads with "Trending songs": a shelf of tracks.
+        // A track card used to come out with neither a videoId nor a browse
+        // id, so the home's tap had nothing to play and nothing to open.
+        val answer = """
+            {"home": {"sectionContainer": {"sections": {"items": [
+              {"data": {"title": {"text": "Trending songs"}}, "sectionItems": {"items": [
+                {"content": {"data": {
+                  "uri": "spotify:track:t1",
+                  "name": "The Song",
+                  "artists": {"items": [{"profile": {"name": "One"}}, {"profile": {"name": "Two"}}]}
+                }}},
+                {"content": {"data": {"uri": "spotify:album:a1", "name": "An Album"}}},
+                {"content": {"data": {"uri": "spotify:playlist:p1", "name": "A Playlist"}}},
+                {"content": {"data": {"uri": "spotify:artist:r1", "profile": {"name": "An Artist"}}}}
+              ]}}
+            ]}}}}
+        """.trimIndent()
+
+        val items = SpotifyHomeFeedParser.parse(root(answer)).shelves.single().cards.map { it.item()!! }
+        val track = items.first { it.title == "The Song" }
+
+        // The same `spotify:<id>` key a Spotify search row plays under, so
+        // the player's resolver finds the recording by name.
+        assertEquals(SpotifyHomeSource.SPOTIFY_KEY_PREFIX + "t1", track.videoId)
+        assertNull(track.browseId)
+        assertEquals("One, Two", track.subtitle)
+
+        // Nothing that opened a page before plays now.
+        val others = items.filter { it !== track }
+        assertTrue(others.all { it.videoId == null })
+        assertEquals(
+            listOf("spotify:album:a1", "spotify:playlist:p1", "spotify:artist:r1"),
+            others.map { it.browseId },
+        )
     }
 
     @Test

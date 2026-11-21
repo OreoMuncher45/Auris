@@ -457,14 +457,22 @@ internal object SpotifyHomeSource {
         }
 }
 
-/** The card on a shelf, as this app draws one. */
+/**
+ * The card on a shelf, as this app draws one.
+ *
+ * A track card carries the same `spotify:<id>` key a Spotify search row does
+ * (see [SpotifyHomeSource.songFor]), so a tap plays it and a hold opens the
+ * song menu; the player resolves the recording by name when it is reached.
+ * Without it a track card — the whole of a signed-out "Trending songs" shelf —
+ * had neither a song nor a page behind it, and the tap did nothing.
+ */
 internal fun SpotifyCard.item(): ShelfItem? {
     if (title.isBlank()) return null
     return ShelfItem(
         title = title,
         subtitle = subtitle,
         thumbnailUrl = imageUrl,
-        videoId = null,
+        videoId = if (kind == SpotifyCard.Kind.TRACK) SpotifyHomeSource.SPOTIFY_KEY_PREFIX + id else null,
         browseId = browseIdOf(),
         year = year,
         popularity = popularity,
