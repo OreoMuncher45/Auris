@@ -402,13 +402,20 @@ object YtMusicRepository {
      * what this listener plays — which is how the cards came to be full of
      * songs the user never listens to.
      *
-     * Only when the suggestions carry no cards (some short or odd prefixes)
-     * does it fall back to [Innertube.searchTypeahead], the anonymous search,
-     * so the dropdown still has something to play.
+     * Only when the suggestions carry no cards (some short or odd prefixes),
+     * or could not be fetched, does it fall back to [Innertube.searchTypeahead],
+     * the anonymous search, so the dropdown still has something to play.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
-            val cards = InnertubeParser.parseSearchSuggestionEntities(rawSuggestions(input))
+            val suggestions = try {
+                rawSuggestions(input)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val cards = suggestions?.let(InnertubeParser::parseSearchSuggestionEntities).orEmpty()
                 .distinctBy { it.identityKey() }
                 .withoutRepeatedRecordings()
             if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
