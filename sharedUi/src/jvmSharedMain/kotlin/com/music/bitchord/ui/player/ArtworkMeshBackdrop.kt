@@ -93,6 +93,12 @@ class ArtworkMesh internal constructor(
      * and the backdrop would sit at a fraction of every colour for ever.
      */
     internal val live: Boolean = false,
+    /**
+     * The lightest and darkest of the sleeve's top band, where the "Playing
+     * from" header sits over a full-bleed cover. Read in the same pass as the
+     * mesh, off a still sleeve only; null off a clip frame.
+     */
+    internal val header: BandBounds? = null,
 )
 
 /**
@@ -325,6 +331,11 @@ fun rememberArtworkMesh(
      * while the last one is still being read cancels it.
      */
     liveFrames: Flow<ImageBitmap?>? = null,
+    /**
+     * Whether the app is in dark theme. A pale cover is tone-mapped dark for
+     * it — see [darkThemeMeshCell] — and the answer is cached per theme.
+     */
+    darkTheme: Boolean = false,
 ): ArtworkMesh? {
     val context = LocalPlatformContext.current
     // The last mesh that was on screen, whatever it was read from. A cover
@@ -334,7 +345,7 @@ fun rememberArtworkMesh(
     // its own thumbnail. Wrong colour for one decode is the trade; absent
     // colour was the flicker.
     val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
-    val cacheKey = imageUrl?.let(::meshKey)
+    val cacheKey = imageUrl?.let { meshKey(it, darkTheme) }
     // Live blur on: the wash follows the clip frame by frame. Off: it follows
     // it at the slow rate the frames arrive at anyway.
     val liveBlur by PlayerSettings.liveBlur.collectAsStateWithLifecycle()
@@ -357,9 +368,9 @@ fun rememberArtworkMesh(
     }
     LaunchedEffect(mesh) { heldMesh.value = mesh }
 
-    LaunchedEffect(imageUrl, artPx) {
+    LaunchedEffect(imageUrl, artPx, darkTheme) {
         val url = imageUrl ?: return@LaunchedEffect
-        val key = meshKey(url)
+        val key = meshKey(url, darkTheme)
         if (meshUrl == key) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
             .data(url.artworkAt(artPx))
@@ -378,7 +389,7 @@ fun rememberArtworkMesh(
             val bitmap = (result as? SuccessResult)?.image?.toImageBitmap()
             if (bitmap != null) {
                 val found = withContext(Dispatchers.Default) {
-                    meshOf(bitmap, url.hashCode())
+                    meshOf(bitmap, url.hashCode(), darkTheme = darkTheme, header = true)
                 }
                 if (found != null) {
                     meshCache[key] = found
@@ -393,6 +404,9 @@ fun rememberArtworkMesh(
     }
 
     LaunchedEffect(liveFrames, cacheKey, liveBlur, reduceDynamicBlur) {
+        // The still sleeve's seed, not the cache key's: the key carries the
+        // theme, and the clip's wash must land in the sleeve's arrangement.
+        val seed = imageUrl?.hashCode() ?: 0
         var lastReadAt = 0L
         // Held to one read every [LIVE_READ_GAP_MS] however fast the frames
         // arrive. The frames themselves are captured at their own rate — see
@@ -420,9 +434,10 @@ fun rememberArtworkMesh(
             mesh = withContext(Dispatchers.Default) {
                 meshOf(
                     frame,
-                    cacheKey?.hashCode() ?: 0,
+                    seed,
                     live = true,
                     soften = !reduceDynamicBlur,
+                    darkTheme = darkTheme,
                 )
             } ?: mesh
             com.music.bitchord.data.PerfCounters.bump(
@@ -813,7 +828,7 @@ private fun boxBlurPass(
 }
 
 /**
- * Meshes already read, keyed by artwork URL and lightness cap — the artwork
+ * Meshes already read, keyed by artwork URL and theme (dark tone-maps the mesh) — the artwork
  * at a URL cannot change, so reading it twice buys a decode and a downsample
  * for the same answer. Touched from composition and from the resumption of
  * [rememberArtworkMesh]'s effect, both on the main thread, so it needs no lock.
@@ -825,7 +840,7 @@ private val meshCache = object : LinkedHashMap<String, ArtworkMesh>(0, 0.75f, tr
     override fun removeEldestEntry(eldest: Map.Entry<String, ArtworkMesh>) = size > MESH_CACHE_ENTRIES
 }
 
-private fun meshKey(url: String): String = url
+private fun meshKey(url: String, darkTheme: Boolean): String = if (darkTheme) "$url#dark" else url
 
 /** A session's worth of covers, at four kilobytes of texture each. */
 private const val MESH_CACHE_ENTRIES = 64
@@ -963,6 +978,8 @@ private fun meshOf(
     seed: Int,
     live: Boolean = false,
     soften: Boolean = false,
+    darkTheme: Boolean = false,
+    header: Boolean = false,
 ): ArtworkMesh? {
     val width = source.width
     val height = source.height
@@ -1029,11 +1046,19 @@ private fun meshOf(
     val grid = IntArray(cells) { cell ->
         val n = count[cell].coerceAtLeast(1)
         argb((red[cell] / n).toInt(), (green[cell] / n).toInt(), (blue[cell] / n).toInt())
-            .lifted()
+            .lifted(darkTheme)
     }
     val texels = grid.rotatedBelowSeam(cols, rows, seed).resampled(cols, rows, MESH_TEX)
     val finished = if (soften) texels.boxBlurred(MESH_TEX, MESH_TEX_BLUR_RADIUS) else texels
-    return ArtworkMesh(imageBitmapOf(finished, MESH_TEX, MESH_TEX), live)
+    // The header's band: the sleeve's top rows, in the order they were read
+    // (unflipped), out of the pixels already in hand — no second read.
+    val headerBounds = if (header) {
+        val headerRows = (height * HEADER_BAND_FRACTION).toInt().coerceIn(1, height)
+        bandBounds(pixels, width, headerRows, HEADER_BANDS)
+    } else {
+        null
+    }
+    return ArtworkMesh(imageBitmapOf(finished, MESH_TEX, MESH_TEX), live, headerBounds)
 }
 
 /**
@@ -1135,12 +1160,24 @@ private fun argb(red: Int, green: Int, blue: Int): Int =
  * find an edge. Neither touches the *proportions*, which is the whole point of
  * this backdrop: a sleeve that is mostly black stays mostly black.
  */
-private fun Int.lifted(): Int {
+internal fun Int.lifted(darkTheme: Boolean = false): Int {
     val hsl = FloatArray(3).also { ColorUtils.colorToHSL(this, it) }
     hsl[1] = (hsl[1] * MESH_VIBRANCE).coerceAtMost(1f)
     hsl[2] = hsl[2].coerceAtLeast(MESH_FLOOR)
-    return ColorUtils.HSLToColor(hsl)
+    val lifted = ColorUtils.HSLToColor(hsl)
+    // Dark theme: a pale cell is brought down to a dark one of the same hue.
+    return if (darkTheme) darkThemeMeshCell(lifted) else lifted
 }
+
+/**
+ * How much of the sleeve, from its top edge, the header's band covers: the
+ * caption and chevron sit in the top fifth of the screen, which is about the
+ * top third of a full-bleed cover.
+ */
+private const val HEADER_BAND_FRACTION = 0.35f
+
+/** Two strips, so a bright patch behind either caption line is seen. */
+private const val HEADER_BANDS = 2
 
 private const val MESH_VIBRANCE = 1.12f
 private const val MESH_FLOOR = 0.045f
