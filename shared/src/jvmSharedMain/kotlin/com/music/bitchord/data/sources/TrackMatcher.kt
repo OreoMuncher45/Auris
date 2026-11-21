@@ -636,9 +636,12 @@ object TrackMatcher {
         // "DJ-Mix" reaches here as one token: the hyphen is stripped, not
         // split. The phrase is read off [parts] too, so "DJ-Mix-Cut" is
         // dj/mix/cut rather than "djmixcut".
-        if ("mixed" in words || "continuous" in words || "nonstop" in words ||
-            words.any { it in DJ_MIX_TOKENS } || "mixed" in parts ||
-            parts.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
+        val tokens = words + parts
+        if ("mixed" in tokens || "continuous" in tokens || "nonstop" in tokens ||
+            tokens.any { it in DJ_MIX_TOKENS } ||
+            parts.zipWithNext().any { (a, b) ->
+                (a == "dj" && (b == "mix" || b == "set")) || (a == "non" && b == "stop")
+            }
         ) {
             marks.removeAll { it == "mix" }
             marks += "mixed"

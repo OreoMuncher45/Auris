@@ -209,6 +209,9 @@ class TrackMatcherWrongRecordingTest {
         // Other takes in a hyphen-joined label survive the DJ-mix reading.
         refused(song("Be By You (DJ-Mix-Instrumental)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (Mixed)", "River Lane", 210))
         accepted(song("Be By You (DJ-Mix-Instrumental)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (DJ Mix) (Instrumental)", "River Lane", 210))
+        refused(song("Be By You (Continuous-Mix-Instrumental)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (Club Mix) (Instrumental)", "River Lane", 210))
+        accepted(song("Be By You (Continuous-Mix-Instrumental)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (Mixed) (Instrumental)", "River Lane", 210))
+        accepted(song("Be By You (Non-Stop Mix)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (Mixed)", "River Lane", 210))
         // Generic names stay neutral.
         accepted(song("Be By You", "River Lane", "3:30", album = "Party Mix 2024"), studio)
         accepted(song("Be By You", "River Lane", "3:30", album = "Let Me Live"), studio)
