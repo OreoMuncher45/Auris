@@ -444,6 +444,20 @@ internal object SpotifyHomeSource {
     /** The prefix that marks a row as Spotify's own, with no playable id behind it. */
     const val SPOTIFY_KEY_PREFIX = "spotify:"
 
+    /**
+     * The link a song menu's Share sends for [videoId].
+     *
+     * A `spotify:<id>` row has no YouTube video behind it until it is played,
+     * so it is shared as the Spotify track it names; anything else is a
+     * YouTube Music video id.
+     */
+    fun shareUrl(videoId: String): String =
+        if (videoId.startsWith(SPOTIFY_KEY_PREFIX)) {
+            "https://open.spotify.com/track/${videoId.removePrefix(SPOTIFY_KEY_PREFIX)}"
+        } else {
+            "https://music.youtube.com/watch?v=$videoId"
+        }
+
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
         matched(tracks).map { (track, song) ->

@@ -214,6 +214,17 @@ class SpotifyHomeTest {
     }
 
     @Test
+    fun sharingASpotifyRowSendsASpotifyLinkNotAYouTubeOne() {
+        // A Spotify row's id is a catalogue key, not a YouTube video id:
+        // pasted into a watch URL it is a link to nothing.
+        assertEquals(
+            "https://open.spotify.com/track/t1",
+            SpotifyHomeSource.shareUrl(SpotifyHomeSource.SPOTIFY_KEY_PREFIX + "t1"),
+        )
+        assertEquals("https://music.youtube.com/watch?v=dQw4w9WgXcQ", SpotifyHomeSource.shareUrl("dQw4w9WgXcQ"))
+    }
+
+    @Test
     fun aShelfWithNothingInItIsNotDrawn() {
         // A heading over a blank space is worse than no heading.
         val answer = """

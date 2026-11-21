@@ -3642,7 +3642,7 @@ internal fun BitChordApp(
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
+                    putExtra(Intent.EXTRA_TEXT, com.music.bitchord.data.spotify.SpotifyHomeSource.shareUrl(song.videoId))
                 }
                 context.startActivity(Intent.createChooser(sendIntent, song.title))
                 sheets.songMenu.song = null
@@ -3984,10 +3984,10 @@ internal fun BitChordApp(
                 upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
-                // Hidden outright when there's no real YouTube id behind
-                // this row to build a link from — SongActionsSheet already
-                // drops it for a local file via `isOffline`, this catches
-                // the rest.
+                // Hidden outright when there's no id behind this row to build
+                // a link from — SongActionsSheet already drops it for a local
+                // file via `isOffline`, this catches the rest. A `spotify:`
+                // row shares its Spotify track link (see shareUrl).
                 onShare = share.takeIf { song.videoId.isNotBlank() },
                 onSaveArtwork = {
                     sheets.songMenu.song = null
