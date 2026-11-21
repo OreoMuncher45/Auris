@@ -2188,10 +2188,11 @@ fun NowPlayingScreen(
     // local changes the whole subtree under it, and this subtree is the entire
     // player. A state changes only the texts and the glyphs that wear it.
     // The header stands on a full-bleed still cover: judged against the
-    // cover's top band rather than the backdrop under the controls. A clip,
-    // a Canvas, landscape or the legacy blobs keep the player's own ink.
+    // cover's top band rather than the backdrop under the controls. A clip
+    // of any shape, a Canvas, landscape or the legacy blobs keep the player's
+    // own ink: the band was read off the still sleeve, not off the clip.
     val headerOnCover = heroMode && !fullCoverBackdropVisible && !legacyMeshBackdrop && !canvasOwnsScreen &&
-        !spotifyCanvasPresentation && !(canvasFirstPortrait && clipState.rendered)
+        !spotifyCanvasPresentation && !clipState.rendered
     val inkStates = rememberPlayerInk(
         palette = canvasPalette,
         fromClip = canvasOwnsScreen,

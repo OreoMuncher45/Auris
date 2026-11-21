@@ -409,7 +409,7 @@ fun rememberArtworkMesh(
         }
     }
 
-    LaunchedEffect(liveFrames, cacheKey, liveBlur, reduceDynamicBlur) {
+    LaunchedEffect(liveFrames, cacheKey, liveBlur, reduceDynamicBlur, darkTheme) {
         // The still sleeve's seed, not the cache key's: the key carries the
         // theme, and the clip's wash must land in the sleeve's arrangement.
         val seed = imageUrl?.hashCode() ?: 0
