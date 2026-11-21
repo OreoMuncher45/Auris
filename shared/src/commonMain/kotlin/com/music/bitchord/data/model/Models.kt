@@ -313,7 +313,73 @@ fun String?.durationMillis(): Long {
 }
 
 /** As [Song.artworkAt], for artwork that isn't a track's. */
-fun String?.artworkAt(px: Int): String? = this?.replace(SIZE_HINT, "w$px-h$px")
+fun String?.artworkAt(px: Int): String? {
+    if (this == null) return null
+    val sized = this.replace(SIZE_HINT, "w$px-h$px")
+    return if (isYouTubeThumbnailHost(this)) upgradeYouTubeThumbnail(sized, px) else sized
+}
+
+internal fun isYouTubeThumbnailHost(url: String): Boolean {
+    val host = url.substringAfter("://", "")
+        .ifEmpty { url.substringAfter("//", "") }
+        .substringBefore('/')
+        .substringBefore(':')
+        .substringBefore('?')
+        .lowercase()
+    return host == "i.ytimg.com" || host.endsWith(".ytimg.com") ||
+        host == "img.youtube.com" || host.endsWith(".youtube.com")
+}
+
+/** YouTube's thumbnail renditions, smallest to largest. Every video has `hqdefault`. */
+private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)\\.([a-zA-Z0-9]+)")
+
+/** The renditions an old or low-resolution upload doesn't have: each answers 404 for it. */
+private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault")
+
+/**
+ * A YouTube video thumbnail at the rendition that suits [px]: `maxresdefault`
+ * for the player and headers, `sddefault` for cards, and the small copy it
+ * came with for rows. An upgraded URL (one read back off the lock screen's
+ * artwork, say) comes back down to `hqdefault` at row sizes, rather than a
+ * list row loading a 1280px cover, or nothing where the video has no such
+ * size. Old uploads lack the larger renditions; see [youTubeThumbnailFallback].
+ */
+internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
+    val match = YT_THUMB_NAME_REGEX.find(url) ?: return url
+    val current = match.groupValues[1]
+    val target = when {
+        // 1280px for what is drawn larger than a card; a card's 480px is
+        // served by sddefault's 640, which is a third of the bytes to fetch
+        // and decode for every video card on a shelf.
+        px > CARD_ART_PX -> "maxresdefault"
+        px >= 240 -> "sddefault"
+        current in YT_UPGRADED_RENDITIONS -> "hqdefault"
+        else -> return url
+    }
+    return if (target == current) url else withRendition(url, match, target)
+}
+
+/**
+ * The copy every YouTube video has, for a thumbnail [artworkAt] asked a larger
+ * rendition of; null when [url] is no such thumbnail. Old and low-resolution
+ * uploads have no `sddefault` or `maxresdefault` (YouTube answers 404), so
+ * whatever loads one of those needs this to fall back on, and a loader that
+ * can't fall back should be handed this instead.
+ */
+fun youTubeThumbnailFallback(url: String): String? {
+    if (!isYouTubeThumbnailHost(url)) return null
+    val match = YT_THUMB_NAME_REGEX.find(url) ?: return null
+    if (match.groupValues[1] !in YT_UPGRADED_RENDITIONS) return null
+    return withRendition(url, match, "hqdefault")
+}
+
+/**
+ * [url] naming [rendition] instead. The query (`sqp=…&rs=…`) is dropped: it
+ * signs the rendition it came with, and the bare path serves any of them.
+ */
+private fun withRendition(url: String, match: MatchResult, rendition: String): String =
+    (url.substring(0, match.range.first) + "/$rendition.${match.groupValues[2]}" + url.substring(match.range.last + 1))
+        .substringBefore('?')
 
 private val SIZE_HINT = Regex("""w\d+-h\d+""")
 

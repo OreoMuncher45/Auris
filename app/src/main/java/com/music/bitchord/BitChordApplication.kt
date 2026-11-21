@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.YouTubeThumbnailFallback
 import android.app.Application
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
@@ -382,6 +383,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 // Covers filed on the SMB share; anything else falls
                 // through to Coil's own fetchers. See SmbCoverFetcher.
                 add(SmbCoverFetcher.Factory())
+                // A larger YouTube cover than the video has 404s; this
+                // falls back to the size every video has. See the class.
+                add(YouTubeThumbnailFallback())
             }
             .memoryCache {
                 // A fifth of the heap, as before, except on a phone that calls
