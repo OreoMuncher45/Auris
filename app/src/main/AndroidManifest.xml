@@ -150,6 +150,19 @@
             </intent-filter>
         </activity>
 
+        <!--
+          The restart trampoline (see util/AppRelaunch). Its own process so it
+          can kill the main one and still be in the foreground to start the
+          launcher, which Android 14+ requires; translucent so nothing shows.
+        -->
+        <activity
+            android:name=".util.RelaunchActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":relaunch"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

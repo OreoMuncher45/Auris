@@ -1,10 +1,13 @@
 package com.music.bitchord.util
 
-import android.app.AlarmManager
-import android.app.PendingIntent
+import android.app.Activity
+import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
-import android.os.SystemClock
+import android.os.Build
+import android.os.Bundle
+import android.os.Process
 
 /**
  * Restarts the app, for the settings whose change cannot be half-applied.
@@ -16,63 +19,108 @@ import android.os.SystemClock
  * describes the feed it came from; the honest answer is "no" for all of them, and
  * the cheapest way to be sure of that is to start over.
  *
- * ## Why an alarm and not a direct launch
+ * ## How
  *
- * A process cannot start an activity and then reliably kill itself: whatever the
- * app does between the two lines can win the race, and the half-dead result is a
- * blank task. The launch is handed to the alarm clock far enough in the future
- * that [Runtime.exit] has finished, then the process goes.
+ * The foreground activity starts [RelaunchActivity], which lives in a process of
+ * its own (`:relaunch`, see the manifest). That activity kills the main process,
+ * starts the launcher activity in a fresh task, and exits. This is the
+ * ProcessPhoenix pattern.
  *
- * The launch intent is the package's own — whatever the launcher would send —
- * with the task cleared, so the listener comes back to the app's normal start
- * rather than to the settings screen they were in.
+ * It replaces an AlarmManager `PendingIntent` that fired after the process had
+ * been killed. Android 14 and 15 refuse that launch ("Background activity launch
+ * blocked"): when the alarm fires, the app has no visible window, no process
+ * and no opt-in, so the app closed and stayed closed. Every launch here comes
+ * from an activity that is in the foreground at the moment it calls
+ * `startActivity`. That is the case background-activity-start rules always
+ * allow, on every API level. Nothing is timed against a process death, so
+ * there is no race to lose.
+ *
+ * Why the second process. A process that starts an activity and then kills
+ * itself races the system: the new activity may still be bound to the dying
+ * process and get removed with it, leaving a blank task. The `:relaunch`
+ * process outlives the main one, so the kill always lands before the launch.
  */
 object AppRelaunch {
 
-    /** Roughly how long the restart waits, so the kill lands first. */
-    private const val RESTART_DELAY_MS = 250L
+    /** Suffix of the process [RelaunchActivity] runs in; matches the manifest. */
+    const val PROCESS_SUFFIX = ":relaunch"
+
+    internal const val EXTRA_MAIN_PID = "com.music.bitchord.relaunch.MAIN_PID"
 
     /**
      * Kills this process and starts [context]'s app again.
      *
+     * [context] should be, or wrap, the foreground activity, as every caller's
+     * `LocalContext` does. Without one, the start falls back to the
+     * application context: older versions allow it, and Android 14+ may not.
+     *
      * Does nothing, and leaves the process running, when the package has no
-     * launch intent — there is nothing to come back to, and exiting would leave
+     * launch intent. There is nothing to come back to, and exiting would leave
      * the listener with a dead app and no way back.
      */
     fun relaunch(context: Context) {
         val application = context.applicationContext
-        val launch = application.packageManager.getLaunchIntentForPackage(application.packageName)
-            ?: return
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-
-        val alarm = application.getSystemService(AlarmManager::class.java) ?: return
-        val pending = PendingIntent.getActivity(
-            application,
-            // A fixed request code, so a second switch before the first restart
-            // has happened replaces that launch rather than queueing another.
-            REQUEST_CODE,
-            launch,
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        alarm.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + RESTART_DELAY_MS, pending)
-
-        // Killed from a thread of its own, and by pid rather than by
-        // [Runtime.exit].
-        //
-        // The straightforward version — `Runtime.getRuntime().exit(0)` on the
-        // caller's thread — runs the JVM's shutdown sequence from inside a
-        // Compose click handler, on the main thread, in the middle of a frame.
-        // That is what crashed the app on the provider switch: the process died
-        // badly enough to take the activity with it and the alarm's launch
-        // arrived at a dying process. This is what a restart utility does
-        // instead: leave the UI thread alone, wait past the next frame, and kill
-        // the pid outright, so nothing is unwound and nothing can fail while it
-        // is.
-        Thread {
-            runCatching { Thread.sleep(RESTART_DELAY_MS) }
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }.start()
+        restartIntent(application) ?: return
+        val activity = context.findActivity()
+        val intent = Intent(application, RelaunchActivity::class.java)
+            .putExtra(EXTRA_MAIN_PID, Process.myPid())
+        if (activity == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        (activity ?: application).startActivity(intent)
     }
 
-    private const val REQUEST_CODE = 1
+    /**
+     * The launcher's own intent, in a cleared task. The listener comes back to
+     * the app's normal start rather than to the settings screen they were in.
+     */
+    internal fun restartIntent(context: Context): Intent? {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: return null
+        val component = launch.component ?: return null
+        return Intent.makeRestartActivityTask(component)
+    }
+
+    /**
+     * Whether [application] is the short-lived `:relaunch` process. The
+     * application class skips its start-up work there: that process only
+     * kills one pid and starts one activity.
+     */
+    fun isRelaunchProcess(application: Application): Boolean {
+        val name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            // API 26–27 have no getProcessName; the cmdline is the process name.
+            runCatching {
+                java.io.File("/proc/self/cmdline").readText().trimEnd('\u0000')
+            }.getOrNull()
+        }
+        return name != null && name.endsWith(PROCESS_SUFFIX)
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var current: Context? = this
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
+}
+
+/**
+ * The relaunch trampoline. It runs in the `:relaunch` process, is translucent
+ * and draws nothing, and lives for one `onCreate`.
+ *
+ * It kills the main process first, so the launcher activity it starts can only
+ * come up in a new one. It starts that activity while it is itself the
+ * foreground activity, then removes its own process.
+ */
+class RelaunchActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val mainPid = intent.getIntExtra(AppRelaunch.EXTRA_MAIN_PID, -1)
+        if (mainPid > 0 && mainPid != Process.myPid()) Process.killProcess(mainPid)
+        AppRelaunch.restartIntent(this)?.let(::startActivity)
+        finish()
+        Process.killProcess(Process.myPid())
+    }
 }

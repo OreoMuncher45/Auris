@@ -217,7 +217,7 @@ fun SetupWizard(
      * the whole point of having arrived over it rather than instead of it: the
      * finish is the app, at full size, already loaded, with the flow gone.
      */
-    fun leave(then: () -> Unit) {
+    fun leave(then: suspend () -> Unit) {
         scope.launch {
             animateReveal(0f, 320)
             then()
@@ -237,15 +237,20 @@ fun SetupWizard(
         AppSettings.setHomeProvider(provider)
         OnboardingState.markCompleted(context)
         leave {
-            onFinished()
             // Only when it moved, and only after the flow is gone: a catalogue
             // that changed re-trains Flow and Autoplay, which is a restart's
             // worth of work rather than something to attempt in place.
+            //
+            // The restart runs before onFinished, in this coroutine. onFinished
+            // removes this composable, and that cancels [scope]. A restart
+            // launched after it was cancelled before its delay ended, so the
+            // app kept running on the old catalogue. The sheet is already
+            // fully hidden here, so the wait shows the same thing.
             if (provider != providerAtEntry) {
-                scope.launch {
-                    delay(RESTART_GRACE_MS)
-                    AppRelaunch.relaunch(context)
-                }
+                delay(RESTART_GRACE_MS)
+                AppRelaunch.relaunch(context)
+            } else {
+                onFinished()
             }
         }
     }
