@@ -390,7 +390,9 @@ object SflxCatalog {
         if (!com.music.bitchord.data.sources.backup.AddonBackupArchive.isSessionName(name)) return false
         return runCatching {
             if (!directory.isDirectory) directory.mkdirs()
-            val staging = File(directory, "$name.tmp")
+            // A short staging name: "$name.tmp" would exceed the 255-byte filename
+            // limit for a session name already near it. Ends in .tmp, so a leftover is never read as a record.
+            val staging = File.createTempFile(".session", ".tmp", directory)
             staging.writeBytes(bytes)
             val target = File(directory, name)
             if (!staging.renameTo(target)) {
