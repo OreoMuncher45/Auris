@@ -637,11 +637,16 @@ class PlaybackService : MediaLibraryService() {
                     }
                 } ?: return@launch
                 if (context.listener != null && context.listener != currentListener()) return@launch
-                val fresh = page.songs
-                    .filterNot(AppSettings::isSongBlocked)
-                    .filter { seen.add(it.videoId) }
-                // A page with nothing new on it means the feed looped back.
-                if (fresh.isEmpty()) return@launch
+                // A page with nothing new on it means the feed looped back. Judged
+                // before the block list: a page of only blocked songs is not the
+                // end, and the pages after it still belong to the folder.
+                val unseen = page.songs.filter { seen.add(it.videoId) }
+                if (unseen.isEmpty()) return@launch
+                val fresh = unseen.filterNot(AppSettings::isSongBlocked)
+                if (fresh.isEmpty()) {
+                    next = page.continuation
+                    continue
+                }
                 fresh.forEach { songCache[it.videoId] = it }
                 val exoPlayer = player ?: return@launch
                 if (castPlayback.active) return@launch
