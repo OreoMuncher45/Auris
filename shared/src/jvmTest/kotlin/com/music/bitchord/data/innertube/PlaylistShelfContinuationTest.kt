@@ -37,4 +37,22 @@ class PlaylistShelfContinuationTest {
         assertEquals(listOf("SET1", "SET2"), page.songs.map { it.setVideoId })
         assertEquals("PAGE3", page.continuation)
     }
+
+    private val repeatedSongPage = Json.parseToJsonElement(
+        """
+        { "onResponseReceivedActions": [ { "appendContinuationItemsAction": { "continuationItems": [
+          ${row("aaaaaaaaaaa", "SET1")},
+          ${row("aaaaaaaaaaa", "SET2")}
+        ] } } ] }
+        """,
+    )
+
+    @Test
+    fun `a song added twice is two entries when read for a reorder`() {
+        val entries = assertNotNull(InnertubeParser.parsePlaylistShelf(repeatedSongPage, byEntry = true))
+        assertEquals(listOf("SET1", "SET2"), entries.songs.map { it.setVideoId })
+        // The open page still lists the recording once.
+        val shown = assertNotNull(InnertubeParser.parsePlaylistShelf(repeatedSongPage))
+        assertEquals(listOf("SET1"), shown.songs.map { it.setVideoId })
+    }
 }

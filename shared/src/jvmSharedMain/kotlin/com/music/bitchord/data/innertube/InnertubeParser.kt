@@ -608,8 +608,12 @@ object InnertubeParser {
      * songs the user added. Returns null off a page with nothing
      * playlist-shaped in scope (an album, say), so callers fall back to the
      * generic walk.
+     *
+     * [byEntry] keeps one row per playlist entry (its `playlistSetVideoId`)
+     * rather than per recording, so a song added twice comes back twice: a
+     * reorder has to name every entry.
      */
-    fun parsePlaylistShelf(root: JsonElement): PlaylistShelfPage? {
+    fun parsePlaylistShelf(root: JsonElement, byEntry: Boolean = false): PlaylistShelfPage? {
         // A later page of the playlist's own rows can also come appended by an
         // action, with no `continuationContents` at all: the shape a long
         // playlist's second page now has. Read as nothing, a reorder saw only
@@ -630,7 +634,7 @@ object InnertubeParser {
         val songs = playlistScope?.let { playlist ->
             collectRenderers(playlist, "musicResponsiveListItemRenderer")
                 .mapNotNull { parseResponsiveListItem(it, pageCredit) }
-                .distinctBy { it.videoId }
+                .distinctBy { if (byEntry) it.setVideoId ?: it.videoId else it.videoId }
         }.orEmpty()
         val knownSongs = songs.mapTo(HashSet()) { it.videoId }
         val suggested = suggestionShelves
