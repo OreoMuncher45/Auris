@@ -1220,6 +1220,10 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // The crossfade controller may use an end-of-item hold to hand off late.
+            if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                crossfade?.cancelAutoMixVisual()
+            }
             // usbdevfs has no AudioTrack to pause; the writer's own gate has
             // to follow the listener's transport state. playWhenReady stays
             // true while buffering, so this does not lock out seek pre-fill.
@@ -1346,6 +1350,7 @@ class PlaybackService : MediaLibraryService() {
          * broken app looks like from the outside.
          */
         override fun onPlayerError(error: PlaybackException) {
+            crossfade?.cancelAutoMixVisual()
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -1355,6 +1360,7 @@ class PlaybackService : MediaLibraryService() {
         // Nothing follows the last track, so there is no transition to
         // pause on — the queue simply runs out and the timer is spent.
         override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_IDLE) crossfade?.cancelAutoMixVisual()
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -1428,6 +1434,7 @@ class PlaybackService : MediaLibraryService() {
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                crossfade?.checkAutoMixVisualTimeline(exoPlayer)
                 castPlayback.onLocalQueueChanged()
                 saveQueueSnapshot(exoPlayer)
                 refreshCustomLayouts()
@@ -2100,7 +2107,49 @@ class PlaybackService : MediaLibraryService() {
                 loudnessB.setBlendTrim(trim)
             },
             versionSwapActive = { versionSwapJob?.isActive == true || upgradeFadeActive },
+            // Each sink's loop-mix port rides on its transition filter, so the
+            // player and the port trade roles together at every handoff.
+            loopPortOf = { target ->
+                when {
+                    target === player -> activeFilter.loop
+                    target === spare -> spareFilter.loop
+                    else -> null
+                }
+            },
+            loopRegion = { item, durationMs, from, to, rate ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.loopRegion(item.mediaId, uri, durationMs / 1000.0, from, to, rate)
+                }
+            },
+            syncedLines = ::loopMixLyrics,
+            loudnessGain = ::loudnessGainFor,
+            onMixPositionJump = { wrapped -> (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped) },
         )
+
+    /**
+     * A track's synced lyrics for the loop mix, which lets a loop be vouched
+     * instrumental by when its lines are sung rather than by the vocal model.
+     * Only with synced lyrics switched on, and never for longer than
+     * [LOOP_MIX_LYRICS_TIMEOUT_MS]: the mask stands in for whatever doesn't come.
+     */
+    private suspend fun loopMixLyrics(item: MediaItem, durationMs: Long): List<LyricLine>? {
+        if (!AppSettings.syncedLyrics.value) return null
+        val song = item.toSong()
+        return kotlinx.coroutines.withTimeoutOrNull(LOOP_MIX_LYRICS_TIMEOUT_MS) {
+            // Only timed lines say when a loop is sung; the file's plain words can't.
+            song.localUri?.let { EmbeddedLyrics.forUri(this@PlaybackService, it) }
+                ?.takeIf(EmbeddedLyrics::isSynced)
+                ?: LyricsRepository.lyrics(
+                    videoId = song.videoId,
+                    title = song.title,
+                    artist = song.artist,
+                    durationMs = durationMs,
+                    album = song.albumName,
+                    sources = AppSettings.lyricsSources.value,
+                    order = AppSettings.lyricsSourceOrder.value,
+                )?.lines
+        }
+    }
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
@@ -3574,6 +3623,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleShuffleFromSession() {
+        crossfade?.cancelAutoMixVisual()
         player?.let(QueueShuffle::toggle)
         refreshCustomLayouts()
     }
@@ -8562,6 +8612,11 @@ class PlaybackService : MediaLibraryService() {
 
     private fun observeSettings() {
         scope.launch {
+            AppSettings.smartFadeEnabled.collect { enabled ->
+                if (!enabled) crossfade?.cancelAutoMixVisual()
+            }
+        }
+        scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
         scope.launch {
@@ -9341,6 +9396,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         if (AppSettings.stopOnTaskRemoved.value) {
+            crossfade?.cancelAutoMixVisual()
             // A receiver left playing with nothing on the phone to drive it
             // would run out its few queued tracks and stop on its own anyway;
             // better to say so now than leave the TV on a casting screen.
@@ -9354,6 +9410,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        crossfade?.cancelAutoMixVisual()
         ProcessLifecycleOwner.get().lifecycle.removeObserver(discordIdleObserver)
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
@@ -9560,7 +9617,7 @@ class PlaybackService : MediaLibraryService() {
         val exoPlayer = player ?: return
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
         val lines = serviceLyrics
-        val pos = exoPlayer.currentPosition
+        val pos = crossfade?.loopPositionMs() ?: exoPlayer.currentPosition
         val subtitleText = if (lines != null && lines.isNotEmpty() && AppSettings.syncedLyrics.value) {
             val idx = lines.indexOfLast { it.timeMs <= pos }
             val currentLine = lines.getOrNull(idx)
@@ -9687,9 +9744,44 @@ class PlaybackService : MediaLibraryService() {
 
         override fun getPlaybackState() = if (cast.active) cast.playbackState else super.getPlaybackState()
 
-        override fun getCurrentPosition() = if (cast.active) cast.positionMs else super.getCurrentPosition()
+        // During a loop mix the song loops and follows the tempo ramp, so its
+        // playhead is the mix's own, not the player's: the seek bar, the
+        // lyrics and every controller read it here.
+        override fun getCurrentPosition() =
+            if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getCurrentPosition()
 
-        override fun getContentPosition() = if (cast.active) cast.positionMs else super.getContentPosition()
+        override fun getContentPosition() =
+            if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getContentPosition()
+
+        private var lastMixPositionMs = C.TIME_UNSET
+
+        /**
+         * Re-anchors every controller on the loop mix's playhead. A wrap is a
+         * deliberate jump back, announced as one (the lyrics follow it); a
+         * re-anchor through the ramp is reported moving forward, so nothing
+         * reads it as a seek.
+         */
+        fun announceMixPosition(wrapped: Boolean) {
+            val now = currentPosition
+            val before = if (wrapped && lastMixPositionMs != C.TIME_UNSET) lastMixPositionMs else (now - 1).coerceAtLeast(0L)
+            lastMixPositionMs = now
+            fun info(position: Long) = Player.PositionInfo(
+                null,
+                currentMediaItemIndex,
+                currentMediaItem,
+                null,
+                currentPeriodIndex,
+                position,
+                position,
+                C.INDEX_UNSET,
+                C.INDEX_UNSET,
+            )
+            val old = info(before)
+            val new = info(now)
+            listeners.forEach { it.onPositionDiscontinuity(old, new, Player.DISCONTINUITY_REASON_INTERNAL) }
+            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_POSITION_DISCONTINUITY).build())
+            listeners.forEach { it.onEvents(this, events) }
+        }
 
         override fun getBufferedPosition() = if (cast.active) cast.positionMs else super.getBufferedPosition()
 
@@ -9854,7 +9946,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun pause() {
             if (lockedTransport(false)) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.pause()
                 return
@@ -9866,6 +9958,7 @@ class PlaybackService : MediaLibraryService() {
         // is the listener's own business, and the lifecycle paths that call it
         // are not asking to move the party.
         override fun stop() {
+            crossfade.cancelAutoMixVisual()
             if (locked()) { super.stop(); return }
             onUserIntent()
             super.stop()
@@ -9902,7 +9995,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
             if (lockedTransport(playWhenReady)) return
-            onUserIntent()
+            if (playWhenReady) onUserIntent() else onAutoMixInterruptingIntent()
             if (playWhenReady && deferPlayToParty()) return
             if (cast.active) {
                 if (playWhenReady) cast.play() else cast.pause()
@@ -9911,12 +10004,18 @@ class PlaybackService : MediaLibraryService() {
             super.setPlayWhenReady(playWhenReady)
         }
 
+        /** A pause, seek or queue edit the listener made: no AutoMix artwork reveal survives it. */
+        private fun onAutoMixInterruptingIntent() {
+            crossfade.cancelAutoMixVisual()
+            onUserIntent()
+        }
+
         // The playhead belongs to the party while locked: it goes where the
         // host puts it, and a local seek would only be dragged back by the next
         // reconcile anyway.
         override fun seekTo(positionMs: Long) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.seekTo(positionMs)
                 return
@@ -9926,7 +10025,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekBack() {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.seekTo(cast.positionMs - seekBackIncrement)
                 return
@@ -9936,7 +10035,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekForward() {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.seekTo(cast.positionMs + seekForwardIncrement)
                 return
@@ -9946,7 +10045,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToPrevious() {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 castPrevious()
                 return
@@ -9956,7 +10055,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToDefaultPosition() {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.seekTo(0L)
                 return
@@ -9966,13 +10065,13 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToDefaultPosition(mediaItemIndex: Int) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.seekToDefaultPosition(mediaItemIndex)
         }
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, resetPosition)
         }
 
@@ -9982,7 +10081,7 @@ class PlaybackService : MediaLibraryService() {
             startPositionMs: Long,
         ) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
         }
 
@@ -9995,37 +10094,37 @@ class PlaybackService : MediaLibraryService() {
         // who can reorder it is still choosing the music.
         override fun addMediaItems(index: Int, mediaItems: List<MediaItem>) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.addMediaItems(index, mediaItems)
         }
 
         override fun addMediaItems(mediaItems: List<MediaItem>) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.addMediaItems(mediaItems)
         }
 
         override fun removeMediaItem(index: Int) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.removeMediaItem(index)
         }
 
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.removeMediaItems(fromIndex, toIndex)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.moveMediaItem(currentIndex, newIndex)
         }
 
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)
         }
 
@@ -10035,13 +10134,13 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
         ) {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.replaceMediaItems(fromIndex, toIndex, mediaItems)
         }
 
         override fun clearMediaItems() {
             if (locked()) return
-            onUserIntent()
+            onAutoMixInterruptingIntent()
             super.clearMediaItems()
         }
 
@@ -11250,6 +11349,9 @@ class PlaybackService : MediaLibraryService() {
          * was merely slow, and the answer was cached as the truth.
          */
         const val PLAYLISTS_FETCH_TIMEOUT_MS = 8_000L
+
+        /** The longest the loop mix waits on a track's synced lyrics before the vocal mask decides alone. */
+        const val LOOP_MIX_LYRICS_TIMEOUT_MS = 10_000L
         const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
 
