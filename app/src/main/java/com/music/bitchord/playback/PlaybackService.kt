@@ -7361,6 +7361,10 @@ class PlaybackService : MediaLibraryService() {
         crossfade?.onSkipRequested()
         autoplayLoadJob?.cancel()
         autoplayLoadJob = null
+        // A station keeps the playing song, which still names the Auto folder
+        // it came from: a pending page of that folder would land behind it.
+        autoContinuationJob?.cancel()
+        autoContinuationJob = null
         autoplaySeed = null
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
