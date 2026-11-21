@@ -360,28 +360,34 @@ object YtMusicRepository {
      * YouTube once rather than twice. Only the latest input is kept — the
      * field never goes back to an older one without it being typed again.
      * Run on its own scope so one reader moving on doesn't cancel the other's
-     * answer; a failure isn't kept, so the next ask tries again.
+     * answer; a failure isn't kept, so the next ask tries again. The answer is
+     * signed-in and ranked by the account, so it is reused only for the
+     * [Innertube.listener] that asked.
      */
     private suspend fun rawSuggestions(input: String): JsonObject {
+        val listener = Innertube.listener
         val pending = synchronized(suggestionsLock) {
-            lastSuggestions?.takeIf { it.first == input && !it.second.isCancelled }?.second
+            lastSuggestions
+                ?.takeIf { it.input == input && it.listener == listener && !it.answer.isCancelled }?.answer
                 ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
-                    .also { lastSuggestions = input to it }
+                    .also { lastSuggestions = PendingSuggestions(input, listener, it) }
         }
         return try {
             pending.await()
         } catch (failure: Throwable) {
             if (failure !is CancellationException || pending.isCancelled) {
                 synchronized(suggestionsLock) {
-                    if (lastSuggestions?.second === pending) lastSuggestions = null
+                    if (lastSuggestions?.answer === pending) lastSuggestions = null
                 }
             }
             throw failure
         }
     }
 
+    private class PendingSuggestions(val input: String, val listener: String?, val answer: Deferred<JsonObject>)
+
     private val suggestionsLock = Any()
-    private var lastSuggestions: Pair<String, Deferred<JsonObject>>? = null
+    private var lastSuggestions: PendingSuggestions? = null
     private val suggestionsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**

@@ -127,7 +127,26 @@ object Innertube {
                 channelOverride = null
             }
             field = value
+            refreshListener()
         }
+
+    /**
+     * Who requests are answered for: the session [cookie] and the channel
+     * chosen under it, or null signed out. A profile switch keeps the cookie
+     * and changes only the channel, so a cache of one listener's answers
+     * compares this rather than the cookie. Rebuilt only when either changes.
+     */
+    @Volatile
+    var listener: String? = null
+        private set
+
+    private fun refreshListener() {
+        val session = cookie
+        listener = session?.let {
+            val channel = channelOverride
+            if (channel == null) it else "${channel.pageId}/${channel.dataSyncId}/${channel.authUser}|$it"
+        }
+    }
 
     /**
      * Google's per-session visitor id.
@@ -280,6 +299,7 @@ object Innertube {
         } else {
             ChannelSelection(pageId, dataSyncId, authUser)
         }
+        refreshListener()
         Log.d(
             TAG,
             "acting as channel pageId=${pageId ?: "none"} authUser=${authUser ?: "as-is"} " +
