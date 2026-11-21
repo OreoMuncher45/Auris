@@ -3642,7 +3642,7 @@ internal fun BitChordApp(
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
+                    putExtra(Intent.EXTRA_TEXT, com.music.bitchord.data.spotify.SpotifyHomeSource.shareUrl(song.videoId))
                 }
                 context.startActivity(Intent.createChooser(sendIntent, song.title))
                 sheets.songMenu.song = null
@@ -3984,10 +3984,10 @@ internal fun BitChordApp(
                 upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
-                // Hidden outright when there's no real YouTube id behind
-                // this row to build a link from — SongActionsSheet already
-                // drops it for a local file via `isOffline`, this catches
-                // the rest.
+                // Hidden outright when there's no id behind this row to build
+                // a link from — SongActionsSheet already drops it for a local
+                // file via `isOffline`, this catches the rest. A `spotify:`
+                // row shares its Spotify track link (see shareUrl).
                 onShare = share.takeIf { song.videoId.isNotBlank() },
                 onSaveArtwork = {
                     sheets.songMenu.song = null
@@ -5840,18 +5840,31 @@ private fun RootPage(
             onShuffle = { songs ->
                 pageActions.playBrowsePageShuffled(page, songs)
             },
+            // A card with a page opens it, as it always has. A track card
+            // has none — a Spotify category page's track shelf holds the
+            // same `spotify:<id>` cards as the home — and plays instead,
+            // with the song menu on a hold.
             onSectionItemClick = { item ->
-                item.browseId?.let { id ->
-                    viewModel.openDetail(
+                val id = item.browseId
+                val song = if (id == null) pageActions.shelfSong(item) else null
+                when {
+                    id != null -> viewModel.openDetail(
                         browseId = id,
                         title = item.title,
                         subtitle = item.subtitle,
                         thumbnailUrl = item.thumbnailUrl,
                         type = BrowseType.ALBUM,
                     )
+                    song != null -> pageActions.playRadio(
+                        song,
+                        QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId),
+                    )
                 }
             },
-            onSectionItemLongPress = pageActions.onBrowseLongPress,
+            onSectionItemLongPress = { item ->
+                val song = if (item.browseId == null) pageActions.shelfSong(item) else null
+                if (song != null) pageActions.openSongMenu(song) else pageActions.onBrowseLongPress(item)
+            },
             // The page's own tracks, so the sheet has them already and
             // Play, Shuffle and Open are the buttons beside the one that
             // opened it rather than rows on it. Download is the other

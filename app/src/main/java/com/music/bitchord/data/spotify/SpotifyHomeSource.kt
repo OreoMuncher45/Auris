@@ -444,6 +444,20 @@ internal object SpotifyHomeSource {
     /** The prefix that marks a row as Spotify's own, with no playable id behind it. */
     const val SPOTIFY_KEY_PREFIX = "spotify:"
 
+    /**
+     * The link a song menu's Share sends for [videoId].
+     *
+     * A `spotify:<id>` row has no YouTube video behind it until it is played,
+     * so it is shared as the Spotify track it names; anything else is a
+     * YouTube Music video id.
+     */
+    fun shareUrl(videoId: String): String =
+        if (videoId.startsWith(SPOTIFY_KEY_PREFIX)) {
+            "https://open.spotify.com/track/${videoId.removePrefix(SPOTIFY_KEY_PREFIX)}"
+        } else {
+            "https://music.youtube.com/watch?v=$videoId"
+        }
+
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
         matched(tracks).map { (track, song) ->
@@ -457,14 +471,22 @@ internal object SpotifyHomeSource {
         }
 }
 
-/** The card on a shelf, as this app draws one. */
+/**
+ * The card on a shelf, as this app draws one.
+ *
+ * A track card carries the same `spotify:<id>` key a Spotify search row does
+ * (see [SpotifyHomeSource.songFor]), so a tap plays it and a hold opens the
+ * song menu; the player resolves the recording by name when it is reached.
+ * Without it a track card — the whole of a signed-out "Trending songs" shelf —
+ * had neither a song nor a page behind it, and the tap did nothing.
+ */
 internal fun SpotifyCard.item(): ShelfItem? {
     if (title.isBlank()) return null
     return ShelfItem(
         title = title,
         subtitle = subtitle,
         thumbnailUrl = imageUrl,
-        videoId = null,
+        videoId = if (kind == SpotifyCard.Kind.TRACK) SpotifyHomeSource.SPOTIFY_KEY_PREFIX + id else null,
         browseId = browseIdOf(),
         year = year,
         popularity = popularity,
