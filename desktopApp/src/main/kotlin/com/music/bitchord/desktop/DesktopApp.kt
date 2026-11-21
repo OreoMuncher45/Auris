@@ -1602,8 +1602,10 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         playbackEngine.state.collect {
             // The audio thread's own timestamp, not this collector's: it runs on the UI thread and
             // gets to a reading as late as the UI is busy.
-            playerPosition.report(it.positionMs, it.positionSampledAtNanos)
+            // The seek count first: report() publishes it with the reading, so a
+            // seek's landing position must not go out under the count before it.
             playerPosition.seeks = it.seeks
+            playerPosition.report(it.positionMs, it.positionSampledAtNanos)
             playerPosition.advancing = !it.awaitingAudio
         }
     }
