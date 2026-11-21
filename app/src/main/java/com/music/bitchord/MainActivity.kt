@@ -191,6 +191,7 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.onboarding.OnboardingState
 import com.music.bitchord.ui.onboarding.SetupWizard
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
@@ -1517,6 +1518,9 @@ internal fun BitChordApp(
     val visibleTabDefs = tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
 
     val scope = rememberCoroutineScope()
+    // The running scroll-to-top, so a second tap restarts it instead of
+    // racing it. A plain holder, not state: nothing draws from it.
+    val tabScrollJob = remember { arrayOfNulls<Job>(1) }
 
     // Copies tracks to the WebDAV server, leaving the local files alone.
     // A clash suspends the batch on WebDavUploads.conflict until the dialog
@@ -4868,6 +4872,24 @@ internal fun BitChordApp(
                 // second tab is not always the second tab.
                 val onTabSelected: (Int) -> Unit = { index ->
                     val tab = visibleTabDefs.getOrNull(index)?.first ?: TAB_HOME
+                    // Tapping the tab already showing takes its list back to
+                    // the top — but only when the tab's own list is what is on
+                    // screen. With a page, a mood or a settings screen over it,
+                    // the tap just closes that, as it always has. Read before
+                    // the lines below clear them.
+                    val scrollToTop = tab == nav.selectedTab && tab != TAB_SEARCH &&
+                        detail == null && selectedMoodGenre == null &&
+                        !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources &&
+                        !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay &&
+                        !nav.showAudiobooks && sheets.openAudiobook == null &&
+                        nav.itunesPodcastId == null && !nav.showGenres &&
+                        !sheets.showHistory && !sheets.showFlow && sheets.libraryShowAll == null &&
+                        !sheets.showQuickPicks && !podcastUi.showContinueListening
+                    if (scrollToTop) {
+                        val list = currentListState
+                        tabScrollJob[0]?.cancel()
+                        tabScrollJob[0] = scope.launch { list.scrollToTopSmoothly() }
+                    }
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
                     nav.showSettings = false
@@ -8734,3 +8756,20 @@ private const val VIDEO_UPGRADE_WAIT_MS = 20_000L
 
 /** How often that question is asked while the controller catches up. */
 private const val VIDEO_UPGRADE_POLL_MS = 150L
+
+/** How many rows above the top a scroll-to-top animates; anything further is jumped to first. */
+private const val SCROLL_TO_TOP_ANIMATED_ROWS = 6
+
+/**
+ * Back to the top of a tab's list, as a scroll the eye can follow.
+ *
+ * A long way down, the list first jumps to a few rows from the top and
+ * animates only the rest: animating the whole distance would compose and
+ * lay out every row in between, which is the frame cost the jump avoids,
+ * and a scroll that long reads as a blur anyway.
+ */
+private suspend fun LazyListState.scrollToTopSmoothly() {
+    if (firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0) return
+    if (firstVisibleItemIndex > SCROLL_TO_TOP_ANIMATED_ROWS) scrollToItem(SCROLL_TO_TOP_ANIMATED_ROWS)
+    animateScrollToItem(0)
+}
