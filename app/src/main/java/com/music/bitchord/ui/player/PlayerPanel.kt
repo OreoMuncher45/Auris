@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,10 +44,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -74,6 +78,7 @@ import com.music.bitchord.ui.components.GLASS_EDGE_COLOR
 import com.music.bitchord.ui.components.GLASS_EDGE_WIDTH
 import com.music.bitchord.ui.components.MiniPlayerNextGlyph
 import com.music.bitchord.ui.components.glassContentColor
+import com.music.bitchord.ui.components.glassRim
 import com.music.bitchord.ui.components.liquidGlass
 import com.music.bitchord.ui.components.MiniArt
 import com.music.bitchord.ui.components.miniArtPadding
@@ -131,12 +136,12 @@ internal enum class PanelPillMaterial {
  * ([PanelMiniRow]) fades out of it and the full player fades in, both on the
  * container; the real pill underneath stands aside while this is up (see
  * [PlayerDock.panelShown]), so there is never a second panel to see. As it
- * opens a plain fill comes in over the material and the material is dropped
- * once that is opaque — the moment its blur stops costing anything.
+ * opens a plain fill comes in over the material and the material stops being
+ * drawn once that is opaque — the moment its blur stops costing anything.
+ * (Stops being drawn, not composed: see [PanelMaterial].)
  *
  * Without a [dock] ("reduce animation") it is just the player, full window.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 internal fun PlayerPanel(
     dock: PlayerDock?,
@@ -181,24 +186,12 @@ internal fun PlayerPanel(
     }
     val rowUntil = if (lightTheme) MINI_ROW_UNTIL_LIGHT else MINI_ROW_UNTIL
     val fillUntil = if (lightTheme) PANEL_FILL_UNTIL_LIGHT else PANEL_FILL_UNTIL_DARK
-    val miniVisible by remember(dock, rowUntil) {
+    // Read in placement only — see [hiddenUnless] — so the row's coming and
+    // going costs a re-placement and never a composition.
+    val miniVisible = remember(dock, rowUntil) {
         derivedStateOf { dock != null && dock.openFraction() < rowUntil }
     }
-    val materialNeeded by remember(dock, fillUntil) {
-        derivedStateOf { dock != null && dock.panelFill(fillUntil) < 1f }
-    }
     val surfaceColor = MaterialTheme.colorScheme.surface
-    val surface = when {
-        dock == null || covered || !materialNeeded -> Modifier
-        material == PanelPillMaterial.Glass -> Modifier.liquidGlass(shape)
-        material == PanelPillMaterial.Frost -> Modifier
-            .clip(shape)
-            .optimizedHazeEffect(state = hazeState, style = HazeMaterials.thin(surfaceColor))
-            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
-        else -> Modifier
-            .background(surfaceColor, shape)
-            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
-    }
 
     Box(
         modifier
@@ -223,9 +216,21 @@ internal fun PlayerPanel(
                 }
             },
     ) {
+        // The panel's material, at the window's own size and place — see
+        // [PanelMaterialLayer]. A sibling under the panel rather than a child
+        // of it, so nothing about it moves when the panel does.
+        if (dock != null) {
+            PanelMaterialLayer(
+                dock = dock,
+                shape = shape,
+                material = material,
+                hazeState = hazeState,
+                surfaceColor = surfaceColor,
+                fillUntil = fillUntil,
+            )
+        }
         Box(
             (if (dock != null) Modifier.panelBounds(dock) else Modifier.fillMaxSize())
-                .then(surface)
                 // The panel is the touch target wherever it stands, so a tap
                 // on a part of the player that has no control of its own
                 // never falls through to the page underneath.
@@ -234,12 +239,27 @@ internal fun PlayerPanel(
                 }
                 .then(if (motion != null) Modifier.playerPullDown(motion) else Modifier),
         ) {
-            if (dock != null && !covered) {
+            // Everything that belongs to the panel's trip — the material's edge,
+            // the plain fill, the pill's row — is composed for as long as the panel
+            // is, and comes and goes in layout and draw alone. Composed only
+            // between two thresholds of the open fraction, each of them was a
+            // composition (an AsyncImage, a glass node, a gesture detector)
+            // landing in the middle of the slide, as the artwork headed home.
+            if (dock != null) {
+                PanelEdge(dock = dock, shape = shape, material = material, fillUntil = fillUntil)
                 val panelColor = dock.panelColor
                 Box(
                     Modifier
                         .matchParentSize()
-                        .graphicsLayer { alpha = dock.panelFill(fillUntil) }
+                        .graphicsLayer {
+                            // Nothing under a fully open portrait player: its
+                            // own background is opaque.
+                            alpha = if (dock.attached && dock.openFraction() >= 1f) {
+                                0f
+                            } else {
+                                dock.panelFill(fillUntil)
+                            }
+                        }
                         .background(panelColor, shape),
                 )
             }
@@ -257,10 +277,13 @@ internal fun PlayerPanel(
                             }
                         },
                 ) { content() }
-                if (dock != null && miniVisible) {
+                if (dock != null) {
                     val density = LocalDensity.current
                     val windowWidth = LocalWindowInfo.current.containerSize.width
-                    val pill = remember(dock) { dock.miniPillInWindow() }
+                    // Measured afresh each time the player stops covering the
+                    // page — the start of every close — rather than once for
+                    // the life of the panel.
+                    val pill = remember(dock, covered) { dock.miniPillInWindow() }
                     val rowHeight = with(density) { (pill?.height ?: 0f).toDp() }
                         .takeIf { it > 0.dp } ?: 56.dp
                     // Inline in the tab bar the glass pill is narrow and drops
@@ -282,6 +305,7 @@ internal fun PlayerPanel(
                         motion = motion,
                         modifier = Modifier
                             .align(Alignment.TopStart)
+                            .hiddenUnless(miniVisible)
                             .fillMaxWidth()
                             .height(rowHeight)
                             .graphicsLayer {
@@ -294,6 +318,124 @@ internal fun PlayerPanel(
         overlay()
     }
 }
+
+/**
+ * Placed off the panel while [shown] is false: out of sight, out of reach of
+ * a finger (the panel clips, so nothing off it is hit) and with nothing to
+ * draw. Read in placement, so a flip costs a re-placement, not a composition.
+ */
+private fun Modifier.hiddenUnless(shown: State<Boolean>): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) {
+            if (shown.value) placeable.place(0, 0) else placeable.place(0, OFF_PANEL_PX)
+        }
+    }
+
+/** Far enough above the panel that nothing placed there is on any screen. */
+private const val OFF_PANEL_PX = -100_000
+
+/**
+ * The pill's material under the moving panel: glass, frost or a plain surface,
+ * whichever the pill underneath is made of.
+ *
+ * Glass and frost are laid out at the **window's** size and place, which never
+ * change, and clipped in draw to the panel's bounds and corners this frame —
+ * not drawn at the panel's own bounds. Glass re-captures any surface whose
+ * size or position has changed, frozen or not (it would otherwise show the
+ * region it used to sit over), and rebuilds its whole effect chain when its
+ * size does; at the panel's bounds that was a re-capture, a blur and a lens
+ * on every frame the panel moved, which is most of a close — the spring spends
+ * ~0.57s of its ~0.78s in the last fifth of the travel, where this material
+ * shows. Standing still, the sheet's freeze
+ * ([com.music.bitchord.ui.components.GlassMotion.sheet]) holds its one capture
+ * for the whole trip, Haze has nothing to re-blur, and a frame of the slide
+ * costs one path clip. A sibling of the panel rather than a child, so it is
+ * not re-placed, nor told it has moved, on any of those frames.
+ *
+ * What that costs: no lens refraction along the panel's moving edge, which is
+ * off the window's edge here — the rim and the hairline are drawn on the
+ * panel's own shape by [PanelEdge]. Not drawn once the panel's plain fill has
+ * covered it, nor under the fully open player; composed for as long as the
+ * panel is, so that its one capture is taken as a trip starts and never lands
+ * in the middle of one.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun PanelMaterialLayer(
+    dock: PlayerDock,
+    shape: Shape,
+    material: PanelPillMaterial,
+    hazeState: HazeState,
+    surfaceColor: Color,
+    fillUntil: Float,
+) {
+    val clip = remember { android.graphics.Path() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawWithContent {
+                // Under an opaque fill, or under the fully open player, the
+                // blur would be paid for nothing anyone sees.
+                if (dock.panelFill(fillUntil) >= 1f) return@drawWithContent
+                // The panel's own rect and corners, at the pixels the panel
+                // is placed at. Into a path kept for the purpose, so a frame
+                // of the slide allocates nothing.
+                val rect = dock.panelBounds(size)
+                val left = rect.left.roundToInt().toFloat()
+                val top = rect.top.roundToInt().toFloat()
+                val right = left + rect.width.roundToInt().coerceAtLeast(1)
+                val bottom = top + rect.height.roundToInt().coerceAtLeast(1)
+                val radius = dock.panelCornerPx(PANEL_SHEET_CORNER_DP * density)
+                clip.rewind()
+                clip.addRoundRect(left, top, right, bottom, radius, radius, android.graphics.Path.Direction.CW)
+                val canvas = drawContext.canvas.nativeCanvas
+                val saved = canvas.save()
+                canvas.clipPath(clip)
+                drawContent()
+                canvas.restoreToCount(saved)
+            },
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    when (material) {
+                        PanelPillMaterial.Glass ->
+                            Modifier.liquidGlass(WINDOW_GLASS_SHAPE, edgeEffects = false)
+                        PanelPillMaterial.Frost -> Modifier.optimizedHazeEffect(
+                            state = hazeState,
+                            style = HazeMaterials.thin(surfaceColor),
+                        )
+                        PanelPillMaterial.Solid -> Modifier.background(surfaceColor)
+                    },
+                ),
+        )
+    }
+}
+
+/**
+ * The material's edge, on the panel's own shape: the glass rim for glass, and
+ * the hairline every material has. Drawn only while the material shows.
+ */
+@Composable
+private fun BoxScope.PanelEdge(
+    dock: PlayerDock,
+    shape: Shape,
+    material: PanelPillMaterial,
+    fillUntil: Float,
+) {
+    Box(
+        Modifier
+            .matchParentSize()
+            .drawWithContent { if (dock.panelFill(fillUntil) < 1f) drawContent() }
+            .then(if (material == PanelPillMaterial.Glass) Modifier.glassRim(shape) else Modifier)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape),
+    )
+}
+
+/** The window-sized glass is clipped by the panel, so it needs no corners of its own. */
+private val WINDOW_GLASS_SHAPE = RoundedCornerShape(0.dp)
 
 /** The container's place this frame: size and position come from the dock. */
 private fun Modifier.panelBounds(dock: PlayerDock): Modifier = layout { measurable, constraints ->

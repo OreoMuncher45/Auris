@@ -17,10 +17,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
@@ -121,6 +123,18 @@ fun Modifier.lightweightLiquidGlass(
 }
 
 /**
+ * The glass rim alone — the same [Highlight] a glass surface draws round its
+ * own edge — for glass whose edge is drawn apart from its capture: the player
+ * panel's, captured at the window's size and clipped to the moving panel.
+ * Re-recorded only when [shape]'s outline changes, as a 0.5dp stroke.
+ */
+@Composable
+internal fun Modifier.glassRim(shape: Shape): Modifier {
+    val shapeProvider = remember(shape) { ShapeProvider { shape } }
+    return then(HighlightElement(shapeProvider = shapeProvider, highlight = { Highlight.Default }))
+}
+
+/**
  * BitChord-facing glass surface. Delegates to the vendored Convx
  * [Modifier.liquidGlass], which is the authoritative implementation; this
  * wrapper only pins BitChord's house defaults so existing call sites keep a
@@ -170,6 +184,13 @@ fun Modifier.liquidGlass(
      * behind it rather than show it. Null keeps the provider's.
      */
     blurRadiusDp: Float? = null,
+    /**
+     * The lens, the rim and the drop shadow — everything drawn off the
+     * surface's own edge. Off for glass whose edge is not where its node is:
+     * the player panel's, captured at the window's fixed size and clipped to
+     * the moving panel (see `PanelMaterial`), whose edge is drawn there.
+     */
+    edgeEffects: Boolean = true,
 ): Modifier {
     // The provider's flag is read here in composition and closed over, not
     // read inside the lambda: CompositionLocals belong to composition, and
@@ -185,6 +206,7 @@ fun Modifier.liquidGlass(
         // dead-control failure mode.
         LocalGlassEffectConfig.current,
         shape,
+        applyEdgeEffects = edgeEffects,
         blurRadiusDp = blurRadiusDp ?: LocalGlassEffectConfig.current.blurRadius,
         frozen = {
             GlassMotion.sheet.frozen() ||
