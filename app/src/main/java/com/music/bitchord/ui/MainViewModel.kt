@@ -77,6 +77,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.withoutRepeatedRecordings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
@@ -3694,15 +3695,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
             val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
             if (stillCurrent) {
+                // Cleared only while this request still owns the search: the
+                // merge below suspends, and a newer search's load-more may be
+                // in flight by the time it resumes.
+                var owns = true
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows).distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
-                    searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
-                    searchSession = session.copy(continuation = page.continuation)
-                    _results.value = UiState.Success(merged)
+                    // Off the main thread: a long scroll is a few hundred rows.
+                    val merged = withContext(Dispatchers.Default) {
+                        (current + page.rows).distinctBy(::searchResultKey)
+                            .withoutRepeatedRecordings()
+                            .withoutBlockedArtists()
+                    }
+                    // The merge suspended; a search started meanwhile owns the list now.
+                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    if (owns) {
+                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
+                        searchSession = session.copy(continuation = page.continuation)
+                        _results.value = UiState.Success(merged)
+                    }
                 }
-                _searchLoadingMore.value = false
+                if (owns) _searchLoadingMore.value = false
             }
         }
     }
@@ -3727,16 +3740,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
             if (stillCurrent) {
+                // Cleared only while this request still owns the search: the
+                // merge below suspends, and a newer search's load-more may be
+                // in flight by the time it resumes.
+                var owns = true
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows)
-                        .distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
-                    searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
-                    searchSession = session.copy(nextOffset = page.nextOffset)
-                    _results.value = UiState.Success(merged)
+                    val merged = withContext(Dispatchers.Default) {
+                        (current + page.rows)
+                            .distinctBy(::searchResultKey)
+                            .withoutRepeatedRecordings()
+                            .withoutBlockedArtists()
+                    }
+                    // The merge suspended; a search started meanwhile owns the list now.
+                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    if (owns) {
+                        searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
+                        searchSession = session.copy(nextOffset = page.nextOffset)
+                        _results.value = UiState.Success(merged)
+                    }
                 }
-                _searchLoadingMore.value = false
+                if (owns) _searchLoadingMore.value = false
             }
         }
     }

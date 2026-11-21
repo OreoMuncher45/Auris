@@ -226,27 +226,62 @@ fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
 /**
  * Whether a row is the track the player is on, for the now-playing highlight.
  *
- * Title and credit, matched exactly, and nothing else. Every id a row could be
- * matched on instead is scoped to where the row came from and so lies when
- * asked across that boundary: a set-video-id names a slot in one playlist, and
- * two playlists hand the same one to unrelated tracks, which is what used to
- * light up a stranger's row while something else played. A video id is no
- * better across catalogues — the same recording arrives with a different id
- * from a local file, a download and a module source, and the highlight would
- * simply go missing.
+ * The id decides. A row and the player's item with the same [Song.videoId]
+ * are the same track; two with different ids are two tracks, whatever they
+ * are called. Matching on title and credit instead lit up every row that
+ * shared them — a song's album cut and its single, or a film song uploaded
+ * once per dubbed release — so a search for one of them showed the whole set
+ * as "playing" at once.
  *
- * The cost is that name and credit are not unique: an album track and its
- * appearance on a compilation are one and the same to this, and both light up.
- * That is the trade the highlight is meant to make — it says "this is the song
- * you are hearing", not "this is the queue entry you are hearing".
+ * The one place an id can't be compared is across the Spotify boundary. A
+ * Spotify row (`spotify:`, `sp:` or `sp-miss:`) and the YouTube Music track it
+ * resolves to name one recording with two ids, and a playlist row that is
+ * matched while its queue entry is still the `spotify:` key has no id in
+ * common with it at all. Only there do title and credit decide, exactly as
+ * before. The three Spotify prefixes are one key, so a pending row and the
+ * `spotify:` entry queued from it are the same id.
  *
- * The one place that must not use this is the player's own queue, where the
- * entry, not the song, is what the row stands for — that list matches on
- * position.
+ * Every other catalogue keeps its own id through playback: a local file is its
+ * content uri on both sides, a download plays under its YouTube id, and a
+ * module substitution swaps the stream, not the queue entry's id.
+ *
+ * The set-video-id is never used: it names a slot in one playlist, and two
+ * playlists hand the same one to unrelated tracks. The player's own queue
+ * doesn't use this either; that list matches on position.
  */
 fun Song.isSameTrackAs(other: Song?): Boolean {
     other ?: return false
-    return title == other.title && artist == other.artist
+    return isSamePlayingTrack(videoId, title, artist, other.videoId, other.title, other.artist)
+}
+
+/**
+ * [Song.isSameTrackAs] for a row that isn't a [Song] — a home-shelf card —
+ * given its id, title and credit line. A blank or null id never matches on
+ * names alone unless the other side is a Spotify row.
+ */
+fun isSamePlayingTrack(
+    rowId: String?,
+    rowTitle: String,
+    rowArtist: String,
+    playingId: String?,
+    playingTitle: String,
+    playingArtist: String,
+): Boolean {
+    val row = trackIdentity(rowId)
+    val playing = trackIdentity(playingId)
+    if (row != null && row == playing) return true
+    val rowSpotify = row?.startsWith(SPOTIFY_ROW_PREFIX) == true
+    val playingSpotify = playing?.startsWith(SPOTIFY_ROW_PREFIX) == true
+    if (rowSpotify == playingSpotify) return false
+    return rowTitle == playingTitle && rowArtist == playingArtist
+}
+
+/** The id a track is compared on, with the three Spotify spellings folded into one. */
+private fun trackIdentity(id: String?): String? = when {
+    id.isNullOrBlank() -> null
+    id.startsWith(SPOTIFY_MISSING_PREFIX) -> SPOTIFY_ROW_PREFIX + id.removePrefix(SPOTIFY_MISSING_PREFIX)
+    id.startsWith(SPOTIFY_PENDING_PREFIX) -> SPOTIFY_ROW_PREFIX + id.removePrefix(SPOTIFY_PENDING_PREFIX)
+    else -> id
 }
 
 /**
@@ -370,6 +405,40 @@ sealed interface SearchResult {
     data class TopTrack(val song: Song) : SearchResult
     data class Track(val song: Song) : SearchResult
     data class Browse(val item: BrowseItem) : SearchResult
+}
+
+/**
+ * The rows with every repeat of one recording after the first taken out.
+ *
+ * A search can list one recording more than once under different ids: the
+ * album cut and the single, the original album and a compilation, or two
+ * Spotify releases of the same master. Ids are already distinct by the time
+ * rows reach here, so this is the other half — a row is a repeat when its
+ * title, credit and length all match an earlier one, compared without regard
+ * to case or surrounding space, and it is the same kind of row (song or
+ * video, explicit or clean). The clean and explicit cuts stay apart because
+ * the audio switch picks between them by that flag. A row that states no
+ * length is always kept, since two different cuts can share a name and
+ * credit; so is a row whose credit differs, which is what a film song's dubbed versions look like.
+ *
+ * The promoted top result is never removed, only remembered, so a plain row
+ * repeating it goes instead. Browse rows pass through untouched. One pass and
+ * one set, linear in the page; callers run it off the main thread.
+ */
+fun List<SearchResult>.withoutRepeatedRecordings(): List<SearchResult> {
+    val seen = HashSet<String>(size)
+    return filter { row ->
+        val song = row.songOrNull() ?: return@filter true
+        val length = song.durationText?.trim()?.takeIf { it.isNotEmpty() } ?: return@filter true
+        val key = buildString {
+            append(song.title.trim().lowercase()).append('\u0001')
+            append(song.artist.trim().lowercase()).append('\u0001')
+            append(length).append('\u0001')
+            append(song.isVideo).append('\u0001')
+            append(song.isExplicit)
+        }
+        seen.add(key) || row is SearchResult.TopTrack
+    }
 }
 
 /** The song carried by a search row, whether it is promoted or ordinary. */

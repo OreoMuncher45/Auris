@@ -926,6 +926,26 @@ class SourcesTest {
         )
     }
 
+    @Test
+    fun `manual video audio switch keeps the explicit edition despite a long visual intro`() {
+        val target = TrackMatcher.Target(
+            "Big Dawgs",
+            "Hanumankind, Kalmi",
+            durationSec = 391,
+            isExplicit = true,
+            isVideo = true,
+        )
+        val clean = song("Big Dawgs", "Hanumankind, Kalmi", "3:11")
+            .copy(videoId = "clean", isExplicit = false)
+        val explicit = song("Big Dawgs", "Hanumankind, Kalmi", "3:11")
+            .copy(videoId = "explicit", isExplicit = true)
+
+        // Both are beyond the ordinary matcher's runtime limit, so the
+        // fallback decides; the clean row listed first must not win.
+        assertNull(TrackMatcher.best(listOf(clean, explicit), target))
+        assertEquals(explicit, TrackMatcher.bestOfficialAudioForVideo(listOf(clean, explicit), target))
+    }
+
     /**
      * A declared tier is a reason to prefer one copy of a recording over
      * another. It is not a reason to play a different recording — the DJ edit

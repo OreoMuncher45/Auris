@@ -22,6 +22,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withQuickPicks
+import com.music.bitchord.data.model.withoutRepeatedRecordings
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
@@ -312,7 +313,7 @@ object YtMusicRepository {
                 Innertube.search(query, filter.params),
                 includeVideos = filter == SearchFilter.VIDEOS,
             ).let { page ->
-                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+                SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
             }
         }
 
@@ -322,7 +323,7 @@ object YtMusicRepository {
             Innertube.searchContinuation(token),
             includeVideos = filter == SearchFilter.VIDEOS,
         ).let { page ->
-            SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+            SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
         }
     }
 
@@ -367,7 +368,7 @@ object YtMusicRepository {
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
             ).let { page ->
-                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+                SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
             }
         }
 

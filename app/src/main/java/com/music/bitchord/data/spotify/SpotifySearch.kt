@@ -5,6 +5,7 @@ import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.withoutRepeatedRecordings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -162,7 +163,10 @@ internal object SpotifySearch {
             Log.w(TAG, "Spotify answered no search section for \"${query.take(80)}\": $why")
             throw SpotifyGraphQLException("Spotify could not answer that search — $why")
         }
-        return@withContext merge(pages, answeredBy)
+        // The album and the single of one recording arrive as two tracks.
+        return@withContext merge(pages, answeredBy).let { page ->
+            page.copy(rows = page.rows.withoutRepeatedRecordings())
+        }
     }
 
     /**

@@ -187,7 +187,8 @@ object TrackMatcher {
      *
      * This remains deliberately stricter than a search engine's first row.
      * A cover, remix or karaoke version still cannot cross the switch just
-     * because it happens to share a title.
+     * because it happens to share a title, and a clean edition can't stand in
+     * for an explicit video, or the reverse, when both state the flag.
      */
     fun bestOfficialAudioForVideo(candidates: List<Song>, target: Target): Song? {
         val wanted = parseTitle(target.title, target.artist)
@@ -197,11 +198,13 @@ object TrackMatcher {
                 val got = parseTitle(candidate.title, candidate.artist)
                 if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
                 val artist = artistScore(target.artist, candidate.artist) ?: return@mapNotNull null
+                // A stated clean or explicit edition must still agree, as in [best].
+                val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return@mapNotNull null
                 val duration = target.durationSec?.let { expected ->
                     secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) }
                         ?: -120
                 } ?: 0
-                candidate to (artist * 1_000 + duration)
+                candidate to (artist * 1_000 + explicit + duration)
             }
             .sortedByDescending { it.second }
             .firstOrNull()
