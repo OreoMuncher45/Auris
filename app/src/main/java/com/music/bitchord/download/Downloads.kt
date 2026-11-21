@@ -2101,6 +2101,12 @@ object Downloads {
                 SourceResolver.forDownload(
                     TrackMatcher.targetOf(track),
                     SourceResolver.requestForDownload(quality),
+                    // A premium claim is read against the stream's own init
+                    // segment before it wins: a source labelling AAC as
+                    // lossless is refused and the walk moves on, rather than
+                    // the claim reaching [ManifestFile.assemble] and failing
+                    // the whole download there.
+                    verify = ManifestFile::verified,
                 )
             } catch (e: CancellationException) {
                 throw e
