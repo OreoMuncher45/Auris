@@ -599,8 +599,9 @@ object TrackMatcher {
         // spelling, replacing the generic "mix" those phrases also carry, so
         // "(DJ Mix)" and "(Mixed)" meet and [score]'s release rule can read
         // it off an album.
+        // "DJ-Mix" reaches here as one token: the hyphen is stripped, not split.
         if ("mixed" in words || "continuous" in words || "nonstop" in words ||
-            words.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
+            words.any { it in DJ_MIX_TOKENS } || words.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
         ) {
             marks.remove("mix")
             marks += "mixed"
@@ -884,6 +885,7 @@ object TrackMatcher {
 
     private val DJ_MIX_ALBUM =
         Regex("""(?:\bdj[\s-]?mix(?:ed)?|\bcontinuous mix|\bnon-?stop mix|\bmixed)\W*$|\bmixed by\b""")
+    private val DJ_MIX_TOKENS = setOf("djmix", "djmixed", "djset")
     private val LIVE_ALBUM = Regex("""\blive (?:at|in|from)\b""")
 
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
