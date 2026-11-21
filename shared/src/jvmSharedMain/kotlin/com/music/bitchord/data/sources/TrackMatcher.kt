@@ -793,16 +793,23 @@ object TrackMatcher {
         val have = normalize(got)
         if (have.isBlank()) return false
         val want = normalize(wanted)
-        val wantWords = creditWords(want)
+        val wantNames = want.split(ARTIST_SEPARATORS).map(::creditWords).filter { it.isNotEmpty() }
         // Each credited name on its own, so a genuine extra artist ("River
         // Lane, Cover Drive") is judged as that artist and not as an act.
         val imitation = have.split(ARTIST_SEPARATORS).any { name ->
             val words = creditWords(name)
-            // What this name says beyond the requested credit, counted:
-            // "Cover Drive Cover Band" has a "cover" more than "Cover Drive".
-            val remaining = words.toMutableList()
-            for (word in wantWords) remaining.remove(word)
-            val namedAfterWanted = remaining.size < words.size
+            // What this name says beyond a requested artist it is built on:
+            // "Cover Drive Cover Band" is "Cover Drive" plus "cover band".
+            // Only a whole requested name comes off, and only from the name
+            // holding it, so a separate "Cover Band" keeps its "cover".
+            val at = wantNames.firstNotNullOfOrNull { wanted ->
+                (0..words.size - wanted.size).firstOrNull { i ->
+                    wanted.isNotEmpty() && words.subList(i, i + wanted.size) == wanted
+                }?.let { i -> i to wanted.size }
+            }
+            val namedAfterWanted = at != null
+            val remaining = if (at == null) words
+            else words.subList(0, at.first) + words.subList(at.first + at.second, words.size)
             remaining.any { it in IMITATION_STRONG } ||
                 // "cover", "salute", "homage" are real name words ("Cover
                 // Drive"); they mark an imitation only on an act named after

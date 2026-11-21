@@ -221,6 +221,7 @@ class TrackMatcherWrongRecordingTest {
     fun `a cover band named after an act with an imitation word is not that act`() {
         refused(song("Lost", "Cover Drive Cover Band", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
         refused(song("Lost", "River Lane, The Cover Band", "3:30"), TrackMatcher.Target("Lost", "River Lane", 210))
+        refused(song("Lost", "Cover Drive, Cover Band", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
     }
 
     @Test
