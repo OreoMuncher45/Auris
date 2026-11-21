@@ -1,11 +1,15 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.sources.DolbyAudio
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.download.Mp4Boxes.boxes
 import com.music.bitchord.download.Mp4Boxes.child
 import com.music.bitchord.download.Mp4Boxes.find
 import com.music.bitchord.download.Mp4Boxes.readU32
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -14,6 +18,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.OutputStream
 import java.net.URI
+import java.util.Locale
 
 /**
  * A manifest's segments joined back into one ordinary file, so a lossless
@@ -58,6 +63,116 @@ internal object ManifestFile {
         sink: OutputStream,
         onProgress: (Long, Long) -> Unit,
     ): Unit = withContext(Dispatchers.IO) {
+        val manifest = open(url, headers, dash)
+        val total = manifest.media.size + 1L
+
+        val init = manifest.fetch(manifest.init)
+        onProgress(1, total)
+        // Lazy, so a hi-res track is never more than one segment in memory.
+        val scope = coroutineContext
+        val media = manifest.media.asSequence().mapIndexed { i, ref ->
+            scope.ensureActive()
+            manifest.fetch(ref).also { onProgress(i + 2L, total) }
+        }
+
+        assemble(cacheDir, extension, init, media, sink)
+        sink.flush()
+    }
+
+    /**
+     * [stream] with its format corrected to what its initialisation segment
+     * actually holds, when that disagrees with what the source claimed.
+     *
+     * A source's codec is a claim, and until this existed it was first checked
+     * by [writeFlac] — after the route was chosen, the pending file opened and
+     * every other source passed over. A SoundCloud extension that labels its
+     * AAC-over-HLS "LOSSLESS" then failed the download outright
+     * (`Stream is mp4a, not FLAC`) instead of losing its place in the lossless
+     * walk, which is what the resolver does with a claim it can see through.
+     * Asked from [SourceResolver.forDownload][com.music.bitchord.data.sources.SourceResolver.forDownload]
+     * before a premium claim is accepted, so a source caught out here is
+     * refused like any other and the walk moves on.
+     *
+     * Only the index and the init segment are fetched — a few kilobytes, off
+     * the main thread. Anything that cannot be read (not a manifest, network
+     * fault, an entry this does not know) leaves the claim standing: the
+     * download itself is where a broken stream reports itself.
+     */
+    suspend fun verified(stream: SourceStream): SourceStream {
+        val claimed = stream.format
+        // Only a premium claim decides anything here; a lossy one is never
+        // the winner of the walk this guards.
+        if (claimed.isLossless != true && !claimed.isDolby) return stream
+        val dash = OfflineDash.handles(stream.url)
+        val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        if (!dash && !hls) return stream
+        val entry = try {
+            withContext(Dispatchers.IO) {
+                val manifest = open(stream.url, stream.headers, dash)
+                sampleEntry(manifest.fetch(manifest.init))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return stream
+        return honest(stream, entry)
+    }
+
+    /**
+     * The pure half of [verified]: [stream] as it stands when [entry] — the
+     * init segment's sample entry type — agrees with its claim, else with the
+     * codec [entry] names and nothing else the source said, since a source
+     * that misnamed the codec has not described the rest of it either.
+     */
+    internal fun honest(stream: SourceStream, entry: String): SourceStream {
+        val actual = SAMPLE_ENTRIES[entry] ?: return stream
+        val claimed = stream.format
+        val agrees = when {
+            // TrueHD is lossless; a lossy Dolby entry (`ec-3`) does not agree
+            // with it even though both are the Dolby family.
+            DolbyAudio.codec(claimed.codec) == "truehd" -> DolbyAudio.codec(actual) == "truehd"
+            // Dolby claims are judged on family: the JOC flag lives inside
+            // `dec3`, so an `ec-3` entry is consistent with an Atmos claim.
+            claimed.isDolby -> DolbyAudio.codec(actual) != null
+            // A lossless claim has to be lossless *and* file as the same
+            // thing: a FLAC claim over ALAC bytes is honest audio but would
+            // still be written by the wrong assembler.
+            else -> actual == claimed.codec?.lowercase(Locale.ROOT) ||
+                (StreamFormat(actual).isLossless == true &&
+                    DownloadStore.storable(actual)?.extension == DownloadStore.storable(claimed.codec)?.extension)
+        }
+        return if (agrees) stream else stream.copy(format = StreamFormat(codec = actual))
+    }
+
+    /** The first sample entry's type in an init segment, looking through CENC to the original format. */
+    internal fun sampleEntry(init: ByteArray): String? {
+        val stsd = find(init, "moov", "trak", "mdia", "minf", "stbl", "stsd") ?: return null
+        val entry = boxes(init, stsd.content + 8, stsd.end).firstOrNull() ?: return null
+        if (entry.type != "enca") return entry.type
+        // AudioSampleEntry fields, then sinf → frma names what was encrypted.
+        val sinf = boxes(init, entry.content + 28, entry.end).firstOrNull { it.type == "sinf" } ?: return null
+        val frma = child(init, sinf, "frma")?.takeIf { it.end - it.content >= 4 } ?: return null
+        return String(init, frma.content, 4, Charsets.ISO_8859_1)
+    }
+
+    /** MP4 audio sample entry types, as the codec names [StreamFormat] uses. */
+    private val SAMPLE_ENTRIES = mapOf(
+        "fLaC" to "flac",
+        "alac" to "alac",
+        "mp4a" to "aac",
+        "Opus" to "opus",
+        ".mp3" to "mp3",
+        "ac-3" to "ac3",
+        "ec-3" to "eac3",
+        "ac-4" to "ac4",
+        "mlpa" to "truehd",
+    )
+
+    /** A manifest's index read and its segment addresses resolved, ready to fetch. */
+    private class Opened(val init: String, val media: List<String>, val fetch: (String) -> ByteArray)
+
+    private fun open(url: String, headers: Map<String, String>, dash: Boolean): Opened {
         fun fetch(target: String): ByteArray {
             // A local extension playlist carries per-part requirements that
             // Media3 cannot express in M3U text. Use the same registry as
@@ -91,19 +206,7 @@ internal object ManifestFile {
         fun resolve(ref: String) = base?.resolve(ref)?.toString()
             ?: ref.toHttpUrlOrNull()?.toString()
             ?: error("Invalid segment URL")
-        val total = mediaRefs.size + 1L
-
-        val init = fetch(resolve(initRef))
-        onProgress(1, total)
-        // Lazy, so a hi-res track is never more than one segment in memory.
-        val scope = coroutineContext
-        val media = mediaRefs.asSequence().mapIndexed { i, ref ->
-            scope.ensureActive()
-            fetch(resolve(ref)).also { onProgress(i + 2L, total) }
-        }
-
-        assemble(cacheDir, extension, init, media, sink)
-        sink.flush()
+        return Opened(resolve(initRef), mediaRefs.map(::resolve), ::fetch)
     }
 
     /** Everything after the fetching: [init] and [media] in, one [extension] file out. */
