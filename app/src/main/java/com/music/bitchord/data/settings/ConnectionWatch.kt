@@ -3,6 +3,7 @@ package com.music.bitchord.data.settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
 /**
@@ -87,7 +88,13 @@ internal class ConnectionWatch(
         pendingCheck?.cancel()
         pendingCheck = scope.launch {
             delay(graceMs)
+            val self = coroutineContext.job
             synchronized(lock) {
+                // Cancelling a job that is already past its delay does not
+                // stop it, so a check a later callback replaced could still
+                // reach here: it must neither publish ahead of its
+                // replacement's grace nor clear the replacement's handle.
+                if (pendingCheck !== self) return@launch
                 publish(isUp())
                 pendingCheck = null
             }
