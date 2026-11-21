@@ -1005,7 +1005,9 @@ class PlaybackService : MediaLibraryService() {
             // Everything the sampler records is about audible time, so its job
             // exists exactly while audio does instead of waking every five
             // seconds to rediscover a paused player.
-            if (isPlaying) reportProgress() else stopProgressReporting()
+            // While a Cast receiver is the speaker, the phone's player pauses
+            // under it on purpose; the sampler then runs on the receiver's clock.
+            if (isPlaying) reportProgress() else if (!castPlayback.isPlaying) stopProgressReporting()
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
             // the artwork are known to be settled.
@@ -1848,6 +1850,7 @@ class PlaybackService : MediaLibraryService() {
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         cast = castPlayback,
         onShuffleRequest = ::toggleShuffleFromSession,
+        onRemotePlaying = ::onRemotePlaying,
     ) { lastPublishedSubtitle }
 
     /**
@@ -7528,9 +7531,27 @@ class PlaybackService : MediaLibraryService() {
      * entry with no watchtime behind it barely registers as a listen, so the
      * sampling has to come from here.
      */
+    /**
+     * A Cast receiver started or stopped playing. The phone's player is held
+     * paused while the receiver is the speaker, so its own isPlaying callback
+     * never starts the sampler: this does, so that listening on the speaker
+     * reaches the listening record too.
+     */
+    private fun onRemotePlaying(playing: Boolean) {
+        if (playing) {
+            reportProgress()
+        } else if (player?.isPlaying != true) {
+            stopProgressReporting()
+            // Paused on the speaker: close the gap like a local pause does.
+            ListeningRecorder.onStopped()
+        }
+    }
+
     private fun reportProgress() {
         if (progressJob?.isActive == true) return
         progressJob = scope.launch {
+            // Whether the last tick counted listening on the Cast receiver.
+            var remoteSampling = false
             while (isActive) {
                 // Re-read every tick rather than captured once: the session
                 // moves between two players, and a sampler pinned to the one
@@ -7574,6 +7595,27 @@ class PlaybackService : MediaLibraryService() {
                     // repeat: it returns immediately unless the track is
                     // pending and nothing is already looking.
                     lookForBetterCopy(player)
+                } else if (castPlayback.active) {
+                    // On the receiver the phone's player is held paused on
+                    // purpose and the receiver owns the clock, so the branch
+                    // above never runs. The receiver's own isPlaying is the
+                    // tick here; the phone's current item is the receiver's
+                    // track (it follows the receiver), and the receiver knows
+                    // the real length.
+                    val playingRemotely = castPlayback.isPlaying
+                    if (playingRemotely) {
+                        player?.currentMediaItem?.toSong()?.let {
+                            val length = castPlayback.durationMs.takeIf { d -> d != C.TIME_UNSET && d > 0 }
+                                ?: (player?.duration ?: 0L)
+                            ListeningRecorder.onSample(it, length)
+                        }
+                    } else if (remoteSampling) {
+                        ListeningRecorder.onStopped()
+                    }
+                    remoteSampling = playingRemotely
+                } else if (remoteSampling) {
+                    remoteSampling = false
+                    ListeningRecorder.onStopped()
                 }
                 delay(PROGRESS_SAMPLE_MS)
             }
@@ -9495,6 +9537,8 @@ class PlaybackService : MediaLibraryService() {
         private val cast: CastPlayback,
         /** Flips the app's own shuffle — the queue edit in [QueueShuffle]. */
         private val onShuffleRequest: () -> Unit,
+        /** The receiver started or stopped making sound; see [PlaybackService.onRemotePlaying]. */
+        private val onRemotePlaying: (Boolean) -> Unit,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player), CastSink {
 
@@ -9624,6 +9668,7 @@ class PlaybackService : MediaLibraryService() {
                 reportedIsPlaying = playing
                 flags.add(Player.EVENT_IS_PLAYING_CHANGED)
                 listeners.forEach { it.onIsPlayingChanged(playing) }
+                onRemotePlaying(playing)
             }
             // Always: a controller extrapolates the position from the last one
             // it was given, and has to be re-anchored whenever the receiver
