@@ -128,6 +128,47 @@ class PlayerDarkThemeTest {
         assertEquals(mid, darkThemeMeshCell(mid))
     }
 
+    // --- The full-cover blur behind lyrics and the queue -------------------
+
+    @Test
+    fun paleBlurInDarkThemeIsDarkWithLightInk() {
+        val toned = paleCover.copyOf().darkThemeToned()
+        toned.forEachIndexed { i, pixel ->
+            assertTrue(wcagLuminance(pixel) < 0.22f, "blur pixel ${Integer.toHexString(pixel)} is not dark")
+            // Close to what the mesh does with the same colour.
+            val mesh = Oklch.fromArgb(darkThemeMeshCell(paleCover[i])).l
+            assertTrue(abs(Oklch.fromArgb(pixel).l - mesh) < 0.06f, "blur and mesh disagree on ${Integer.toHexString(paleCover[i])}")
+        }
+        val surface = fullBlurInkSurface(BandBounds(toned.copyOfRange(0, 3), toned.copyOfRange(3, 6)))
+        val choice = resolveInk(paleSleeve.accent, surface, paleSleeve.alphas, allowDark = false)
+        assertFalse(choice.dark)
+        assertTrue(choice.wash <= 0.10f, "lyrics grade ${choice.wash}")
+    }
+
+    @Test
+    fun paleBlurUntonedIsWhatLightThemeShowsAndTookDarkInk() {
+        // The reported lyrics screen: the untoned blur under its scrim, and
+        // the old resolver answering it with dark ink.
+        val surface = fullBlurInkSurface(BandBounds(paleCover.copyOfRange(0, 3), paleCover.copyOfRange(3, 6)))
+        assertTrue(resolveInk(paleSleeve.accent, surface, paleSleeve.alphas).dark)
+    }
+
+    @Test
+    fun darkBlurIsUntouched() {
+        val toned = darkCover.copyOf().darkThemeToned()
+        assertTrue(darkCover.contentEquals(toned))
+    }
+
+    @Test
+    fun blurKeepsHue() {
+        val toned = paleCover.copyOf().darkThemeToned()
+        paleCover.forEachIndexed { i, source ->
+            if (Oklch.fromArgb(source).chroma > 0.02f) {
+                assertTrue(hueGap(hue(source), hue(toned[i])) < 15f, "hue moved on ${Integer.toHexString(source)}")
+            }
+        }
+    }
+
     // --- The "Playing from" header ----------------------------------------
 
     private val captionAlpha = min(1f, NowPlayingAlphas().secondary + 0.25f)

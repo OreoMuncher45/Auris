@@ -743,11 +743,11 @@ private data class InkOutcome(
 private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     val live = inputs.live
     val owner = if (fromClip && live != null) live.palette else inputs.sleeve
-    // Dark theme keeps the main view's ink light, cover or clip — see
-    // [resolveInk]'s allowDark. Lyrics and queue already never go dark.
+    // Dark theme keeps the ink light on the main view and on the full-cover
+    // blur behind lyrics and the queue — see [resolveInk]'s allowDark.
     val allowDark = !inputs.darkTheme
     val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
-    val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas) }
+    val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
     // A Canvas that owns the screen is its own surface, graded over its dim.
     val canvas = if (fromClip && live != null) {
         live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
@@ -2132,11 +2132,16 @@ fun NowPlayingScreen(
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
     // effect.
+    // The app's theme, read off the scheme the player is drawn in: the mesh,
+    // the full-cover blur and the ink all answer to it — see
+    // [darkThemeMeshCell] and [darkThemeToned].
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
         imageUrl = remoteArt,
         artPx = artPx,
         prepare = landscape || tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen ||
             playerPrewarmStage >= 1,
+        darkTheme = darkTheme,
     )
     // Where the backdrops publish what they show under the chrome — see
     // [resolveInk]. Written by the backdrops' own effects and read only by the
@@ -2182,13 +2187,10 @@ fun NowPlayingScreen(
     // rather than as a colour: a colour handed down through a composition
     // local changes the whole subtree under it, and this subtree is the entire
     // player. A state changes only the texts and the glyphs that wear it.
-    // The app's theme, read off the scheme the player is drawn in: the mesh
-    // and the main view's ink both answer to it — see [darkThemeMeshCell].
-    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     // The header stands on a full-bleed still cover: judged against the
     // cover's top band rather than the backdrop under the controls. A clip,
     // a Canvas, landscape or the legacy blobs keep the player's own ink.
-    val headerOnCover = heroMode && !landscape && !legacyMeshBackdrop && !canvasOwnsScreen &&
+    val headerOnCover = heroMode && !fullCoverBackdropVisible && !legacyMeshBackdrop && !canvasOwnsScreen &&
         !spotifyCanvasPresentation && !(canvasFirstPortrait && clipState.rendered)
     val inkStates = rememberPlayerInk(
         palette = canvasPalette,
@@ -2234,6 +2236,7 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
     // it replaced. See [rememberLiveBlurImage].
@@ -2259,6 +2262,7 @@ fun NowPlayingScreen(
                 blackWash = { inkStates.panelBlackWash.value },
                 whiteWash = { inkStates.panelWhiteWash.value },
                 onShown = publishPanelInk,
+                darkTheme = currentDarkTheme.value,
             )
         }
     }

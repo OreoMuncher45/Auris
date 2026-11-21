@@ -117,7 +117,7 @@ internal enum class InkSurfaceKind { MAIN, PANEL }
  * Each 8-bit sRGB level in linear light, once: the same values the WCAG
  * formula gives, without a `pow` per channel per pixel.
  */
-private val SRGB_TO_LINEAR = FloatArray(256) { level ->
+internal val SRGB_TO_LINEAR = FloatArray(256) { level ->
     val c = level / 255f
     if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
 }

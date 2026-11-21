@@ -121,12 +121,12 @@ class ArtworkMesh internal constructor(
  * invalidated when a frame lands.
  */
 @Composable
-fun rememberLiveBlurImage(frames: Flow<ImageBitmap?>?): ImageBitmap? {
+fun rememberLiveBlurImage(frames: Flow<ImageBitmap?>?, darkTheme: Boolean = false): ImageBitmap? {
     var blurred by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(frames) {
+    LaunchedEffect(frames, darkTheme) {
         frames?.collectLatest { source ->
             if (source == null) return@collectLatest
-            blurred = withContext(Dispatchers.Default) { source.boxBlurred(FULL_BLUR_PASSES) }
+            blurred = withContext(Dispatchers.Default) { source.boxBlurred(FULL_BLUR_PASSES, darkTheme) }
         }
     }
     return blurred
@@ -153,18 +153,22 @@ fun rememberFullArtworkBlurImage(
     imageUrl: String?,
     artPx: Int = CARD_ART_PX,
     prepare: Boolean = true,
+    /** Dark theme: the blur is toned dark — see [darkThemeToned]. Cached per theme. */
+    darkTheme: Boolean = false,
 ): ImageBitmap? {
     val context = LocalPlatformContext.current
-    // Not keyed on the URL: see the doc above.
-    var image by remember { mutableStateOf(imageUrl?.let(fullBlurCache::get)) }
+    // Not keyed on the URL: see the doc above. Cached per theme: dark theme
+    // tones the blur — see [darkThemeToned].
+    val cacheKey = imageUrl?.let { if (darkTheme) "$it#dark" else it }
+    var image by remember { mutableStateOf(cacheKey?.let(fullBlurCache::get)) }
 
-    LaunchedEffect(imageUrl, artPx, prepare) {
-        if (imageUrl == null) {
+    LaunchedEffect(imageUrl, artPx, prepare, darkTheme) {
+        if (imageUrl == null || cacheKey == null) {
             // No cover at all: nothing to hold on to.
             image = null
             return@LaunchedEffect
         }
-        fullBlurCache[imageUrl]?.let {
+        fullBlurCache[cacheKey]?.let {
             image = it
             return@LaunchedEffect
         }
@@ -178,9 +182,9 @@ fun rememberFullArtworkBlurImage(
             .build()
         val result = SingletonImageLoader.get(context).execute(request)
         val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@LaunchedEffect
-        val blurred = withContext(Dispatchers.Default) { bitmap.boxBlurred(FULL_BLUR_PASSES) }
+        val blurred = withContext(Dispatchers.Default) { bitmap.boxBlurred(FULL_BLUR_PASSES, darkTheme) }
         val ready = blurred
-        fullBlurCache[imageUrl] = ready
+        fullBlurCache[cacheKey] = ready
         image = ready
     }
     return image
@@ -232,10 +236,12 @@ fun FullArtworkBlurBackdrop(
      * judged against it. Called from an effect, never from composition.
      */
     onShown: suspend (ImageBitmap) -> Unit = {},
+    /** Dark theme: a clip's live blur is toned like the still one. */
+    darkTheme: Boolean = false,
 ) {
     // The blur of the frame, re-blurred as the frame changes. While there is
     // one it *is* the backdrop.
-    val liveBlur = rememberLiveBlurImage(liveFrames)
+    val liveBlur = rememberLiveBlurImage(liveFrames, darkTheme)
     val shown = liveBlur ?: image
     LaunchedEffect(shown) { shown?.let { onShown(it) } }
     // One cover's blur crossfading straight into the next on a skip, with the
@@ -754,7 +760,7 @@ private val fullBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f
 }
 
 /** Three small box passes approximate a broad Gaussian blur at thumbnail scale. */
-private fun ImageBitmap.boxBlurred(passes: Int): ImageBitmap {
+private fun ImageBitmap.boxBlurred(passes: Int, darkTheme: Boolean = false): ImageBitmap {
     val width = width
     val height = height
     if (width < 2 || height < 2) return this
@@ -767,6 +773,8 @@ private fun ImageBitmap.boxBlurred(passes: Int): ImageBitmap {
         boxBlurPass(source, target, width, height, radius, horizontal = true)
         boxBlurPass(target, source, width, height, radius, horizontal = false)
     }
+    // Dark theme: toned in the same pass over the same pixels, before upload.
+    if (darkTheme) source.darkThemeToned()
     return imageBitmapOf(source, width, height)
 }
 
