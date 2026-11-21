@@ -1551,6 +1551,10 @@ object AppSettings {
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
+        // Once, on the first launch with BitChord's Automix engine: the old
+        // engine's analysis store and profiles go, and its engine switch with
+        // them. Before [readAll], so nothing reads a key that is on its way out.
+        com.music.bitchord.playback.smart.AutomixMigration.run(prefs, context.filesDir)
         readAll()
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
