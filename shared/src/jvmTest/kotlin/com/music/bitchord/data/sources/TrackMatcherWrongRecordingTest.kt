@@ -65,6 +65,7 @@ class TrackMatcherWrongRecordingTest {
         // An unspaced separator must not fuse the tribute word into the name.
         refused(song("Jolene", "Dolly Parton,Tribute Band", "2:42"), jolene)
         refused(song("Jolene", "Dolly Parton, Tribute Band", "2:42"), jolene)
+        refused(song("Jolene", "Dolly Parton Tribute-Band", "2:42"), jolene)
     }
 
     private val beByYou = TrackMatcher.Target("Be By You", "River Lane", durationSec = 210)
@@ -202,6 +203,7 @@ class TrackMatcherWrongRecordingTest {
         refused(song("Be By You", "River Lane", "3:30", album = "Club Night DJ-Mix"), studio)
         refused(song("Be By You (DJ-Mix)", "River Lane", "3:30"), studio)
         refused(song("Be By You DJ-Mix", "River Lane", "3:30"), studio)
+        refused(song("Be By You DJ-Mix-Cut", "River Lane", "3:30"), studio)
         // Generic names stay neutral.
         accepted(song("Be By You", "River Lane", "3:30", album = "Party Mix 2024"), studio)
         accepted(song("Be By You", "River Lane", "3:30", album = "Let Me Live"), studio)
@@ -213,6 +215,21 @@ class TrackMatcherWrongRecordingTest {
             song("Lost", "Cover Drive", "3:30"),
             TrackMatcher.Target("Lost", "Cover Drive", 210),
         )
+    }
+
+    @Test
+    fun `a cover band named after an act with an imitation word is not that act`() {
+        refused(song("Lost", "Cover Drive Cover Band", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
+    }
+
+    @Test
+    fun `the video audio switch refuses a same-titled row on a DJ-mix or live album`() {
+        val video = TrackMatcher.Target("Be By You", "River Lane", 260, isVideo = true)
+        val mix = song("Be By You", "River Lane", "3:30", album = "Club Night (DJ Mix)")
+        val live = song("Be By You", "River Lane", "3:40", album = "Live at Wembley")
+        val studio = song("Be By You", "River Lane", "3:30", album = "Be By You")
+        assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(mix, live), video))
+        assertEquals(studio, TrackMatcher.bestOfficialAudioForVideo(listOf(mix, live, studio), video))
     }
 
     @Test
