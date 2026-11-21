@@ -23,6 +23,7 @@
 
 package com.music.bitchord.playback.smart
 
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaDataSource
 import android.media.MediaExtractor
@@ -308,6 +309,12 @@ object AudioDecoder {
             val bufferInfo = MediaCodec.BufferInfo()
             var outputChannels = format.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 1
             var outputRate = format.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: 0
+            var outputEncoding = format.intOrNull(MediaFormat.KEY_PCM_ENCODING) ?: AudioFormat.ENCODING_PCM_16BIT
+            val narrowed = Narrowed()
+            if (!narrowed.supports(outputEncoding)) {
+                Log.w(TAG, "Unsupported PCM encoding $outputEncoding; giving up")
+                return null
+            }
             var actualStartSeconds = -1.0
             var sawFirstSample = false
             var inputDone = false
@@ -345,6 +352,12 @@ object AudioDecoder {
                         val newFormat = codec.outputFormat
                         outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
                         outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
+                        outputEncoding = newFormat.intOrNull(MediaFormat.KEY_PCM_ENCODING) ?: outputEncoding
+                        Log.d(TAG, "Output format: ${outputRate}Hz x$outputChannels, encoding $outputEncoding")
+                        if (!narrowed.supports(outputEncoding)) {
+                            Log.w(TAG, "Unsupported PCM encoding $outputEncoding; giving up")
+                            return null
+                        }
                     }
                     MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
                     else -> if (outputIndex >= 0) {
@@ -357,7 +370,12 @@ object AudioDecoder {
                                 sawFirstSample = true
                             }
                             codec.getOutputBuffer(outputIndex)?.let { output ->
-                                onBuffer(output, bufferInfo, outputChannels, outputRate)
+                                if (outputEncoding == AudioFormat.ENCODING_PCM_16BIT) {
+                                    onBuffer(output, bufferInfo, outputChannels, outputRate)
+                                } else {
+                                    val (shorts, info) = narrowed.of(output, bufferInfo, outputEncoding)
+                                    onBuffer(shorts, info, outputChannels, outputRate)
+                                }
                             }
                             if (bufferInfo.presentationTimeUs > endUs) outputDone = true
                         }
@@ -375,6 +393,89 @@ object AudioDecoder {
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
             runCatching { extractor.release() }
+        }
+    }
+
+    /**
+     * A decoder's non-16-bit output, narrowed to 16-bit PCM in a reused buffer.
+     *
+     * Everything downstream reads 16-bit samples, which is what MediaCodec
+     * produces unless asked otherwise — but a hi-res FLAC's track format can
+     * carry a float or 24-bit `pcm-encoding` through to the decoder, and read
+     * as shorts that is noise with twice or one and a half times the frames:
+     * an analysis of garbage, held in a buffer sized for audio that is not
+     * there. Narrowed here instead, so the 16-bit path stays exactly what it
+     * was. Sixteen bits is far more resolution than the analysis reads.
+     */
+    private class Narrowed {
+        companion object {
+            /** [AudioFormat]'s values, which it only names from API 31; MediaCodec used them earlier. */
+            const val PCM_24BIT_PACKED = 21
+            const val PCM_32BIT = 22
+        }
+
+        private val info = MediaCodec.BufferInfo()
+
+        fun supports(encoding: Int): Boolean = encoding == AudioFormat.ENCODING_PCM_16BIT ||
+            encoding == AudioFormat.ENCODING_PCM_FLOAT ||
+            encoding == PCM_24BIT_PACKED ||
+            encoding == PCM_32BIT ||
+            encoding == AudioFormat.ENCODING_PCM_8BIT
+
+        private var raw = ByteArray(0)
+        private var narrow = ByteArray(0)
+        private var wrapped = ByteBuffer.wrap(narrow)
+
+        /**
+         * Bulk-copied out of the codec's buffer and converted with plain array
+         * indexing: a per-sample read from a direct buffer costs a bounds check
+         * and a call for every one of the ~115 M samples in ten minutes of
+         * 96 kHz stereo, and was most of that decode's time.
+         */
+        fun of(source: ByteBuffer, from: MediaCodec.BufferInfo, encoding: Int): Pair<ByteBuffer, MediaCodec.BufferInfo> {
+            val width = when (encoding) {
+                AudioFormat.ENCODING_PCM_FLOAT, PCM_32BIT -> 4
+                PCM_24BIT_PACKED -> 3
+                else -> 1
+            }
+            val count = from.size / width
+            val bytes = count * width
+            if (raw.size < bytes) raw = ByteArray(bytes)
+            if (narrow.size < count * 2) {
+                narrow = ByteArray(count * 2)
+                wrapped = ByteBuffer.wrap(narrow)
+            }
+            source.duplicate().apply {
+                position(from.offset)
+                limit(from.offset + bytes)
+            }.get(raw, 0, bytes)
+            val input = raw
+            val out = narrow
+            var at = 0
+            var to = 0
+            for (index in 0 until count) {
+                val value = when (encoding) {
+                    AudioFormat.ENCODING_PCM_FLOAT -> {
+                        val bits = (input[at].toInt() and 0xff) or
+                            ((input[at + 1].toInt() and 0xff) shl 8) or
+                            ((input[at + 2].toInt() and 0xff) shl 16) or
+                            (input[at + 3].toInt() shl 24)
+                        (java.lang.Float.intBitsToFloat(bits).coerceIn(-1f, 1f) * 32767f).toInt()
+                    }
+                    // The top two bytes of a little-endian 32-bit sample are its 16-bit value.
+                    PCM_32BIT -> (input[at + 2].toInt() and 0xff) or (input[at + 3].toInt() shl 8)
+                    PCM_24BIT_PACKED -> (input[at + 1].toInt() and 0xff) or (input[at + 2].toInt() shl 8)
+                    else -> ((input[at].toInt() and 0xff) - 128) shl 8
+                }
+                out[to] = value.toByte()
+                out[to + 1] = (value shr 8).toByte()
+                at += width
+                to += 2
+            }
+            wrapped.clear()
+            wrapped.limit(count * 2)
+            info.set(0, count * 2, from.presentationTimeUs, from.flags)
+            return wrapped to info
         }
     }
 
