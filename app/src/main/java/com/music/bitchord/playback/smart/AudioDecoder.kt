@@ -50,8 +50,22 @@ object AudioDecoder {
     private const val TAG = "BitChordAudioDecoder"
     private const val TIMEOUT_US = 10_000L
 
-    /** The first buffer's size: about a second and a half of audio at 48 kHz. */
+    /** The buffer's size when the region's length is not known, and its least growth step. */
     private const val INITIAL_SAMPLES = 1 shl 16
+
+    /**
+     * Room a region's buffer leaves for audio ahead of what was asked for: the
+     * seek lands on the sync sample at or before the start, and the decoder's
+     * priming comes out first.
+     */
+    private const val PRE_ROLL_SECONDS = 1.0
+
+    /**
+     * The most a region's buffer is sized for up front (32 MB): past it the
+     * buffer grows as the audio actually arrives, so a nonsensical end time
+     * cannot turn into one enormous allocation before a sample is decoded.
+     */
+    private const val MAX_PRESIZE_SAMPLES = 1 shl 23
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
@@ -119,11 +133,73 @@ object AudioDecoder {
         com.music.bitchord.data.PerfCounters.bump(
             com.music.bitchord.data.PerfCounters.Counter.ANALYSER_PASS,
         )
-        val samples = SampleBuffer()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
-            samples.add(toMono(buffer, info, channels))
+        val samples = SampleBuffer(endSeconds - startSeconds)
+        var scratch = FloatArray(0)
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+            scratch = scratchFor(scratch, info, channels)
+            val frames = toMono(buffer, info, channels, scratch)
+            samples.add(scratch, frames, rate)
         } ?: return null
         return Pcm(samples.toArray(), decoded.first) to decoded.second
+    }
+
+    /**
+     * As [decodeRegion], but resampled to [outputRate] while it decodes, so the
+     * region is never held at the container's own rate.
+     *
+     * This is the whole-track pass's decode. Decoded first and resampled after,
+     * a seven-minute song at 44.1 kHz grew its buffer to one 64 MiB block with
+     * the 32 MiB one it replaced still live, and a ten-minute 96 kHz file would
+     * have asked for 256 MiB: an OutOfMemoryError on a 192 MB heap, and the
+     * track written off for the session. Streamed, the only buffer that scales
+     * with the track is the output, at [outputRate] — about 2.6 MB a minute at
+     * the analyser's 11 kHz, whatever the source was. See [StreamingResampler]
+     * for why the samples are the ones a single resample call would produce.
+     *
+     * [resample] is the whole-array resampler the stream is cut into, normally
+     * [TrackFeatures.resample]; a block it fails on fails the decode. The
+     * returned [Pcm.sampleRate] is [outputRate], or the container's own rate
+     * when the two are within a hertz and nothing was converted.
+     */
+    fun decodeRegionResampled(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        outputRate: Int,
+        resample: (FloatArray, Double, Double) -> FloatArray?,
+        abort: () -> Boolean = { false },
+    ): Pair<Pcm, Double>? {
+        com.music.bitchord.data.PerfCounters.bump(
+            com.music.bitchord.data.PerfCounters.Counter.ANALYSER_PASS,
+        )
+        var stream: StreamingResampler? = null
+        var streamRate = 0
+        var broken = false
+        var scratch = FloatArray(0)
+        val decoded = decodeRaw(source, startSeconds, endSeconds, { broken || abort() }) { buffer, info, channels, rate ->
+            if (broken) return@decodeRaw
+            val current = stream ?: StreamingResampler(rate, outputRate, resample).also {
+                stream = it
+                streamRate = rate
+            }
+            // A rate change mid-stream would put two rates in one buffer.
+            // Containers do not do this; a decoder that did is refused rather
+            // than resampled at the wrong ratio.
+            if (rate != streamRate) {
+                Log.w(TAG, "Output rate changed mid-decode ($streamRate -> $rate); giving up")
+                broken = true
+                return@decodeRaw
+            }
+            scratch = scratchFor(scratch, info, channels)
+            val frames = toMono(buffer, info, channels, scratch)
+            if (!current.push(scratch, frames)) broken = true
+        } ?: return null
+        // A rate change on the very last buffer sets this after the loop's
+        // last abort check, so the decode above can still come back "done".
+        if (broken) return null
+        val finished = stream ?: return null
+        val samples = finished.finish() ?: return null
+        return Pcm(samples, finished.rate.toDouble()) to decoded.second
     }
 
     /**
@@ -140,10 +216,16 @@ object AudioDecoder {
         endSeconds: Double,
         abort: () -> Boolean = { false },
     ): Pair<StereoPcm, Double>? {
-        val left = SampleBuffer()
-        val right = SampleBuffer()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
-            toStereo(buffer, info, channels, left, right)
+        val left = SampleBuffer(endSeconds - startSeconds)
+        val right = SampleBuffer(endSeconds - startSeconds)
+        var leftScratch = FloatArray(0)
+        var rightScratch = FloatArray(0)
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+            leftScratch = scratchFor(leftScratch, info, channels)
+            rightScratch = scratchFor(rightScratch, info, channels)
+            val frames = toStereo(buffer, info, channels, leftScratch, rightScratch)
+            left.add(leftScratch, frames, rate)
+            right.add(rightScratch, frames, rate)
         } ?: return null
         return StereoPcm(left.toArray(), right.toArray(), decoded.first) to decoded.second
     }
@@ -152,32 +234,38 @@ object AudioDecoder {
      * One growable buffer of decoded samples.
      *
      * The decoder hands its output over one buffer at a time and the caller
-     * wants the track contiguous, and the obvious way to get there — collect
-     * the chunks, then copy them into one array — holds the track twice: at
-     * the container's own rate a ten-minute song is a hundred megabytes of
-     * mono float, and two of those is more than the process is allowed in
-     * total. On a long recording it was the difference between an analysis
-     * and an OutOfMemoryError that took the player's own next allocation
-     * with it.
+     * wants the region contiguous, and the obvious way to get there — collect
+     * the chunks, then copy them into one array — holds the region twice.
      *
-     * So the samples go into one buffer that grows as they arrive, and the
-     * track is in memory once. The growth is a copy, so the buffer is sized
-     * for the region on its first buffer rather than doubling its way there:
-     * a decoder that produces more than the region asked for — the priming
-     * samples at the front — grows once more and then holds.
+     * So the samples go into one buffer, sized for the region the moment the
+     * first output buffer says what rate it is at: [seconds] of audio plus
+     * [PRE_ROLL_SECONDS] for the sync-sample seek and the decoder's priming.
+     * It used to start at [INITIAL_SAMPLES] and double its way there, which for
+     * a 30 s stereo window at 96 kHz meant six copies per channel and a final
+     * 16 MiB buffer per channel holding 11 MB of audio, with the 8 MiB one it
+     * replaced live beside it. A decoder that produces more than that still
+     * grows, by half rather than double.
      */
-    private class SampleBuffer {
-        private var samples = FloatArray(INITIAL_SAMPLES)
+    private class SampleBuffer(private val seconds: Double) {
+        private var samples = FloatArray(0)
         private var size = 0
 
-        fun add(chunk: FloatArray) {
-            if (size + chunk.size > samples.size) {
+        fun add(chunk: FloatArray, count: Int, rate: Int) {
+            if (samples.isEmpty()) {
+                val expected = if (seconds.isFinite() && seconds > 0 && rate > 0) {
+                    ((seconds + PRE_ROLL_SECONDS) * rate).coerceAtMost(MAX_PRESIZE_SAMPLES.toDouble()).toInt()
+                } else {
+                    INITIAL_SAMPLES
+                }
+                samples = FloatArray(max(expected, count))
+            }
+            if (size + count > samples.size) {
                 var next = samples.size
-                while (next < size + chunk.size) next = next shl 1
+                while (next < size + count) next += max(next shr 1, INITIAL_SAMPLES)
                 samples = samples.copyOf(next)
             }
-            chunk.copyInto(samples, size)
-            size += chunk.size
+            chunk.copyInto(samples, size, 0, count)
+            size += count
         }
 
         fun toArray(): FloatArray = if (size == samples.size) samples else samples.copyOf(size)
@@ -196,7 +284,7 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
-        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int) -> Unit,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) return null
         val extractor = MediaExtractor()
@@ -223,6 +311,12 @@ object AudioDecoder {
             val bufferInfo = MediaCodec.BufferInfo()
             var outputChannels = format.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 1
             var outputRate = format.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: 0
+            // 16-bit until the decoder's own output format says otherwise. The
+            // track format's encoding is what was asked of the decoder, not what
+            // it will produce, and MediaCodec reports the output format before
+            // the first output buffer.
+            var outputEncoding = PcmNarrowing.PCM_16BIT
+            val narrowed = Narrowed()
             var actualStartSeconds = -1.0
             var sawFirstSample = false
             var inputDone = false
@@ -260,6 +354,12 @@ object AudioDecoder {
                         val newFormat = codec.outputFormat
                         outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
                         outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
+                        outputEncoding = PcmNarrowing.outputEncodingOf(newFormat.intOrNull(MediaFormat.KEY_PCM_ENCODING))
+                        Log.d(TAG, "Output format: ${outputRate}Hz x$outputChannels, encoding $outputEncoding")
+                        if (!PcmNarrowing.supports(outputEncoding)) {
+                            Log.w(TAG, "Unsupported PCM encoding $outputEncoding; giving up")
+                            return null
+                        }
                     }
                     MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
                     else -> if (outputIndex >= 0) {
@@ -272,7 +372,12 @@ object AudioDecoder {
                                 sawFirstSample = true
                             }
                             codec.getOutputBuffer(outputIndex)?.let { output ->
-                                onBuffer(output, bufferInfo, outputChannels)
+                                if (outputEncoding == PcmNarrowing.PCM_16BIT) {
+                                    onBuffer(output, bufferInfo, outputChannels, outputRate)
+                                } else {
+                                    val (shorts, info) = narrowed.of(output, bufferInfo, outputEncoding)
+                                    onBuffer(shorts, info, outputChannels, outputRate)
+                                }
                             }
                             if (bufferInfo.presentationTimeUs > endUs) outputDone = true
                         }
@@ -293,8 +398,62 @@ object AudioDecoder {
         }
     }
 
-    /** Downmixes one 16-bit PCM output buffer to mono float in [-1, 1]. */
-    private fun toMono(buffer: ByteBuffer, info: MediaCodec.BufferInfo, channels: Int): FloatArray {
+    /**
+     * A decoder's non-16-bit output, narrowed to 16-bit PCM in a reused buffer.
+     *
+     * Everything downstream reads 16-bit samples, which is what MediaCodec
+     * produces unless asked otherwise — but a hi-res FLAC's track format can
+     * carry a float or 24-bit `pcm-encoding` through to the decoder, and read
+     * as shorts that is noise with twice or one and a half times the frames:
+     * an analysis of garbage, held in a buffer sized for audio that is not
+     * there. Narrowed here instead, so the 16-bit path stays exactly what it
+     * was. Sixteen bits is far more resolution than the analysis reads.
+     */
+    private class Narrowed {
+        private val info = MediaCodec.BufferInfo()
+        private var raw = ByteArray(0)
+        private var narrow = ByteArray(0)
+        private var wrapped = ByteBuffer.wrap(narrow)
+
+        /**
+         * Bulk-copied out of the codec's buffer and converted with plain array
+         * indexing ([PcmNarrowing.narrow]): a per-sample read from a direct
+         * buffer costs a bounds check and a call for every one of the ~115 M
+         * samples in ten minutes of 96 kHz stereo.
+         */
+        fun of(source: ByteBuffer, from: MediaCodec.BufferInfo, encoding: Int): Pair<ByteBuffer, MediaCodec.BufferInfo> {
+            val width = PcmNarrowing.widthOf(encoding)
+            val count = from.size / width
+            val bytes = count * width
+            if (raw.size < bytes) raw = ByteArray(bytes)
+            if (narrow.size < count * 2) {
+                narrow = ByteArray(count * 2)
+                wrapped = ByteBuffer.wrap(narrow)
+            }
+            source.duplicate().apply {
+                position(from.offset)
+                limit(from.offset + bytes)
+            }.get(raw, 0, bytes)
+            PcmNarrowing.narrow(raw, count, encoding, narrow)
+            wrapped.clear()
+            wrapped.limit(count * 2)
+            info.set(0, count * 2, from.presentationTimeUs, from.flags)
+            return wrapped to info
+        }
+    }
+
+    /** A scratch array big enough for one output buffer's frames, reused while it is. */
+    private fun scratchFor(current: FloatArray, info: MediaCodec.BufferInfo, channels: Int): FloatArray {
+        val frames = info.size / 2 / max(1, channels)
+        return if (current.size >= frames) current else FloatArray(frames)
+    }
+
+    /**
+     * Downmixes one 16-bit PCM output buffer to mono float in [-1, 1], into
+     * [into], and returns the frame count. [into] is reused across buffers:
+     * a whole-track decode is thousands of them.
+     */
+    private fun toMono(buffer: ByteBuffer, info: MediaCodec.BufferInfo, channels: Int, into: FloatArray): Int {
         val safeChannels = max(1, channels)
         val shorts = buffer.duplicate().apply {
             order(ByteOrder.LITTLE_ENDIAN)
@@ -302,20 +461,18 @@ object AudioDecoder {
             limit(info.offset + info.size)
         }.asShortBuffer()
         val frames = shorts.remaining() / safeChannels
-        val mono = FloatArray(frames)
-        val frame = ShortArray(safeChannels)
+        val divisor = safeChannels.toFloat()
         for (index in 0 until frames) {
-            shorts.get(frame, 0, safeChannels)
             var sum = 0
-            for (value in frame) sum += value
-            mono[index] = (sum / safeChannels.toFloat()) / 32768f
+            for (channel in 0 until safeChannels) sum += shorts.get()
+            into[index] = (sum / divisor) / 32768f
         }
-        return mono
+        return frames
     }
 
     /**
      * Splits one 16-bit PCM output buffer into planar left/right float in
-     * [-1, 1], appending each to its own accumulator.
+     * [-1, 1], into [left] and [right], and returns the frame count.
      *
      * A mono source is widened by giving both sides the same samples, and
      * anything above two channels keeps only the first two: the model's input
@@ -327,9 +484,9 @@ object AudioDecoder {
         buffer: ByteBuffer,
         info: MediaCodec.BufferInfo,
         channels: Int,
-        left: SampleBuffer,
-        right: SampleBuffer,
-    ) {
+        left: FloatArray,
+        right: FloatArray,
+    ): Int {
         val safeChannels = max(1, channels)
         val shorts = buffer.duplicate().apply {
             order(ByteOrder.LITTLE_ENDIAN)
@@ -337,16 +494,14 @@ object AudioDecoder {
             limit(info.offset + info.size)
         }.asShortBuffer()
         val frames = shorts.remaining() / safeChannels
-        val leftChunk = FloatArray(frames)
-        val rightChunk = FloatArray(frames)
-        val frame = ShortArray(safeChannels)
         for (index in 0 until frames) {
-            shorts.get(frame, 0, safeChannels)
-            leftChunk[index] = frame[0] / 32768f
-            rightChunk[index] = (if (safeChannels > 1) frame[1] else frame[0]) / 32768f
+            val first = shorts.get()
+            val second = if (safeChannels > 1) shorts.get() else first
+            for (skip in 2 until safeChannels) shorts.get()
+            left[index] = first / 32768f
+            right[index] = second / 32768f
         }
-        left.add(leftChunk)
-        right.add(rightChunk)
+        return frames
     }
 
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null
