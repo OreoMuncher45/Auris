@@ -623,21 +623,24 @@ object TrackMatcher {
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
-        val marks = words.filter { it in VERSION_WORDS }.toMutableList()
+        // Take words come off the aside split on every non-letter as well,
+        // so a hyphen-joined label keeps each of them: "(DJ-Mix-Instrumental)"
+        // is both the DJ mix and the instrumental.
+        val parts = segment.split(NON_ALNUM_RUN).filter { it.isNotEmpty() }
+        val marks = (words + parts).filter { it in VERSION_WORDS }.distinct().toMutableList()
         // "(DJ Mix)", "(Mixed)", "(Continuous Mix)": a track cut out of a mixed
         // set and crossfaded into its neighbours. One marker for every
         // spelling, replacing the generic "mix" those phrases also carry, so
         // "(DJ Mix)" and "(Mixed)" meet and [score]'s release rule can read
         // it off an album.
         // "DJ-Mix" reaches here as one token: the hyphen is stripped, not
-        // split. The phrase is read off the aside split on every non-letter
-        // too, so "DJ-Mix-Cut" is dj/mix/cut rather than "djmixcut".
-        val parts = segment.split(NON_ALNUM_RUN).filter { it.isNotEmpty() }
+        // split. The phrase is read off [parts] too, so "DJ-Mix-Cut" is
+        // dj/mix/cut rather than "djmixcut".
         if ("mixed" in words || "continuous" in words || "nonstop" in words ||
             words.any { it in DJ_MIX_TOKENS } || "mixed" in parts ||
             parts.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
         ) {
-            marks.remove("mix")
+            marks.removeAll { it == "mix" }
             marks += "mixed"
         }
         if (marks.isNotEmpty()) {
