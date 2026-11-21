@@ -355,16 +355,37 @@ class PlaybackService : MediaLibraryService() {
      * never has to wait this long for it.
      */
     /**
+     * One account-bound Auto folder as it was fetched: when, its songs, the
+     * token for its next page, and the [Innertube.listener] it was read for.
+     * Kept as one object so a folder's rows, its continuation and the account
+     * they are checked against all come from the same fetch, and a listing
+     * read for one account or profile is never shown or played under another.
+     */
+    private class AutoListing(
+        val at: Long,
+        val songs: List<Song>,
+        val listener: String?,
+        val continuation: String? = null,
+    )
+
+    private fun currentListener(): String? = com.music.bitchord.data.innertube.Innertube.listener
+
+    /** [listing] when it was read for the listener now, and holds something. */
+    private fun AutoListing?.forCurrentListener(): AutoListing? =
+        this?.takeIf { it.songs.isNotEmpty() && it.listener == currentListener() }
+
+    /**
      * [YtMusicRepository.recents] cached for Android Auto's browse tree.
      */
-    private var cachedRecents: Pair<Long, List<Song>>? = null
+    private var cachedRecents: AutoListing? = null
     private val recentsMutex = Mutex()
     private val RECENTS_CACHE_TTL_MS = 30_000L
 
-    private suspend fun cachedRecentsSongs(): List<Song> = recentsMutex.withLock {
-        cachedRecents?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < RECENTS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
+    private suspend fun cachedRecentsSongs(): List<Song> = cachedRecentsListing()?.songs.orEmpty()
+
+    private suspend fun cachedRecentsListing(): AutoListing? = recentsMutex.withLock {
+        cachedRecents.forCurrentListener()?.let { if (isFresh(it.at, RECENTS_CACHE_TTL_MS)) return it }
+        val listener = currentListener()
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.recents().getOrNull()
@@ -372,26 +393,25 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedRecents = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
-        }
-        songs
+        if (songs.isEmpty()) return null
+        songs.forEach { songCache[it.videoId] = it }
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedRecents = it }
     }
 
     /**
      * [YtMusicRepository.quickPicks] cached for Android Auto's browse tree.
      * Excludes listening history songs to guarantee strictly unique data.
      */
-    private var cachedQuickPicks: Pair<Long, List<Song>>? = null
+    private var cachedQuickPicks: AutoListing? = null
     private val quickPicksMutex = Mutex()
     private val QUICK_PICKS_CACHE_TTL_MS = 60_000L
 
-    private suspend fun cachedQuickPicksSongs(): List<Song> = quickPicksMutex.withLock {
-        cachedQuickPicks?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < QUICK_PICKS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
-        val recentsIds = cachedRecents?.second?.mapTo(HashSet()) { it.videoId } ?: emptySet()
+    private suspend fun cachedQuickPicksSongs(): List<Song> = cachedQuickPicksListing()?.songs.orEmpty()
+
+    private suspend fun cachedQuickPicksListing(): AutoListing? = quickPicksMutex.withLock {
+        cachedQuickPicks.forCurrentListener()?.let { if (isFresh(it.at, QUICK_PICKS_CACHE_TTL_MS)) return it }
+        val listener = currentListener()
+        val recentsIds = cachedRecents.forCurrentListener()?.songs?.mapTo(HashSet()) { it.videoId } ?: emptySet()
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.quickPicks(excludeSongIds = recentsIds).getOrNull()
@@ -399,38 +419,28 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedQuickPicks = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
-        }
-        songs
+        if (songs.isEmpty()) return null
+        songs.forEach { songCache[it.videoId] = it }
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedQuickPicks = it }
     }
 
     /**
-     * [YtMusicRepository.browseSongs] for Liked Music cached for Android Auto's browse tree.
+     * [YtMusicRepository.browseSongs] for Liked Music cached for Android Auto's
+     * browse tree, with the token for the page after its songs.
      */
-    private var cachedLiked: Pair<Long, List<Song>>? = null
-    private var cachedLikedCookie: String? = null
-    /** The token for the page of Liked Music after [cachedLiked]'s songs. */
-    private var cachedLikedContinuation: String? = null
+    private var cachedLiked: AutoListing? = null
     private val likedMutex = Mutex()
     private val LIKED_CACHE_TTL_MS = 60_000L
 
-    private suspend fun cachedLikedSongs(): List<Song> = likedMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
+    private suspend fun cachedLikedSongs(): List<Song> = cachedLikedListing()?.songs.orEmpty()
+
+    private suspend fun cachedLikedListing(): AutoListing? = likedMutex.withLock {
+        val listener = currentListener()
+        if (listener == null) {
             cachedLiked = null
-            cachedLikedCookie = null
-            cachedLikedContinuation = null
-            return emptyList()
+            return null
         }
-        if (cachedLikedCookie != null && cachedLikedCookie != cookie) {
-            cachedLiked = null
-            cachedLikedContinuation = null
-        }
-        cachedLiked?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < LIKED_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
+        cachedLiked.forCurrentListener()?.let { if (isFresh(it.at, LIKED_CACHE_TTL_MS)) return it }
         val page = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()?.takeIf { it.songs.isNotEmpty() }
@@ -451,23 +461,22 @@ class PlaybackService : MediaLibraryService() {
             null
         }
         val songs = page?.songs.orEmpty()
-        if (songs.isNotEmpty()) {
-            cachedLiked = SystemClock.elapsedRealtime() to songs
-            cachedLikedContinuation = page?.continuation
-            cachedLikedCookie = cookie
-            songs.forEach { songCache[it.videoId] = it }
-            LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
-        }
-        songs
+        if (songs.isEmpty()) return null
+        songs.forEach { songCache[it.videoId] = it }
+        LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
     }
 
     private var cachedHome: Pair<Long, com.music.bitchord.data.model.HomeFeed>? = null
+    /** The [Innertube.listener] [cachedHome] was read for. */
+    private var cachedHomeListener: String? = null
     private val homeMutex = Mutex()
     private val HOME_CACHE_TTL_MS = 60_000L
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
-        cachedHome?.let { (at, feed) ->
+        val listener = currentListener()
+        cachedHome?.takeIf { cachedHomeListener == listener }?.let { (at, feed) ->
             if (SystemClock.elapsedRealtime() - at < HOME_CACHE_TTL_MS) return feed
         }
         val feed = try {
@@ -478,6 +487,7 @@ class PlaybackService : MediaLibraryService() {
             null
         } ?: return null
         cachedHome = SystemClock.elapsedRealtime() to feed
+        cachedHomeListener = listener
         feed
     }
 
@@ -556,21 +566,15 @@ class PlaybackService : MediaLibraryService() {
         cards
     }
 
-    private fun snapshotRecents(): List<Song> = cachedRecents?.second.orEmpty()
-    private fun snapshotQuickPicks(): List<Song> = cachedQuickPicks?.second.orEmpty()
-    private fun snapshotLiked(): List<Song> {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        return if (cookie != null && cookie == cachedLikedCookie) cachedLiked?.second.orEmpty() else emptyList()
-    }
-    private fun snapshotLikedContinuation(): String? {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        return if (cookie != null && cookie == cachedLikedCookie) cachedLikedContinuation else null
-    }
+    private fun snapshotRecents(): AutoListing? = cachedRecents.forCurrentListener()
+    private fun snapshotQuickPicks(): AutoListing? = cachedQuickPicks.forCurrentListener()
+    private fun snapshotLiked(): AutoListing? = cachedLiked.forCurrentListener()?.takeIf { it.listener != null }
     private fun snapshotPlaylistCards(): List<ShelfItem> {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
     }
-    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? = cachedHome?.second
+    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? =
+        cachedHome?.takeIf { cachedHomeListener == currentListener() }?.second
 
     /** Every Auto folder listing a tapped row can still be played from. */
     private val autoBrowseContexts = AutoBrowseContexts()
@@ -582,18 +586,19 @@ class PlaybackService : MediaLibraryService() {
      * [songs] as Auto rows whose ids name this very listing, so a tap plays
      * the folder from that row — see [AutoBrowseContexts].
      *
-     * [cookie] is the account the listing was read with; pass null for a
+     * [listener] is the [Innertube.listener] the listing was read for — a
+     * cached listing's own, not whoever is signed in now; pass null for a
      * folder that belongs to no account.
      */
     private fun autoBrowseItems(
         songs: List<Song>,
         source: QueueSource,
+        listener: String?,
         continuation: String? = null,
-        cookie: String? = com.music.bitchord.data.innertube.Innertube.cookie,
         parentBrowseId: String? = null,
     ): List<MediaItem> {
         if (songs.isEmpty()) return emptyList()
-        val token = autoBrowseContexts.register(AutoBrowseContext(songs, continuation, cookie, source))
+        val token = autoBrowseContexts.register(AutoBrowseContext(songs, continuation, listener, source))
         return songs.mapIndexed { index, song ->
             song.toMediaItem(parentBrowseId = parentBrowseId).buildUpon()
                 .setMediaId(AutoBrowseContexts.mediaId(token, index))
@@ -631,9 +636,7 @@ class PlaybackService : MediaLibraryService() {
                         null
                     }
                 } ?: return@launch
-                if (context.cookie != null && context.cookie != com.music.bitchord.data.innertube.Innertube.cookie) {
-                    return@launch
-                }
+                if (context.listener != null && context.listener != currentListener()) return@launch
                 val fresh = page.songs
                     .filterNot(AppSettings::isSongBlocked)
                     .filter { seen.add(it.videoId) }
@@ -664,15 +667,6 @@ class PlaybackService : MediaLibraryService() {
 
     private fun isFresh(at: Long, ttlMs: Long): Boolean =
         SystemClock.elapsedRealtime() - at < ttlMs
-
-    private fun isRecentsFresh(): Boolean =
-        cachedRecents?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, RECENTS_CACHE_TTL_MS) } ?: false
-
-    private fun isQuickPicksFresh(): Boolean =
-        cachedQuickPicks?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, QUICK_PICKS_CACHE_TTL_MS) } ?: false
-
-    private fun isLikedFresh(): Boolean =
-        snapshotLiked().isNotEmpty() && cachedLiked?.let { (at, _) -> isFresh(at, LIKED_CACHE_TTL_MS) } == true
 
     private fun isPlaylistsFresh(): Boolean =
         snapshotPlaylistCards().isNotEmpty() && cachedPlaylistCards?.let { (at, _) -> isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
@@ -10309,20 +10303,22 @@ class PlaybackService : MediaLibraryService() {
                 )
                 MEDIA_RECENTS_ID -> {
                     val snapshot = snapshotRecents()
-                    val songs = if (snapshot.isNotEmpty()) {
-                        if (!isRecentsFresh()) {
+                    val listing = if (snapshot != null) {
+                        if (!isFresh(snapshot.at, RECENTS_CACHE_TTL_MS)) {
                             refreshFolderInBackground(session, browser, parentId, params) {
                                 cachedRecentsSongs().size
                             }
                         }
                         snapshot
                     } else {
-                        cachedRecentsSongs()
+                        cachedRecentsListing()
                     }
+                    val songs = listing?.songs.orEmpty()
                     songs.forEach { songCache[it.videoId] = it }
-                    if (songs.isNotEmpty()) autoBrowseItems(
+                    if (listing != null && songs.isNotEmpty()) autoBrowseItems(
                         songs,
                         QueueSource(getString(R.string.auto_recents), PlaybackSourceType.HISTORY, parentId),
+                        listener = listing.listener,
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_recents",
@@ -10333,25 +10329,30 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_QUICK_PICKS_ID -> {
                     val snapshot = snapshotQuickPicks()
-                    val songs = if (snapshot.isNotEmpty()) {
-                        if (!isQuickPicksFresh()) {
+                    val listing = if (snapshot != null) {
+                        if (!isFresh(snapshot.at, QUICK_PICKS_CACHE_TTL_MS)) {
                             refreshFolderInBackground(session, browser, parentId, params) {
                                 cachedQuickPicksSongs().size
                             }
                         }
                         snapshot
                     } else {
-                        cachedQuickPicksSongs().ifEmpty {
+                        cachedQuickPicksListing() ?: run {
+                            // snapshotHome is only ever the current listener's.
+                            val listener = currentListener()
                             snapshotHome()?.shelves?.flatMap { it.items }
                                 ?.mapNotNull { it.toSongOrNull() }
                                 ?.distinctBy { it.videoId }
-                                .orEmpty()
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let { AutoListing(0L, it, listener) }
                         }
                     }
+                    val songs = listing?.songs.orEmpty()
                     songs.forEach { songCache[it.videoId] = it }
-                    if (songs.isNotEmpty()) autoBrowseItems(
+                    if (listing != null && songs.isNotEmpty()) autoBrowseItems(
                         songs,
                         QueueSource(getString(R.string.auto_quick_picks), PlaybackSourceType.HOME, parentId),
+                        listener = listing.listener,
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_quick_picks",
@@ -10364,23 +10365,28 @@ class PlaybackService : MediaLibraryService() {
                     if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
                         listOf(createLoginPromptItem())
                     } else {
+                        // Captured once: the background refresh below replaces
+                        // the cache, and the rows, their next page and their
+                        // listener must all be the listing that was shown.
                         val snapshot = snapshotLiked()
-                        val songs = if (snapshot.isNotEmpty()) {
-                            if (!isLikedFresh()) {
+                        val listing = if (snapshot != null) {
+                            if (!isFresh(snapshot.at, LIKED_CACHE_TTL_MS)) {
                                 refreshFolderInBackground(session, browser, parentId, params) {
                                     cachedLikedSongs().size
                                 }
                             }
                             snapshot
                         } else {
-                            cachedLikedSongs()
+                            cachedLikedListing()
                         }
+                        val songs = listing?.songs.orEmpty()
                         songs.forEach { songCache[it.videoId] = it }
-                        if (songs.isNotEmpty()) {
+                        if (listing != null && songs.isNotEmpty()) {
                             autoBrowseItems(
                                 songs,
                                 QueueSource(getString(R.string.auto_liked), PlaybackSourceType.BROWSE, YtMusicRepository.LIKED_MUSIC),
-                                continuation = snapshotLikedContinuation(),
+                                listener = listing.listener,
+                                continuation = listing.continuation,
                             )
                         } else {
                             listOf(
@@ -10399,7 +10405,7 @@ class PlaybackService : MediaLibraryService() {
                     if (downloaded.isNotEmpty()) autoBrowseItems(
                         downloaded,
                         QueueSource(getString(R.string.downloads), PlaybackSourceType.BROWSE, parentId),
-                        cookie = null,
+                        listener = null,
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_downloads",
@@ -10449,7 +10455,7 @@ class PlaybackService : MediaLibraryService() {
                     if (local.isNotEmpty()) autoBrowseItems(
                         local,
                         QueueSource(getString(R.string.local_music), PlaybackSourceType.BROWSE, parentId),
-                        cookie = null,
+                        listener = null,
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_local",
@@ -10463,7 +10469,7 @@ class PlaybackService : MediaLibraryService() {
                         parentId.startsWith("playlist:") || parentId.startsWith("browse:") -> {
                             val id = parentId.substringAfter(':')
                             val browseId = if (parentId.startsWith("playlist:")) "VL$id" else id
-                            val cookie = com.music.bitchord.data.innertube.Innertube.cookie
+                            val listener = currentListener()
                             val songPage = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs(browseId).getOrNull()
@@ -10483,7 +10489,7 @@ class PlaybackService : MediaLibraryService() {
                                     songPage.songs.filterNot(AppSettings::isSongBlocked),
                                     QueueSource(title, PlaybackSourceType.BROWSE, browseId),
                                     continuation = songPage.continuation,
-                                    cookie = cookie,
+                                    listener = listener,
                                     parentBrowseId = parentId,
                                 )
                             }
@@ -10514,7 +10520,7 @@ class PlaybackService : MediaLibraryService() {
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> = scope.future(Dispatchers.IO) {
             if (AutoBrowseContexts.isAutoBrowseId(mediaId)) {
-                val selection = autoBrowseContexts.select(mediaId, com.music.bitchord.data.innertube.Innertube.cookie)
+                val selection = autoBrowseContexts.select(mediaId, currentListener())
                 if (selection is AutoBrowseContexts.Selection.Found) {
                     return@future LibraryResult.ofItem(
                         selection.song.toMediaItem().buildUpon().setMediaId(mediaId).build(), null,
@@ -10724,7 +10730,7 @@ class PlaybackService : MediaLibraryService() {
             mediaId: String,
             startPositionMs: Long,
         ): MediaSession.MediaItemsWithStartPosition {
-            val selection = autoBrowseContexts.select(mediaId, com.music.bitchord.data.innertube.Innertube.cookie)
+            val selection = autoBrowseContexts.select(mediaId, currentListener())
             if (selection !is AutoBrowseContexts.Selection.Found) {
                 withContext(Dispatchers.Main) {
                     mediaSession.sendError(
@@ -10797,7 +10803,7 @@ class PlaybackService : MediaLibraryService() {
                     // Adding one browsed row to the queue resolves it to its
                     // track without replacing the queue; a stale one is dropped.
                     AutoBrowseContexts.isAutoBrowseId(id) -> {
-                        val selection = autoBrowseContexts.select(id, com.music.bitchord.data.innertube.Innertube.cookie)
+                        val selection = autoBrowseContexts.select(id, currentListener())
                         if (selection is AutoBrowseContexts.Selection.Found) {
                             resolved.add(selection.song.toMediaItem())
                         }

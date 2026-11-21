@@ -5,16 +5,19 @@ import java.util.UUID
 
 /**
  * One Android Auto folder listing, exactly as it was shown: the tracks in
- * their order, the token for the folder's next page, the account it was read
- * with, and the label the queue it starts should carry.
+ * their order, the token for the folder's next page, the listener it was read
+ * for, and the label the queue it starts should carry.
  *
- * [cookie] is null for folders that do not belong to an account (downloads,
- * music on the device), which therefore survive a sign-in or sign-out.
+ * [listener] is the account and profile the listing belongs to — see
+ * [Innertube.listener][com.music.bitchord.data.innertube.Innertube.listener],
+ * which a profile switch changes though the cookie stays. It is null for
+ * folders that do not belong to an account (downloads, music on the device),
+ * which therefore survive a sign-in, sign-out or profile switch.
  */
 internal data class AutoBrowseContext(
     val songs: List<Song>,
     val continuation: String?,
-    val cookie: String?,
+    val listener: String?,
     val source: QueueSource,
 )
 
@@ -59,12 +62,12 @@ internal class AutoBrowseContexts(
 
     /**
      * What a tapped row's [mediaId] points at, checked against the account
-     * signed in now ([currentCookie]).
+     * and profile listening now ([currentListener]).
      */
-    fun select(mediaId: String, currentCookie: String?): Selection {
+    fun select(mediaId: String, currentListener: String?): Selection {
         val (token, index) = parse(mediaId) ?: return Selection.Invalid
         val context = synchronized(entries) { entries[token] } ?: return Selection.Expired
-        if (context.cookie != null && context.cookie != currentCookie) return Selection.AccountChanged
+        if (context.listener != null && context.listener != currentListener) return Selection.AccountChanged
         if (index !in context.songs.indices) return Selection.Invalid
         return Selection.Found(context, index)
     }

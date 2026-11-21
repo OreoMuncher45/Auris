@@ -14,13 +14,13 @@ class AutoBrowseContextsTest {
 
     private fun context(
         vararg ids: String,
-        cookie: String? = "c1",
+        listener: String? = "c1",
         continuation: String? = null,
         sourceId: String = "VLPL1",
     ) = AutoBrowseContext(
         songs = ids.map(::song),
         continuation = continuation,
-        cookie = cookie,
+        listener = listener,
         source = QueueSource("Mix", PlaybackSourceType.BROWSE, sourceId),
     )
 
@@ -81,7 +81,7 @@ class AutoBrowseContextsTest {
     @Test
     fun anAccountListingIsRefusedAfterTheAccountChanges() {
         val store = AutoBrowseContexts()
-        val token = store.register(context("a", cookie = "c1"))
+        val token = store.register(context("a", listener = "c1"))
         val id = AutoBrowseContexts.mediaId(token, 0)
         assertEquals(AutoBrowseContexts.Selection.AccountChanged, store.select(id, "c2"))
         assertEquals(AutoBrowseContexts.Selection.AccountChanged, store.select(id, null))
@@ -90,7 +90,7 @@ class AutoBrowseContextsTest {
     @Test
     fun aDeviceListingSurvivesSignInAndSignOut() {
         val store = AutoBrowseContexts()
-        val token = store.register(context("a", cookie = null))
+        val token = store.register(context("a", listener = null))
         val id = AutoBrowseContexts.mediaId(token, 0)
         assertTrue(store.select(id, null) is AutoBrowseContexts.Selection.Found)
         assertTrue(store.select(id, "c2") is AutoBrowseContexts.Selection.Found)
