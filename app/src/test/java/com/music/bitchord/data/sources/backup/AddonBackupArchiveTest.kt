@@ -121,7 +121,7 @@ class AddonBackupArchiveTest {
             "extensions/demo/notes.txt" to "x",
             "extensions/.hidden/manifest.json" to manifest,
             "sessions/../../shared_prefs/x.json" to "x",
-            "sessions/Upper.json" to "x",
+            "sessions/.hidden.json" to "x",
             "sessions/ok-1.json" to "{}",
             "future/thing.bin" to "x",
         )
@@ -144,6 +144,11 @@ class AddonBackupArchiveTest {
         assertFalse(AddonBackupArchive.isSessionName("a/b.json"))
         assertFalse(AddonBackupArchive.isSessionName("x.json.tmp"))
         assertFalse(AddonBackupArchive.isSessionName(".json"))
+        // Everything the session store can name is accepted: non-ASCII and long namespaces too.
+        assertTrue(AddonBackupArchive.isSessionName("müzik-0123456789abcdef.json"))
+        assertTrue(AddonBackupArchive.isSessionName("音楽-0123456789abcdef.json"))
+        assertTrue(AddonBackupArchive.isSessionName("n".repeat(200) + "-0123456789abcdef.json"))
+        assertFalse(AddonBackupArchive.isSessionName("n".repeat(300) + ".json"))
     }
 
     @Test

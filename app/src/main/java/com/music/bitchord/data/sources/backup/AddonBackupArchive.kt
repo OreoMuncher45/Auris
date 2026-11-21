@@ -102,12 +102,24 @@ object AddonBackupArchive {
     internal const val MAX_ENTRIES = 2_000
     internal const val MAX_UNPACKED_BYTES = 64L * 1024 * 1024
 
-    private val SESSION_NAME = Regex("[a-z0-9][a-z0-9._-]{0,127}\\.json")
-
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    /** Whether [name] is a safe file name for a signed-session record. */
-    fun isSessionName(name: String): Boolean = SESSION_NAME.matches(name) && !name.contains("..")
+    /**
+     * Whether [name] is a safe file name for a signed-session record.
+     *
+     * Accepts every name `SignedSessionConfig.fileName()` can produce: a
+     * namespace of any letters or digits (Unicode included) plus `.`, `_` and
+     * `-`, then a hash and `.json`. The only other limit is the filesystem's
+     * 255-byte name cap, so no record the store writes is left out of a backup.
+     * Still one plain path segment: no separators, no `..`, no leading dot.
+     */
+    fun isSessionName(name: String): Boolean =
+        name.endsWith(".json") &&
+            name.length > ".json".length &&
+            name.encodeToByteArray().size <= 255 &&
+            name.first().isLetterOrDigit() &&
+            name.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' } &&
+            !name.contains("..")
 
     /**
      * Packs [contents].
