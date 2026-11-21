@@ -253,6 +253,31 @@ class FloatDspChainTest {
         }
     }
 
+    @Test
+    fun `loudness limiter catches overs produced by spatial audio when normalization is idle`() {
+        val chain = DspChain()
+        chain.configure(sampleRate, 2)
+        chain.spatial.enabled = true
+        chain.flush()
+
+        val frames = 512
+        val block = AudioBlock(channelCount = 2, capacityFrames = frames)
+        // Out-of-phase energy, which the widener's side boost pushes past full scale.
+        for (f in 0 until frames) {
+            val s = 0.95f * sin(2.0 * PI * 100.0 * f / sampleRate).toFloat()
+            block.samples[f * 2] = s
+            block.samples[f * 2 + 1] = -s
+        }
+        block.reset(frames)
+
+        chain.process(block)
+
+        var peak = 0f
+        for (i in 0 until frames * 2) peak = maxOf(peak, abs(block.samples[i]))
+        assertTrue("Spatial output must stay under the limiter ceiling (got $peak)", peak <= 0.985f + 1e-5f)
+        assertTrue("The limiter should turn the over down, not mute it (got $peak)", peak > 0.8f)
+    }
+
     // ── TransitionFilterProcessor Float32 Tests ─────────────────────────────
 
     @Test

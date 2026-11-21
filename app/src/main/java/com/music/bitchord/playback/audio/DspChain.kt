@@ -115,6 +115,12 @@ class DspChain(
         equalizer.process(block)
         jamesDsp.process(block)
         transition.process(block)
+        // The spatial widener's makeup gain does not cover every widened peak,
+        // and it leaves those overs for the stages after it to see; the
+        // loudness stage's limiter is what catches whatever survives, so it
+        // stays engaged while spatial audio is on even when normalization
+        // has nothing to do.
+        loudness.holdLimiter = spatial.enabled
         loudness.process(block)
     }
 
