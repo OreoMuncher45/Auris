@@ -4894,6 +4894,7 @@ internal fun BitChordApp(
                         !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay &&
                         !nav.showAudiobooks && sheets.openAudiobook == null &&
                         nav.itunesPodcastId == null && !nav.showGenres &&
+                        !sheets.showSpotify && !sheets.showDiscord &&
                         !sheets.showHistory && !sheets.showFlow && sheets.libraryShowAll == null &&
                         !sheets.showQuickPicks && !podcastUi.showContinueListening
                     if (scrollToTop) {
