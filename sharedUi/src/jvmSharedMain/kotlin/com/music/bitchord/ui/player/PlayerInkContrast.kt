@@ -280,13 +280,17 @@ internal fun bandBounds(
     width: Int,
     height: Int,
     bands: Int = INK_BANDS,
+    /** The first row read: the strips divide rows [firstRow] until [height]. */
+    firstRow: Int = 0,
 ): BandBounds {
     require(width > 0 && height > 0 && pixels.size >= width * height)
+    require(firstRow in 0 until height)
+    val rows = height - firstRow
     val lightest = IntArray(bands)
     val darkest = IntArray(bands)
     for (band in 0 until bands) {
-        val top = band * height / bands
-        val bottom = ((band + 1) * height / bands).coerceAtLeast(top + 1).coerceAtMost(height)
+        val top = firstRow + band * rows / bands
+        val bottom = (firstRow + (band + 1) * rows / bands).coerceAtLeast(top + 1).coerceAtMost(height)
         var maxL = -1f
         var minL = 2f
         for (i in top * width until bottom * width) {
@@ -375,8 +379,19 @@ private const val MESH_CHROME_TOP = 0.40f
 /** The banner's wash at its strongest, at the foot of the screen — see [PortraitBackdrop]. */
 internal const val HERO_WASH_MAX = 0.12f
 
-/** The dim over a Spotify Canvas while its control deck is up. */
-internal const val CANVAS_DECK_DIM = 0.5f
+/** How much of the screen Spotify Canvas's control deck covers, from the foot up. */
+internal const val CANVAS_DECK_FRACTION = 0.56f
+
+/**
+ * The scrim under Spotify Canvas's control deck while it is up: where its
+ * stops sit, as fractions of the deck's height, its black at each, and how
+ * much of the ink's grade each carries. Clear at the deck's top edge, so the
+ * clip above the deck is never dimmed; the title stands where the deck's
+ * glass reaches full strength, and the scrim deepens from there to the foot.
+ */
+internal val CANVAS_DECK_SCRIM_POSITIONS = floatArrayOf(0f, SPOTIFY_DECK_TOP_FADE_FRACTION, 1f)
+internal val CANVAS_DECK_SCRIM_ALPHAS = floatArrayOf(0f, 0.30f, 0.55f)
+internal val CANVAS_DECK_WASH_SHARE = floatArrayOf(0f, 1f, 1f)
 
 /**
  * The full-cover blur's bands under its scrim: each band at the top of its
@@ -434,11 +449,34 @@ internal class MeshInkPublisher<M : Any>(
     }
 }
 
-/** A Spotify Canvas frame's bands under the dim the deck brings with it. */
+/**
+ * A Spotify Canvas frame's bands under its deck, as the deck's chrome sees
+ * them: at the scrim where the title stands for light ink, and at the foot's
+ * scrim for dark — whichever band ends up behind whichever control.
+ */
 internal fun canvasInkSurface(bounds: BandBounds): InkSurface = InkSurface(
-    light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], CANVAS_DECK_DIM) },
-    dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], CANVAS_DECK_DIM) },
+    light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], CANVAS_DECK_SCRIM_ALPHAS[1]) },
+    dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], CANVAS_DECK_SCRIM_ALPHAS.last()) },
 )
+
+/**
+ * The deck's chrome over a Canvas frame of [width] x [height]: only the rows
+ * the deck covers are read, since nothing in the deck stands on the rest.
+ */
+internal fun canvasInkSurface(pixels: IntArray, width: Int, height: Int): InkSurface {
+    val deckTop = (height * (1f - CANVAS_DECK_FRACTION)).toInt().coerceIn(0, height - 1)
+    return canvasInkSurface(bandBounds(pixels, width, height, INK_BANDS, firstRow = deckTop))
+}
+
+/**
+ * The "Playing from" header over a Canvas frame: the frame's top rows under
+ * the header's own scrim, judged as over a full-bleed cover — see
+ * [resolveHeaderInk]. Read from the pixels already in hand.
+ */
+internal fun canvasHeaderInkSurface(pixels: IntArray, width: Int, height: Int): InkSurface {
+    val headerRows = (height * HEADER_BAND_FRACTION).toInt().coerceIn(1, height)
+    return headerInkSurface(bandBounds(pixels, width, headerRows, HEADER_BANDS))
+}
 
 /**
  * The scrim over a portrait motion cover that runs the screen behind the

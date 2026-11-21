@@ -28,6 +28,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -221,7 +223,7 @@ internal fun BoxScope.PortraitBackdrop(
 
 /**
  * Spotify Canvas's own chrome over its video: the glass under the lower
- * control deck and the dim over the whole clip while that deck is up.
+ * control deck and the scrim under that deck while it is up.
  */
 @Composable
 internal fun BoxScope.SpotifyCanvasChrome(
@@ -229,8 +231,9 @@ internal fun BoxScope.SpotifyCanvasChrome(
     presentation: Boolean,
     hazeState: HazeState,
     /**
-     * The ink's grade over the dim — black under light ink, white under dark —
-     * for a frame no ink holds on under the dim alone. Read in draw.
+     * The ink's grade over the deck's scrim — black under light ink, white
+     * under dark — for a frame no ink holds on under the scrim alone. Read in
+     * draw.
      */
     inkBlackWash: () -> Float = { 0f },
     inkWhiteWash: () -> Float = { 0f },
@@ -244,7 +247,7 @@ internal fun BoxScope.SpotifyCanvasChrome(
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .fillMaxWidth()
-            .fillMaxHeight(0.56f),
+            .fillMaxHeight(CANVAS_DECK_FRACTION),
         enter = fadeIn(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideIn(),
         exit = fadeOut(tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS)) + playerDeckSlideOut(),
     ) {
@@ -304,30 +307,47 @@ internal fun BoxScope.SpotifyCanvasChrome(
         )
     }
 
-    // While the control deck is up, the whole Canvas sits under a flat 50%
-    // dim so the buttons and text read against any clip. It fades out as
-    // the deck collapses to the full-screen video, and back in with the
-    // deck, on the deck's own timing. Alpha is read in the draw phase, so
-    // the fade never recomposes the player. Drawn above the glass deck, not
-    // under it: the deck's blur samples the video layer itself, so a dim
-    // beneath it never reached the glass and the deck stayed bright.
-    val spotifyCanvasDim = animateFloatAsState(
-        targetValue = if (deckShown) 0.5f else 0f,
+    // While the control deck is up, the deck's stretch of the Canvas sits
+    // under a scrim so the buttons and text read against any clip: clear at
+    // the deck's top edge, deepening to the foot — see
+    // [CANVAS_DECK_SCRIM_ALPHAS]. Above the deck the clip is never dimmed;
+    // the header carries its own scrim. It fades out as the deck collapses
+    // to the full-screen video, and back in with the deck, on the deck's own
+    // timing. Drawn above the glass deck, not under it: the deck's blur
+    // samples the video layer itself, so a scrim beneath it never reached
+    // the glass and the deck stayed bright.
+    val spotifyCanvasDeck = animateFloatAsState(
+        targetValue = if (deckShown) 1f else 0f,
         animationSpec = tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS),
-        label = "spotifyCanvasDim",
+        label = "spotifyCanvasDeck",
     )
-    val spotifyCanvasDimShowing by remember { derivedStateOf { spotifyCanvasDim.value > 0f } }
-    if (presentation || spotifyCanvasDimShowing) {
-        // One rect, drawn with the dim and the ink's grade folded together,
-        // and everything read here in draw: neither the deck's fade nor the
-        // grade recomposes, and it needs no layer of its own. The grade fades
-        // with the deck, as the controls it is for do.
+    val spotifyCanvasDeckShowing by remember { derivedStateOf { spotifyCanvasDeck.value > 0f } }
+    if (presentation || spotifyCanvasDeckShowing) {
+        // One rect over the deck's rows only, with the ink's grade and the
+        // deck's fade folded into each stop, and everything read here in
+        // draw: neither the fade nor the grade recomposes, and it needs no
+        // layer of its own. Video frames do not invalidate it — it redraws
+        // only while the deck fades or the grade moves.
         Box(
             Modifier.matchParentSize().drawBehind {
-                val dim = spotifyCanvasDim.value
-                if (dim <= 0f) return@drawBehind
-                val deck = (dim / CANVAS_DECK_DIM).coerceIn(0f, 1f)
-                drawRect(gradedScrimStop(dim, inkBlackWash() * deck, inkWhiteWash() * deck))
+                val deck = spotifyCanvasDeck.value
+                if (deck <= 0f) return@drawBehind
+                val black = inkBlackWash()
+                val white = inkWhiteWash()
+                val top = size.height * (1f - CANVAS_DECK_FRACTION)
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colorStops = Array(CANVAS_DECK_SCRIM_POSITIONS.size) { i ->
+                            val share = CANVAS_DECK_WASH_SHARE[i]
+                            val stop = gradedScrimStop(CANVAS_DECK_SCRIM_ALPHAS[i], black * share, white * share)
+                            CANVAS_DECK_SCRIM_POSITIONS[i] to stop.copy(alpha = stop.alpha * deck)
+                        },
+                        startY = top,
+                        endY = size.height,
+                    ),
+                    topLeft = Offset(0f, top),
+                    size = Size(size.width, size.height - top),
+                )
             },
         )
     }
