@@ -143,4 +143,33 @@ class SflxSignedSessionRetireTest {
 
         assertEquals("the imported record survives the late refresh", imported, file().readText())
     }
+
+    @Test
+    fun aRetiredClientBootstrapsOnceAndStopsInsteadOfLooping() {
+        // No authenticated record on disk, and a gateway that hands out a session on bootstrap.
+        val bootstraps = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/v2/bootstrap" -> {
+                    bootstraps.incrementAndGet()
+                    json(
+                        200,
+                        JSONObject()
+                            .put("session_id", "boot")
+                            .put("session_secret", "boot-secret")
+                            .put("expires_at", Instant.now().plusSeconds(7_200).toString())
+                            .toString(),
+                    )
+                }
+                else -> json(200, """{"ok":true}""")
+            }
+        }
+        val session = session()
+        session.retire()
+
+        val answer = session.signedFetch("GET", "/stream", "", emptyMap())
+
+        assertEquals(false, answer.optBoolean("ok"))
+        assertEquals("one bootstrap, not a loop", 1, bootstraps.get())
+    }
 }

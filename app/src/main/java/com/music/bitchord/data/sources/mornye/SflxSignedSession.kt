@@ -557,7 +557,14 @@ class SflxSignedSession(
             // Bootstrap can authenticate without a page. That session is the
             // answer to the failure above, not a reason to make the extension
             // issue the same signed request a second time.
-            is Bootstrap.Session -> signedFetch(method, path, body, headers, depth)
+            // A retired client can't save what bootstrap returned, so a retry would read
+            // the same unauthenticated record and bootstrap again, forever. End this call
+            // instead; the engine's next call reaches a current client (SflxHost.sessionCallFor).
+            is Bootstrap.Session -> if (retired) {
+                JSONObject().put("ok", false).put("error", "signed session was replaced; try again")
+            } else {
+                signedFetch(method, path, body, headers, depth)
+            }
             is Bootstrap.Challenge -> afterChallenge(bootstrap.url, method, path, body, headers, depth)
         }
     }
