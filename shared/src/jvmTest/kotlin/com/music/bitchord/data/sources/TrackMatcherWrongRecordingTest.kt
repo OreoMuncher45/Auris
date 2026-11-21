@@ -228,6 +228,8 @@ class TrackMatcherWrongRecordingTest {
     fun `a genuine extra artist with an imitation-like word is a collaboration`() {
         accepted(song("Lost", "River Lane, Cover Drive", "3:30"), TrackMatcher.Target("Lost", "River Lane", 210))
         assertTrue(TrackMatcher.sharesArtist("River Lane", "River Lane, Cover Drive"))
+        // The longest requested name is the one taken off the credit.
+        accepted(song("Lost", "Cover Drive", "3:30"), TrackMatcher.Target("Lost", "Drive, Cover Drive", 210))
     }
 
     @Test

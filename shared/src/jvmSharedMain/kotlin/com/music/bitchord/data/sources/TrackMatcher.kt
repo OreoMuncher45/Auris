@@ -793,7 +793,10 @@ object TrackMatcher {
         val have = normalize(got)
         if (have.isBlank()) return false
         val want = normalize(wanted)
+        // Longest first, so "Cover Drive" is taken off before a shorter
+        // requested "Drive" could leave a stray "cover" behind.
         val wantNames = want.split(ARTIST_SEPARATORS).map(::creditWords).filter { it.isNotEmpty() }
+            .sortedByDescending { it.size }
         // Each credited name on its own, so a genuine extra artist ("River
         // Lane, Cover Drive") is judged as that artist and not as an act.
         val imitation = have.split(ARTIST_SEPARATORS).any { name ->
