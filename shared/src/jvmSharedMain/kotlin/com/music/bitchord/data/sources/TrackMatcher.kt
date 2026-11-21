@@ -588,10 +588,15 @@ object TrackMatcher {
         val marks = words.filter { it in VERSION_WORDS }.toMutableList()
         // "(DJ Mix)", "(Mixed)", "(Continuous Mix)": a track cut out of a mixed
         // set and crossfaded into its neighbours. One marker for every
-        // spelling, so [score]'s release rule can read it off an album.
+        // spelling, replacing the generic "mix" those phrases also carry, so
+        // "(DJ Mix)" and "(Mixed)" meet and [score]'s release rule can read
+        // it off an album.
         if ("mixed" in words || "continuous" in words || "nonstop" in words ||
             words.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
-        ) marks += "mixed"
+        ) {
+            marks.remove("mix")
+            marks += "mixed"
+        }
         if (marks.isNotEmpty()) {
             versions += marks
             return
@@ -767,8 +772,10 @@ object TrackMatcher {
         return IMITATION_PHRASES.any { it.containsMatchIn(have) && !it.containsMatchIn(want) }
     }
 
+    /** Separators first: "Dolly Parton,Tribute Band" must not fuse into "partontribute". */
     private fun creditWords(normalized: String): Set<String> =
-        normalized.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }.toSet()
+        normalized.split(ARTIST_SEPARATORS).flatMap { it.split(WORD_SPLIT) }
+            .map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }.toSet()
 
     /**
      * The credited artists, each as its own list of words.

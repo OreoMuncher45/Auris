@@ -62,6 +62,9 @@ class TrackMatcherWrongRecordingTest {
         // Not even at the exact runtime, through the credits override.
         refused(song("Jolene", "Dolly Parton- Experience ® Tribute Show", "2:42"), jolene)
         assertTrue(!TrackMatcher.sharesArtist("Dolly Parton", "Dolly Parton- Experience ® Tribute Show"))
+        // An unspaced separator must not fuse the tribute word into the name.
+        refused(song("Jolene", "Dolly Parton,Tribute Band", "2:42"), jolene)
+        refused(song("Jolene", "Dolly Parton, Tribute Band", "2:42"), jolene)
     }
 
     private val beByYou = TrackMatcher.Target("Be By You", "River Lane", durationSec = 210)
@@ -147,6 +150,21 @@ class TrackMatcherWrongRecordingTest {
             song("Wish You Were Here", "Pink Floyd", "5:34", album = "Delicate Sound of Thunder (Live)"),
             TrackMatcher.Target("Wish You Were Here", "Pink Floyd", 334, album = "Wish You Were Here"),
         )
+    }
+
+    @Test
+    fun `every spelling of a DJ-mixed take is one take`() {
+        val spellings = listOf("Be By You (Mixed)", "Be By You (DJ Mix)", "Be By You (Continuous Mix)")
+        for (wanted in spellings) for (got in spellings) {
+            accepted(song(got, "River Lane", "3:30"), TrackMatcher.Target(wanted, "River Lane", 210))
+        }
+        // The mixed request also meets a plain row filed on a DJ-mix album.
+        accepted(
+            song("Be By You", "River Lane", "3:30", album = "Club Night (DJ Mix)"),
+            TrackMatcher.Target("Be By You (Mixed)", "River Lane", 210),
+        )
+        // A club mix is still its own take, not a DJ set's cut.
+        refused(song("Be By You (Club Mix)", "River Lane", "3:30"), TrackMatcher.Target("Be By You (DJ Mix)", "River Lane", 210))
     }
 
     @Test
