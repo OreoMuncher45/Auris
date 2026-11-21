@@ -88,6 +88,8 @@ internal fun BoxScope.PortraitBackdrop(
     /** The ink's grade over the main view's scrim, read in draw. */
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
+    /** Dark theme: the mesh tone-maps a pale cover dark — see [darkThemeMeshCell]. */
+    darkTheme: Boolean = false,
 ) {
     // Anchored to the sleeve's bottom edge, so the screen carries on in the
     // colours the artwork ended in rather than in a quantiser's idea of what
@@ -144,6 +146,7 @@ internal fun BoxScope.PortraitBackdrop(
             inkSurfaces = inkSurfaces,
             inkBlackWash = inkBlackWash,
             inkWhiteWash = inkWhiteWash,
+            darkTheme = darkTheme,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
         // Not drawn once the full-cover blur has taken the screen: a
@@ -163,6 +166,7 @@ internal fun BoxScope.PortraitBackdrop(
                 inkSurfaces = inkSurfaces,
                 inkBlackWash = inkBlackWash,
                 inkWhiteWash = inkWhiteWash,
+                darkTheme = darkTheme,
             )
         }
     }
@@ -353,9 +357,10 @@ private fun PlayerMeshBackdrop(
     inkSurfaces: PlayerInkSurfaces,
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
+    darkTheme: Boolean,
 ) {
     val mesh = key(trackKey) {
-        rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames)
+        rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames, darkTheme = darkTheme)
     }
     // What the chrome stands on, read off the mesh on screen: a 32-texel
     // image, averaged into bands off the main thread whenever the mesh
@@ -371,7 +376,13 @@ private fun PlayerMeshBackdrop(
             publish = { inkSurfaces.main = it },
         )
     }
-    LaunchedEffect(mesh) { meshInk.onMesh(mesh) }
+    LaunchedEffect(mesh) {
+        // The cover's top band, for the header: read with the mesh, so this
+        // is a few contrast-free blends and no pixels. A clip frame carries
+        // none and leaves the still sleeve's answer in place.
+        mesh?.header?.let { inkSurfaces.header = headerInkSurface(it) }
+        meshInk.onMesh(mesh)
+    }
     ArtworkMeshBackdrop(
         mesh = mesh,
         seam = seam,
@@ -399,6 +410,7 @@ private fun LegacyMeshBackdrop(
     inkSurfaces: PlayerInkSurfaces,
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
+    darkTheme: Boolean,
 ) {
     // One frame at a time: the legacy backdrop takes a picture, not a stream.
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -408,12 +420,15 @@ private fun LegacyMeshBackdrop(
     val palette = rememberArtworkColors(imageUrl, frame)
     // The blobs' own colours, published for the ink — four colours and a
     // base, so cheap enough to read wherever the palette lands.
-    LaunchedEffect(palette) { inkSurfaces.main = legacyMeshInkSurface(palette) }
+    LaunchedEffect(palette, darkTheme) { inkSurfaces.main = legacyMeshInkSurface(palette, darkTheme) }
+    // No cover band is read here; the header keeps the player's own ink.
+    LaunchedEffect(Unit) { inkSurfaces.header = null }
     MeshGradientBackground(
         palette = palette,
         trackKey = trackKey,
         modifier = modifier,
         blackWash = inkBlackWash,
         whiteWash = inkWhiteWash,
+        darkTheme = darkTheme,
     )
 }

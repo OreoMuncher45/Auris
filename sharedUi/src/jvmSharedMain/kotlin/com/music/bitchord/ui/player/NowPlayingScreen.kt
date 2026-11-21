@@ -9,6 +9,7 @@ import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.sharedui.resources.*
 
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -545,9 +546,12 @@ private const val HERO_FADE_FRACTION = 0.42f
  * this tall the crease is the only thing the eye caught.
  */
 internal const val ART_FADE_END_FRACTION = 1.0f
-/** Black at the very top of the player, fading out over [TOP_SCRIM_FRACTION]. */
-internal const val TOP_SCRIM_ALPHA = 0.40f
-internal const val TOP_SCRIM_FRACTION = 0.14f
+/**
+ * How far down the player the header's scrim reaches — see
+ * [HEADER_SCRIM_POSITIONS] for its shape. Past the caption, with room to ease
+ * out rather than stop at it.
+ */
+internal const val TOP_SCRIM_FRACTION = 0.22f
 
 /**
  * The player's ink, as a state.
@@ -587,6 +591,12 @@ internal class PlayerInkStates(
     /** The same over a portrait motion cover's scrim. */
     val portraitBlackWash: State<Float>,
     val portraitWhiteWash: State<Float>,
+    /**
+     * The "Playing from" header's ink over a full-bleed cover, and the grade
+     * its scrim takes for it — see [resolveHeaderInk].
+     */
+    val headerInk: State<Color>,
+    val headerGrade: State<Float>,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -598,6 +608,13 @@ internal fun rememberPlayerInk(
     surfaces: PlayerInkSurfaces = remember { PlayerInkSurfaces() },
     surface: InkSurfaceKind = InkSurfaceKind.MAIN,
     portraitClip: Boolean = false,
+    /**
+     * Dark theme: the main view never takes dark ink, so a pale cover is never
+     * answered with a white grade — see [resolveInk]'s allowDark.
+     */
+    darkTheme: Boolean = false,
+    /** Whether the header stands on a full-bleed still cover. */
+    headerOnCover: Boolean = false,
 ): PlayerInkStates {
     // Read only by the effect below, never by composition: a clip's new ink,
     // or a backdrop's new colours, must not recompose the player that
@@ -605,13 +622,19 @@ internal fun rememberPlayerInk(
     val currentSleeve = rememberUpdatedState(sleeve)
     val currentSurface = rememberUpdatedState(surface)
     val currentPortraitClip = rememberUpdatedState(portraitClip)
+    val currentDarkTheme = rememberUpdatedState(darkTheme)
+    val currentHeaderOnCover = rememberUpdatedState(headerOnCover)
     val ink = remember {
         val first = Snapshot.withoutReadObservation { palette.value }
         Animatable(
-            if (fromClip && first != null) first.palette.fg else sleeve.fg,
+            if (fromClip && first != null) first.palette.fg else sleeve.themedFg(darkTheme),
             Color.VectorConverter(sleeve.fg.colorSpace),
         )
     }
+    val headerInk = remember {
+        Animatable(sleeve.accent.at(sleeve.accent.lightL), Color.VectorConverter(sleeve.fg.colorSpace))
+    }
+    val headerGrade = remember { Animatable(0f) }
     val mainBlack = remember { Animatable(0f) }
     val mainWhite = remember { Animatable(0f) }
     val panelBlack = remember { Animatable(0f) }
@@ -631,6 +654,8 @@ internal fun rememberPlayerInk(
                 panel = surfaces.panel,
                 surface = currentSurface.value,
                 portraitClip = currentPortraitClip.value,
+                darkTheme = currentDarkTheme.value,
+                header = if (currentHeaderOnCover.value) surfaces.header else null,
             )
         }
             // The judging is a few hundred contrast checks: off the main thread.
@@ -649,6 +674,8 @@ internal fun rememberPlayerInk(
                     launch { canvasWhite.animateTo(out.canvasWhite, canvasSpec) }
                     launch { portraitBlack.animateTo(out.portraitBlack, washSpec) }
                     launch { portraitWhite.animateTo(out.portraitWhite, washSpec) }
+                    launch { headerInk.animateTo(out.headerFg, inkSpec) }
+                    launch { headerGrade.animateTo(out.headerGrade, washSpec) }
                 }
             }
     }
@@ -663,9 +690,19 @@ internal fun rememberPlayerInk(
             canvasWhiteWash = canvasWhite.asState(),
             portraitBlackWash = portraitBlack.asState(),
             portraitWhiteWash = portraitWhite.asState(),
+            headerInk = headerInk.asState(),
+            headerGrade = headerGrade.asState(),
         )
     }
 }
+
+/**
+ * The sleeve-judged ink, as the theme allows it: in dark theme the light side
+ * of the record's accent, so the frame before any backdrop has reported is
+ * not dark ink either.
+ */
+private fun NowPlayingPalette.themedFg(darkTheme: Boolean): Color =
+    if (darkTheme && !fg.isLightInk()) accent.at(accent.lightL) else fg
 
 /** Everything the ink is decided from, read together so it is judged once per change. */
 private data class InkInputs(
@@ -675,6 +712,9 @@ private data class InkInputs(
     val panel: InkSurface?,
     val surface: InkSurfaceKind,
     val portraitClip: Boolean,
+    val darkTheme: Boolean = false,
+    /** The cover's top band, when the header stands on a full-bleed still cover. */
+    val header: InkSurface? = null,
 )
 
 /** The ink and the grades, settled. */
@@ -688,6 +728,8 @@ private data class InkOutcome(
     val canvasWhite: Float,
     val portraitBlack: Float,
     val portraitWhite: Float,
+    val headerFg: Color,
+    val headerGrade: Float,
 )
 
 /**
@@ -701,8 +743,11 @@ private data class InkOutcome(
 private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     val live = inputs.live
     val owner = if (fromClip && live != null) live.palette else inputs.sleeve
-    val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas) }
-    val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas) }
+    // Dark theme keeps the ink light on the main view and on the full-cover
+    // blur behind lyrics and the queue — see [resolveInk]'s allowDark.
+    val allowDark = !inputs.darkTheme
+    val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
+    val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
     // A Canvas that owns the screen is its own surface, graded over its dim.
     val canvas = if (fromClip && live != null) {
         live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
@@ -714,7 +759,7 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     // That scrim lies over the mesh as well, so it carries the grade instead.
     val portrait = if (!fromClip && inputs.portraitClip && live?.source == LiveColorSource.LIVE_ART) {
         live.surface?.let { clip ->
-            resolveInk(owner.accent, portraitOverMeshInkSurface(clip, inputs.main), owner.alphas)
+            resolveInk(owner.accent, portraitOverMeshInkSurface(clip, inputs.main), owner.alphas, allowDark = allowDark)
         }
     } else {
         null
@@ -723,8 +768,9 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
         fromClip && live != null -> canvas?.fg ?: live.palette.fg
         inputs.surface == InkSurfaceKind.PANEL -> panel?.fg ?: owner.fg
         portrait != null -> portrait.fg
-        else -> main?.fg ?: owner.fg
+        else -> main?.fg ?: owner.themedFg(inputs.darkTheme)
     }
+    val header = inputs.header?.let { resolveHeaderInk(owner.accent, it, owner.alphas) }
     fun InkResolution?.black() = if (this == null || dark) 0f else wash
     fun InkResolution?.white() = if (this != null && dark) wash else 0f
     val meshGraded = if (portrait != null) null else main
@@ -734,6 +780,8 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
         panel.black(), panel.white(),
         canvas.black(), canvas.white(),
         portrait.black(), portrait.white(),
+        headerFg = header?.fg ?: fg,
+        headerGrade = header?.wash ?: 0f,
     )
 }
 
@@ -2084,11 +2132,16 @@ fun NowPlayingScreen(
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
     // effect.
+    // The app's theme, read off the scheme the player is drawn in: the mesh,
+    // the full-cover blur and the ink all answer to it — see
+    // [darkThemeMeshCell] and [darkThemeToned].
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
         imageUrl = remoteArt,
         artPx = artPx,
         prepare = landscape || tabletArtworkBackdrop || panels.lyricsOpen || panels.queueOpen ||
             playerPrewarmStage >= 1,
+        darkTheme = darkTheme,
     )
     // Where the backdrops publish what they show under the chrome — see
     // [resolveInk]. Written by the backdrops' own effects and read only by the
@@ -2134,6 +2187,12 @@ fun NowPlayingScreen(
     // rather than as a colour: a colour handed down through a composition
     // local changes the whole subtree under it, and this subtree is the entire
     // player. A state changes only the texts and the glyphs that wear it.
+    // The header stands on a full-bleed still cover: judged against the
+    // cover's top band rather than the backdrop under the controls. A clip
+    // of any shape, a Canvas, landscape or the legacy blobs keep the player's
+    // own ink: the band was read off the still sleeve, not off the clip.
+    val headerOnCover = heroMode && !fullCoverBackdropVisible && !legacyMeshBackdrop && !canvasOwnsScreen &&
+        !spotifyCanvasPresentation && !clipState.rendered
     val inkStates = rememberPlayerInk(
         palette = canvasPalette,
         fromClip = canvasOwnsScreen,
@@ -2149,12 +2208,19 @@ fun NowPlayingScreen(
         // A portrait motion cover runs the screen behind the controls, under
         // a scrim of its own — that, not the mesh beneath it, is the surface.
         portraitClip = canvasFirstPortrait && clipState.rendered,
+        darkTheme = darkTheme,
+        headerOnCover = headerOnCover,
     )
     val playerInkState = inkStates.ink
     // The halo follows the ink: dark under light ink, light under dark. It is
     // also strictly optional: with the switch off neither the composition
     // local nor the text shadow may carry any colour at all.
     val playerInkGlowState = rememberPlayerInkGlow(playerInkState)
+    // The header's own ink and halo while it stands on the cover — see
+    // [headerOnCover]; the player's otherwise. Switched in composition, which
+    // happens when the presentation changes, not when a colour does.
+    val headerInkState = if (headerOnCover) inkStates.headerInk else playerInkState
+    val headerGlowState = rememberPlayerInkGlow(inkStates.headerInk)
     // The glow, switched off: a state of its own, so the local's value never
     // changes and nothing under it is invalidated when the setting is off.
     val playerInkGlowOff = remember { mutableStateOf(Color.Transparent) }
@@ -2171,6 +2237,7 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
     // it replaced. See [rememberLiveBlurImage].
@@ -2196,6 +2263,7 @@ fun NowPlayingScreen(
                 blackWash = { inkStates.panelBlackWash.value },
                 whiteWash = { inkStates.panelWhiteWash.value },
                 onShown = publishPanelInk,
+                darkTheme = currentDarkTheme.value,
             )
         }
     }
@@ -2469,6 +2537,7 @@ fun NowPlayingScreen(
             inkSurfaces = inkSurfaces,
             inkBlackWash = { inkStates.mainBlackWash.value },
             inkWhiteWash = { inkStates.mainWhiteWash.value },
+            darkTheme = darkTheme,
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
@@ -2634,6 +2703,13 @@ fun NowPlayingScreen(
                 song = song,
                 playedBy = playedBy,
                 onOpenCaption = openPlaybackOrigin,
+                headerInk = headerInkState,
+                headerGlow = when {
+                    !textGlow -> playerInkGlowOff
+                    headerOnCover -> headerGlowState
+                    else -> playerInkGlowState
+                },
+                headerGrade = { if (headerOnCover) inkStates.headerGrade.value else 0f },
             )
 
             Column(

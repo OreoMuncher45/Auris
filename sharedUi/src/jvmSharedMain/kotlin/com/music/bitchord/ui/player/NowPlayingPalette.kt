@@ -246,7 +246,7 @@ private fun cluster(pixels: List<Int>): List<Bucket> {
 }
 
 /** OKLCH: L 0..1, chroma, hue in degrees. */
-private data class Oklch(val l: Float, val chroma: Float, val hue: Float) {
+internal data class Oklch(val l: Float, val chroma: Float, val hue: Float) {
     companion object {
         fun fromArgb(argb: Int): Oklch {
             val r = srgbToLinear(((argb shr 16) and 0xFF) / 255f)

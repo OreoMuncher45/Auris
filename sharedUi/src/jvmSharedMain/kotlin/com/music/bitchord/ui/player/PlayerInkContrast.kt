@@ -97,6 +97,13 @@ internal class PlayerInkSurfaces {
 
     /** The full-cover blur behind lyrics, queue, tablet and landscape. */
     var panel: InkSurface? by mutableStateOf(null)
+
+    /**
+     * The sleeve's top band under the header's scrim, where the "Playing
+     * from" header stands over a full-bleed cover. Null until a still sleeve
+     * has been read, and while the legacy backdrop is up.
+     */
+    var header: InkSurface? by mutableStateOf(null)
 }
 
 /**
@@ -110,7 +117,7 @@ internal enum class InkSurfaceKind { MAIN, PANEL }
  * Each 8-bit sRGB level in linear light, once: the same values the WCAG
  * formula gives, without a `pow` per channel per pixel.
  */
-private val SRGB_TO_LINEAR = FloatArray(256) { level ->
+internal val SRGB_TO_LINEAR = FloatArray(256) { level ->
     val c = level / 255f
     if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
 }
@@ -166,11 +173,17 @@ internal fun inkHolds(ink: Int, background: Int, alphas: NowPlayingAlphas): Bool
  * of the surface. If no lightness holds, the surface's scrim is graded by the
  * least that lets one. The side needing less grading wins, then the side that
  * moved less from where it wanted to be; light wins a tie. The hue never moves.
+ *
+ * [allowDark] false takes dark ink off the table: the main view in dark theme,
+ * where dark ink and a white grade read as a light-theme screen. [maxWash]
+ * caps the grade, for a surface that may only be graded so far.
  */
 internal fun resolveInk(
     accent: InkAccent,
     surface: InkSurface,
     alphas: NowPlayingAlphas = NowPlayingAlphas(),
+    allowDark: Boolean = true,
+    maxWash: Float = MAX_INK_WASH,
 ): InkResolution {
     // Capped short of white, not at white. Gamut mapping gives up chroma as
     // lightness rises, and at OKLCH L=1 there is none left to give: the
@@ -199,9 +212,9 @@ internal fun resolveInk(
     fun side(inks: List<Int>, bands: IntArray, toward: Int): Side? {
         if (inks.isEmpty() || bands.isEmpty()) return null
         firstHolding(inks, bands, toward, 0f).let { if (it >= 0) return Side(it, 0f, inks[it]) }
-        if (firstHolding(inks, bands, toward, MAX_INK_WASH) < 0) return null
+        if (firstHolding(inks, bands, toward, maxWash) < 0) return null
         var low = 0f
-        var high = MAX_INK_WASH
+        var high = maxWash
         repeat(WASH_BISECTIONS) {
             val mid = (low + high) / 2f
             if (firstHolding(inks, bands, toward, mid) >= 0) high = mid else low = mid
@@ -211,7 +224,7 @@ internal fun resolveInk(
     }
 
     val light = side(lights, surface.light, BLACK_ARGB)
-    val dark = side(darks, surface.dark, WHITE_ARGB)
+    val dark = if (allowDark) side(darks, surface.dark, WHITE_ARGB) else null
     val darkWins = dark != null && (
         light == null ||
             dark.wash < light.wash - WASH_TIE ||
@@ -222,7 +235,7 @@ internal fun resolveInk(
         light != null -> InkResolution(Color(light.ink), dark = false, wash = light.wash)
         // Unreachable in practice — see MAX_INK_WASH — but never leave the
         // chrome without an answer.
-        else -> InkResolution(Color(lights.last()), dark = false, wash = MAX_INK_WASH)
+        else -> InkResolution(Color(lights.last()), dark = false, wash = maxWash)
     }
 }
 
@@ -466,6 +479,62 @@ internal fun portraitClipInkSurface(bounds: BandBounds): InkSurface {
         dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], PORTRAIT_CLIP_SCRIM_ALPHAS.last()) },
     )
 }
+
+// --- The "Playing from" header over a full-bleed cover -----------------------
+
+/**
+ * The header's static scrim at the caption line, about 11% down the screen —
+ * see [HEADER_SCRIM_POSITIONS]. What the header's ink is judged against before
+ * any grade.
+ */
+internal const val HEADER_SCRIM_AT_CAPTION = 0.41f
+
+/**
+ * The header's scrim: where its stops sit, as fractions of [TOP_SCRIM_FRACTION]
+ * of the player, and its black at each. Eased rather than linear, so it holds
+ * through the caption and then gets out of the cover's way.
+ */
+internal val HEADER_SCRIM_POSITIONS = floatArrayOf(0f, 0.5f, 0.727f, 1f)
+internal val HEADER_SCRIM_ALPHAS = floatArrayOf(0.55f, HEADER_SCRIM_AT_CAPTION, HEADER_SCRIM_AT_CAPTION * 0.55f, 0f)
+
+/**
+ * How much the header's grade may add, as black over the scrim at the caption:
+ * 1 - (1 - 0.41)(1 - 0.32) ≈ 0.60, the most of a bright cover's top the header
+ * is allowed to hide.
+ */
+internal const val HEADER_MAX_GRADE = 0.32f
+
+/**
+ * The share of the grade each scrim stop carries: all of it down to the
+ * caption, tapering with the scrim below.
+ */
+internal val HEADER_GRADE_SHARE = floatArrayOf(1f, 1f, 0.55f, 0f)
+
+/** The sleeve's top band as the header sees it: under its scrim at the caption. */
+internal fun headerInkSurface(bounds: BandBounds): InkSurface = InkSurface(
+    light = IntArray(bounds.lightest.size) { scrimmed(bounds.lightest[it], HEADER_SCRIM_AT_CAPTION) },
+    dark = IntArray(bounds.darkest.size) { scrimmed(bounds.darkest[it], HEADER_SCRIM_AT_CAPTION) },
+)
+
+/**
+ * The header's ink over a full-bleed cover: light, from the record's accent,
+ * with the header's scrim graded as little as lets it hold (at most
+ * [HEADER_MAX_GRADE]). Judged for the playlist line as text at its own alpha
+ * and the chevron as an icon; the small "PLAYING FROM" label is best-effort.
+ */
+internal fun resolveHeaderInk(accent: InkAccent, surface: InkSurface, alphas: NowPlayingAlphas): InkResolution {
+    val title = minOf(1f, alphas.secondary + 0.25f)
+    return resolveInk(
+        accent,
+        surface,
+        NowPlayingAlphas(primary = title, secondary = title, tertiary = HEADER_CHEVRON_ALPHA),
+        allowDark = false,
+        maxWash = HEADER_MAX_GRADE,
+    )
+}
+
+/** The chevron's alpha — see [PlayerTopStrip]. */
+internal const val HEADER_CHEVRON_ALPHA = 0.92f
 
 /** WCAG relative luminance of a [Color], for tests and callers holding one. */
 internal fun Color.wcagLuminance(): Float = wcagLuminance(toArgb())
