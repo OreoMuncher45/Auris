@@ -914,7 +914,7 @@ class SflxHost(
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
                 // And its signed-session client is built from the new manifest.
-                sessions.remove(installed.id)
+                dropSession(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
@@ -929,7 +929,7 @@ class SflxHost(
                 val installed = store.restore(id, files)
                 unload(installed.id)
                 this.files.remove(installed.id)
-                sessions.remove(installed.id)
+                dropSession(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx restore failed: ${it.message}") }
@@ -942,7 +942,31 @@ class SflxHost(
      * record from disk again. Used after an import writes session records
      * under extensions that are already running.
      */
-    fun reloadSessions() = synchronized(lifecycle) { sessions.clear() }
+    fun reloadSessions() = synchronized(lifecycle) { dropAllSessions() }
+
+    /**
+     * Takes [id]'s client out of the map and retires it.
+     *
+     * The invariant this keeps: a client that is no longer in the map is
+     * retired. A loaded engine holds its client directly (its `sessionCall`),
+     * so a client dropped without retiring could keep saving, and the next
+     * [replaceSessionRecords], which only reaches the map, could never stop
+     * it. Every removal goes through here or [dropAllSessions].
+     */
+    private fun dropSession(id: String) {
+        sessions.remove(id)?.retire()
+    }
+
+    /**
+     * Retires and drops every client, then unloads the engines that held one,
+     * so their next load builds a fresh client that can save again.
+     */
+    private fun dropAllSessions() {
+        val ids = sessions.keys.toList()
+        sessions.values.forEach { it.retire() }
+        sessions.clear()
+        ids.forEach(::unload)
+    }
 
     /**
      * Runs [write], which replaces signed-session records on disk, so that no
@@ -961,7 +985,7 @@ class SflxHost(
         try {
             write()
         } finally {
-            sessions.clear()
+            dropAllSessions()
         }
     }
 
@@ -972,7 +996,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
-            sessions.remove(id)
+            dropSession(id)
         }
         removed
     }
