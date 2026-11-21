@@ -806,7 +806,15 @@ class SflxSignedSession(
         return record
     }
 
-    private fun save(record: Record) {
+    /**
+     * Writes [record]. The [retired] check and the write happen together under
+     * [lock], the lock [retire] takes. Some callers (a refresh, for one) reach
+     * here without holding it, so a save can't pass the check, lose the race
+     * to [retire] and an import, and then write its stale record anyway. The
+     * monitor is reentrant, so callers that already hold the lock are
+     * unaffected.
+     */
+    private fun save(record: Record): Unit = synchronized(lock) {
         // An import has replaced this record; writing now would put the old one back.
         if (retired) return
         val root = JSONObject()
