@@ -38,13 +38,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.ShelfSnap
 import com.music.bitchord.ui.components.rememberShelfKeys
 import com.music.bitchord.ui.components.uniqueKeys
 import com.music.bitchord.ui.components.ROW_REMOVAL_FADE_OUT
@@ -703,9 +704,13 @@ fun DetailScreen(
                         )
                         BoxWithConstraints {
                             val columnWidth = trackColumnWidth(maxWidth)
-                            LazyRow(
+                            // Home's Recents shelf, the same way: a column is most of the row
+                            // wide, so a fling turns one page of four songs and settles on the
+                            // heading's inset instead of stopping partway through a column.
+                            ShelfRow(
                                 contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                snap = ShelfSnap.OneItemPerFling,
                             ) {
                                 itemsIndexed(
                                     topColumns,
@@ -856,7 +861,8 @@ fun DetailScreen(
                         onShowAll = if (canShowAll) { { onActiveShelfChange(shelf) } } else null,
                         horizontalPadding = ARTIST_CONTENT_GUTTER,
                     )
-                    LazyRow(
+                    // Settles on the nearest card, like Home's card shelves.
+                    ShelfRow(
                         contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
