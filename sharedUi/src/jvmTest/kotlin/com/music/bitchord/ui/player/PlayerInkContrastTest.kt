@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import kotlin.math.abs
 import kotlin.test.Test
@@ -383,6 +384,16 @@ class PlayerInkContrastTest {
         val choice = resolveHeaderInk(NeutralInkAccent, surface, alphas)
         assertFalse(choice.dark)
         assertTrue(choice.wash > 0f && choice.wash <= HEADER_MAX_GRADE + 1e-4f, "grade ${choice.wash}")
+    }
+
+    @Test
+    fun aHeaderOnlyChangeIsPublished() {
+        val palette = NowPlayingPalette(fg = Color.White)
+        val deck = InkSurface(intArrayOf(grey(0x30)), intArrayOf(grey(0x30)))
+        val before = LivePalette(palette, LiveColorSource.CANVAS, deck, InkSurface(intArrayOf(grey(0x30)), intArrayOf(grey(0x30))))
+        val after = before.copy(header = InkSurface(intArrayOf(white), intArrayOf(white)))
+        assertTrue(inkMoved(before, after), "a bright patch moving into the header must reach the header's ink")
+        assertFalse(inkMoved(before, before.copy()), "nothing moved")
     }
 
     @Test

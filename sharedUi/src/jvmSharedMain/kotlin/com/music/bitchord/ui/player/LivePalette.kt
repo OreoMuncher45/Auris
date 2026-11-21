@@ -193,8 +193,12 @@ internal fun rememberLivePalette(
  * half-percent of opacity is the difference between a label that reads and
  * one that does not.
  */
-private fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
-    inkMoved(previous.palette, next.palette) || inkSurfaceMoved(previous.surface, next.surface)
+internal fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
+    inkMoved(previous.palette, next.palette) ||
+        inkSurfaceMoved(previous.surface, next.surface) ||
+        // The header is judged on a band of its own: a bright patch can move
+        // into the top of a Canvas while the deck's rows stand still.
+        inkSurfaceMoved(previous.header, next.header)
 
 /** Whether a surface's bands moved by more than a few levels of eight-bit colour. */
 internal fun inkSurfaceMoved(previous: InkSurface?, next: InkSurface?): Boolean {
