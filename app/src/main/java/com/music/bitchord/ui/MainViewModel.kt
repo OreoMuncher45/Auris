@@ -4778,7 +4778,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             followContinuations(
                 token = token,
-                fetch = { next -> YtMusicRepository.moreSongs(next).getOrNull() },
+                // One dropped request used to end the walk for good, leaving a
+                // long playlist cut short on screen and in its menu.
+                fetch = { next ->
+                    retryingOrNull(FILL_IN_RETRIES_MS) { YtMusicRepository.moreSongs(next).getOrNull() }
+                },
                 nextToken = { fetched ->
                     // A page with nothing new on it means the feed has looped
                     // back rather than run dry with a token still attached.
@@ -5785,3 +5789,16 @@ internal data class LyricsLookupKey(
     val order: List<LyricsSource>,
     val prioritizeSyllableSync: Boolean,
 )
+
+/** Waits before each retry of a page's fill-in, as the service's own loader waits. */
+private val FILL_IN_RETRIES_MS = longArrayOf(2_000L, 5_000L, 15_000L)
+
+/** [attempt], then again after each of [waitsMs] while it answers null; null if it never answers. */
+internal suspend fun <T : Any> retryingOrNull(waitsMs: LongArray, attempt: suspend () -> T?): T? {
+    attempt()?.let { return it }
+    for (wait in waitsMs) {
+        delay(wait)
+        attempt()?.let { return it }
+    }
+    return null
+}
