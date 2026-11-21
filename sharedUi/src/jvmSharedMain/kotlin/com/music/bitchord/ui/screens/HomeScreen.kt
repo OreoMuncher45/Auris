@@ -85,6 +85,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isSamePlayingTrack
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.isQuickPicksShelfTitle
 import java.util.Locale
@@ -130,7 +131,7 @@ private const val SHORTCUT_SHELF_TITLE = "Shortcuts"
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
-    return videoId == song.videoId || (title == song.title && subtitle == song.artist)
+    return isSamePlayingTrack(videoId, title, subtitle, song.videoId, song.title, song.artist)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
