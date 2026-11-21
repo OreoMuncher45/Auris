@@ -86,6 +86,9 @@ class SflxSignedSession(
      */
     fun retire() = synchronized(lock) { retired = true }
 
+    /** Whether [retire] has run: for the host's tests. */
+    internal val isRetired: Boolean get() = retired
+
     /** A challenge the listener has been sent to, so the grant can be matched. */
     @Volatile
     private var pending: Pending? = null

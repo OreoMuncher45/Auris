@@ -976,10 +976,15 @@ class SflxHost(
     /**
      * Retires and drops every client. Loaded engines need no reload: their
      * next session call builds a fresh client that can save (see [sessionCallFor]).
+     *
+     * Removes key by key and retires exactly what each removal took, never a
+     * blanket `clear()`. [sessionFor] doesn't take the lifecycle lock, so a
+     * client it creates concurrently is either removed here, and so retired,
+     * or created after its key's removal and left in the map. No client
+     * leaves the map unretired.
      */
     private fun dropAllSessions() {
-        sessions.values.forEach { it.retire() }
-        sessions.clear()
+        sessions.keys.toList().forEach(::dropSession)
     }
 
     /**

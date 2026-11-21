@@ -78,4 +78,25 @@ class SflxHostSessionReplaceTest {
         engineCall("clear", "[]")
         org.junit.Assert.assertNotEquals(imported, recordFile(installed).readText())
     }
+
+    @Test
+    fun noClientLeavesTheMapUnretiredWhileClientsAreCreatedDuringADrop() {
+        val (host, installed) = host()
+        val seen = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<SflxSignedSession, Boolean>())
+        val running = java.util.concurrent.atomic.AtomicBoolean(true)
+        // Callers keep asking for a client, as engines and the UI do, while the host drops them.
+        val callers = (1..4).map {
+            kotlin.concurrent.thread {
+                while (running.get()) host.sessionFor(installed)?.let(seen::add)
+            }
+        }
+        repeat(500) { host.reloadSessions() }
+        running.set(false)
+        callers.forEach { it.join(5_000) }
+
+        val current = host.sessionFor(installed)
+        val orphans = seen.filter { it !== current && !it.isRetired }
+        assertEquals("every client that left the map was retired", emptyList<SflxSignedSession>(), orphans)
+        org.junit.Assert.assertTrue("the stress actually produced several clients", seen.size > 1)
+    }
 }
