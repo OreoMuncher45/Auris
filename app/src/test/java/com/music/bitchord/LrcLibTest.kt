@@ -39,6 +39,17 @@ class LrcLibTest {
     }
 
     @Test
+    fun `each repeat of a stamped line gets word timings at its own time`() {
+        val lines = LrcLib.parseLrc("[00:12.00][00:45.00]<00:12.00>chorus <00:12.50>line<00:13.00>")
+            .filterNot { it.isGap }
+
+        assertEquals(listOf(12_000L, 12_500L), lines[0].words.map { it.startMs })
+        assertEquals(listOf(45_000L, 45_500L), lines[1].words.map { it.startMs })
+        assertEquals(46_000L, lines[1].words.last().endMs)
+        assertEquals(lines[0].text, lines[1].text)
+    }
+
+    @Test
     fun `stamps with a space between them are still one run`() {
         val lines = LrcLib.parseLrc("[00:12.00] [00:45.00] chorus").filterNot { it.isGap }
 

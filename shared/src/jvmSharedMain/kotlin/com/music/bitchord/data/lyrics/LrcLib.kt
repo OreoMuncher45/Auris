@@ -102,22 +102,21 @@ object LrcLib {
             val body = line.substring(stamps.last().range.last + 1)
             // Detect the RTL marker that was written by [toEnhancedLrc].
             val (text, alignment) = stripAlignmentMarker(body)
+            // Stripped rather than rebuilt from the runs below: the spacing
+            // and punctuation between two words belong to the line, and
+            // re-joining the words with single spaces would quietly rewrite
+            // a line that never had them.
+            val plain = text.replace(WORD_STAMP, "").trim()
+            val words = parseWordRuns(text)
+            // Word stamps are absolute and written for the first line stamp, so
+            // each repeat moves them by its distance from that one.
+            val firstMs = msOf(stamps.first())
             stamps.asSequence().map { match ->
-                val (minutes, seconds, fraction) = match.destructured
-                // Two digits mean centiseconds, three mean milliseconds.
-                val fractionMs = when (fraction.length) {
-                    2 -> fraction.toLong() * 10
-                    3 -> fraction.toLong()
-                    else -> 0L
-                }
+                val timeMs = msOf(match)
                 LyricLine(
-                    timeMs = minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs,
-                    // Stripped rather than rebuilt from the runs below: the spacing
-                    // and punctuation between two words belong to the line, and
-                    // re-joining the words with single spaces would quietly rewrite
-                    // a line that never had them.
-                    text = text.replace(WORD_STAMP, "").trim(),
-                    words = parseWordRuns(text),
+                    timeMs = timeMs,
+                    text = plain,
+                    words = words.shiftedBy(timeMs - firstMs),
                     alignment = alignment,
                 )
             }
@@ -199,6 +198,16 @@ object LrcLib {
         )
     }
 
+    private fun List<LyricWord>.shiftedBy(deltaMs: Long): List<LyricWord> =
+        if (deltaMs == 0L || isEmpty()) this else map { word ->
+            word.copy(
+                startMs = word.startMs + deltaMs,
+                endMs = word.endMs + deltaMs,
+                syllables = word.syllables.map { it.copy(startMs = it.startMs + deltaMs, endMs = it.endMs + deltaMs) },
+            )
+        }
+
+    /** `[mm:ss.xx]` or `<mm:ss.xx>`: two fraction digits mean centiseconds, three mean milliseconds. */
     private fun msOf(mark: MatchResult): Long {
         val (minutes, seconds, fraction) = mark.destructured
         val fractionMs = when (fraction.length) {
