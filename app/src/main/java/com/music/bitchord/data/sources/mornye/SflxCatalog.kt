@@ -388,19 +388,21 @@ object SflxCatalog {
         val directory = sessionsDirectory ?: return false
         // Same rule as the archive: one plain segment, so no separators and no leading dot.
         if (!com.music.bitchord.data.sources.backup.AddonBackupArchive.isSessionName(name)) return false
-        return runCatching {
-            if (!directory.isDirectory) directory.mkdirs()
-            // A short staging name: "$name.tmp" would exceed the 255-byte filename
-            // limit for a session name already near it. Ends in .tmp, so a leftover is never read as a record.
-            val staging = File.createTempFile(".session", ".tmp", directory)
+        if (!directory.isDirectory) directory.mkdirs()
+        // A short staging name: "$name.tmp" would exceed the 255-byte filename
+        // limit for a session name already near it. Ends in .tmp, so a leftover is never read as a record.
+        val staging = runCatching { File.createTempFile(".session", ".tmp", directory) }.getOrNull() ?: return false
+        return try {
             staging.writeBytes(bytes)
             val target = File(directory, name)
-            if (!staging.renameTo(target)) {
-                target.writeBytes(bytes)
-                staging.delete()
-            }
+            if (!staging.renameTo(target)) target.writeBytes(bytes)
             true
-        }.getOrDefault(false)
+        } catch (e: Exception) {
+            false
+        } finally {
+            // Gone after a successful rename; removed here after a fallback write or a failure.
+            staging.delete()
+        }
     }
 
     /** Writes a package from a backup. Call [snapshotAfterRestore] once every package is written. */
