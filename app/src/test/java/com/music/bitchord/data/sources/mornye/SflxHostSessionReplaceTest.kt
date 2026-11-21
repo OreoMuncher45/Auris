@@ -90,7 +90,15 @@ class SflxHostSessionReplaceTest {
                 while (running.get()) host.sessionFor(installed)?.let(seen::add)
             }
         }
-        repeat(500) { host.reloadSessions() }
+        // Wait until the callers are running, then drop until the stress has produced
+        // plenty of clients (at least 500 drops, capped at 5 s).
+        val start = System.nanoTime()
+        while (seen.isEmpty() && System.nanoTime() - start < 5_000_000_000L) Thread.yield()
+        var drops = 0
+        while ((drops < 500 || seen.size < 10) && System.nanoTime() - start < 5_000_000_000L) {
+            host.reloadSessions()
+            drops++
+        }
         running.set(false)
         callers.forEach { it.join(5_000) }
 
@@ -98,5 +106,24 @@ class SflxHostSessionReplaceTest {
         val orphans = seen.filter { it !== current && !it.isRetired }
         assertEquals("every client that left the map was retired", emptyList<SflxSignedSession>(), orphans)
         org.junit.Assert.assertTrue("the stress actually produced several clients", seen.size > 1)
+    }
+
+    @Test
+    fun aRemovedExtensionsLeftoverCallbackCannotWriteDuringAnImport() {
+        val (host, installed) = host()
+        // A checked-out engine keeps its callback after its extension is removed.
+        val leftoverCall = host.sessionCallFor(installed)!!
+        host.remove(installed.id)
+
+        val imported = """{"install_id":"imported","session_id":"s","session_secret":"x"}"""
+        host.replaceSessionRecords {
+            recordFile(installed).writeText(imported)
+            // The callback runs mid-import. The extension is gone, so the host made no
+            // client for it up front, and this call creates one now. It must be born retired.
+            leftoverCall("clear", "[]")
+            assertEquals(imported, recordFile(installed).readText())
+            org.junit.Assert.assertTrue(host.sessionFor(installed)!!.isRetired)
+        }
+        assertEquals(imported, recordFile(installed).readText())
     }
 }

@@ -73,6 +73,21 @@ class SflxHost(
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SflxSignedSession>()
 
     /**
+     * Guards creating a client against [replacing] flipping. Held only for a
+     * map lookup and a constructor, never across I/O or a client's own lock
+     * wait, so engine calls never queue behind a record write.
+     */
+    private val clientsLock = Any()
+
+    /**
+     * True while [replaceSessionRecords] writes records. A client created now,
+     * by any caller, including a leftover engine of an extension that was just
+     * removed, starts retired, so it can read but never save over the records
+     * being written.
+     */
+    private var replacing = false
+
+    /**
      * Whether this extension's source row is switched on.
      *
      * Checked here, at the only places an extension is ever run, because the
@@ -93,18 +108,24 @@ class SflxHost(
     fun sessionFor(installed: InstalledSflx): SflxSignedSession? {
         val directory = signedSessionsDirectory ?: return null
         val config = SignedSessionConfig.from(installed.manifest) ?: return null
-        return sessions.computeIfAbsent(installed.id) {
-            SflxSignedSession(
-                extensionId = installed.id,
-                config = config,
-                directory = directory,
-                onVerificationRequired = { url ->
-                    // A switched-off extension must not put a page on screen.
-                    if (enabled(installed)) {
-                        SflxVerify.open(installed.id, installed.manifest.displayName, url)
-                    }
-                },
-            )
+        sessions[installed.id]?.let { return it }
+        return synchronized(clientsLock) {
+            sessions.computeIfAbsent(installed.id) {
+                SflxSignedSession(
+                    extensionId = installed.id,
+                    config = config,
+                    directory = directory,
+                    onVerificationRequired = { url ->
+                        // A switched-off extension must not put a page on screen.
+                        if (enabled(installed)) {
+                            SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                        }
+                    },
+                ).also { client ->
+                    // Brand new, so its lock is free: this never waits.
+                    if (replacing) client.retire()
+                }
+            }
         }
     }
 
@@ -970,7 +991,7 @@ class SflxHost(
      * hold clients past a call; see [sessionCallFor].
      */
     private fun dropSession(id: String) {
-        sessions.remove(id)?.retire()
+        synchronized(clientsLock) { sessions.remove(id) }?.retire()
     }
 
     /**
@@ -1000,10 +1021,19 @@ class SflxHost(
      */
     fun <T> replaceSessionRecords(write: () -> T): T = synchronized(lifecycle) {
         runCatching { store.list() }.getOrDefault(emptyList()).forEach { sessionFor(it) }
-        sessions.values.forEach { it.retire() }
+        // From here every new client is born retired, for any extension,
+        // installed or not. The snapshot covers every client made before the flip.
+        val existing = synchronized(clientsLock) {
+            replacing = true
+            sessions.values.toList()
+        }
         try {
+            // Outside clientsLock: a retire may wait out a save in progress, and
+            // callers asking for a client must not wait with it.
+            existing.forEach { it.retire() }
             write()
         } finally {
+            synchronized(clientsLock) { replacing = false }
             dropAllSessions()
         }
     }
