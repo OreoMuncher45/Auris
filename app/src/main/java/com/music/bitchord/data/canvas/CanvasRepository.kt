@@ -87,7 +87,7 @@ object CanvasRepository {
         val album = song.albumName
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
         val spotify = AppSettings.spotifyCanvasEnabled.value
-        val key = cacheKey("song|${song.videoId}", spotifyFirst, spotify)
+        val key = cacheKey(songKey(song), spotifyFirst, spotify)
 
         return resolve(key, album != null) {
             if (spotifyFirst && spotify) {
@@ -119,7 +119,7 @@ object CanvasRepository {
      */
     fun cached(song: Song): CanvasArtwork? {
         val key = cacheKey(
-            base = "song|${song.videoId}",
+            base = songKey(song),
             spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value,
             spotifyEnabled = AppSettings.spotifyCanvasEnabled.value,
         )
@@ -161,6 +161,15 @@ object CanvasRepository {
             }
         }
     }
+
+    /**
+     * The track's id plus the title and artist the search is made from. The id
+     * alone is not enough: an id that is blank, or one that two catalogues
+     * both use, would hand one song's clip to every other song sharing it.
+     * Raw strings rather than [cleaned] ones, so [cached] stays a plain
+     * concatenation on the main thread.
+     */
+    private fun songKey(song: Song): String = "song|${song.videoId}|${song.title}|${song.artist}"
 
     /** Priority is part of the question, so a toggle never reuses the other order's answer. */
     private fun cacheKey(
