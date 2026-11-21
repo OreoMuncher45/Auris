@@ -482,14 +482,19 @@ fun Modifier.liquidGlass(
  * its capture: the player panel's, captured at the window's size and clipped
  * to the moving panel. The same colour and opacity [liquidGlass] gives its
  * rim — the configured highlight, scaled by the intensity setting's
- * [GlassEffectConfig.highlightOpacity] — and none under [GlassStyle.BLUR],
- * which drops the rim. Remembered, so the moving panel only re-records the
- * stroke when its outline changes.
+ * [GlassEffectConfig.highlightOpacity] — and none where [liquidGlass] draws
+ * none: under [GlassStyle.BLUR], or as its translucent tint-only fallback.
+ * Remembered, so the moving panel only re-records the stroke when its
+ * outline changes.
  */
 @Composable
 internal fun Modifier.glassRim(shape: Shape): Modifier {
     val config = LocalGlassEffectConfig.current
-    if (!isGlassAllowed() || config.style == GlassStyle.BLUR) return this
+    if (!isGlassAllowed() || config.style == GlassStyle.BLUR ||
+        shouldUseTranslucentGlassFallback(config.style, isRenderEffectSupported())
+    ) {
+        return this
+    }
     val isDark = glassUsesDarkAppearance()
     val ambientColor = LocalAmbientBackgroundColor.current.value
     val heroContext = ambientColor.isSpecified && !ambientColor.isHueless()
