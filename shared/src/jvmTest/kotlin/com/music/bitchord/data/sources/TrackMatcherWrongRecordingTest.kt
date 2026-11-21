@@ -172,6 +172,7 @@ class TrackMatcherWrongRecordingTest {
     fun `an extra take word is not absorbed by a repeated title word`() {
         val target = TrackMatcher.Target("Live Forever", "Oasis", 276)
         refused(song("Live Forever Live", "Oasis", "4:36"), target)
+        refused(song("LiveForever Live", "Oasis", "4:36"), target)
         accepted(song("Live Forever", "Oasis", "4:36"), target)
     }
 
@@ -204,9 +205,25 @@ class TrackMatcherWrongRecordingTest {
         refused(song("Be By You (DJ-Mix)", "River Lane", "3:30"), studio)
         refused(song("Be By You DJ-Mix", "River Lane", "3:30"), studio)
         refused(song("Be By You DJ-Mix-Cut", "River Lane", "3:30"), studio)
+        refused(song("Be By You (DJ-Mix-Cut)", "River Lane", "3:30"), studio)
         // Generic names stay neutral.
         accepted(song("Be By You", "River Lane", "3:30", album = "Party Mix 2024"), studio)
         accepted(song("Be By You", "River Lane", "3:30", album = "Let Me Live"), studio)
+        accepted(song("Be By You", "River Lane", "3:30", album = "Live in the Moment"), studio)
+    }
+
+    @Test
+    fun `a request from an instrumental edition meets its own row`() {
+        val album = "Metroverse (Instrumental Edition)"
+        accepted(
+            song("Am I Dreaming", "River Lane", "4:16", album = album),
+            TrackMatcher.Target("Am I Dreaming", "River Lane", 256, album = album),
+        )
+        // The vocal request still refuses the instrumental twin.
+        refused(
+            song("Am I Dreaming", "River Lane", "4:16", album = album),
+            TrackMatcher.Target("Am I Dreaming", "River Lane", 256, album = "Metroverse"),
+        )
     }
 
     @Test

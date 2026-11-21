@@ -244,8 +244,11 @@ object TrackMatcher {
      */
     private fun versionsAgree(wanted: TitleParts, got: TitleParts, target: Target, candidate: Song): Boolean {
         val albumMarks = albumVersionMarkers(candidate.albumName)
+        // The request's own release counts the same way as the candidate's:
+        // a plain-titled row asked for from "… (Instrumental Edition)" or
+        // "Pulse (Live)" is that take, and meets its twin on that album.
         val wantedVersions = wanted.versions +
-            (albumVersionMarkers(target.album) intersect RELEASE_TAKES)
+            (albumVersionMarkers(target.album) intersect (NOVOCAL_TAKES + RELEASE_TAKES))
         val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
             (albumMarks intersect RELEASE_TAKES) + (albumMarks intersect wantedVersions)
         return wantedVersions == effectiveVersions
@@ -264,8 +267,18 @@ object TrackMatcher {
         // printed without brackets: "Be By You Live DJ Mix" contains
         // "Be By You" and is a DJ set. The words one side has over the other
         // must not be the words that mark a different recording.
-        else -> differingWords(wanted.markerWords, got.markerWords)
-            .none { it in VERSION_WORDS || it in IMITATION_WORDS || it in DJ_MIX_TOKENS }
+        else -> differingWords(wanted.markerWords, got.markerWords).none { it in CONTAINMENT_MARKERS } &&
+            // Words can cancel out across positions ("LiveForever Live" has
+            // the same "live" count as "Live Forever"), so the text the longer
+            // core has around the shorter one is read too.
+            extraCoreText(wanted.core, got.core).none { extra -> CONTAINMENT_MARKERS.any { extra.contains(it) } }
+    }
+
+    /** The text before and after the shorter core inside the longer one. */
+    private fun extraCoreText(a: String, b: String): List<String> {
+        val (longer, shorter) = if (a.length >= b.length) a to b else b to a
+        val at = longer.indexOf(shorter).takeIf { it >= 0 } ?: return emptyList()
+        return listOf(longer.substring(0, at), longer.substring(at + shorter.length)).filter { it.isNotEmpty() }
     }
 
     /**
@@ -616,9 +629,13 @@ object TrackMatcher {
         // spelling, replacing the generic "mix" those phrases also carry, so
         // "(DJ Mix)" and "(Mixed)" meet and [score]'s release rule can read
         // it off an album.
-        // "DJ-Mix" reaches here as one token: the hyphen is stripped, not split.
+        // "DJ-Mix" reaches here as one token: the hyphen is stripped, not
+        // split. The phrase is read off the aside split on every non-letter
+        // too, so "DJ-Mix-Cut" is dj/mix/cut rather than "djmixcut".
+        val parts = segment.split(NON_ALNUM_RUN).filter { it.isNotEmpty() }
         if ("mixed" in words || "continuous" in words || "nonstop" in words ||
-            words.any { it in DJ_MIX_TOKENS } || words.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
+            words.any { it in DJ_MIX_TOKENS } || "mixed" in parts ||
+            parts.zipWithNext().any { (a, b) -> a == "dj" && (b == "mix" || b == "set") }
         ) {
             marks.remove("mix")
             marks += "mixed"
@@ -931,7 +948,10 @@ object TrackMatcher {
     private val DJ_MIX_ALBUM =
         Regex("""(?:\bdj[\s-]?mix(?:ed)?|\bcontinuous mix|\bnon-?stop mix|\bmixed)\W*$|\bmixed by\b""")
     private val DJ_MIX_TOKENS = setOf("djmix", "djmixed", "djset")
-    private val LIVE_ALBUM = Regex("""\blive (?:at|in|from)\b""")
+    // Not "live in": "Live in the Moment" is a studio album's name as often
+    // as "Live in Paris" is a concert, and a bracketed "(Live in …)" is
+    // already read by the title parser.
+    private val LIVE_ALBUM = Regex("""\blive (?:at|from)\b""")
 
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
     private fun albumKey(value: String?): String? {
@@ -1136,6 +1156,11 @@ object TrackMatcher {
         "band", "bands", "show", "act", "group", "orchestra", "ensemble", "singers", "experience",
     )
     private val IMITATION_WORDS = IMITATION_STRONG + IMITATION_WEAK
+
+    /** What may not hide in the words or text one title has over another; see [titleCoresMatch]. */
+    private val CONTAINMENT_MARKERS: Set<String> by lazy {
+        (VERSION_WORDS + IMITATION_WORDS + DJ_MIX_TOKENS).filter { it.length >= 3 }.toSet()
+    }
     private val IMITATION_PHRASES = listOf(
         Regex("""\bin the style of\b"""),
         Regex("""\bmade famous by\b"""),
