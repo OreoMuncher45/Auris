@@ -4,10 +4,19 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class RepeatedRecordingsTest {
-    private fun track(id: String, title: String, artist: String, length: String? = "4:08", video: Boolean = false) =
-        SearchResult.Track(
-            Song(videoId = id, title = title, artist = artist, thumbnailUrl = null, durationText = length, isVideo = video),
-        )
+    private fun track(
+        id: String,
+        title: String,
+        artist: String,
+        length: String? = "4:08",
+        video: Boolean = false,
+        explicit: Boolean? = null,
+    ) = SearchResult.Track(
+        Song(
+            videoId = id, title = title, artist = artist, thumbnailUrl = null,
+            durationText = length, isVideo = video, isExplicit = explicit,
+        ),
+    )
 
     private fun ids(rows: List<SearchResult>) = rows.map { it.songOrNull()?.videoId ?: "browse" }
 
@@ -45,6 +54,16 @@ class RepeatedRecordingsTest {
     fun aVideoIsNotTheSameRowAsTheSong() {
         val rows = listOf(track("a", "Kissik", "Singer A"), track("b", "Kissik", "Singer A", video = true))
         assertEquals(listOf("a", "b"), ids(rows.withoutRepeatedRecordings()))
+    }
+
+    @Test
+    fun theCleanAndExplicitCutsAreBothKept() {
+        // The audio switch picks between them by the explicit flag.
+        val rows = listOf(
+            track("explicit", "Kissik", "Singer A", explicit = true),
+            track("clean", "Kissik", "Singer A", explicit = false),
+        )
+        assertEquals(listOf("explicit", "clean"), ids(rows.withoutRepeatedRecordings()))
     }
 
     @Test

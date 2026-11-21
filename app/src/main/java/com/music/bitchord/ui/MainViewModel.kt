@@ -3695,6 +3695,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
             val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
             if (stillCurrent) {
+                // Cleared only while this request still owns the search: the
+                // merge below suspends, and a newer search's load-more may be
+                // in flight by the time it resumes.
+                var owns = true
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
                     // Off the main thread: a long scroll is a few hundred rows.
@@ -3704,13 +3708,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    if (searchSession == session && session.requestId == newestRequestId.get()) {
+                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                         searchSession = session.copy(continuation = page.continuation)
                         _results.value = UiState.Success(merged)
                     }
                 }
-                _searchLoadingMore.value = false
+                if (owns) _searchLoadingMore.value = false
             }
         }
     }
@@ -3735,6 +3740,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
             if (stillCurrent) {
+                // Cleared only while this request still owns the search: the
+                // merge below suspends, and a newer search's load-more may be
+                // in flight by the time it resumes.
+                var owns = true
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
                     val merged = withContext(Dispatchers.Default) {
@@ -3744,13 +3753,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    if (searchSession == session && session.requestId == newestRequestId.get()) {
+                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
                         searchSession = session.copy(nextOffset = page.nextOffset)
                         _results.value = UiState.Success(merged)
                     }
                 }
-                _searchLoadingMore.value = false
+                if (owns) _searchLoadingMore.value = false
             }
         }
     }

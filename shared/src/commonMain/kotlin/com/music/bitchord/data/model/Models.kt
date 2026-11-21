@@ -415,9 +415,11 @@ sealed interface SearchResult {
  * Spotify releases of the same master. Ids are already distinct by the time
  * rows reach here, so this is the other half — a row is a repeat when its
  * title, credit and length all match an earlier one, compared without regard
- * to case or surrounding space. A row that states no length is always kept,
- * since two different cuts can share a name and credit; so is a row whose
- * credit differs, which is what a film song's dubbed versions look like.
+ * to case or surrounding space, and it is the same kind of row (song or
+ * video, explicit or clean). The clean and explicit cuts stay apart because
+ * the audio switch picks between them by that flag. A row that states no
+ * length is always kept, since two different cuts can share a name and
+ * credit; so is a row whose credit differs, which is what a film song's dubbed versions look like.
  *
  * The promoted top result is never removed, only remembered, so a plain row
  * repeating it goes instead. Browse rows pass through untouched. One pass and
@@ -432,7 +434,8 @@ fun List<SearchResult>.withoutRepeatedRecordings(): List<SearchResult> {
             append(song.title.trim().lowercase()).append('\u0001')
             append(song.artist.trim().lowercase()).append('\u0001')
             append(length).append('\u0001')
-            append(song.isVideo)
+            append(song.isVideo).append('\u0001')
+            append(song.isExplicit)
         }
         seen.add(key) || row is SearchResult.TopTrack
     }
