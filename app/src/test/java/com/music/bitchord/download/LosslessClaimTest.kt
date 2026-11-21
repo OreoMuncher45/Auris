@@ -90,6 +90,15 @@ class LosslessClaimTest {
     }
 
     @Test
+    fun `a TrueHD claim over lossy ec-3 is corrected and stops being lossless`() {
+        val honest = ManifestFile.honest(hls("module", "truehd"), "ec-3")
+        assertEquals("eac3", honest.format.codec)
+        assertEquals(false, honest.format.isLossless)
+        val stream = hls("module", "truehd")
+        assertSame(stream, ManifestFile.honest(stream, "mlpa"))
+    }
+
+    @Test
     fun `an entry this does not know leaves the claim standing`() {
         val stream = hls("module", "flac")
         assertSame(stream, ManifestFile.honest(stream, "zzzz"))
@@ -163,6 +172,19 @@ class LosslessClaimTest {
         // YouTube's download — and storable() would not file `aac` anyway.
         assertTrue(!SourceResolver.beatsYouTubeAac(walk.bestLossy!!.second.format))
         assertNull(DownloadStore.storable("aac"))
+    }
+
+    @Test
+    fun `a premium answer that cannot be filed does not end the walk`() = runBlocking {
+        val truehd = hls("module", "flac")
+        val genuine = hls("qobuz", "flac")
+        val walk = SourceResolver.walkBitExact(
+            listOf(ClaimingSource("Module", truehd), ClaimingSource("Qobuz", genuine)),
+            target, StreamRequest.Lossless, strictLength = true,
+            verify = verifyAgainst(mapOf(truehd.url to init("mlpa"), genuine.url to flacInit)),
+            fileable = { DownloadStore.storable(it.codec) != null },
+        )
+        assertEquals(genuine.url, walk.winner?.url)
     }
 
     @Test

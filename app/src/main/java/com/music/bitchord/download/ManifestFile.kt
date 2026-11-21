@@ -129,6 +129,9 @@ internal object ManifestFile {
         val actual = SAMPLE_ENTRIES[entry] ?: return stream
         val claimed = stream.format
         val agrees = when {
+            // TrueHD is lossless; a lossy Dolby entry (`ec-3`) does not agree
+            // with it even though both are the Dolby family.
+            DolbyAudio.codec(claimed.codec) == "truehd" -> DolbyAudio.codec(actual) == "truehd"
             // Dolby claims are judged on family: the JOC flag lives inside
             // `dec3`, so an `ec-3` entry is consistent with an Atmos claim.
             claimed.isDolby -> DolbyAudio.codec(actual) != null

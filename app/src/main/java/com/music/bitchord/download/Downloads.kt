@@ -2107,6 +2107,9 @@ object Downloads {
                     // the claim reaching [ManifestFile.assemble] and failing
                     // the whole download there.
                     verify = ManifestFile::verified,
+                    // A premium answer this device cannot file must not end
+                    // the walk — the next source may hold a FLAC.
+                    fileable = { DownloadStore.storable(it.codec) != null },
                 )
             } catch (e: CancellationException) {
                 throw e

@@ -756,11 +756,14 @@ object SourceResolver {
      * @param verify reads a premium claim against the bytes behind it — see
      *   [walkBitExact]. The default trusts the claim, as everything but a
      *   download can afford to.
+     * @param fileable whether the caller can keep a file of this format. A
+     *   premium answer it cannot keep does not end the walk — see [walkBitExact].
      */
     suspend fun forDownload(
         target: TrackMatcher.Target,
         request: StreamRequest = requestForDownload(),
         verify: suspend (SourceStream) -> SourceStream = { it },
+        fileable: (StreamFormat) -> Boolean = { true },
     ): SourceStream? = coroutineScope {
         if (target.title.isBlank()) return@coroutineScope null
         // Standard, and the one rung the sources are no use for: it is a
@@ -837,7 +840,7 @@ object SourceResolver {
             }
         }
 
-        val walk = walkBitExact(bitExact, target, request, strictLength, verify)
+        val walk = walkBitExact(bitExact, target, request, strictLength, verify, fileable)
         walk.winner?.let {
             // Nothing is waiting on it any more, and leaving it running
             // would hold this whole call open on a source whose answer has
@@ -898,6 +901,11 @@ object SourceResolver {
      * really is; one that is not premium after all is treated exactly like a
      * source that admitted to being lossy — refused here, kept only as a
      * lossy candidate for the floor below.
+     *
+     * A premium answer that [fileable] says cannot be kept (a source caught
+     * serving TrueHD under a FLAC label, say) is passed over rather than
+     * returned: returning it would end the walk, the caller would then decline
+     * it, and a genuine FLAC further down the list would never be asked.
      */
     internal suspend fun walkBitExact(
         sources: List<MusicSource>,
@@ -905,6 +913,7 @@ object SourceResolver {
         request: StreamRequest,
         strictLength: Boolean,
         verify: suspend (SourceStream) -> SourceStream = { it },
+        fileable: (StreamFormat) -> Boolean = { true },
     ): BitExactWalk {
         var best: Pair<MusicSource, SourceStream>? = null
         for (source in sources) {
@@ -931,6 +940,14 @@ object SourceResolver {
             // first-class download path instead of throwing it away and
             // falling back to YouTube solely because it has no bitrate tag.
             if (stream.format.isLossless == true || stream.format.isDolbyAtmos) {
+                if (!fileable(stream.format)) {
+                    TrackLog.d(
+                        TAG,
+                        "${source.displayName} offered ${stream.format.summary} to download; " +
+                            "nothing to file that as, looking further",
+                    )
+                    continue
+                }
                 TrackLog.d(
                     TAG,
                     "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
