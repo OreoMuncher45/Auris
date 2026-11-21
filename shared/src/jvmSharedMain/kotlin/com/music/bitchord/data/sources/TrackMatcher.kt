@@ -793,11 +793,24 @@ object TrackMatcher {
         val have = normalize(got)
         if (have.isBlank()) return false
         val want = normalize(wanted)
-        // What the candidate credit says beyond the requested one, counted:
-        // "Cover Drive Cover Band" has a "cover" more than "Cover Drive".
-        val remaining = creditWords(have).toMutableList()
-        for (word in creditWords(want)) remaining.remove(word)
-        if (remaining.any { it in IMITATION_WORDS }) return true
+        val wantWords = creditWords(want)
+        // Each credited name on its own, so a genuine extra artist ("River
+        // Lane, Cover Drive") is judged as that artist and not as an act.
+        val imitation = have.split(ARTIST_SEPARATORS).any { name ->
+            val words = creditWords(name)
+            // What this name says beyond the requested credit, counted:
+            // "Cover Drive Cover Band" has a "cover" more than "Cover Drive".
+            val remaining = words.toMutableList()
+            for (word in wantWords) remaining.remove(word)
+            val namedAfterWanted = remaining.size < words.size
+            remaining.any { it in IMITATION_STRONG } ||
+                // "cover", "salute", "homage" are real name words ("Cover
+                // Drive"); they mark an imitation only on an act named after
+                // the artist or billed as a band or show.
+                (remaining.any { it in IMITATION_WEAK } &&
+                    (namedAfterWanted || remaining.any { it in IMITATION_ACTS }))
+        }
+        if (imitation) return true
         return IMITATION_PHRASES.any { it.containsMatchIn(have) && !it.containsMatchIn(want) }
     }
 
@@ -1105,10 +1118,14 @@ object TrackMatcher {
     private val RELEASE_TAKES = setOf("live", "concert", "unplugged", "mixed")
 
     /** Credit words that make an act an imitation of the artist it names; see [isImitationCredit]. */
-    private val IMITATION_WORDS = setOf(
-        "tribute", "tributes", "karaoke", "cover", "covers", "impersonator", "impersonators",
-        "soundalike", "soundalikes", "salute", "homage",
+    private val IMITATION_STRONG = setOf(
+        "tribute", "tributes", "karaoke", "impersonator", "impersonators", "soundalike", "soundalikes",
     )
+    private val IMITATION_WEAK = setOf("cover", "covers", "salute", "homage")
+    private val IMITATION_ACTS = setOf(
+        "band", "bands", "show", "act", "group", "orchestra", "ensemble", "singers", "experience",
+    )
+    private val IMITATION_WORDS = IMITATION_STRONG + IMITATION_WEAK
     private val IMITATION_PHRASES = listOf(
         Regex("""\bin the style of\b"""),
         Regex("""\bmade famous by\b"""),

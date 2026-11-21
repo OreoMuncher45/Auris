@@ -220,6 +220,13 @@ class TrackMatcherWrongRecordingTest {
     @Test
     fun `a cover band named after an act with an imitation word is not that act`() {
         refused(song("Lost", "Cover Drive Cover Band", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
+        refused(song("Lost", "River Lane, The Cover Band", "3:30"), TrackMatcher.Target("Lost", "River Lane", 210))
+    }
+
+    @Test
+    fun `a genuine extra artist with an imitation-like word is a collaboration`() {
+        accepted(song("Lost", "River Lane, Cover Drive", "3:30"), TrackMatcher.Target("Lost", "River Lane", 210))
+        assertTrue(TrackMatcher.sharesArtist("River Lane", "River Lane, Cover Drive"))
     }
 
     @Test
