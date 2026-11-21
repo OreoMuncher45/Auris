@@ -614,59 +614,88 @@ class PlaybackService : MediaLibraryService() {
      * Stops when the folder runs dry, after [AUTO_CONTINUATION_MAX_PAGES],
      * when the account changes, or once the queue no longer holds the folder
      * — the driver started something else. A later Auto start cancels it.
+     *
+     * Called on the main thread while the folder's queue is being built, before
+     * Media3 has installed it, so the queue is read only after the next
+     * playlist change — the installation — and never as the one it replaces.
      */
     private fun followAutoBrowseContinuation(context: AutoBrowseContext) {
         autoContinuationJob?.cancel()
         val first = context.continuation ?: return
         val sourceId = context.source.id ?: return
-        autoContinuationJob = scope.launch {
-            val seen = context.songs.mapTo(HashSet()) { it.videoId }
-            var next: String? = first
-            var pages = 0
-            while (next != null && pages++ < AUTO_CONTINUATION_MAX_PAGES) {
-                val token: String = next
-                val page = withContext(Dispatchers.IO) {
-                    try {
-                        withTimeoutOrNull(AUTO_CONTINUATION_TIMEOUT_MS) {
-                            YtMusicRepository.moreSongs(token).getOrNull()
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        null
-                    }
-                } ?: return@launch
-                if (context.listener != null && context.listener != currentListener()) return@launch
-                // A page with nothing new on it means the feed looped back. Judged
-                // before the block list: a page of only blocked songs is not the
-                // end, and the pages after it still belong to the folder.
-                val unseen = page.songs.filter { seen.add(it.videoId) }
-                if (unseen.isEmpty()) return@launch
-                val fresh = unseen.filterNot(AppSettings::isSongBlocked)
-                if (fresh.isEmpty()) {
-                    next = page.continuation
-                    continue
-                }
-                fresh.forEach { songCache[it.videoId] = it }
-                val exoPlayer = player ?: return@launch
-                if (castPlayback.active) return@launch
-                val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
-                val last = queuedSongs
-                    .indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
-                    .takeIf { it >= 0 } ?: return@launch
-                val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
-                val additions = fresh
-                    .filter { it.videoId !in queued }
-                    .map { song ->
-                        song.copy(
-                            playbackSource = context.source.title,
-                            playbackSourceType = context.source.type,
-                            playbackSourceId = sourceId,
-                        ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
-                    }
-                if (additions.isNotEmpty()) exoPlayer.addMediaItems(last + 1, additions)
-                next = page.continuation
+        val installedOn = player ?: return
+        val installed = CompletableDeferred<Unit>()
+        val installListener = object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) installed.complete(Unit)
             }
+        }
+        installedOn.addListener(installListener)
+        autoContinuationJob = scope.launch {
+            // [scope] is the main thread's, which the listener is removed on.
+            try {
+                followAutoBrowsePages(context, first, sourceId, installedOn, installed)
+            } finally {
+                installedOn.removeListener(installListener)
+            }
+        }
+    }
+
+    private suspend fun followAutoBrowsePages(
+        context: AutoBrowseContext,
+        first: String,
+        sourceId: String,
+        installedOn: Player,
+        installed: CompletableDeferred<Unit>,
+    ) {
+        val seen = context.songs.mapTo(HashSet()) { it.videoId }
+        var next: String? = first
+        var pages = 0
+        while (next != null && pages++ < AUTO_CONTINUATION_MAX_PAGES) {
+            val token: String = next
+            val page = withContext(Dispatchers.IO) {
+                try {
+                    withTimeoutOrNull(AUTO_CONTINUATION_TIMEOUT_MS) {
+                        YtMusicRepository.moreSongs(token).getOrNull()
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            } ?: return
+            if (context.listener != null && context.listener != currentListener()) return
+            // A page with nothing new on it means the feed looped back. Judged
+            // before the block list: a page of only blocked songs is not the
+            // end, and the pages after it still belong to the folder.
+            val unseen = page.songs.filter { seen.add(it.videoId) }
+            if (unseen.isEmpty()) return
+            val fresh = unseen.filterNot(AppSettings::isSongBlocked)
+            if (fresh.isEmpty()) {
+                next = page.continuation
+                continue
+            }
+            fresh.forEach { songCache[it.videoId] = it }
+            // Until Media3 has installed the folder, the queue is the one it replaces.
+            withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
+            val exoPlayer = player?.takeIf { it === installedOn } ?: return
+            if (castPlayback.active) return
+            val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+            val last = queuedSongs
+                .indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
+                .takeIf { it >= 0 } ?: return
+            val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
+            val additions = fresh
+                .filter { it.videoId !in queued }
+                .map { song ->
+                    song.copy(
+                        playbackSource = context.source.title,
+                        playbackSourceType = context.source.type,
+                        playbackSourceId = sourceId,
+                    ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
+                }
+            if (additions.isNotEmpty()) exoPlayer.addMediaItems(last + 1, additions)
+            next = page.continuation
         }
     }
 
@@ -11228,6 +11257,9 @@ class PlaybackService : MediaLibraryService() {
          */
         const val AUTO_CONTINUATION_MAX_PAGES = 10
         const val AUTO_CONTINUATION_TIMEOUT_MS = 5_000L
+
+        /** How long a continuation waits for Media3 to install the folder it extends. */
+        const val AUTO_QUEUE_INSTALL_TIMEOUT_MS = 10_000L
 
         val ROOT_CHILDREN: List<String> = listOf(
             MEDIA_QUICK_PICKS_ID,
