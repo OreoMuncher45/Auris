@@ -3768,9 +3768,14 @@ internal fun BitChordApp(
                 ?.takeIf { !fromPlayer && song.setVideoId != null }
             // The folder this page is, when it is one. A track on a folder's
             // page can be taken back out of it; a track anywhere else cannot.
-            val openFolder = detail?.browseId
+            val openLocal = detail?.browseId
                 ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
-                ?.takeIf { it.isFolder && !fromPlayer }
+                ?.takeIf { !fromPlayer }
+            val openFolder = openLocal?.takeIf { it.isFolder }
+            // A playlist imported onto this device (signed out, or one YouTube
+            // refused to create) is the listener's to edit as well, account or
+            // not — its rows come out of the local store, not YouTube.
+            val openImported = openLocal?.takeIf { !it.isFolder && it.browseId == detail?.browseId }
             // Asked of the cache's index off the main thread as the menu opens,
             // so "Remove from cache" is only offered for a track it holds.
             // Re-asked when the cache changes, which is what drops the row
@@ -3844,6 +3849,12 @@ internal fun BitChordApp(
                     {
                         sheets.songMenu.song = null
                         viewModel.removeFromPlaylist(it.browseId, song)
+                    }
+                } ?: openImported?.let { imported ->
+                    {
+                        sheets.songMenu.song = null
+                        com.music.bitchord.data.spotify.LocalPlaylistStore.removeSong(imported.browseId, song)
+                        viewModel.reloadLocalDetail(imported.browseId)
                     }
                 },
                 onRemoveFromCache = if (inCache) {
@@ -7044,17 +7055,19 @@ private fun RootOverlays(
         val remote = target.browseId?.startsWith("local:") == false
         val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
         val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
-        // A folder of the listener's own: renamed and deleted here, on the
-        // device, rather than on an account that may not exist.
+        // A folder of the listener's own, or a playlist imported onto this
+        // device: renamed and deleted here, on the device, rather than on an
+        // account that may not exist.
         val localFolder = target.browseId
             ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
-            ?.takeIf { it.isFolder }
+            ?.takeIf { it.isFolder || it.browseId == target.browseId }
         BrowseActionsSheet(
             // The live answer, not the one the target was built with.
             target = target.copy(playlist = playlist),
             localCollection = localFolder?.let { folder ->
                 com.music.bitchord.ui.components.LocalCollectionActions(
                     title = folder.title,
+                    isFolder = folder.isFolder,
                     onRename = { name ->
                         sheets.browseMenu.target = null
                         com.music.bitchord.data.spotify.LocalPlaylistStore.renamePlaylist(folder.id, name)

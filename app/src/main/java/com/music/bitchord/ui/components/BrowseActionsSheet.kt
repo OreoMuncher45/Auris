@@ -105,6 +105,11 @@ data class LocalCollectionActions(
     val title: String,
     val onRename: (String) -> Unit,
     val onDelete: () -> Unit,
+    /**
+     * False for a playlist imported onto the device rather than a folder: the
+     * same two rows, worded as the account's playlist rows are.
+     */
+    val isFolder: Boolean = true,
 )
 
 /**
@@ -293,18 +298,31 @@ fun BrowseActionsSheet(
             // the one collection here whose loss cannot be undone by tapping
             // the same row again.
             localCollection?.let { local ->
-                ActionRow(Icons.Rounded.Edit, stringResource(R.string.rename_folder)) {
-                    onAskForName(renameFolderHeading, local.title, local.onRename)
+                ActionRow(
+                    Icons.Rounded.Edit,
+                    stringResource(if (local.isFolder) R.string.rename_folder else R.string.rename),
+                ) {
+                    onAskForName(
+                        if (local.isFolder) renameFolderHeading else renamePlaylistHeading,
+                        local.title,
+                        local.onRename,
+                    )
                 }
                 if (confirmingLocalDelete) {
                     ActionRow(
                         icon = Icons.Rounded.DeleteForever,
-                        label = stringResource(R.string.delete_folder_confirmation, target.title),
+                        label = stringResource(
+                            if (local.isFolder) R.string.delete_folder_confirmation else R.string.delete_playlist_confirmation,
+                            target.title,
+                        ),
                         tint = MaterialTheme.colorScheme.error,
                         onClick = local.onDelete,
                     )
                 } else {
-                    ActionRow(Icons.Rounded.Delete, stringResource(R.string.delete_folder)) {
+                    ActionRow(
+                        Icons.Rounded.Delete,
+                        stringResource(if (local.isFolder) R.string.delete_folder else R.string.delete_playlist),
+                    ) {
                         confirmingLocalDelete = true
                     }
                 }
