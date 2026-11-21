@@ -376,8 +376,8 @@ object EmbeddedLyrics {
      * The first `USLT` frame's text (`ULT` in ID3v2.2): the lyrics field every
      * MP3 tagger writes, and the one other players read (#1020).
      *
-     * ponytail: v2.4's per-frame unsynchronisation and compression flags are
-     * not undone; such a frame reads as no lyrics, as every MP3 did before.
+     * v2.4's per-frame unsynchronisation is undone; a compressed or encrypted
+     * frame reads as no lyrics rather than as garbled text.
      */
     private fun id3(head: ByteArray): String? {
         if (head.size < 10) return null
@@ -405,10 +405,34 @@ object EmbeddedLyrics {
             }
             val body = at + headerLength
             if (size <= 0 || body + size > bytes.size) break
-            if (id == wanted) usltText(bytes, body, body + size)?.let { return it }
+            if (id == wanted) frameText(bytes, major, flags, at, body, body + size)?.let { return it }
             at = body + size
         }
         return null
+    }
+
+    /**
+     * Applies the frame's format flags before [usltText]: grouping and v2.4
+     * data-length bytes are skipped and v2.4 unsynchronisation is undone.
+     * Compression and encryption are not supported, so such a frame is no lyrics.
+     */
+    private fun frameText(bytes: ByteArray, major: Int, tagFlags: Int, header: Int, from: Int, until: Int): String? {
+        if (major == 2) return usltText(bytes, from, until)
+        val format = bytes[header + 9].toInt() and 0xFF
+        var start = from
+        if (major == 3) {
+            if (format and 0xC0 != 0) return null // compressed or encrypted
+            if (format and 0x20 != 0) start += 1 // group id
+            return if (start < until) usltText(bytes, start, until) else null
+        }
+        if (format and 0x0C != 0) return null // compressed or encrypted
+        if (format and 0x40 != 0) start += 1 // group id
+        if (format and 0x01 != 0) start += 4 // data length indicator
+        if (start >= until) return null
+        // v2.4 unsynchronises per frame; the tag-level flag means every frame is.
+        if (format and 0x02 == 0 && tagFlags and 0x80 == 0) return usltText(bytes, start, until)
+        val plain = deUnsync(bytes, start, until)
+        return usltText(plain, 0, plain.size)
     }
 
     /** encoding, three-letter language, a terminated description, then the lyrics. */

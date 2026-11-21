@@ -57,6 +57,40 @@ class EmbeddedLyricsTest {
         assertEquals("слова песни", EmbeddedLyrics.fromBytes(id3(major = 3, encoding = 1, lyrics = "слова песни")))
     }
 
+    /** A v2.4 tag with one USLT frame carrying [formatFlags] around an already-transformed body. */
+    private fun id3v24Frame(formatFlags: Int, frameBody: ByteArray): ByteArray {
+        val frame = "USLT".toByteArray() + syncsafe(frameBody.size) + byteArrayOf(0, formatFlags.toByte()) + frameBody
+        return byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 4, 0, 0) +
+            syncsafe(frame.size + 16) + frame + ByteArray(16)
+    }
+
+    /** ID3 unsynchronisation: a zero after every FF that precedes 111xxxxx or 00. */
+    private fun unsync(b: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        for (i in b.indices) {
+            out.write(b[i].toInt())
+            val next = if (i + 1 < b.size) b[i + 1].toInt() and 0xFF else 0
+            if (b[i] == 0xFF.toByte() && (next and 0xE0 == 0xE0 || next == 0)) out.write(0)
+        }
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `a v2_4 frame's unsynchronisation is undone before decoding`() {
+        // UTF-16 with a little-endian BOM (FF FE) is exactly what unsynchronisation rewrites.
+        val body = byteArrayOf(1) + "eng".toByteArray() + byteArrayOf(0, 0) + "слова песни".toByteArray(Charsets.UTF_16LE).let {
+            byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + it
+        }
+        assertEquals("слова песни", EmbeddedLyrics.fromBytes(id3v24Frame(0x02, unsync(body))))
+        assertEquals("слова песни", EmbeddedLyrics.fromBytes(id3v24Frame(0x03, syncsafe(body.size) + unsync(body))))
+    }
+
+    @Test
+    fun `a compressed v2_4 frame reads as no lyrics`() {
+        val body = byteArrayOf(3) + "eng".toByteArray() + byteArrayOf(0) + "zlib bytes".toByteArray()
+        assertNull(EmbeddedLyrics.fromBytes(id3v24Frame(0x09, syncsafe(body.size) + body)))
+    }
+
     @Test
     fun `an mp3 without lyrics has none`() {
         assertNull(EmbeddedLyrics.fromBytes(byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 3, 0, 0, 0, 0, 0, 16) + ByteArray(16)))
