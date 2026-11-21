@@ -19,10 +19,8 @@ import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.audio.JamesDspConfig
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
@@ -1944,7 +1942,6 @@ object AppSettings {
      */
     private fun watchConnection(context: Context) {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
-        var pendingCheck: Job? = null
 
         // A connected network is not the same thing as a working one. Wi-Fi
         // with no internet behind it — the router is up, the line is down —
@@ -1953,59 +1950,52 @@ object AppSettings {
         // while the detector insists it is fine. The system's own probe is the
         // answer: VALIDATED is set only after it got an answer from the
         // internet, so a captive portal and a dead line both read as offline.
+        fun NetworkCapabilities.working() =
+            hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
+        // Asked once, before any callback: with no network at all the system
+        // sends none, and the verdict has to learn "offline" from somewhere.
         val actuallyUp = {
             runCatching {
                 val network = manager.activeNetwork ?: return@runCatching false
-                val capabilities = manager.getNetworkCapabilities(network)
-                    ?: return@runCatching false
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                manager.getNetworkCapabilities(network)?.working() == true
             }.getOrDefault(false)
         }
 
-        // Believed immediately when a network is there; believed gone only after
-        // the grace period, and only if it is *still* gone by then. `activeNetwork`
-        // is null for a moment on every handover, and the player reads this to
-        // choose between a downloaded file and a stream — a verdict that
-        // flickers for 200ms mid-handover is how one queue came out as files and
-        // the next as streams.
-        //
-        // The wait has to be *scheduled*, not read from the clock inside the
-        // callback. Reading it there meant the verdict was only ever computed at
-        // the instant the callback ran, which is always inside the grace: with
-        // no network at all the only callback is the initial one, so the app
-        // believed it could stream forever and no downloaded file ever played.
-        val markStreaming = {
-            pendingCheck?.cancel()
-            pendingCheck = null
-            streamingAvailableFlow.value = true
+        // The verdict itself follows the callbacks, not the system's answer —
+        // which lags them. See [ConnectionWatch] for the grace period and why.
+        val watch = ConnectionWatch(networkScope, NETWORK_LOST_GRACE_MS, actuallyUp) { up ->
+            streamingAvailableFlow.value = up
         }
 
-        val refresh = {
-            if (actuallyUp()) {
-                markStreaming()
-            } else {
-                pendingCheck?.cancel()
-                pendingCheck = networkScope.launch {
-                    delay(NETWORK_LOST_GRACE_MS)
-                    if (!actuallyUp()) streamingAvailableFlow.value = false
-                    pendingCheck = null
-                }
-            }
+        val refreshMetered = {
             meteredConnection.value = runCatching {
                 if (manager.activeNetwork == null) null else manager.isActiveNetworkMetered
             }.getOrNull()
         }
-        refresh()
+        watch.start()
+        refreshMetered()
         runCatching {
             manager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) = refresh()
-                    override fun onLost(network: Network) = refresh()
+                    override fun onAvailable(network: Network) {
+                        watch.onAvailable(network)
+                        refreshMetered()
+                    }
+
+                    override fun onLost(network: Network) {
+                        watch.onLost(network)
+                        refreshMetered()
+                    }
+
                     override fun onCapabilitiesChanged(
                         network: Network,
                         capabilities: NetworkCapabilities,
-                    ) = refresh()
+                    ) {
+                        watch.onCapabilities(network, capabilities.working())
+                        refreshMetered()
+                    }
                 },
             )
         }
