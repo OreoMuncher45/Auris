@@ -478,7 +478,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // mix-out anchor, the energy curve — and storing one
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
-                        store.save(trackId, whole)
+                        // Not a deliberately partial answer: see [WholeTrack.persist].
+                        if (outcome.persist) store.save(trackId, whole)
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS
@@ -955,7 +956,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * rejected — the following two attempts decoded nothing because there was
      * nothing left to decode, and were counted as though they had tried.
      */
-    private class WholeTrack(val analysis: TrackAnalysis?, val decodedShort: Boolean = false)
+    private class WholeTrack(
+        val analysis: TrackAnalysis?,
+        val decodedShort: Boolean = false,
+        /**
+         * False for an answer that is deliberately less than a whole-track one
+         * — see [Structural.outOfMemory] — and must not be frozen in the store
+         * in place of the complete answer a later session can still get.
+         */
+        val persist: Boolean = true,
+    )
 
     /**
      * What Pass 1 came back with.
@@ -967,6 +977,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private class Structural(
         val features: TrackFeatures.Features?,
         val decodedShort: Boolean = false,
+        /**
+         * Pass 1 ran out of heap. Not a broken copy and not a strike: the bytes
+         * are fine and the phone was short of memory, so the track is measured
+         * the way one over [MAX_WHOLE_TRACK_SECONDS] is — head and tail only —
+         * rather than written off with nothing.
+         */
+        val outOfMemory: Boolean = false,
     )
 
     /**
@@ -981,10 +998,37 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         uri: Uri,
         copy: Copy,
         effectiveDuration: Double,
+    ): Structural = try {
+        structureOf(trackId, uri, copy, effectiveDuration)
+    } catch (error: OutOfMemoryError) {
+        // Caught here, around Pass 1 alone, rather than by the pool thread's
+        // catch-all: that one writes the track off as ready-but-empty for the
+        // session, for a track whose only fault was arriving while the heap was
+        // full. Everything Pass 1 allocated is unreachable once this frame is
+        // gone, so Pass 2's windows still have room.
+        Log.w(TAG, "Pass 1 of $trackId ran out of memory; measuring head and tail only", error)
+        Structural(null, outOfMemory = true)
+    }
+
+    private fun structureOf(
+        trackId: String,
+        uri: Uri,
+        copy: Copy,
+        effectiveDuration: Double,
     ): Structural {
-        val structRate = TrackFeatures.sampleRate
-        val decoded = copy.open()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) { stopped } }
-            ?: return Structural(null)
+        // Resampled to the analyser's rate as it decodes rather than after: the
+        // track is never held at the container's own rate, which for a long or
+        // hi-res file was a single buffer bigger than the heap could give. See
+        // [AudioDecoder.decodeRegionResampled].
+        val decoded = copy.open()?.use {
+            AudioDecoder.decodeRegionResampled(
+                it,
+                0.0,
+                effectiveDuration,
+                outputRate = TrackFeatures.sampleRate.toInt(),
+                resample = TrackFeatures::resample,
+            ) { stopped }
+        } ?: return Structural(null)
         val (pcm, _) = decoded
 
         // A decode that stops early is indistinguishable, downstream, from a
@@ -1050,13 +1094,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return Structural(null, decodedShort = true)
         }
 
-        val samples = if (abs(pcm.sampleRate - structRate) > 1.0) {
-            TrackFeatures.resample(pcm.samples, pcm.sampleRate, structRate) ?: return Structural(null)
-        } else {
-            pcm.samples
-        }
-
-        return Structural(TrackFeatures.analyze(samples, effectiveDuration))
+        // Already at the analyser's rate, or within a hertz of it, which is
+        // what the resample used to be skipped for too.
+        return Structural(TrackFeatures.analyze(pcm.samples, effectiveDuration))
     }
 
     /**
@@ -1089,15 +1129,23 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // own low sample rate, so this is a much smaller decode than a full-rate pass would be.
         //
         // In a frame of its own, and handing back only the features, because of what it allocates
-        // to get them: the whole track decoded to mono at the container's rate (35 MB for a
-        // 3.5-minute song) plus the resampled copy the DSP reads (8 MB). Neither is touched again
-        // after this line, but a local holding either stays reachable to the end of the method, and
+        // to get them: the whole track at the analyser's rate (2.6 MB a minute; it is resampled as
+        // it decodes, so it is never held at the container's own rate). It is not touched again
+        // after this line, but a local holding it stays reachable to the end of the method, and
         // the rest of the method is Pass 2 — the most allocation-heavy part of the analysis.
-        // Measured on the API 28 emulator: those two buffers were 43 MB of an 82 MB live set, still
-        // held while the models ran, in a process that was reaching a 256 MB heap limit and had
-        // died on it. Returning is what releases them — a `val` cannot be nulled, and a narrower
-        // scope alone does not make ART treat one as dead.
-        val structural = structure(trackId, uri, copy, effectiveDuration)
+        // Returning is what releases it — a `val` cannot be nulled, and a narrower scope alone
+        // does not make ART treat one as dead.
+        //
+        // Not for a track over [MAX_WHOLE_TRACK_SECONDS]: an hour-long mix is still 160 MB at the
+        // analyser's rate, more than many heaps allow altogether. Such a track is measured head and
+        // tail only, which is what a transition reads anyway.
+        val wholeTrack = effectiveDuration <= MAX_WHOLE_TRACK_SECONDS
+        val structural = if (wholeTrack) {
+            structure(trackId, uri, copy, effectiveDuration)
+        } else {
+            Log.i(TAG, "Not analysing $trackId whole: ${"%.0f".format(Locale.ROOT, effectiveDuration)}s is over the ${MAX_WHOLE_TRACK_SECONDS}s cap")
+            Structural(null)
+        }
         // A party started while Pass 1 was decoding. Dropped as "no result"
         // rather than as a failure — the track was never measured, so nothing
         // should be recorded against it and nothing should stop it being
@@ -1108,7 +1156,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // exactly what those lines write a permanent "cannot be analysed" for.
         if (stopped) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
-        val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
+        val outOfMemory = structural.outOfMemory
+        // A track over the cap, or one Pass 1 ran out of memory on, has no
+        // features: the windows below are read without them, the way the head
+        // pass reads them. Any other missing features mean an unreadable copy.
+        val features = structural.features
+        if (features == null && wholeTrack && !outOfMemory) return WholeTrack(empty(trackId, effectiveDuration))
 
         // Pass 2 (Phases 2 and 3, models): the Beat This! grid and the open-unmix vocal mask, over
         // the opening and the ending only. A transition only ever reads the tail of the outgoing
@@ -1142,6 +1195,30 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // The tail governs where the outgoing track is mixed out, so it takes precedence; the
         // head is what a track uses when it is the *incoming* side of a different transition.
         val leading = tailGrid ?: headGrid
+
+        // Head and tail only: the model's grid and nothing the whole-track pass would have added.
+        // Published so the pair still beatmatches, and kept out of the store after an OOM, which a
+        // later session with more room can still answer in full.
+        if (features == null) {
+            val grid = leading ?: return WholeTrack(empty(trackId, effectiveDuration), persist = !outOfMemory)
+            Log.d(TAG, "Analysed $trackId head and tail only: bpm=${grid.bpm} conf=${grid.beatConfidence}")
+            return WholeTrack(
+                TrackAnalysis(
+                    status = TrackAnalysis.STATUS_READY,
+                    trackId = trackId,
+                    duration = effectiveDuration,
+                    contentEndTime = effectiveDuration,
+                    bpm = grid.bpm,
+                    beatInterval = grid.beatInterval,
+                    beatConfidence = grid.beatConfidence,
+                    downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty()).sorted(),
+                    firstBeat = headGrid?.firstBeat ?: grid.firstBeat,
+                    headBeats = headSide,
+                    tailBeats = tailSide,
+                ),
+                persist = !outOfMemory,
+            )
+        }
 
         Log.d(
             TAG,
@@ -1329,6 +1406,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         endSeconds: Double,
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
+    ): Region? = try {
+        regionOf(openSource, startSeconds, endSeconds, features, deriveFeatures)
+    } catch (error: OutOfMemoryError) {
+        // The same degradation as everywhere else a window yields nothing: no
+        // model evidence for it, and the DSP estimate or a plain fade standing
+        // in. A half-built region is never returned.
+        Log.w(TAG, "Region [$startSeconds, $endSeconds) ran out of memory", error)
+        null
+    }
+
+    private fun regionOf(
+        openSource: () -> MediaDataSource?,
+        startSeconds: Double,
+        endSeconds: Double,
+        features: TrackFeatures.Features?,
+        deriveFeatures: Boolean,
     ): Region? {
         val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped } }
             ?: run {
@@ -1639,6 +1732,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Refusals before a track is written off as truncated rather than still filling in. */
         const val MAX_SHORT_DECODE_ATTEMPTS = 3
+
+        /**
+         * The longest track the whole-track pass is run on. Past it — a DJ mix,
+         * an audiobook chapter — the whole track at the analyser's rate is more
+         * PCM than a phone's heap allows, and the track is measured head and
+         * tail only.
+         */
+        const val MAX_WHOLE_TRACK_SECONDS = 10 * 60.0
 
         /** How long the analyser stands down after the player lost its decoder. */
         const val DECODER_YIELD_MS = 8_000L
