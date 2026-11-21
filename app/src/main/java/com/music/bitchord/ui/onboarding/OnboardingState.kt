@@ -138,14 +138,33 @@ object OnboardingState {
     }
 
     fun savePicks(context: Context, picks: List<Pick>) {
-        val encoded = picks.joinToString(PICK_ROW.toString()) { pick ->
-            listOf(pick.name, pick.imageUrl.orEmpty(), pick.browseId.orEmpty()).joinToString(PICK_FIELD.toString())
-        }
         runCatching {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-                .edit().putString(KEY_PICKS, encoded).apply()
+                .edit().putString(KEY_PICKS, encodePicks(picks)).apply()
         }
     }
+
+    /**
+     * Writes the finished flow (picks, name and the completed flag) to disk
+     * and returns whether the write succeeded.
+     *
+     * Used before the catalogue-change restart, which kills the process: the
+     * `apply()` writes above may still be queued, and a killed process drops
+     * them. Blocks on disk, so call it off the main thread.
+     */
+    fun commitFinished(context: Context, picks: List<Pick>, name: String): Boolean =
+        runCatching {
+            context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+                .putString(KEY_PICKS, encodePicks(picks))
+                .putString(KEY_NAME, name.trim())
+                .putBoolean(KEY_COMPLETED, true)
+                .commit()
+        }.getOrDefault(false)
+
+    private fun encodePicks(picks: List<Pick>): String =
+        picks.joinToString(PICK_ROW.toString()) { pick ->
+            listOf(pick.name, pick.imageUrl.orEmpty(), pick.browseId.orEmpty()).joinToString(PICK_FIELD.toString())
+        }
 
     fun picks(context: Context): List<Pick> =
         runCatching {

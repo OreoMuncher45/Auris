@@ -42,6 +42,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.util.AppRelaunch
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @kotlin.OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
+        // The `:relaunch` process only kills the main pid and starts the
+        // launcher; none of the start-up below belongs in it. See [AppRelaunch].
+        if (AppRelaunch.isRelaunchProcess(this)) return
         // First, so anything that fails below is recorded rather than lost. A
         // crash report with a stack in it is the difference between a bug that
         // can be fixed and one that can only be guessed at; see [CrashLog].
