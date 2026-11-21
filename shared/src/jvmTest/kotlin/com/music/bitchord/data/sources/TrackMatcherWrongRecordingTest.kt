@@ -247,6 +247,7 @@ class TrackMatcherWrongRecordingTest {
         assertTrue(TrackMatcher.sharesArtist("River Lane", "River Lane, Cover Drive"))
         // The longest requested name is the one taken off the credit.
         accepted(song("Lost", "Cover Drive", "3:30"), TrackMatcher.Target("Lost", "Drive, Cover Drive", 210))
+        accepted(song("Lost", "Cover Drive", "3:30"), TrackMatcher.Target("Lost", "Cover Drive, Drive", 210))
     }
 
     @Test
