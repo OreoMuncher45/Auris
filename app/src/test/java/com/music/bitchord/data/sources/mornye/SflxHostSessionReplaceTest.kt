@@ -62,4 +62,20 @@ class SflxHostSessionReplaceTest {
         fresh.clear()
         org.junit.Assert.assertNotEquals(imported, recordFile(installed).readText())
     }
+
+    @Test
+    fun aLoadedEngineKeepsPersistingAfterAnImportThatDidNotReplaceItsPackage() {
+        val (host, installed) = host()
+        // What the engine was loaded with, before any import.
+        val engineCall = host.sessionCallFor(installed)!!
+
+        // Session records are restored; the package itself is left alone.
+        val imported = """{"install_id":"imported","session_id":"s","session_secret":"x"}"""
+        host.replaceSessionRecords { recordFile(installed).writeText(imported) }
+        assertEquals(imported, recordFile(installed).readText())
+
+        // The engine's next call reaches a current client, so its writes persist again.
+        engineCall("clear", "[]")
+        org.junit.Assert.assertNotEquals(imported, recordFile(installed).readText())
+    }
 }

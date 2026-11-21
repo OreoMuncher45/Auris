@@ -804,7 +804,6 @@ class SflxHost(
                 )
             }
             Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
-            val session = sessionFor(installed)
             QuickJsExecutor.loadModule(
                 moduleId = moduleId,
                 jsCode = script,
@@ -828,10 +827,26 @@ class SflxHost(
                 // like a catalogue refusing, and is why some of them searched but
                 // never streamed.
                 allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
-                sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+                sessionCall = sessionCallFor(installed),
                 fileCall = filesFor(installed)?.let { folder -> { method, args -> folder.call(method, args) } },
             ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
+    }
+
+    /**
+     * The `sessionCall` an engine is loaded with, or null when [installed]
+     * declares no signed session.
+     *
+     * Bound to the extension, not to one client. Each call looks up the
+     * current client in the map, so an engine that outlives a client (an
+     * import retires and replaces every client) moves to the new one on its
+     * next call, and keeps persisting refreshes and grants. Only a call
+     * already running on the old client stays on it, and that client is
+     * retired, so it can't write a stale record.
+     */
+    internal fun sessionCallFor(installed: InstalledSflx): ((String, String) -> String)? {
+        val first = sessionFor(installed) ?: return null
+        return { method, args -> (sessionFor(installed) ?: first).sessionCall(method, args) }
     }
 
     /** One lock per extension, so two callers cannot load the same package twice. */
@@ -948,24 +963,23 @@ class SflxHost(
      * Takes [id]'s client out of the map and retires it.
      *
      * The invariant this keeps: a client that is no longer in the map is
-     * retired. A loaded engine holds its client directly (its `sessionCall`),
-     * so a client dropped without retiring could keep saving, and the next
+     * retired. A call running on a client keeps it until the call ends, so a
+     * client dropped without retiring could still save, and the next
      * [replaceSessionRecords], which only reaches the map, could never stop
-     * it. Every removal goes through here or [dropAllSessions].
+     * it. Every removal goes through here or [dropAllSessions]. Engines don't
+     * hold clients past a call; see [sessionCallFor].
      */
     private fun dropSession(id: String) {
         sessions.remove(id)?.retire()
     }
 
     /**
-     * Retires and drops every client, then unloads the engines that held one,
-     * so their next load builds a fresh client that can save again.
+     * Retires and drops every client. Loaded engines need no reload: their
+     * next session call builds a fresh client that can save (see [sessionCallFor]).
      */
     private fun dropAllSessions() {
-        val ids = sessions.keys.toList()
         sessions.values.forEach { it.retire() }
         sessions.clear()
-        ids.forEach(::unload)
     }
 
     /**
