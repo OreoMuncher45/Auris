@@ -56,11 +56,16 @@ internal data class LivePalette(
     val palette: NowPlayingPalette,
     val source: LiveColorSource,
     /**
-     * What a Canvas shows under the chrome — its frame under the deck's dim —
+     * What a Canvas shows under the chrome — its frame under the deck's scrim —
      * for the ink to be judged against. Null for every other source: those
      * stand behind the sleeve's own backdrop, which publishes its own.
      */
     val surface: InkSurface? = null,
+    /**
+     * A Canvas's top rows under the header's scrim, for the "Playing from"
+     * header's own ink — see [canvasHeaderInkSurface]. Null for other sources.
+     */
+    val header: InkSurface? = null,
 )
 
 /**
@@ -84,13 +89,19 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
     val pixels = IntArray(frame.width * frame.height)
     frame.readPixels(pixels, startX = 0, startY = 0, width = frame.width, height = frame.height)
     // What the controls stand on when this picture is behind them: a Canvas
-    // under its deck dim, or a portrait motion cover under its own scrim.
+    // under its deck scrim, or a portrait motion cover under its own scrim.
     val surface = when (source) {
-        LiveColorSource.CANVAS -> canvasInkSurface(bandBounds(pixels, frame.width, frame.height))
+        LiveColorSource.CANVAS -> canvasInkSurface(pixels, frame.width, frame.height)
         LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, frame.width, frame.height))
         LiveColorSource.STATIC_ART -> null
     }
-    return LivePalette(computeNowPlayingPalette(pixels.liveSamples()), source, surface)
+    // A Canvas also owns the screen behind the header, under its scrim alone.
+    val header = if (source == LiveColorSource.CANVAS) {
+        canvasHeaderInkSurface(pixels, frame.width, frame.height)
+    } else {
+        null
+    }
+    return LivePalette(computeNowPlayingPalette(pixels.liveSamples()), source, surface, header)
 }
 
 /**

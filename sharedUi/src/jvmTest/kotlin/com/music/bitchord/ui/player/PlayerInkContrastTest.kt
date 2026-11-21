@@ -339,11 +339,59 @@ class PlayerInkContrastTest {
     }
 
     @Test
-    fun canvasIsJudgedUnderItsDim() {
-        // A white Canvas under the deck's half dim is mid grey.
+    fun canvasIsJudgedUnderItsDeckScrim() {
+        // A white Canvas under the deck's scrim: the grade buys what the scrim does not.
         val surface = canvasInkSurface(BandBounds.uniform(IntArray(INK_BANDS) { white }))
         val choice = resolveInk(NeutralInkAccent, surface, alphas)
         assertHolds(choice, surface)
+    }
+
+    @Test
+    fun canvasDeckScrimLeavesTheClipAboveTheDeckClear() {
+        // Nothing is drawn above the deck, and nothing at its top edge either.
+        assertEquals(0f, CANVAS_DECK_SCRIM_ALPHAS.first())
+        assertEquals(0f, CANVAS_DECK_WASH_SHARE.first())
+        // The old flat dim was half the clip everywhere; the title now stands
+        // on less than that, and only the foot of the screen goes past it.
+        assertTrue(CANVAS_DECK_SCRIM_ALPHAS[1] < 0.5f)
+        assertTrue(CANVAS_DECK_FRACTION < 0.6f)
+    }
+
+    @Test
+    fun canvasDeckIsReadFromTheDeckRowsOnly() {
+        // A frame white above the deck and black under it: the deck's chrome
+        // stands on black, so light ink holds with no grade at all.
+        val w = 4
+        val h = 100
+        val deckTop = (h * (1f - CANVAS_DECK_FRACTION)).toInt()
+        val pixels = IntArray(w * h) { if (it / w < deckTop) white else black }
+        val surface = canvasInkSurface(pixels, w, h)
+        assertTrue(surface.light.all { it == black }, "read above the deck")
+        val choice = resolveInk(NeutralInkAccent, surface, alphas)
+        assertFalse(choice.dark)
+        assertEquals(0f, choice.wash)
+    }
+
+    @Test
+    fun canvasHeaderIsReadFromTheTopRows() {
+        // White at the very top, black below: the header sees the white.
+        val w = 4
+        val h = 100
+        val pixels = IntArray(w * h) { if (it / w < 10) white else black }
+        val surface = canvasHeaderInkSurface(pixels, w, h)
+        assertEquals(scrimmed(white, HEADER_SCRIM_AT_CAPTION), surface.light.first())
+        val choice = resolveHeaderInk(NeutralInkAccent, surface, alphas)
+        assertFalse(choice.dark)
+        assertTrue(choice.wash > 0f && choice.wash <= HEADER_MAX_GRADE + 1e-4f, "grade ${choice.wash}")
+    }
+
+    @Test
+    fun bandBoundsCanStartPartWayDown() {
+        val w = 2
+        val pixels = IntArray(w * 10) { if (it / w < 6) white else grey(0x40) }
+        val bounds = bandBounds(pixels, w, 10, bands = 2, firstRow = 6)
+        assertTrue(bounds.lightest.all { it == grey(0x40) })
+        assertTrue(bounds.darkest.all { it == grey(0x40) })
     }
 
     @Test

@@ -1182,10 +1182,10 @@ internal fun Int.lifted(darkTheme: Boolean = false): Int {
  * caption and chevron sit in the top fifth of the screen, which is about the
  * top third of a full-bleed cover.
  */
-private const val HEADER_BAND_FRACTION = 0.35f
+internal const val HEADER_BAND_FRACTION = 0.35f
 
 /** Two strips, so a bright patch behind either caption line is seen. */
-private const val HEADER_BANDS = 2
+internal const val HEADER_BANDS = 2
 
 private const val MESH_VIBRANCE = 1.12f
 private const val MESH_FLOOR = 0.045f

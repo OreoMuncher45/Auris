@@ -748,7 +748,7 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     val allowDark = !inputs.darkTheme
     val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
     val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
-    // A Canvas that owns the screen is its own surface, graded over its dim.
+    // A Canvas that owns the screen is its own surface, graded over its deck scrim.
     val canvas = if (fromClip && live != null) {
         live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
     } else {
@@ -770,7 +770,14 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
         portrait != null -> portrait.fg
         else -> main?.fg ?: owner.themedFg(inputs.darkTheme)
     }
-    val header = inputs.header?.let { resolveHeaderInk(owner.accent, it, owner.alphas) }
+    // The header over a full-bleed still cover, or over a Canvas that owns the
+    // screen: its own band, its own scrim, judged on its own — see
+    // [resolveHeaderInk].
+    val header = if (fromClip && live != null) {
+        live.header?.let { resolveHeaderInk(live.palette.accent, it, live.palette.alphas) }
+    } else {
+        inputs.header?.let { resolveHeaderInk(owner.accent, it, owner.alphas) }
+    }
     fun InkResolution?.black() = if (this == null || dark) 0f else wash
     fun InkResolution?.white() = if (this != null && dark) wash else 0f
     val meshGraded = if (portrait != null) null else main
@@ -2219,7 +2226,11 @@ fun NowPlayingScreen(
     // The header's own ink and halo while it stands on the cover — see
     // [headerOnCover]; the player's otherwise. Switched in composition, which
     // happens when the presentation changes, not when a colour does.
-    val headerInkState = if (headerOnCover) inkStates.headerInk else playerInkState
+    // A Canvas that owns the screen stands behind the header too, under the
+    // header's scrim alone rather than the deck's, so the header is judged
+    // on the clip's top rows — see [canvasHeaderInkSurface].
+    val headerJudged = headerOnCover || canvasOwnsScreen
+    val headerInkState = if (headerJudged) inkStates.headerInk else playerInkState
     val headerGlowState = rememberPlayerInkGlow(inkStates.headerInk)
     // The glow, switched off: a state of its own, so the local's value never
     // changes and nothing under it is invalidated when the setting is off.
@@ -2706,10 +2717,10 @@ fun NowPlayingScreen(
                 headerInk = headerInkState,
                 headerGlow = when {
                     !textGlow -> playerInkGlowOff
-                    headerOnCover -> headerGlowState
+                    headerJudged -> headerGlowState
                     else -> playerInkGlowState
                 },
-                headerGrade = { if (headerOnCover) inkStates.headerGrade.value else 0f },
+                headerGrade = { if (headerJudged) inkStates.headerGrade.value else 0f },
             )
 
             Column(
