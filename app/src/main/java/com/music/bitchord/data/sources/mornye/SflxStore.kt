@@ -119,6 +119,59 @@ class SflxStore(private val root: File) {
     }
 
     /**
+     * [id]'s package files by name, for an add-ons backup.
+     *
+     * Only the files [install] writes and [settings] keeps: the `cache` folder
+     * holds decrypted tracks, and those never travel. Null when [id] isn't installed.
+     */
+    fun exportFiles(id: String): Map<String, ByteArray>? {
+        if (!isSafeId(id)) return null
+        val directory = directoryOf(id)
+        if (read(directory) == null) return null
+        return BACKUP_FILES.mapNotNull { name ->
+            File(directory, name).takeIf { it.isFile }?.let { name to it.readBytes() }
+        }.toMap()
+    }
+
+    /**
+     * Writes a package restored from an add-ons backup, as one swap.
+     *
+     * Same shape as [install]: staged into a fresh directory, then moved into
+     * place, so a failure leaves the previous copy or nothing at all. The
+     * manifest must parse and must name [id]: a backup whose folder and
+     * manifest disagree would otherwise install under a name the package
+     * doesn't answer to. Files outside [BACKUP_FILES] are ignored.
+     *
+     * @throws SflxException when the id is unsafe, the manifest won't read or
+     *   names another id, or the files can't be written.
+     */
+    fun restore(id: String, files: Map<String, ByteArray>): InstalledSflx {
+        if (!isSafeId(id)) throw SflxException("'$id' is not a usable extension name")
+        val manifestBytes = files[MANIFEST_FILE] ?: throw SflxException("the backup has no manifest for '$id'")
+        if (files[SCRIPT_FILE] == null) throw SflxException("the backup has no script for '$id'")
+        val manifest = runCatching { SflxManifestParser.parse(manifestBytes.decodeToString()) }
+            .getOrElse { throw SflxException("the backed-up manifest for '$id' will not read") }
+        if (manifest.id != id) throw SflxException("the backed-up manifest names '${manifest.id}', not '$id'")
+
+        val target = directoryOf(id)
+        val staging = File(root, "$id.restoring")
+        staging.deleteRecursively()
+        if (!staging.mkdirs()) throw SflxException("could not create $staging")
+        runCatching {
+            BACKUP_FILES.forEach { name -> files[name]?.let { File(staging, name).writeBytes(it) } }
+        }.getOrElse { error ->
+            staging.deleteRecursively()
+            throw SflxException("could not write the package: ${error.message}")
+        }
+        target.deleteRecursively()
+        if (!staging.renameTo(target)) {
+            staging.deleteRecursively()
+            throw SflxException("could not move the package into place")
+        }
+        return read(target) ?: throw SflxException("restored package at $target will not read back")
+    }
+
+    /**
      * Removes [id] and everything of it — package, icon and settings.
      *
      * @return whether anything was there to remove.
@@ -203,5 +256,8 @@ class SflxStore(private val root: File) {
         const val ICON_FILE = SflxPackages.ICON_ENTRY
         const val META_FILE = "meta.json"
         const val SETTINGS_FILE = "settings.json"
+
+        /** What an add-ons backup carries of a package. */
+        val BACKUP_FILES: List<String> = listOf(MANIFEST_FILE, SCRIPT_FILE, ICON_FILE, META_FILE, SETTINGS_FILE)
     }
 }

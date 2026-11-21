@@ -958,7 +958,29 @@ fun PillTextField(
     container: Color = MaterialTheme.colorScheme.surfaceVariant,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    /**
+     * Drawn at the field's end, such as a Show/Hide toggle for a password.
+     * The text stops short of it rather than running underneath. Null for
+     * every existing caller, which draws exactly what it drew before.
+     */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
+    if (trailing != null) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .background(container, RoundedCornerShape(11.dp))
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                PillTextFieldContent(value, onValueChange, placeholder, enabled, isPassword, keyboardOptions, keyboardActions)
+            }
+            trailing()
+        }
+        return
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -967,29 +989,43 @@ fun PillTextField(
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (value.isEmpty()) {
-            Text(
-                text = placeholder,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = keyboardOptions,
-            keyboardActions = keyboardActions,
-            modifier = Modifier.fillMaxWidth(),
+        PillTextFieldContent(value, onValueChange, placeholder, enabled, isPassword, keyboardOptions, keyboardActions)
+    }
+}
+
+@Composable
+private fun PillTextFieldContent(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    enabled: Boolean,
+    isPassword: Boolean,
+    keyboardOptions: KeyboardOptions,
+    keyboardActions: KeyboardActions,
+) {
+    // Stacked by the caller's Box: the placeholder sits under the field.
+    if (value.isEmpty()) {
+        Text(
+            text = placeholder,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onBackground,
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

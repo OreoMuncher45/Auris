@@ -58,6 +58,10 @@ object SflxCatalog {
     @Volatile
     private var appVersion: String = ""
 
+    /** Where signed-session records live; null until [init]. */
+    @Volatile
+    private var sessionsDirectory: File? = null
+
     /** Every installed extension, newest install last. */
     private val _installed = MutableStateFlow<List<InstalledSflx>>(emptyList())
     val installed: StateFlow<List<InstalledSflx>> = _installed.asStateFlow()
@@ -125,6 +129,7 @@ object SflxCatalog {
         // Kept out of backups and device transfer: they are content keys.
         com.music.bitchord.playback.cenc.CencKeys.init(context.noBackupFilesDir)
         val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
+        this.sessionsDirectory = sessions
         // Extensions that ask for files get a private folder each, in the
         // cache: what they write there is a decrypted track, and the system
         // may reclaim it like any other cache.
@@ -347,6 +352,63 @@ object SflxCatalog {
     fun settingsOf(id: String): JsonObject =
         runCatching { Json.parseToJsonElement(hostRef?.settingsJson(id) ?: "{}") as JsonObject }
             .getOrDefault(JsonObject(emptyMap()))
+
+    // ── Add-ons backup ───────────────────────────────────────────────────
+
+    /** Every installed package's files by id, in install order. Disk reads, so never on the main thread. */
+    internal fun backupPackages(): Map<String, Map<String, ByteArray>> {
+        val store = store ?: return emptyMap()
+        return runCatching { store.list() }.getOrDefault(emptyList())
+            .mapNotNull { installed -> store.exportFiles(installed.id)?.let { installed.id to it } }
+            .toMap()
+    }
+
+    /** Every signed-session record by file name. Disk reads, so never on the main thread. */
+    internal fun backupSessions(): Map<String, ByteArray> {
+        val directory = sessionsDirectory ?: return emptyMap()
+        return directory.listFiles { file -> file.isFile && file.name.endsWith(".json") }
+            .orEmpty()
+            .associate { it.name to it.readBytes() }
+    }
+
+    /** The names of the session records on disk now. */
+    internal fun sessionNames(): Set<String> =
+        sessionsDirectory?.list { _, name -> name.endsWith(".json") }?.toSet().orEmpty()
+
+    /**
+     * Writes one session record from a backup, atomically.
+     *
+     * The caller has already checked [name] is a plain file name. It's checked
+     * again here so this function is safe on its own.
+     */
+    internal fun restoreSession(name: String, bytes: ByteArray): Boolean {
+        val directory = sessionsDirectory ?: return false
+        if (name.contains('/') || name.contains('\\') || name.contains("..") || !name.endsWith(".json")) return false
+        return runCatching {
+            if (!directory.isDirectory) directory.mkdirs()
+            val staging = File(directory, "$name.tmp")
+            staging.writeBytes(bytes)
+            val target = File(directory, name)
+            if (!staging.renameTo(target)) {
+                target.writeBytes(bytes)
+                staging.delete()
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Writes a package from a backup. Call [finishRestore] once every package is written. */
+    internal fun restorePackage(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
+        hostRef?.restore(id, files) ?: Result.failure(SflxException("the extension host is not ready"))
+
+    /**
+     * Puts the restored packages on the sources list and makes running
+     * extensions read their new sessions, all without a restart.
+     */
+    internal fun finishRestore() {
+        hostRef?.reloadSessions()
+        refresh()
+    }
 
     // ── Sources list ─────────────────────────────────────────────────────
 

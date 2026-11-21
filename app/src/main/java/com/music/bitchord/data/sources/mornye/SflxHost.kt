@@ -919,6 +919,28 @@ class SflxHost(
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
 
+    /**
+     * Writes a package restored from an add-ons backup, then drops everything
+     * the running copy held, for the same reasons as [install].
+     */
+    fun restore(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
+        runCatching {
+            synchronized(lifecycle) {
+                val installed = store.restore(id, files)
+                unload(installed.id)
+                this.files.remove(installed.id)
+                sessions.remove(installed.id)
+                installed
+            }
+        }.onFailure { Log.w(TAG, "sflx restore failed: ${it.message}") }
+
+    /**
+     * Drops every signed-session client, so the next signed call reads its
+     * record from disk again. Used after an import writes session records
+     * under extensions that are already running.
+     */
+    fun reloadSessions() = synchronized(lifecycle) { sessions.clear() }
+
     fun remove(id: String): Boolean = synchronized(lifecycle) {
         // All of it under the lock: a reinstall between deleting the package
         // and clearing its folder would otherwise lose the new folder.
