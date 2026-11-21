@@ -1806,7 +1806,7 @@ internal fun BitChordApp(
         if (ready.isEmpty()) return@browse
         // Shuffle goes on first so the queue is built shuffled as it is
         // set — the random pick here only decides which track leads it.
-        QueueShuffle.enableForNextQueue()
+        setShuffleForNextQueue(true)
         playFrom(ready, ready.indices.random(), source)
     }
 
@@ -5792,7 +5792,7 @@ private fun RootPage(
             onSongLongPress = pageActions.openSongMenu,
             onSongSwipe = pageActions.onSongSwipe,
             onShuffle = { songs ->
-                QueueShuffle.enableForNextQueue()
+                setShuffleForNextQueue(true)
                 pageActions.playFrom(
                     songs,
                     songs.indices.random(),
@@ -5876,7 +5876,7 @@ private fun RootPage(
                 if (songs.isNotEmpty()) {
                     // Play is the release in order, so a shuffle left on
                     // from the last queue goes off before this one is built.
-                    QueueShuffle.disableForNextQueue()
+                    setShuffleForNextQueue(false)
                     pageActions.playBrowsePage(page, songs, 0)
                 }
             },
@@ -6639,6 +6639,16 @@ private data class PageActions(
 )
 
 /**
+ * A release's Play or Shuffle button setting shuffle for the queue it is about
+ * to start. Skipped when the party host has taken the controls: that play is
+ * refused, and the listener's shuffle and its saved order must survive it.
+ */
+private fun setShuffleForNextQueue(on: Boolean) {
+    if (ListenTogether.state.value.controlsLocked) return
+    if (on) QueueShuffle.enableForNextQueue() else QueueShuffle.disableForNextQueue()
+}
+
+/**
  * What [RootOverlays]' menus can do with a list of tracks: play it, queue it
  * next or last, download it, or first fetch the tracks behind an album or
  * playlist. They travel together from [BitChordApp], which owns them.
@@ -7091,14 +7101,14 @@ private fun RootOverlays(
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
             onPlay = act { songs ->
-                QueueShuffle.disableForNextQueue()
+                setShuffleForNextQueue(false)
                 tracks.play(songs, 0)
             }.takeIf { target.fromCard },
             onShuffle = act { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played
                 // out of order.
-                QueueShuffle.enableForNextQueue()
+                setShuffleForNextQueue(true)
                 tracks.play(songs, songs.indices.random())
             }.takeIf { target.fromCard },
             // The whole release into one of the account's playlists — an
