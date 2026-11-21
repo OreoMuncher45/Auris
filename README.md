@@ -48,7 +48,7 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 ### Listening
 - **Flow** — an endless personal mix that unlocks at 16 favourites, trains on skips and bans, refreshes hourly, survives restarts, and never autoplays until you press play.
 - **Classipod** — a full iPod Classic theme with click-wheel navigation and Cover Flow.
-- **Automix V2** — DJ-style transitions with beat locking, entrance rescoring and vocal gating.
+- **Automix** — BitChord's DJ-style transitions: beat-matched, phrase-aware blends and loop mixes, timed from an on-device beat and vocal analysis.
 - **Sing** — karaoke mode that turns the lead vocal down so you can sing over the track.
 - **Honest lossless numbers** — stats and Discord presence report the decoded PCM rate (1411 / 4608 kbps), never a container guess.
 - **AI badge with strict mode** — flags AI-generated uploads and can skip them.

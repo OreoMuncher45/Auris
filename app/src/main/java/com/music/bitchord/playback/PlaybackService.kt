@@ -2047,7 +2047,7 @@ class PlaybackService : MediaLibraryService() {
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
-            requestAnalysis = { item, durationMs, outgoing ->
+            requestAnalysis = { item, durationMs ->
                 // Nothing the eye cannot see is worth a decode. Off screen, or
                 // with the display off, an analysis pass is the largest thing
                 // this process would otherwise do — a full decode of a track's
@@ -2056,7 +2056,7 @@ class PlaybackService : MediaLibraryService() {
                 // analyser stays a plain object with no Android lifecycle in it.
                 if (com.music.bitchord.perf.AppAwake.isAwake()) {
                     item.localConfiguration?.uri?.let { uri ->
-                        trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                        trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
                     }
                 }
             },
@@ -2087,15 +2087,6 @@ class PlaybackService : MediaLibraryService() {
                     transitionFilterA.parkEcho()
                     transitionFilterB.parkEcho()
                 }
-
-                // The tone shape the listener chose for this song's handoff.
-                // It rides on the track that is arriving, so it is put on
-                // whichever sink that track is being written to.
-                override fun incomingEq(centerHz: Float, gainDb: Float) =
-                    activeFilter.setEq(centerHz, gainDb)
-
-                override fun outgoingEq(centerHz: Float, gainDb: Float) =
-                    spareFilter.setEq(centerHz, gainDb)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
@@ -7587,11 +7578,6 @@ class PlaybackService : MediaLibraryService() {
                     mediaId = item.mediaId,
                     target = TrackMatcher.targetOf(item.toSong()),
                     uri = item.localConfiguration?.uri,
-                    // The runtime, from the timeline window when the player has
-                    // one and from the item's own claim otherwise — the same
-                    // pair [claimedDurationMs] reads. Read-ahead sizes a
-                    // source-backed track's analysis opening from it.
-                    durationMs = item.claimedDurationMs(),
                 )
             },
         )

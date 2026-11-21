@@ -21,6 +21,9 @@
 
 package com.music.bitchord.playback.smart
 
+import kotlin.math.log10
+import kotlin.math.pow
+
 /**
  * Stored offline analysis for one track, in that track's own timeline seconds.
  *
@@ -81,84 +84,6 @@ data class TrackAnalysis(
     val mixOutCandidates: List<MixCandidate> = emptyList(),
 
     val energyCurve: List<EnergySample> = emptyList(),
-    /**
-     * The energy curve of the track's **opening**, measured by a head-only
-     * pass.
-     *
-     * Kept apart from [energyCurve] on purpose. The head pass measures the
-     * envelope of the window it decoded, which is real evidence — but it is
-     * evidence about the first half-minute and nothing else, and the policy
-     * indexes the vocal mask against the curve and counts audible seconds
-     * from it. A curve that stops at thirty seconds would have this track's
-     * *outgoing* half scored against a window it does not cover, which is
-     * how a head pass came to describe an ending it had never heard.
-     *
-     * So the policy keeps reading [energyCurve], which only the whole-track
-     * pass fills, and this one is for the panel: a lane that has nothing in
-     * it is worse than a lane with the opening drawn in it and the rest
-     * honestly blank. The times are the track's own, so the panel draws this
-     * curve exactly where it belongs.
-     */
-    val headEnergyCurve: List<EnergySample> = emptyList(),
-    /**
-     * The energy curve of the track's **ending**, measured by a tail-only pass.
-     *
-     * The other half of [headEnergyCurve], and it exists for the same reason
-     * its sibling does: a streamed track's last seconds are not on disk until
-     * the track has been played through, so the whole-track pass — the only
-     * thing that used to fill [energyCurve] — lands after the transition it was
-     * meant to describe, if it lands at all.
-     *
-     * The Automix panel draws the outgoing track over the *end* of its own
-     * timeline, so an opening-only curve is drawn entirely off-screen and the
-     * lane reads as empty however much of the opening was measured. This is the
-     * half that lands in that view, and the times are the track's own, so it
-     * lands exactly where the audio is.
-     *
-     * Kept out of [energyCurve] for the reason [headEnergyCurve] documents from
-     * the other end: the policy counts audible seconds from that curve, and a
-     * curve that covers only the last half-minute would describe a whole track
-     * from its outro. The policy reads the whole-track fields the tail pass
-     * fills in — [contentEndTime], [outroStartTime], [mixOutCandidates] — which
-     * are the measurements a streamed track used to go into its transition
-     * without.
-     */
-    val tailEnergyCurve: List<EnergySample> = emptyList(),
-    /**
-     * The **peaks** of the track's whole envelope, measured from the decoded
-     * samples.
-     *
-     * The curve above is an RMS level per quarter-second: the right shape for
-     * "how loud is this part of the song", and the wrong shape for a picture
-     * of the sound. Drawn as it stands it reads as a bar chart — flat-topped
-     * blocks on the curve's own grid, with the transients nowhere in it.
-     *
-     * This is the waveform's own data: the loudest instant in each short
-     * window of the decoded audio, which is what the eye reads as the shape
-     * of a sound. It is measured, not derived, so it has the transients.
-     *
-     * Not persisted: it is a great deal of numbers for a picture, and the
-     * analysis that produced them is cheap to repeat.
-     */
-    val peakCurve: List<EnergySample> = emptyList(),
-    /**
-     * The peaks of the track's **opening**, measured by a head-only pass.
-     *
-     * The peak-curve counterpart of [headEnergyCurve], and kept apart from
-     * [peakCurve] for the same reason: it describes the first window and
-     * nothing else.
-     */
-    val headPeakCurve: List<EnergySample> = emptyList(),
-    /**
-     * The peaks of the track's **ending**, measured by a tail-only pass.
-     *
-     * The peak-curve counterpart of [tailEnergyCurve]. This is the half the
-     * outgoing lane is drawn from, and it is the half that was missing: the
-     * outgoing track is drawn over the *end* of its own timeline, so a curve
-     * that covers only the opening lands entirely off-screen and the lane
-     * reads as empty however much of the opening was measured.
-     */
-    val tailPeakCurve: List<EnergySample> = emptyList(),
     /** Low-band energy, present only when the analyzer ran a band split. Drives the bass swap. */
     val lowEnergyCurve: List<EnergySample> = emptyList(),
     /**
@@ -169,6 +94,26 @@ data class TrackAnalysis(
     val vocalActivityMask: List<Double> = emptyList(),
     /** Whole-track vocal likelihood, distinct from the per-sample [vocalActivityMask]. */
     val vocalProbability: Double = 0.0,
+
+    /**
+     * Beat This!'s grid over the opening (what the track is mixed *in* on) and
+     * over its last minute (what it is mixed *out* on), kept apart. One grid
+     * cannot fit both: a breakdown that comes back half a beat off breaks any
+     * single fit. Null where the model found too few beats there.
+     */
+    val headBeats: BeatSide? = null,
+    val tailBeats: BeatSide? = null,
+    /**
+     * The open-unmix model's own output over each window it ran on, unresampled.
+     * Unlike [vocalActivityMask] this says where nothing was measured, which is
+     * what a loop must not be cut from. See [LoopMix.maskStats].
+     */
+    val vocalWindows: List<CurveWindow> = emptyList(),
+    /**
+     * RMS level over the same windows, at [LEVEL_FRAME_RATE]: fine enough to
+     * judge one bar's loudness, which the 240-point [energyCurve] is not.
+     */
+    val levelWindows: List<CurveWindow> = emptyList(),
 ) {
     /**
      * Whether this analysis actually describes a track, as opposed to standing
@@ -190,103 +135,6 @@ data class TrackAnalysis(
 
 /** One point on an energy curve. [energy] is in whatever scale the analyzer chose. */
 data class EnergySample(val time: Double, val energy: Double)
-
-/**
- * The envelope the Automix panel draws for a track.
- *
- * The whole track's curve where one has been measured, and otherwise the two
- * *windows* that have — the opening from a head pass and the ending from a tail
- * pass — in the track's own seconds.
- *
- * ## Why the windows are drawn together
- *
- * A streamed track is measured in pieces, and the piece that matters for the
- * lower-quality case is not always the one that arrived first. The panel draws
- * the outgoing track across the *end* of its own timeline, so a curve covering
- * only the opening lands entirely off-screen and the lane reads as empty however
- * much of the opening was measured — which is what "the analysis found the key
- * and the BPM but the waveform is blank" was.
- *
- * The two windows are disjoint in time, which is what makes stitching them
- * honest: the music at either end of the track is drawn where it is, and the
- * middle — the part nobody has measured — is left blank rather than
- * interpolated.
- */
-val TrackAnalysis.panelEnergyCurve: List<EnergySample>
-    get() = when {
-        energyCurve.isNotEmpty() -> energyCurve
-        headEnergyCurve.isEmpty() && tailEnergyCurve.isEmpty() -> emptyList()
-        else -> (headEnergyCurve + tailEnergyCurve).sortedBy { it.time }
-    }
-
-/**
- * The envelope the Automix panel draws for a track, as peaks.
- *
- * The whole track's peaks where one has been measured, and otherwise the two
- * *windows* that have — the opening from a head pass and the ending from a
- * tail pass — in the track's own seconds.
- *
- * The same shape as [panelEnergyCurve] and for the same reasons: a streamed
- * track is measured in pieces, and the piece that lands in the panel's view
- * is not always the one that arrived first.
- *
- * Empty when nothing has been measured at the peak resolution, in which case
- * the caller falls back to [panelEnergyCurve] — a coarse drawing beats none.
- */
-val TrackAnalysis.panelPeakCurve: List<EnergySample>
-    get() = when {
-        peakCurve.isNotEmpty() -> peakCurve
-        headPeakCurve.isEmpty() && tailPeakCurve.isEmpty() -> emptyList()
-        else -> (headPeakCurve + tailPeakCurve).sortedBy { it.time }
-    }
-
-/**
- * A partial pass's answer merged into another's.
- *
- * The head pass measures a track's entry and the tail pass its exit, and both
- * are published while the track is still playing — so the panel is drawn from
- * whichever has landed, then from both. Each field is taken from the half that
- * measured it, with `this` winning where both did: the head pass is where the
- * policy's entry numbers come from, and a tail window's own tempo estimate is
- * measured over thirty seconds of an outro, which is the least representative
- * music in the track.
- *
- * The two beat grids are kept *together* rather than chosen between. They are
- * disjoint in time, and the panel draws them along the edges of its lanes so a
- * handoff can be snapped to the grid of the music it actually lands on.
- *
- * Order matters, and deliberately: `this` is the analysis whose measurements win
- * where both halves have one. Callers merge the head pass into the tail pass —
- * see [TrackAnalyzer] — so a note's tempo is never taken from thirty seconds of
- * an outro over the opening's own estimate.
- */
-fun TrackAnalysis.mergedWith(arriving: TrackAnalysis): TrackAnalysis = copy(
-    status = TrackAnalysis.STATUS_READY,
-    trackId = trackId,
-    duration = duration.takeIf { it > 0.0 } ?: arriving.duration,
-    bpm = bpm.takeIf { it > 0.0 } ?: arriving.bpm,
-    beatInterval = beatInterval.takeIf { it > 0.0 } ?: arriving.beatInterval,
-    beatConfidence = maxOf(beatConfidence, arriving.beatConfidence),
-    firstBeat = firstBeat.takeIf { it > 0.0 } ?: arriving.firstBeat,
-    downbeats = (downbeats + arriving.downbeats).distinct().sorted(),
-    phraseBoundaries = phraseBoundaries.ifEmpty { arriving.phraseBoundaries },
-    key = key.ifBlank { arriving.key },
-    keyConfidence = maxOf(keyConfidence, arriving.keyConfidence),
-    audibleStartTime = audibleStartTime ?: arriving.audibleStartTime,
-    pickupTime = pickupTime ?: arriving.pickupTime,
-    introEndTime = introEndTime.takeIf { it > 0.0 } ?: arriving.introEndTime,
-    contentEndTime = contentEndTime.takeIf { it > 0.0 } ?: arriving.contentEndTime,
-    outroStartTime = outroStartTime.takeIf { it > 0.0 } ?: arriving.outroStartTime,
-    mixInTime = mixInTime.takeIf { it > 0.0 } ?: arriving.mixInTime,
-    mixOutTime = mixOutTime.takeIf { it > 0.0 } ?: arriving.mixOutTime,
-    mixInCandidates = mixInCandidates.ifEmpty { arriving.mixInCandidates },
-    mixOutCandidates = mixOutCandidates.ifEmpty { arriving.mixOutCandidates },
-    headEnergyCurve = headEnergyCurve.ifEmpty { arriving.headEnergyCurve },
-    tailEnergyCurve = tailEnergyCurve.ifEmpty { arriving.tailEnergyCurve },
-    peakCurve = peakCurve.ifEmpty { arriving.peakCurve },
-    headPeakCurve = headPeakCurve.ifEmpty { arriving.headPeakCurve },
-    tailPeakCurve = tailPeakCurve.ifEmpty { arriving.tailPeakCurve },
-)
 
 /**
  * A candidate point for a transition to enter or leave on. [score] is the
@@ -339,3 +187,37 @@ enum class TransitionTier {
     /** The evidence supports nothing beyond an equal-power fade at the analyzed anchor. */
     PLAIN_CROSSFADE,
 }
+
+/**
+ * The model's beats over one stretch of a track, in its own seconds.
+ * [bpm] is the tempo across them; [confidence] the grid's, 0..1.
+ */
+data class BeatSide(
+    val beats: List<Double>,
+    val downbeats: List<Double>,
+    val bpm: Double,
+    val confidence: Double,
+)
+
+/** Frames per second of [TrackAnalysis.levelWindows]. */
+const val LEVEL_FRAME_RATE = 10.0
+
+/**
+ * One curve over one analysed window: [values] at [frameRate] per second from
+ * [startTime] (track seconds). The vocal model's output (0..1, compared against
+ * [VOCAL_ACTIVE_THRESHOLD]), or the RMS level.
+ */
+class CurveWindow(
+    val startTime: Double,
+    val frameRate: Double,
+    val values: FloatArray,
+) {
+    val endTime: Double get() = startTime + values.size / frameRate
+}
+
+/** A level window's value for an RMS: -60..0 dBFS onto 0..1, so hundredths are 0.6 dB steps. */
+fun levelFromRms(rms: Double): Double =
+    if (rms <= 1e-3) 0.0 else ((20 * log10(rms) + 60) / 60).coerceIn(0.0, 1.0)
+
+/** The RMS a [levelFromRms] value stands for. */
+fun rmsFromLevel(level: Double): Double = if (level <= 0) 0.0 else 10.0.pow((level * 60 - 60) / 20)
