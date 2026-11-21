@@ -248,6 +248,15 @@ class TrackMatcherWrongRecordingTest {
     }
 
     @Test
+    fun `an unaccented cover act named after an accented artist is still a cover`() {
+        assertTrue(TrackMatcher.isImitationCredit("Müslüm Gürses", "Muslum Gurses Cover"))
+        refused(song("Hangimiz Sevmedik", "Muslum Gurses Cover", "3:30"), TrackMatcher.Target("Hangimiz Sevmedik", "Müslüm Gürses", 210))
+        // Folding does not touch an act genuinely called "Cover ...".
+        accepted(song("Lost", "Cover Drive", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
+        accepted(song("Hangimiz Sevmedik", "Muslum Gurses", "3:30"), TrackMatcher.Target("Hangimiz Sevmedik", "Müslüm Gürses", 210))
+    }
+
+    @Test
     fun `a genuine extra artist with an imitation-like word is a collaboration`() {
         accepted(song("Lost", "River Lane, Cover Drive", "3:30"), TrackMatcher.Target("Lost", "River Lane", 210))
         assertTrue(TrackMatcher.sharesArtist("River Lane", "River Lane, Cover Drive"))

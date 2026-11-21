@@ -838,9 +838,11 @@ object TrackMatcher {
      * act genuinely called "... Cover ..." still matches itself.
      */
     internal fun isImitationCredit(wanted: String, got: String): Boolean {
-        val have = normalize(got)
+        // Folded as [artistNames] is, or an unaccented "Muslum Gurses Cover"
+        // would share a credit with "Müslüm Gürses" yet not be named after it.
+        val have = foldLatin(normalize(got))
         if (have.isBlank()) return false
-        val want = normalize(wanted)
+        val want = foldLatin(normalize(wanted))
         // Longest first, so "Cover Drive" is taken off before a shorter
         // requested "Drive" could leave a stray "cover" behind.
         val wantNames = want.split(ARTIST_SEPARATORS).map(::creditWords).filter { it.isNotEmpty() }
