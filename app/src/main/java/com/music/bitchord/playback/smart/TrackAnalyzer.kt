@@ -265,6 +265,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /**
+     * Restores get a lane of their own. Reading a stored result is a file read;
+     * queued behind another track's whole-track pass it waited out that pass's
+     * seconds of decoding, and the transition in between read the track as
+     * unmeasured.
+     */
+    private val restoreExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "bitchord-smart-restore").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY
+        }
+    }
+
+    /**
      * What is known about [trackId] right now: never a computation, never a
      * block. Returns an empty analysis for anything not yet finished, which
      * [assessTransitionTier] reads as no evidence rather than as a failure.
@@ -286,7 +299,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // caller, so a track with nothing stored is looked for once per session
         // rather than on every tick.
         if (!restoreAttempted.add(trackId)) return
-        executor.execute {
+        restoreExecutor.execute {
             val stored = store.load(trackId) ?: return@execute
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
             results.putIfAbsent(trackId, stored)
@@ -440,14 +453,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         Process.THREAD_PRIORITY_DEFAULT
                     },
                 )
-                // [restoreOnce] queues onto this same single-threaded executor,
-                // so a stored result for this track has landed by now if there
-                // was one — but the decision to get here was taken a tick
-                // earlier, when it had not. Without this check a track measured
-                // in an earlier session is restored and then immediately spends
-                // seven seconds recomputing the identical numbers. A provisional
-                // result is exempt: superseding one is the whole point of it.
-                val landed = results[trackId]
+                // [restoreOnce] runs on its own lane, so a stored result for
+                // this track may not have landed yet — the decision to get here
+                // was taken a tick earlier, when it had not. The store is asked
+                // directly (a miss is remembered, so it costs nothing twice).
+                // Without this check a track measured in an earlier session is
+                // restored and then immediately spends seven seconds
+                // recomputing the identical numbers. A provisional result is
+                // exempt: superseding one is the whole point of it.
+                val landed = results[trackId] ?: store.load(trackId)?.let { stored ->
+                    results.putIfAbsent(trackId, stored) ?: stored
+                }
                 if (landed != null && landed.isUsable && trackId !in provisional) return@execute
                 // The queue this task sat in is single-threaded, so a party
                 // started while the track ahead of it was being measured. Every
@@ -1661,6 +1677,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     fun release() {
         executor.shutdownNow()
+        restoreExecutor.shutdownNow()
         sourceResolutionScope.cancel()
         sourceAnalysisUris.clear()
         sourceResolutions.clear()
