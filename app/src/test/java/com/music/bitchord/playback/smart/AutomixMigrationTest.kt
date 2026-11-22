@@ -100,6 +100,22 @@ class AutomixMigrationTest {
     }
 
     @Test
+    fun aRetiredDirectoryLeftByAKilledProcessIsDeletedOnTheNextLaunch() {
+        oldInstall()
+        assertTrue(run())
+        // The process died before the deleter got to them.
+        val leftover = deferred.toList()
+        deferred.clear()
+        val fresh = File(filesDir, AutomixMigration.RETIRED_ANALYSIS_DIRECTORY).apply { mkdirs() }.resolve("456_11.json")
+        fresh.writeText("{\"version\":3}")
+
+        assertFalse(run())
+
+        assertEquals(leftover.map { it.name }.sorted(), deferred.map { it.name }.sorted())
+        assertTrue(fresh.exists())
+    }
+
+    @Test
     fun anOldDirectoryThatWillNotGoLeavesTheMoveToRunAgain() {
         oldInstall()
         // A directory that can be neither renamed nor emptied: here, one under a read-only parent.

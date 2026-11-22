@@ -25,7 +25,8 @@ import java.io.File
  * The directories are renamed out of the way on the calling thread — a rename
  * is one metadata write however many files are inside — and their contents
  * deleted by [deleteLater], so a few thousand small files never cost the first
- * frame. A rename that fails falls back to deleting in place.
+ * frame. A rename that fails falls back to deleting in place. A renamed
+ * directory a killed process left behind is deleted on the next launch.
  */
 object AutomixMigration {
 
@@ -59,6 +60,11 @@ object AutomixMigration {
         filesDir: File,
         deleteLater: (File) -> Unit = { dir -> Thread({ dir.deleteRecursively() }, "automix-migration").start() },
     ): Boolean {
+        // Anything renamed aside on an earlier launch whose deletion the
+        // process did not live to finish. Looked for on every launch, done or
+        // not: a single listing of the files directory.
+        filesDir.listFiles { file -> RETIRED_DIRECTORIES.any { file.name.startsWith("$it$RETIRED_SUFFIX") } }
+            ?.forEach(deleteLater)
         if (prefs.getBoolean(KEY_DONE, false)) return false
         for (name in RETIRED_DIRECTORIES) {
             val directory = File(filesDir, name)
