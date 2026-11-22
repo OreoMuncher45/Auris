@@ -381,17 +381,21 @@ object LoopMix {
         return null
     }
 
-    /** The RMS of the quietest of a loop's bars, from the level windows; NaN where they don't reach. */
+    /**
+     * The RMS of the quietest of a loop's bars, from the level windows; NaN where
+     * they don't reach. A bar measured as silent is reported even when another
+     * bar is unmeasured, so missing levels can't let a silent loop through.
+     */
     private fun quietestBar(windows: List<CurveWindow>, loop: Loop, bars: Int): Double {
         if (windows.isEmpty()) return Double.NaN
         var quietest = Double.POSITIVE_INFINITY
+        var unmeasured = false
         val bar = (loop.end - loop.start) / bars
         for (b in 0 until bars) {
             val rms = meanRms(windows, loop.start + b * bar, loop.start + (b + 1) * bar)
-            if (rms.isNaN()) return Double.NaN
-            quietest = min(quietest, rms)
+            if (rms.isNaN()) unmeasured = true else quietest = min(quietest, rms)
         }
-        return quietest
+        return if (unmeasured && quietest > SILENT_RMS) Double.NaN else quietest
     }
 
     private fun meanRms(windows: List<CurveWindow>, from: Double, to: Double): Double {

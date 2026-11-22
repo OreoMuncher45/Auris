@@ -99,6 +99,15 @@ class LoopMixTest {
     }
 
     @Test
+    fun aMeasuredSilentBarStillRulesOutALoopWhoseOtherBarsAreUnmeasured() {
+        // Levels end at 192 s, the last 8 s of them silent: a loop that starts in
+        // that silence and runs on past the levels is not a groove.
+        val out = analysis(120.0, 200.0).copy(levelWindows = levels(192.0, quiet = listOf(184.0 to 192.0)))
+        val plan = assertNotNull(plan(out, analysis(120.0, 180.0)))
+        assertTrue(plan.out.loopEnd <= 185.0, "loop end ${plan.out.loopEnd}")
+    }
+
+    @Test
     fun rampsAnyTempoGapFoldingToDoubleOrHalfTimeWhenCloser() {
         val near = assertNotNull(plan(analysis(120.0, 200.0), analysis(134.0, 180.0)))
         assertEquals(1.0, near.fold)
