@@ -41,6 +41,7 @@ import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -182,6 +183,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionAttempted = ConcurrentHashMap.newKeySet<String>()
+
+    /** Failed catalogue searches per track, and when the next may run ([SystemClock.elapsedRealtime]). */
+    private val sourceResolutionFailures = ConcurrentHashMap<String, Int>()
+    private val sourceResolutionRetryAt = ConcurrentHashMap<String, Long>()
     private val sourceResolutionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Tracks whose result came from [analyzeHead] and is waiting to be superseded. */
@@ -925,11 +930,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (playbackUri.getQueryParameter("v") != null || playbackUri.authority != "source") return playbackUri
         sourceAnalysisUris[trackId]?.let { return it }
         if (trackId in sourceResolutionAttempted) return null
+        sourceResolutionRetryAt[trackId]?.let { if (SystemClock.elapsedRealtime() < it) return null }
         if (!sourceResolutions.add(trackId)) return null
         val target = SourceResolver.targetIn(playbackUri)
         sourceResolutionScope.launch {
+            // Only a search that answered counts as an attempt. One that failed
+            // (offline, a refused request) is tried again later, backing off.
+            var answered = false
             try {
                 val match = findYouTubeMatch(target)
+                answered = true
                 if (match != null) {
                     sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
@@ -937,9 +947,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     Log.d(TAG, "No YouTube match for Automix analysis of $trackId")
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 Log.d(TAG, "YouTube match failed for Automix analysis of $trackId: ${error.message}")
             } finally {
-                sourceResolutionAttempted.add(trackId)
+                if (answered) {
+                    sourceResolutionAttempted.add(trackId)
+                    sourceResolutionFailures.remove(trackId)
+                    sourceResolutionRetryAt.remove(trackId)
+                } else {
+                    val failures = sourceResolutionFailures.merge(trackId, 1, Int::plus)!!
+                    val delayMs = (SOURCE_RETRY_BASE_MS shl (failures - 1).coerceAtMost(5))
+                    sourceResolutionRetryAt[trackId] = SystemClock.elapsedRealtime() + delayMs
+                }
                 sourceResolutions.remove(trackId)
             }
         }
@@ -949,11 +968,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private suspend fun findYouTubeMatch(target: TrackMatcher.Target): com.music.bitchord.data.model.Song? {
         if (target.title.isBlank()) return null
         for (query in TrackMatcher.queries(target)) {
+            // A failed search throws, so the caller can tell it from "no match".
             val candidates = YtMusicRepository.search(query, SearchFilter.SONGS)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
+                .getOrThrow()
+                .filterIsInstance<SearchResult.Track>()
+                .map { it.song }
             TrackMatcher.best(candidates, target)?.let { return it }
         }
         return null
@@ -1691,6 +1710,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         sourceAnalysisUris.clear()
         sourceResolutions.clear()
         sourceResolutionAttempted.clear()
+        sourceResolutionFailures.clear()
+        sourceResolutionRetryAt.clear()
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
@@ -1705,6 +1726,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private companion object {
         const val TAG = "BitChordTrackAnalyzer"
+
+        /** First wait before a failed catalogue search is retried; doubles per failure, to 16 minutes. */
+        const val SOURCE_RETRY_BASE_MS = 30_000L
 
         /**
          * What an unmeasured instant reads as. Below the policy's VOCAL_ACTIVE_THRESHOLD by
