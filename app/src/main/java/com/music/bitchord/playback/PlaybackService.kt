@@ -177,6 +177,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import com.music.bitchord.data.model.playerArtPx
+import com.music.bitchord.data.remote.RemoteArtworkStore
+import com.music.bitchord.ui.player.prefetchAutoMixArtwork
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -2048,6 +2051,61 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private var autoMixArtworkJob: Job? = null
+    private var autoMixArtworkGeneration: Long? = null
+
+    private fun allowsAutoMixArtwork(generation: Long, mini: Boolean = false): Boolean =
+        AppSettings.autoMixArtwork.value.allows(AppSettings.smartFadeEnabled.value, generation, mini)
+
+    private fun allowsAnyAutoMixArtwork(generation: Long): Boolean =
+        allowsAutoMixArtwork(generation) || allowsAutoMixArtwork(generation, mini = true)
+
+    /**
+     * Decodes the incoming track's cover as soon as a mix is armed, so the
+     * artwork transition starts from pixels already in memory. Nothing runs
+     * unless one of the two artwork switches is on. Ported from BitChord
+     * (without its Canvas lookup).
+     */
+    private fun prefetchAutoMixIncoming(item: MediaItem) {
+        autoMixArtworkJob?.cancel()
+        val coverGeneration = AutoMixVisualFeed.state.value?.takeIf {
+            it.phase == AutoMixVisualPhase.ARMED && allowsAnyAutoMixArtwork(it.generation)
+        }?.generation
+        autoMixArtworkGeneration = coverGeneration
+        if (coverGeneration == null) return
+        autoMixArtworkJob = scope.launch {
+            try {
+                val song = item.toSong()
+                val artUrl = song.thumbnailUrl ?: if (
+                    song.videoId.startsWith("webdav:") || song.videoId.startsWith("smb:")
+                ) {
+                    withContext(Dispatchers.IO) { RemoteArtworkStore.resolveArt(this@PlaybackService, song) }
+                } else {
+                    null
+                }
+                if (artUrl != null) {
+                    val metrics = resources.displayMetrics
+                    prefetchAutoMixArtwork(
+                        this@PlaybackService,
+                        artUrl,
+                        // The copy the player asks for on this screen, so the
+                        // prepared decode is the one it then reads.
+                        playerArtPx(metrics.widthPixels / metrics.density, metrics.density),
+                        coverGeneration,
+                        prepareCover = { allowsAutoMixArtwork(it) },
+                        prepareMiniCover = { allowsAutoMixArtwork(it, mini = true) },
+                    ) { generation ->
+                        AutoMixVisualFeed.pending(generation)?.phase == AutoMixVisualPhase.ARMED
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("BitChord", "Automix artwork prefetch failed", e)
+            }
+        }
+    }
+
     private fun createCrossfadeController() = CrossfadeController(
             scope,
             active = { requireNotNull(player) },
@@ -2101,6 +2159,7 @@ class PlaybackService : MediaLibraryService() {
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
+            onArmAutoMixIncoming = ::prefetchAutoMixIncoming,
             // Both sinks, not a role: the trim is about what the pair sums to.
             onBlendHeadroom = { trim ->
                 loudnessA.setBlendTrim(trim)
@@ -8675,6 +8734,14 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
                 if (!enabled) crossfade?.cancelAutoMixVisual()
+            }
+        }
+        scope.launch {
+            AppSettings.autoMixArtwork.collect {
+                if (autoMixArtworkGeneration?.let { !allowsAnyAutoMixArtwork(it) } == true) {
+                    autoMixArtworkJob?.cancel()
+                    autoMixArtworkGeneration = null
+                }
             }
         }
         scope.launch {

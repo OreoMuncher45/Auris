@@ -338,6 +338,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.LocalMiniAutoMixArtwork
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
@@ -363,6 +364,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.rememberMiniAutoMixArtwork
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.components.VolumeHud
 import com.music.bitchord.ui.components.VolumeHudOverlay
@@ -4962,39 +4964,42 @@ internal fun BitChordApp(
                         // component they are stacked to imitate: the now playing
                         // controls dock into the tab bar rather than riding above it,
                         // and the pair folds together on scroll. See [GlassNavBar].
-                        AppGlassNav(
-                            useFoldingNav = useFoldingNav,
-                            tabs = tabs,
-                            selectedIndex = selectedTabIndex,
-                            onTabSelected = onTabSelected,
-                            scrollConnection = navBarScroll,
-                            search = navSearchState,
-                            placeholder = org.jetbrains.compose.resources.stringResource(
-                                if (searchSourceState.value == SearchSource.LIBRARY) {
-                                    SharedRes.string.search_library_hint
+                        val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
+                        CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                            AppGlassNav(
+                                useFoldingNav = useFoldingNav,
+                                tabs = tabs,
+                                selectedIndex = selectedTabIndex,
+                                onTabSelected = onTabSelected,
+                                scrollConnection = navBarScroll,
+                                search = navSearchState,
+                                placeholder = org.jetbrains.compose.resources.stringResource(
+                                    if (searchSourceState.value == SearchSource.LIBRARY) {
+                                        SharedRes.string.search_library_hint
+                                    } else {
+                                        SharedRes.string.search_hint
+                                    },
+                                ),
+                                song = player.song,
+                                isPlaying = player.isPlaying,
+                                isLoading = playPauseBusy,
+                                onPlayPause = { togglePlayPause() },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onPrevious = { controller?.seekToPrevious() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
                                 } else {
-                                    SharedRes.string.search_hint
+                                    playerSheetMotion::open
                                 },
-                            ),
-                            song = player.song,
-                            isPlaying = player.isPlaying,
-                            isLoading = playPauseBusy,
-                            onPlayPause = { togglePlayPause() },
-                            onNext = { controller?.seekToNextMediaItem() },
-                            onPrevious = { controller?.seekToPrevious() },
-                            onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
-                            } else {
-                                playerSheetMotion::open
-                            },
-                            controlsLocked = controlsLocked,
-                            onBlockedControl = showHostOnlyNotice,
-                            // Still in the tree under the full player: no motion
-                            // there for a tap nobody can see.
-                            animationsActive = !showNowPlaying,
-                            dock = activeDock,
-                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                        )
+                                controlsLocked = controlsLocked,
+                                onBlockedControl = showHostOnlyNotice,
+                                // Still in the tree under the full player: no motion
+                                // there for a tap nobody can see.
+                                animationsActive = !showNowPlaying,
+                                dock = activeDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            )
+                        }
                     }
                 } else Box(
                     modifier = Modifier
@@ -5029,29 +5034,32 @@ internal fun BitChordApp(
                         // buffering flip. In here they re-run the mini player.
                         IsolatedScope {
                             QueueActionNoticeHost(queueNotice)
+                            val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
                             player.song?.let { song ->
-                                MiniPlayer(
-                                    song = song,
-                                    isPlaying = player.isPlaying,
-                                    isLoading = playPauseBusy,
-                                    hazeState = hazeState,
-                                    onPlayPause = {
-                                        togglePlayPause()
-                                    },
-                                    onNext = { controller?.seekToNextMediaItem() },
-                                    onPrevious = { controller?.seekToPrevious() },
-                                    onExpand = if (reducePlayerMotion) {
-                                        { showNowPlaying = true }
-                                    } else {
-                                        playerSheetMotion::open
-                                    },
-                                    controlsLocked = controlsLocked,
-                                    onBlockedControl = showHostOnlyNotice,
-                                    dock = activeDock,
-                                    animationsActive = !showNowPlaying,
-                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                                    MiniPlayer(
+                                        song = song,
+                                        isPlaying = player.isPlaying,
+                                        isLoading = playPauseBusy,
+                                        hazeState = hazeState,
+                                        onPlayPause = {
+                                            togglePlayPause()
+                                        },
+                                        onNext = { controller?.seekToNextMediaItem() },
+                                        onPrevious = { controller?.seekToPrevious() },
+                                        onExpand = if (reducePlayerMotion) {
+                                            { showNowPlaying = true }
+                                        } else {
+                                            playerSheetMotion::open
+                                        },
+                                        controlsLocked = controlsLocked,
+                                        onBlockedControl = showHostOnlyNotice,
+                                        dock = activeDock,
+                                        animationsActive = !showNowPlaying,
+                                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 Spacer(Modifier.height(8.dp))
                             }
                         }

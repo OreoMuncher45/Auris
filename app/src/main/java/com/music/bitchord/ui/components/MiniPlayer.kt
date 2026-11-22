@@ -34,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -468,6 +469,25 @@ internal fun Modifier.playerDockText(dock: PlayerDock?, titleSizePx: Float): Mod
     }
 }
 
+/**
+ * Automix's artwork transition for the mini player's cover, provided above
+ * the bars by whoever knows the queue; null draws the plain cover. See
+ * [com.music.bitchord.ui.player.rememberMiniAutoMixArtwork].
+ */
+val LocalMiniAutoMixArtwork = compositionLocalOf<(@Composable (String?, Modifier) -> Unit)?> { null }
+
+/** The mini player's cover, in whichever bar is showing it. */
+@Composable
+internal fun MiniPlayerArtwork(song: Song, modifier: Modifier) {
+    val model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX)
+    val autoMix = LocalMiniAutoMixArtwork.current
+    if (autoMix != null) {
+        autoMix(model, modifier)
+    } else {
+        AsyncImage(model = model, contentDescription = null, modifier = modifier)
+    }
+}
+
 /** Frosted mini player that rides just above the floating tab bar. */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -543,9 +563,8 @@ fun MiniPlayer(
                 .miniArtPadding(art),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
-                contentDescription = null,
+            MiniPlayerArtwork(
+                song = song,
                 modifier = Modifier
                     .size(art.size)
                     .playerDockArt(dock, art.corner)

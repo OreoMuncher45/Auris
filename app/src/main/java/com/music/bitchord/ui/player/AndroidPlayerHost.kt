@@ -67,6 +67,14 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override fun onAutoMixScrubIntent() = AutoMixVisualFeed.cancel()
 
+    @Composable
+    override fun autoMixIncomingReveal(
+        eased: () -> Float,
+        reducedMotion: () -> Boolean,
+        generation: Long,
+        blur: Boolean,
+    ): Modifier = androidAutoMixIncomingReveal(eased, reducedMotion, generation, blur)
+
     override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
         override val animatedCanvas get() = AppSettings.animatedCanvas
         override val audioQualityCellular get() = AppSettings.audioQualityCellular
@@ -99,6 +107,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val showHiResBadge get() = AppSettings.showHiResBadge
         override val smartAnalysis get() = AppSettings.smartAnalysis
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
+        override val autoMixArtwork get() = AppSettings.autoMixArtwork
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow

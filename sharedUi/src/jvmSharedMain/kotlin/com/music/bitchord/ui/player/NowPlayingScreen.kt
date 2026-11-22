@@ -1812,6 +1812,17 @@ fun NowPlayingScreen(
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
     val art = rememberPlayerArtwork(remoteArt, artPx)
+    // Automix's artwork transition: the next cover spreads over this one in
+    // step with the audio blend, when the listener has it switched on. See
+    // [AutoMixCoverState].
+    val coverEntry = remember(song.videoId, song.queueEntryId, queue, queueIndex) {
+        coverOccurrence(song, queue, queueIndex)
+    }
+    val autoMixGate = autoMixStillArtworkGate(coverEntry, canvasShown = canvas != null)
+    val autoMixCover = rememberAutoMixCover(coverEntry, art, autoMixGate)
+    val autoMixFrames: () -> AutoMixCoverFrames? = remember(autoMixCover, coverEntry, autoMixGate) {
+        { autoMixCover.framesFor(coverEntry, autoMixGate) }
+    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -2359,13 +2370,17 @@ fun NowPlayingScreen(
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
+    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover) {
+        { trackMotionVisible() && !autoMixCover.holdsCover() }
+    }
     val trackCoverLoaded: () -> Boolean = remember(art) { { art.loaded } }
     SideEffect {
         trackMotion.widthPx = with(density) { windowWidth.toPx() }
         trackMotion.banner = heroMode && !landscape
         trackMotion.reduced = reduceAnimation
         trackMotion.hasNext = hasNext
-        trackMotion.canAnimate = trackMotionVisible
+        // A track change the Automix reveal is drawing needs no slide of its own.
+        trackMotion.canAnimate = trackMotionAllowed
         trackMotion.coverLoaded = trackCoverLoaded
     }
     LaunchedEffect(song.videoId, queueIndex) { trackMotion.onTrackChanged(song.videoId, queueIndex) }
@@ -3196,6 +3211,7 @@ fun NowPlayingScreen(
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
+                    autoMixFrames = autoMixFrames,
                     bestPart = { pillModifier ->
                         BestPartPill(
                             song = song,
