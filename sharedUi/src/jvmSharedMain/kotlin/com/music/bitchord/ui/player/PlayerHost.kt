@@ -3,6 +3,7 @@ package com.music.bitchord.ui.player
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntSize
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.listentogether.PartyMember
@@ -37,6 +38,20 @@ interface PlayerHost {
 
     /** Visual-only seek intent, before the scrubber dispatches its transport command. */
     fun onAutoMixScrubIntent() = Unit
+
+    /**
+     * How the incoming cover is revealed over the outgoing one during an
+     * Automix transition: a plain fade unless the platform has something
+     * better. Incoming layer only. [blur] is off for thumbnails, independently
+     * of the reveal.
+     */
+    @Composable
+    fun autoMixIncomingReveal(
+        eased: () -> Float,
+        reducedMotion: () -> Boolean,
+        generation: Long,
+        blur: Boolean,
+    ): Modifier = Modifier.graphicsLayer { alpha = eased() }
 
     /** A Canvas already settled for [song], without a lookup. */
     fun cachedCanvas(song: Song): CanvasArtwork?
@@ -257,6 +272,8 @@ interface PlayerSettingsSource {
     val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
     val smartFadeEnabled: StateFlow<Boolean>
+    /** Whether Automix's artwork transitions run; both off where a platform keeps no such setting. */
+    val autoMixArtwork: StateFlow<AutoMixArtworkPreferences> get() = defaultAutoMixArtwork
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
     /** The Automix blend in flight, for the scrubber's beat glow; null between blends. */
@@ -283,6 +300,8 @@ interface PlayerSettingsSource {
     /** Draws the album art a little smaller inside its card, or not. */
     fun setZoomOutAlbumArt(value: Boolean)
 }
+
+private val defaultAutoMixArtwork: StateFlow<AutoMixArtworkPreferences> = MutableStateFlow(AutoMixArtworkPreferences())
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */
 internal val PlayerSettings: PlayerSettingsSource

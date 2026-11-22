@@ -1660,4 +1660,16 @@
     <string name="download_liked_songs_subtitle">מוריד את המוזיקה שאהבת וכל שיר שתאהב מעכשיו</string>
     <string name="show_best_part">Best Part button</string>
     <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">מודל Automix</string>
+    <string name="automix_models_downloading">מוריד את Automix (%1$d MB)… %2$d%%. עד הסיום השירים יתחלפו במעבר רגיל.</string>
+    <string name="automix_model_missing">לא הורד. Automix יוריד אותו כשתפעיל אותו, או הורד אותו עכשיו.</string>
+    <string name="automix_model_download">הורדה (%1$d MB)</string>
+    <string name="automix_model_ready">הורד, תופס %1$d MB במכשיר הזה.</string>
+    <string name="automix_models_failed">לא ניתן היה להוריד את המודל. בדוק את החיבור ונסה שוב.</string>
+    <string name="automix_model_delete_title">למחוק את מודל Automix?</string>
+    <string name="automix_model_delete_warning">פעולה זו תפנה %1$d MB ותכבה את Automix. הפעלה מחדש של Automix תוריד את המודל שוב.</string>
 </resources>

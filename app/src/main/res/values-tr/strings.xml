@@ -1612,4 +1612,16 @@
     <string name="download_liked_songs_subtitle">Beğendiğin müzikleri ve bundan sonra beğendiğin her şarkıyı indirir</string>
     <string name="show_best_part">Best Part button</string>
     <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">Automix modeli</string>
+    <string name="automix_models_downloading">Automix indiriliyor (%1$d MB)… %2$d%%. Bitene kadar şarkılar normal geçişle değişir.</string>
+    <string name="automix_model_missing">İndirilmedi. Automix açıldığında indirir ya da şimdi indirin.</string>
+    <string name="automix_model_download">İndir (%1$d MB)</string>
+    <string name="automix_model_ready">İndirildi, bu cihazda %1$d MB kullanıyor.</string>
+    <string name="automix_models_failed">Model indirilemedi. Bağlantınızı kontrol edip tekrar deneyin.</string>
+    <string name="automix_model_delete_title">Automix modeli silinsin mi?</string>
+    <string name="automix_model_delete_warning">Bu işlem %1$d MB yer açar ve Automix\'i kapatır. Automix yeniden açıldığında model tekrar indirilir.</string>
 </resources>

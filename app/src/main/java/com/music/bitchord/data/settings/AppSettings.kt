@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import com.music.bitchord.playback.SingMethod
+import com.music.bitchord.playback.AutoMixVisualFeed
+import com.music.bitchord.ui.player.AutoMixArtworkPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -323,6 +325,15 @@ object AppSettings {
      * See [com.music.bitchord.playback.smart.TransitionPlanner].
      */
     val smartFadeEnabled = MutableStateFlow(false)
+
+    /**
+     * Whether Automix's artwork transitions run in the full player and the
+     * mini player, plus the in-memory fences that keep a mix already under way
+     * from picking one up half way through when either is switched. Both off
+     * by default: Automix's audio does not depend on them. Ported from BitChord.
+     */
+    private val _autoMixArtwork = MutableStateFlow(AutoMixArtworkPreferences())
+    val autoMixArtwork = _autoMixArtwork.asStateFlow()
 
     /**
      * Turns the music down over the sleep timer's last 30 seconds instead of
@@ -1656,6 +1667,10 @@ object AppSettings {
         downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        _autoMixArtwork.value = AutoMixArtworkPreferences(
+            artTransition = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false),
+            miniPlayerTransition = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false),
+        )
         sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
         youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
@@ -2190,9 +2205,41 @@ object AppSettings {
     }
 
     fun setSmartFadeEnabled(value: Boolean) {
+        if (smartFadeEnabled.value != value) {
+            val previous = _autoMixArtwork.value
+            _autoMixArtwork.value = previous.copy(
+                skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+                skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+            )
+        }
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
+
+    fun setAutoMixArtTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.artTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            artTransition = value,
+            skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_ART_TRANSITION, value).apply()
+    }
+
+    fun setAutoMixMiniPlayerTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.miniPlayerTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            miniPlayerTransition = value,
+            skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, value).apply()
+    }
+
+    // At either edge, skip the generation already in flight. Even a rapid
+    // off/on round trip cannot revive the artwork on a renderer just mounting.
+    private fun artworkCutoff(previous: Long): Long =
+        maxOf(previous, AutoMixVisualFeed.state.value?.generation ?: 0L)
 
     fun setSleepTimerFadeOut(value: Boolean) {
         sleepTimerFadeOut.value = value
@@ -3363,6 +3410,8 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_ART_TRANSITION = "automix_art_transition"
+    private const val KEY_AUTOMIX_MINI_ART_TRANSITION = "automix_mini_art_transition"
     private const val KEY_SLEEP_TIMER_FADE_OUT = "sleep_timer_fade_out"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
     private const val KEY_YOUTUBE_PREMIUM_AUDIO = "youtube_premium_audio"

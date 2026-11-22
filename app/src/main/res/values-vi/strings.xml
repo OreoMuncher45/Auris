@@ -1572,4 +1572,16 @@
     <string name="download_liked_songs_subtitle">Tải xuống nhạc đã thích và mọi bài hát bạn thích từ giờ trở đi</string>
     <string name="show_best_part">Best Part button</string>
     <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">Mô hình Automix</string>
+    <string name="automix_models_downloading">Đang tải Automix (%1$d MB)… %2$d%%. Cho đến khi xong, bài hát chuyển bằng crossfade thông thường.</string>
+    <string name="automix_model_missing">Chưa tải xuống. Automix sẽ tải khi bạn bật, hoặc tải ngay bây giờ.</string>
+    <string name="automix_model_download">Tải xuống (%1$d MB)</string>
+    <string name="automix_model_ready">Đã tải xuống, dùng %1$d MB trên thiết bị này.</string>
+    <string name="automix_models_failed">Không thể tải mô hình. Hãy kiểm tra kết nối và thử lại.</string>
+    <string name="automix_model_delete_title">Xóa mô hình Automix?</string>
+    <string name="automix_model_delete_warning">Thao tác này giải phóng %1$d MB và tắt Automix. Bật lại Automix sẽ tải lại mô hình.</string>
 </resources>

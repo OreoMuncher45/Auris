@@ -1594,4 +1594,16 @@
     <string name="download_liked_songs_subtitle">Scarica i brani che ti piacciono e ogni brano a cui metti mi piace da ora in poi</string>
     <string name="show_best_part">Best Part button</string>
     <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">Modello Automix</string>
+    <string name="automix_models_downloading">Download di Automix (%1$d MB)… %2$d%%. Fino al termine i brani usano la normale dissolvenza.</string>
+    <string name="automix_model_missing">Non scaricato. Automix lo scarica quando lo attivi, oppure scaricalo ora.</string>
+    <string name="automix_model_download">Scarica (%1$d MB)</string>
+    <string name="automix_model_ready">Scaricato, occupa %1$d MB su questo dispositivo.</string>
+    <string name="automix_models_failed">Impossibile scaricare il modello. Controlla la connessione e riprova.</string>
+    <string name="automix_model_delete_title">Eliminare il modello Automix?</string>
+    <string name="automix_model_delete_warning">Libera %1$d MB e disattiva Automix. Riattivando Automix il modello verrà scaricato di nuovo.</string>
 </resources>

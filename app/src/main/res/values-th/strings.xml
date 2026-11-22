@@ -1638,4 +1638,16 @@
     <string name="download_liked_songs_subtitle">ดาวน์โหลดเพลงที่คุณชอบ และทุกเพลงที่คุณกดชอบนับจากนี้</string>
     <string name="show_best_part">Best Part button</string>
     <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">โมเดล Automix</string>
+    <string name="automix_models_downloading">กำลังดาวน์โหลด Automix (%1$d MB)… %2$d%% ระหว่างนี้เพลงจะเฟดข้ามแบบปกติ</string>
+    <string name="automix_model_missing">ยังไม่ได้ดาวน์โหลด Automix จะดาวน์โหลดเมื่อเปิดใช้ หรือดาวน์โหลดตอนนี้</string>
+    <string name="automix_model_download">ดาวน์โหลด (%1$d MB)</string>
+    <string name="automix_model_ready">ดาวน์โหลดแล้ว ใช้พื้นที่ %1$d MB บนอุปกรณ์นี้</string>
+    <string name="automix_models_failed">ดาวน์โหลดโมเดลไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</string>
+    <string name="automix_model_delete_title">ลบโมเดล Automix ไหม</string>
+    <string name="automix_model_delete_warning">จะคืนพื้นที่ %1$d MB และปิด Automix เมื่อเปิด Automix อีกครั้งจะดาวน์โหลดโมเดลใหม่</string>
 </resources>
