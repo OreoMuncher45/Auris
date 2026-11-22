@@ -96,9 +96,14 @@ class LoopMixSession private constructor(
     }
 
     fun close() {
-        outPort.disarm()
-        inPort.disarm()
-        renderer.close()
+        // A session dropped before it was attached has no ports to disarm,
+        // only its renderer to free.
+        try {
+            if (::outPort.isInitialized) outPort.disarm()
+            if (::inPort.isInitialized) inPort.disarm()
+        } finally {
+            renderer.close()
+        }
     }
 
     companion object {
