@@ -1687,4 +1687,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Pokazuj całkowity czas</string>
     <string name="show_total_duration_subtitle">Pokazuje pełną długość utworu zamiast pozostałego czasu</string>
+    <string name="sleep_timer_fade_out">Wyciszanie przed pauzą</string>
+    <string name="sleep_timer_fade_out_subtitle">Stopniowo ścisza dźwięk przez ostatnie 30 sekund</string>
 </resources>

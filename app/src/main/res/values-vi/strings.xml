@@ -1564,4 +1564,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Hiện tổng thời lượng</string>
     <string name="show_total_duration_subtitle">Hiện toàn bộ thời lượng bài hát thay vì thời gian còn lại</string>
+    <string name="sleep_timer_fade_out">Giảm dần âm lượng trước khi tạm dừng</string>
+    <string name="sleep_timer_fade_out_subtitle">Giảm âm lượng từ từ trong 30 giây cuối</string>
 </resources>

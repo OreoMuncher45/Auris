@@ -1029,6 +1029,13 @@ class CrossfadeController(
             return
         }
         holdWanted = false
+        // The sleep timer is fading the music out, and owns the volume until
+        // it pauses: no blend may start under it. Any hold on the track's end
+        // is let go too, so the queue simply runs on at the faded volume.
+        if (SleepTimer.fadingOut) {
+            if (phase == Phase.IDLE) releaseHold()
+            return
+        }
         planAutoTransition(player)
         if (!holdWanted && phase == Phase.IDLE) releaseHold()
     }

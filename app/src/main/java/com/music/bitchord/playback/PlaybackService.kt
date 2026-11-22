@@ -7789,19 +7789,56 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Pause when the sleep timer runs out.
+     * Pause when the sleep timer runs out, fading the music out over its last
+     * [SleepTimer.FADE_OUT_DURATION_MS] first when [AppSettings.sleepTimerFadeOut]
+     * is on.
      *
      * `collectLatest` is what makes re-setting the timer work: the pending wait
      * is cancelled and restarted on the new deadline instead of both firing.
+     * A cancel or a reset mid-fade lands in the `finally`, which turns the
+     * player back up.
      */
     private fun watchSleepTimer() {
         scope.launch {
             SleepTimer.deadline.collectLatest { deadline ->
                 if (deadline == null) return@collectLatest
-                val remaining = deadline - SystemClock.elapsedRealtime()
-                if (remaining > 0) delay(remaining)
-                player?.pause()
-                SleepTimer.cancel()
+                // The player this timer turned down, if it did. Only that one
+                // is turned back up: the crossfade owns both players' volume
+                // the rest of the time, and resetting it whenever a timer is
+                // cancelled would cut into a blend it is running.
+                var faded: ExoPlayer? = null
+                try {
+                    val fadeMs = if (AppSettings.sleepTimerFadeOut.value) SleepTimer.FADE_OUT_DURATION_MS else 0L
+                    val wait = deadline - SystemClock.elapsedRealtime() - fadeMs
+                    if (wait > 0) delay(wait)
+                    if (fadeMs > 0) {
+                        // No new blend from here on — see [SleepTimer.fadingOut].
+                        // One already running owns the volumes until it lands,
+                        // so the fade starts after it, over what time is left,
+                        // rather than jumping the new track down mid-rise.
+                        SleepTimer.fadingOut = true
+                        while (crossfade?.isTransitioning() == true &&
+                            SystemClock.elapsedRealtime() < deadline
+                        ) {
+                            delay(FADE_STEP_MS)
+                        }
+                        val span = deadline - SystemClock.elapsedRealtime()
+                        while (span > 0) {
+                            val left = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                            player?.let {
+                                it.volume = SleepTimer.fadeVolume(left, span)
+                                faded = it
+                            }
+                            if (left <= 0L) break
+                            delay(FADE_STEP_MS)
+                        }
+                    }
+                    player?.pause()
+                    SleepTimer.cancel()
+                } finally {
+                    SleepTimer.fadingOut = false
+                    faded?.volume = 1f
+                }
             }
         }
     }
@@ -11320,6 +11357,8 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
     private companion object {
+        /** How often the sleep timer's fade-out steps the volume: ten a second is smooth to the ear. */
+        const val FADE_STEP_MS = 100L
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"

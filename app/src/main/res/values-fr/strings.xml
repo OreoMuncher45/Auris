@@ -1648,4 +1648,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Afficher la durée totale</string>
     <string name="show_total_duration_subtitle">Affiche la durée complète du titre au lieu du temps restant</string>
+    <string name="sleep_timer_fade_out">Fondu avant la pause</string>
+    <string name="sleep_timer_fade_out_subtitle">Baisse progressivement le volume pendant les 30 dernières secondes</string>
 </resources>

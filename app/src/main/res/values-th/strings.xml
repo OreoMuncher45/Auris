@@ -1630,4 +1630,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">แสดงความยาวทั้งหมด</string>
     <string name="show_total_duration_subtitle">แสดงความยาวเต็มของเพลงแทนเวลาที่เหลือ</string>
+    <string name="sleep_timer_fade_out">ค่อยๆ ลดเสียงก่อนหยุดชั่วคราว</string>
+    <string name="sleep_timer_fade_out_subtitle">ค่อยๆ ลดระดับเสียงในช่วง 30 วินาทีสุดท้าย</string>
 </resources>

@@ -1624,4 +1624,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Tampilkan durasi total</string>
     <string name="show_total_duration_subtitle">Menampilkan durasi penuh lagu, bukan sisa waktu</string>
+    <string name="sleep_timer_fade_out">Pelankan sebelum jeda</string>
+    <string name="sleep_timer_fade_out_subtitle">Menurunkan volume perlahan selama 30 detik terakhir</string>
 </resources>

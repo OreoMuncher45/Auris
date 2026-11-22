@@ -1624,4 +1624,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">显示总时长</string>
     <string name="show_total_duration_subtitle">显示歌曲的完整时长，而不是剩余时间</string>
+    <string name="sleep_timer_fade_out">暂停前淡出</string>
+    <string name="sleep_timer_fade_out_subtitle">在最后 30 秒内逐渐降低音量</string>
 </resources>

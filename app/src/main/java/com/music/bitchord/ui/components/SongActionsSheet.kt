@@ -55,6 +55,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -825,6 +827,15 @@ private fun SleepTimerPicker(
                 onBack()
             }
         }
+        // Under the durations because it is about them: the timer's last
+        // half-minute, not a choice of when it ends.
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        SleepFadeOption(
+            checked = fadeOut,
+            accent = palette.accent,
+            mutedInk = mutedInk,
+            onCheckedChange = AppSettings::setSleepTimerFadeOut,
+        )
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -864,6 +875,48 @@ private fun SleepOption(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** The fade-out switch under the sleep timer's durations, in the same row shape as [SleepOption]. */
+@Composable
+private fun SleepFadeOption(
+    checked: Boolean,
+    accent: Color,
+    mutedInk: Color,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface
+    val interactive = LocalMenuInteractive.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = interactive) { onCheckedChange(!checked) }
+            .padding(start = 22.dp, end = 16.dp, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out),
+                style = MaterialTheme.typography.bodyLarge,
+                color = ink,
+            )
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = mutedInk,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = interactive,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = accent,
+                checkedBorderColor = accent,
+            ),
+        )
     }
 }
 

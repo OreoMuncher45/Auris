@@ -1647,4 +1647,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">कुल अवधि दिखाएँ</string>
     <string name="show_total_duration_subtitle">बचे हुए समय की जगह गाने की पूरी अवधि दिखाता है</string>
+    <string name="sleep_timer_fade_out">रोकने से पहले आवाज़ धीमी करें</string>
+    <string name="sleep_timer_fade_out_subtitle">आख़िरी 30 सेकंड में आवाज़ धीरे-धीरे कम करता है</string>
 </resources>

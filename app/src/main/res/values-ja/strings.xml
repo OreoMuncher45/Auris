@@ -1625,4 +1625,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">合計時間を表示</string>
     <string name="show_total_duration_subtitle">残り時間の代わりに曲の長さを表示します</string>
+    <string name="sleep_timer_fade_out">一時停止前にフェードアウト</string>
+    <string name="sleep_timer_fade_out_subtitle">最後の30秒で音量を徐々に下げます</string>
 </resources>

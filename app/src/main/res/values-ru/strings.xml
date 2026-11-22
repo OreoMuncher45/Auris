@@ -1679,4 +1679,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Показывать общую длительность</string>
     <string name="show_total_duration_subtitle">Показывает полную длительность трека вместо оставшегося времени</string>
+    <string name="sleep_timer_fade_out">Затухание перед паузой</string>
+    <string name="sleep_timer_fade_out_subtitle">Плавно уменьшает громкость в последние 30 секунд</string>
 </resources>

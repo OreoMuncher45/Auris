@@ -1499,4 +1499,6 @@
     <string name="remove_from_history_failed">Couldn\'t remove from history</string>
     <string name="show_total_duration">Show total duration</string>
     <string name="show_total_duration_subtitle">Shows the song\'s full length instead of the time remaining</string>
+    <string name="sleep_timer_fade_out">Fade out before pausing</string>
+    <string name="sleep_timer_fade_out_subtitle">Gradually lowers volume over the last 30 seconds</string>
 </resources>

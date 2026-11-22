@@ -1604,4 +1604,6 @@
     <string name="community_reddit_subtitle">r/BitChordNext</string>
     <string name="show_total_duration">Toplam süreyi göster</string>
     <string name="show_total_duration_subtitle">Kalan süre yerine şarkının tam uzunluğunu gösterir</string>
+    <string name="sleep_timer_fade_out">Duraklatmadan önce sesi azalt</string>
+    <string name="sleep_timer_fade_out_subtitle">Son 30 saniyede sesi yavaş yavaş kısar</string>
 </resources>
