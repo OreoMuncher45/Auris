@@ -373,7 +373,13 @@ object YtMusicRepository {
                     .also { lastSuggestions = PendingSuggestions(input, listener, it) }
         }
         return try {
-            pending.await()
+            pending.await().also {
+                // The request reads the account again when it is built, so a
+                // switch while it was out leaves its account unknown: not kept.
+                if (Innertube.listener != listener) synchronized(suggestionsLock) {
+                    if (lastSuggestions?.answer === pending) lastSuggestions = null
+                }
+            }
         } catch (failure: Throwable) {
             if (failure !is CancellationException || pending.isCancelled) {
                 synchronized(suggestionsLock) {
