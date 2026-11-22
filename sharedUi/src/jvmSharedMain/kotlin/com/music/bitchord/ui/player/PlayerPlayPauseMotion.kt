@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.graphics.vector.toPath
 import androidx.compose.ui.unit.Dp
 import com.music.bitchord.ui.rememberIsForeground
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -125,7 +126,11 @@ fun rememberPlayerPlayPauseMotion(
                 launch {
                     // A second animateTo captures velocity BEFORE Animatable
                     // cancels the dip. Never snap the scale, even on rapid reversal.
-                    launch {
+                    // Started undispatched so the dip owns the pulse before the
+                    // wait below reads it: a pulse already near the dip would
+                    // otherwise start the return first, and the dip, starting
+                    // late, would cancel it and leave the glyph shrunk.
+                    launch(start = CoroutineStart.UNDISPATCHED) {
                         motion.pulse.animateTo(PlayPauseMotionSpec.DipScale,
                             spring(PlayPauseMotionSpec.DipDamping, PlayPauseMotionSpec.DipStiffness,
                                 visibilityThreshold = PlayPauseMotionSpec.Threshold),
