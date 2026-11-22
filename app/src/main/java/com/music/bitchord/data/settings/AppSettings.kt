@@ -16,6 +16,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.audio.JamesDspConfig
@@ -980,6 +981,13 @@ object AppSettings {
     val showTotalDuration = MutableStateFlow(false)
 
     /**
+     * The period last picked on the Replay page, which it opens on next time.
+     * This year until one is picked. Device-local, like the listening it
+     * charts — see [DEVICE_LOCAL].
+     */
+    val replayPeriod = MutableStateFlow(ReplayPeriod.DEFAULT)
+
+    /**
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
      * behind the whole screen, rather than the artwork's own colours hung off
      * the sleeve's bottom edge.
@@ -1789,6 +1797,7 @@ object AppSettings {
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         zoomOutAlbumArt.value = prefs.getBoolean(KEY_ZOOM_OUT_ALBUM_ART, false)
         showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
+        replayPeriod.value = ReplayPeriod.named(prefs.getString(KEY_REPLAY_PERIOD, null))
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
@@ -2716,6 +2725,12 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
     }
 
+    fun setReplayPeriod(value: ReplayPeriod) {
+        if (replayPeriod.value == value) return
+        replayPeriod.value = value
+        prefs.edit().putString(KEY_REPLAY_PERIOD, value.name).apply()
+    }
+
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
@@ -3291,6 +3306,8 @@ object AppSettings {
         // Whether this install's old Automix store has been cleared: a backup
         // from before the move would otherwise run it again over the new one.
         com.music.bitchord.playback.smart.AutomixMigration.KEY_DONE,
+        // Which stretch of this phone's listening the Replay was left on.
+        KEY_REPLAY_PERIOD,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
@@ -3448,6 +3465,7 @@ object AppSettings {
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_ZOOM_OUT_ALBUM_ART = "zoom_out_album_art"
     private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
+    private const val KEY_REPLAY_PERIOD = "replay_period"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
