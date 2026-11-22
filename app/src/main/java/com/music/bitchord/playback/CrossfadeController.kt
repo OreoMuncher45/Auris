@@ -290,6 +290,14 @@ class CrossfadeController(
     private var handedOff = false
 
     /**
+     * The furthest [driveFade] has got this blend. An unheld outgoing player
+     * runs on into the next item at its end, and from then its duration and
+     * position describe that item, so the end-driven term could drop the
+     * progress and the incoming fader with it; the blend only moves forward.
+     */
+    private var fadePeak = 0f
+
+    /**
      * How many items the queue held when the standby was loaded with a copy of
      * it. AutoPlay appending mid-transition is explicitly allowed, so the
      * difference is reconciled onto the standby before the swap rather than
@@ -1907,6 +1915,7 @@ class CrossfadeController(
         // The bar fills to the end through the first half of the blend, which
         // would run straight over the marker for the transition now under way.
         AppSettings.smartTransitionWindow.value = null
+        fadePeak = 0f
         phase = Phase.FADING
         AutoMixVisualFeed.start(visualGeneration, audioSeconds = 0.0)
     }
@@ -2100,7 +2109,8 @@ class CrossfadeController(
         val endDrivenProgress = outRemaining?.let {
             ((span - it).toFloat() / span).coerceIn(0f, 1f)
         } ?: 0f
-        val progress = maxOf(incomingProgress, endDrivenProgress)
+        val progress = maxOf(incomingProgress, endDrivenProgress, fadePeak)
+        fadePeak = progress
 
         // Before the handoff the session is still the outgoing player, so a
         // failure on the incoming one would otherwise go unheard: its position
