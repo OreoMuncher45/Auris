@@ -1252,7 +1252,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     bpm = grid.bpm,
                     beatInterval = grid.beatInterval,
                     beatConfidence = grid.beatConfidence,
-                    downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty()).sorted(),
+                    downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty()).sorted().distinct(),
                     firstBeat = headGrid?.firstBeat ?: grid.firstBeat,
                     headBeats = headSide,
                     tailBeats = tailSide,
@@ -1283,9 +1283,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     bpm = leading?.bpm ?: features.bpm,
                 beatInterval = leading?.beatInterval ?: features.beatInterval,
                 beatConfidence = leading?.beatConfidence ?: features.beatConfidence,
+                // Where the two sides overlap (a short track) both hold the same
+                // downbeats; published once each.
                 downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
                     .ifEmpty { features.downbeats }
-                    .sorted(),
+                    .sorted()
+                    .distinct(),
                 firstBeat = headGrid?.firstBeat ?: features.firstBeat,
                 phraseBoundaries = features.phraseBoundaries,
                 key = features.key,
