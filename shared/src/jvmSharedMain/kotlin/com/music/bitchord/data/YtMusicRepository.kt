@@ -361,22 +361,23 @@ object YtMusicRepository {
      * field never goes back to an older one without it being typed again.
      * Run on its own scope so one reader moving on doesn't cancel the other's
      * answer; a failure isn't kept, so the next ask tries again. The answer is
-     * signed-in and ranked by the account, so it is reused only for the
-     * [Innertube.listener] that asked.
+     * signed-in and ranked by the account, so it is reused only while
+     * [Innertube.listenerGeneration] is the one it was asked under: comparing
+     * the listener itself would miss a switch away and back while it was out.
      */
     private suspend fun rawSuggestions(input: String): JsonObject {
-        val listener = Innertube.listener
+        val generation = Innertube.listenerGeneration
         val pending = synchronized(suggestionsLock) {
             lastSuggestions
-                ?.takeIf { it.input == input && it.listener == listener && !it.answer.isCancelled }?.answer
+                ?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
                 ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
-                    .also { lastSuggestions = PendingSuggestions(input, listener, it) }
+                    .also { lastSuggestions = PendingSuggestions(input, generation, it) }
         }
         return try {
             pending.await().also {
                 // The request reads the account again when it is built, so a
                 // switch while it was out leaves its account unknown: not kept.
-                if (Innertube.listener != listener) synchronized(suggestionsLock) {
+                if (Innertube.listenerGeneration != generation) synchronized(suggestionsLock) {
                     if (lastSuggestions?.answer === pending) lastSuggestions = null
                 }
             }
@@ -390,7 +391,7 @@ object YtMusicRepository {
         }
     }
 
-    private class PendingSuggestions(val input: String, val listener: String?, val answer: Deferred<JsonObject>)
+    private class PendingSuggestions(val input: String, val generation: Long, val answer: Deferred<JsonObject>)
 
     private val suggestionsLock = Any()
     private var lastSuggestions: PendingSuggestions? = null
