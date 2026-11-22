@@ -38,4 +38,27 @@ class AnalysisStoreVocalWindowTest {
             directory.deleteRecursively()
         }
     }
+
+    @Test
+    fun aNanInAVocalWindowDoesNotLoseTheEntry() {
+        val directory = Files.createTempDirectory("analysis-store").toFile()
+        try {
+            val store = AnalysisStore { directory }
+            store.save(
+                "t",
+                TrackAnalysis(
+                    status = TrackAnalysis.STATUS_READY,
+                    trackId = "t",
+                    bpm = 120.0,
+                    vocalWindows = listOf(CurveWindow(10.0, 10.0, floatArrayOf(0.9f, Float.NaN, 0.1f))),
+                ),
+            )
+
+            val restored = assertNotNull(store.load("t"))
+            assertEquals(120.0, restored.bpm)
+            assertEquals(listOf(0.9f, 0f, 0.1f), restored.vocalWindows.single().values.toList())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
 }

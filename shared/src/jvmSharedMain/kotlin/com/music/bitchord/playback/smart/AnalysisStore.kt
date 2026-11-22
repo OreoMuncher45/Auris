@@ -313,6 +313,10 @@ class AnalysisStore(
                     round(window.startTime),
                     window.frameRate,
                     window.values.map { value ->
+                        // A NaN from the model would throw in roundToInt and lose the
+                        // whole entry; stored as clear, which is what an unmeasured
+                        // point means to the mask.
+                        if (value.isNaN()) return@map 0
                         val stored = (value.coerceIn(0f, 1f) * 100).roundToInt()
                         when {
                             threshold == null -> stored
