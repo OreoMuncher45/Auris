@@ -1991,18 +1991,35 @@ class CrossfadeController(
      * that copy is what survives the swap, so the difference has to be carried
      * across or the appended tracks simply vanish when the roles change.
      *
-     * Only a pure append is reconciled. Anything else — a queue replaced, an
-     * item removed or moved — changes what the incoming track *is*, and
-     * [listener] has already bailed the transition for it.
+     * A pure append is copied across as it is. An edit further up — a folder's
+     * next page inserted ahead of what AutoPlay appended — is matched entry by
+     * entry: the standby's queue is replaced from the first entry that differs,
+     * as long as that is after the incoming track. Anything that reaches the
+     * playing or incoming track — a queue replaced, the next item removed —
+     * changes what the incoming track *is*, and [listener] has already bailed
+     * the transition for it.
      */
     private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
-        val appended = runCatching {
-            (queuedItemCount until out.mediaItemCount).map { out.getMediaItemAt(it) }
-        }.getOrNull().orEmpty()
-        if (appended.isEmpty()) return
-        into.addMediaItems(appended)
-        queuedItemCount = out.mediaItemCount
-        TrackLog.d(TAG, "reconciled ${appended.size} appended item(s) onto the incoming player")
+        val queue = runCatching { (0 until out.mediaItemCount).map(out::getMediaItemAt) }.getOrNull() ?: return
+        val held = into.mediaItemCount
+        val shared = minOf(queue.size, held)
+        val firstDifference = (0 until shared).firstOrNull { !sameQueueEntry(queue[it], into.getMediaItemAt(it)) }
+        if (firstDifference == null) {
+            if (queue.size > held) {
+                into.addMediaItems(queue.subList(held, queue.size))
+                TrackLog.d(TAG, "reconciled ${queue.size - held} appended item(s) onto the incoming player")
+            }
+            queuedItemCount = queue.size
+            return
+        }
+        if (firstDifference <= into.currentMediaItemIndex) {
+            TrackLog.w(TAG, "queue changed at $firstDifference, at or before the incoming track; not reconciled")
+            return
+        }
+        into.removeMediaItems(firstDifference, held)
+        into.addMediaItems(queue.subList(firstDifference, queue.size))
+        queuedItemCount = queue.size
+        TrackLog.d(TAG, "reconciled the queue from entry $firstDifference onto the incoming player")
     }
 
     private fun effectiveFadeSpan(player: ExoPlayer): Long {
