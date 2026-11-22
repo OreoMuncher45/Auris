@@ -1029,6 +1029,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * rather than written off with nothing.
          */
         val outOfMemory: Boolean = false,
+        /**
+         * The decode stopped because its abort poll said so. Recorded where it
+         * happened rather than read back off [stopped] afterwards: that is a
+         * clock check, and a hold that ran out during codec cleanup made an
+         * aborted decode read as an unreadable copy and stored it as one.
+         */
+        val aborted: Boolean = false,
     )
 
     /**
@@ -1065,6 +1072,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // track is never held at the container's own rate, which for a long or
         // hi-res file was a single buffer bigger than the heap could give. See
         // [AudioDecoder.decodeRegionResampled].
+        var aborted = false
         val decoded = copy.open()?.use {
             AudioDecoder.decodeRegionResampled(
                 it,
@@ -1072,8 +1080,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 effectiveDuration,
                 outputRate = TrackFeatures.sampleRate.toInt(),
                 resample = TrackFeatures::resample,
-            ) { stopped }
-        } ?: return Structural(null)
+            ) { stopped.also { stop -> if (stop) aborted = true } }
+        } ?: return Structural(null, aborted = aborted)
         val (pcm, _) = decoded
 
         // A decode that stops early is indistinguishable, downstream, from a
@@ -1199,7 +1207,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read *before* the two lines below, not after, because an abort comes
         // back from [structure] as a decode that produced nothing, and that is
         // exactly what those lines write a permanent "cannot be analysed" for.
-        if (stopped) return WholeTrack(null)
+        if (stopped || structural.aborted) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
         val outOfMemory = structural.outOfMemory
         // A track over the cap, or one Pass 1 ran out of memory on, has no
