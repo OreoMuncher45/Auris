@@ -604,8 +604,14 @@ private fun phraseBarPlan(
     // outgoing one for the whole overlap, so the incoming downbeat lines up with the transition
     // start. The drop point is carried for the renderer's handoff marker but does not gate the cue:
     // a 16-bar mix must not require an intro as long as itself, which backing the cue off from the
-    // drop would.
-    val finalIncomingCueTime = audibleStart
+    // drop would. A beat-matched pair cues on the incoming song's first measured
+    // downbeat from there, so its bar one meets the outgoing one; the filter mix
+    // has no shared grid and keeps the audible start.
+    val finalIncomingCueTime = if (beatmatched) {
+        nextAnalysis.downbeats.firstOrNull { it.isFinite() && it >= audibleStart - 0.05 } ?: audibleStart
+    } else {
+        audibleStart
+    }
     val incomingHandoffTime =
         if (nextLength > 0) {
             min(incomingDropTime, nextLength - MIN_INCOMING_CLEARANCE_SECONDS).coerceAtLeast(finalIncomingCueTime)

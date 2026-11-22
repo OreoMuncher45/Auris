@@ -115,6 +115,18 @@ class PhraseBarAutomixTest {
     }
 
     @Test
+    fun aMatchedPhraseMixCuesTheIncomingSongOnItsFirstDownbeat() {
+        // Sound from 0.25 s, bar one at 1.0 s: cueing at the first sound would put
+        // the incoming bar line 0.75 s off the outgoing one for the whole mix.
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+        val base = track("b", 120.0, "C major", vocal = 0.1)
+        val next = base.copy(audibleStartTime = 0.25, downbeats = base.downbeats.map { it + 0.5 })
+        val plan = plan(current, next, PHRASE_BARS_SHORT)
+        assertEquals("before-phrase-8-bar", plan.reason)
+        assertEquals(1.0, plan.incomingCueTime, 1e-9)
+    }
+
+    @Test
     fun anUntrustedOutgoingGridGetsTheAdaptivePlan() {
         val current = track("a", 120.0, "C major", vocal = 0.1).copy(beatConfidence = 0.1)
         val next = track("b", 120.0, "C major", vocal = 0.1)
