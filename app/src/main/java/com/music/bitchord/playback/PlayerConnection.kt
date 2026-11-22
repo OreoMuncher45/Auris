@@ -1084,7 +1084,8 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
 }
 
 /**
- * Replaces the queue with [songs] and starts it.
+ * Replaces the queue with [songs] and starts it. Returns false when nothing
+ * was installed: [songs] was empty or a newer play request superseded this one.
  *
  * Suspending because of the mapping: [toMediaItem] is not the cheap struct copy
  * it looks like — it builds a URI and a metadata bundle per track, and asks
@@ -1100,8 +1101,8 @@ suspend fun MediaController.playSongs(
     startIndex: Int,
     /** False once a newer play request has started; the queue is then left to it. */
     stillCurrent: () -> Boolean = { true },
-) {
-    if (songs.isEmpty()) return
+): Boolean {
+    if (songs.isEmpty()) return false
     // A queue started while shuffle is on goes in shuffled rather than being
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
@@ -1114,11 +1115,12 @@ suspend fun MediaController.playSongs(
         }
         queue.map { it.toMediaItem() }
     }
-    if (!stillCurrent()) return
+    if (!stillCurrent()) return false
     if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
     play()
+    return true
 }
 
 /**

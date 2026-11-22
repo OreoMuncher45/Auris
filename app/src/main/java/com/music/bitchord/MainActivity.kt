@@ -2064,7 +2064,11 @@ internal fun BitChordApp(
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
-                    activeController.playSongs(listOf(seed) + related, 0) { request == playRequestGeneration }
+                    // Superseded: the newer request owns the queue and its
+                    // snapshot, so neither commit nor claim a station started.
+                    if (!activeController.playSongs(listOf(seed) + related, 0) { request == playRequestGeneration }) {
+                        return@launch
+                    }
                 }
                 // Make this station — never the queue from before it — what a
                 // fresh process restores, even if it is killed immediately.
@@ -2118,7 +2122,7 @@ internal fun BitChordApp(
                     return@launch
                 }
                 activeController.beginRadioQueue()
-                activeController.playSongs(tracks, 0) { request == playRequestGeneration }
+                if (!activeController.playSongs(tracks, 0) { request == playRequestGeneration }) return@launch
                 activeController.commitRadioQueue()
                 Toast.makeText(
                     context,
