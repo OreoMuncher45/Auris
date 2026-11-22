@@ -1304,8 +1304,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // the heuristic rather than to nothing matters because the policy reads an
                 // absent mask and a neutral one identically — as "no evidence" — so a failed model
                 // pass would otherwise silently discard the estimate Phase 1 already had.
-                vocalActivityMask = mergeMasks(features.energyCurve.size, regions.mapNotNull { it.vocalMask })
-                    ?: features.vocalActivityMask.map(::heuristicVocalOnModelScale),
+                // Per point, not all or nothing: a head window that ran and a
+                // tail one that failed leaves the tail on the heuristic too.
+                vocalActivityMask = mergeVocalMasks(
+                    features.energyCurve.size,
+                    features.vocalActivityMask.map(::heuristicVocalOnModelScale),
+                    regions.mapNotNull { it.vocalMask },
+                    NEUTRAL_VOCAL,
+                ) ?: features.vocalActivityMask.map(::heuristicVocalOnModelScale),
                 vocalProbability = features.vocalProbability,
                 headBeats = headSide,
                 tailBeats = tailSide,
@@ -1578,9 +1584,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * same length, but the model's window is fixed at about 22 seconds, far less than a track. So
      * the mask is built at full length and filled only over this region.
      *
-     * Everywhere else stays at [NEUTRAL_VOCAL]. That is not a guess dressed up as data: it sits
-     * below the policy's own VOCAL_ACTIVE_THRESHOLD, so unmeasured material can never trip vocal
-     * logic in either direction.
+     * Everywhere else is left NaN, and [mergeVocalMasks] fills it from the DSP heuristic, or
+     * [NEUTRAL_VOCAL] where there is none. That is not a guess dressed up as data: it sits below
+     * the policy's own VOCAL_ACTIVE_THRESHOLD, so unmeasured material can never trip vocal logic in
+     * either direction.
      */
     private fun vocalValues(stereo: AudioDecoder.StereoPcm): FloatArray? {
         if (!VocalSpectrogram.available) return null
@@ -1603,28 +1610,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val curve = features.energyCurve
         if (curve.isEmpty()) return null
 
-        val mask = DoubleArray(curve.size) { NEUTRAL_VOCAL }
+        // NaN where the model's window did not reach: see [mergeVocalMasks].
+        val mask = DoubleArray(curve.size) { Double.NaN }
         for (index in curve.indices) {
             val frame = ((curve[index].time - actualStart) * VocalSpectrogram.frameRate).toInt()
             if (frame in values.indices) mask[index] = values[frame].toDouble()
         }
         return mask
-    }
-
-    /**
-     * Overlays the head and tail masks onto one full-length curve, or null when neither ran —
-     * which the caller answers by keeping the DSP heuristic rather than reporting a mask of
-     * nothing but [NEUTRAL_VOCAL].
-     */
-    private fun mergeMasks(size: Int, masks: List<DoubleArray>): List<Double>? {
-        if (size <= 0 || masks.isEmpty()) return null
-        val merged = DoubleArray(size) { NEUTRAL_VOCAL }
-        for (source in masks) {
-            for (index in merged.indices) {
-                if (index < source.size && source[index] != NEUTRAL_VOCAL) merged[index] = source[index]
-            }
-        }
-        return merged.toList()
     }
 
     /** Recorded ready-but-empty so a track that cannot be decoded is not retried every tick. */
@@ -1832,4 +1824,26 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          */
         const val HEAD_RETRY_GROWTH = 2
     }
+}
+
+/**
+ * Overlays the model's masks (NaN wherever a window did not reach) onto [fallback], one value per
+ * energy-curve point; null when no model window ran, which the caller answers by keeping the DSP
+ * heuristic. Coverage is read from the NaNs, never from a value: the model can legitimately answer
+ * anything, the neutral value included. Points [fallback] does not reach read as [neutral].
+ */
+internal fun mergeVocalMasks(
+    size: Int,
+    fallback: List<Double>,
+    masks: List<DoubleArray>,
+    neutral: Double,
+): List<Double>? {
+    if (size <= 0 || masks.isEmpty()) return null
+    val merged = DoubleArray(size) { fallback.getOrNull(it) ?: neutral }
+    for (source in masks) {
+        for (index in merged.indices) {
+            if (index < source.size && !source[index].isNaN()) merged[index] = source[index]
+        }
+    }
+    return merged.toList()
 }
