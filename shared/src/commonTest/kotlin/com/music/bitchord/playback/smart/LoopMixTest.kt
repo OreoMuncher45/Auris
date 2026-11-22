@@ -169,6 +169,14 @@ class LoopMixTest {
     }
 
     @Test
+    fun aTailWithOneMeasuredBarLineGetsNoLoopFromTheOpeningGrid() {
+        // The model found one bar line in the search, a quarter second off the
+        // opening grid: no measured loop fits, and the opening grid is not trusted there.
+        val out = analysis(120.0, 200.0).copy(tailBeats = BeatSide(listOf(196.25), listOf(196.25), 120.0, 0.9))
+        assertNull(plan(out, analysis(120.0, 180.0)))
+    }
+
+    @Test
     fun clockWrapsOnlyAtLoopEndsAndTheIncomingSongArrivesAtItsOwnSpeed() {
         val plan = assertNotNull(plan(analysis(111.0, 200.0), analysis(169.0, 180.0)))
         val clock = LoopMix.Clock(plan)
