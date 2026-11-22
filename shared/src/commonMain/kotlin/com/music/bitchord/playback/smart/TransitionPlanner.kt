@@ -543,8 +543,8 @@ private fun phraseBarPlan(
     if (mixEnd <= 0) return null
 
     // Both edges on the grid: snap the start to a phrase boundary or downbeat at
-    // or before the target, then run exactly [requestedOverlap] from it, so the
-    // end lands on the grid too and the overlap is the length that was asked for.
+    // or before the target, then run [requestedOverlap] from it, and end on the
+    // measured downbeat there, so the overlap is the bars that were asked for.
     val latestStart = mixEnd - requestedOverlap
     if (latestStart < MIN_CLEARANCE_SECONDS) return null
     val transitionStart = if (gridTrusted) {
@@ -558,7 +558,19 @@ private fun phraseBarPlan(
     } else {
         latestStart
     }
-    val transitionEnd = transitionStart + requestedOverlap
+    val nominalEnd = transitionStart + requestedOverlap
+    // Where the grid is measured there, the end is its downbeat: a tempo that
+    // drifts even slightly puts start-plus-nominal off the bar line. Half a
+    // beat out is a different bar count, not drift, and the adaptive plan
+    // takes the pair instead.
+    val measuredEnd = if (gridTrusted) {
+        analysis.downbeats.minByOrNull { abs(it - nominalEnd) }
+            ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
+    } else {
+        null
+    }
+    if (measuredEnd != null && abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
+    val transitionEnd = measuredEnd ?: nominalEnd
     if (transitionEnd > length + 0.05) return null
     val overlapSeconds = transitionEnd - transitionStart
     if (overlapSeconds <= 0) return null

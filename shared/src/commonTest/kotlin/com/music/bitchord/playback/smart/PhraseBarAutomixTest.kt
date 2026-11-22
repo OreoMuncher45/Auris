@@ -18,9 +18,12 @@ class PhraseBarAutomixTest {
         key: String,
         vocal: Double,
         duration: Double = 200.0,
+        /** How much longer each bar runs past 150 s: a tempo that eases off near the end. */
+        lateBarStretch: Double = 1.0,
     ): TrackAnalysis {
         val beat = 60.0 / bpm
-        val downbeats = generateSequence(0.5) { it + 4 * beat }.takeWhile { it < duration - 1 }.toList()
+        val downbeats = generateSequence(0.5) { it + 4 * beat * (if (it >= 150.0) lateBarStretch else 1.0) }
+            .takeWhile { it < duration - 1 }.toList()
         val energy = (0 until (duration * 2).toInt()).map { EnergySample(it / 2.0, 1.0) }
         return TrackAnalysis(
             status = TrackAnalysis.STATUS_READY,
@@ -70,6 +73,31 @@ class PhraseBarAutomixTest {
             "the mix should open on a downbeat: ${plan.transitionStart}",
         )
         assertTrue(plan.transitionEnd <= current.duration + 1e-6)
+        assertTrue(
+            current.downbeats.any { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 },
+            "the mix should close on a downbeat: ${plan.transitionEnd}",
+        )
+    }
+
+    @Test
+    fun bothEdgesLandOnMeasuredDownbeatsWhenTheTempoDrifts() {
+        // Bars 1% long near the end: eight nominal bars from the opening
+        // downbeat fall 0.16 s short of the eighth measured one.
+        val current = track("a", 120.0, "C major", vocal = 0.1, lateBarStretch = 1.01)
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+        val plan = plan(current, next, PHRASE_BARS_SHORT)
+
+        assertEquals("before-phrase-8-bar", plan.reason, "the phrase mode should take the pair")
+        assertTrue(
+            current.downbeats.any { kotlin.math.abs(it - plan.transitionStart) < 1e-6 },
+            "the mix should open on a downbeat: ${plan.transitionStart}",
+        )
+        assertTrue(
+            current.downbeats.any { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 },
+            "the mix should close on a downbeat: ${plan.transitionEnd}",
+        )
+        val opening = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
+        assertEquals(current.downbeats[opening + 8], plan.transitionEnd, 1e-6, "eight measured bars")
     }
 
     @Test
