@@ -11330,7 +11330,7 @@ class PlaybackService : MediaLibraryService() {
             // Android Auto hands over the tapped song, not the playlist around
             // it. Rebuild the folder so the queue follows the playlist's own
             // order and AutoPlay only starts after its last track.
-            expandPlaylistContext(mediaItems, startIndex)?.let { return@future it }
+            expandPlaylistContext(mediaItems, startIndex, startPositionMs)?.let { return@future it }
             val resolved = resolveMediaItems(mediaItems)
             val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
             MediaSession.MediaItemsWithStartPosition(
@@ -11364,6 +11364,7 @@ class PlaybackService : MediaLibraryService() {
         private suspend fun expandPlaylistContext(
             mediaItems: List<MediaItem>,
             startIndex: Int,
+            startPositionMs: Long = 0L,
         ): MediaSession.MediaItemsWithStartPosition? {
             val parents = mediaItems
                 .mapNotNull { it.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT) }
@@ -11373,6 +11374,7 @@ class PlaybackService : MediaLibraryService() {
             val tappedItem = mediaItems
                 .getOrNull(startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0)))
             val tapped = tappedItem?.mediaId
+            val startPos = startPositionMs.coerceAtLeast(0L)
 
             if (parent.startsWith("spotify_playlist:") || parent.startsWith("spotify_album:")) {
                 val tappedSpotifyId = tappedItem?.mediaMetadata?.extras?.getString(EXTRA_SPOTIFY_TRACK_ID)
@@ -11406,22 +11408,25 @@ class PlaybackService : MediaLibraryService() {
                     priorityIndex = priorityIdx,
                 )
                 if (full.size <= 1 || full.size < mediaItems.size) return null
-                val index = if (tappedSpotifyId != null) {
+                val (index, positionMs) = if (tappedSpotifyId != null) {
                     val found = full.indexOfFirst {
                         it.mediaMetadata.extras?.getString(EXTRA_SPOTIFY_TRACK_ID) == tappedSpotifyId
                     }
                     if (found < 0) return null
-                    found
+                    found to startPos
                 } else {
-                    full.indexOfFirst { it.mediaId == tapped }.takeIf { it >= 0 } ?: 0
+                    val found = full.indexOfFirst { it.mediaId == tapped }
+                    if (found >= 0) found to startPos else 0 to 0L
                 }
-                return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
+                return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, positionMs)
             }
 
             val full = resolveMediaItems(listOf(MediaItem.Builder().setMediaId(parent).build()))
             if (full.size <= 1 || full.size < mediaItems.size) return null
-            val index = full.indexOfFirst { it.mediaId == tapped }.takeIf { it >= 0 } ?: 0
-            return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
+            val found = full.indexOfFirst { it.mediaId == tapped }
+            val index = if (found >= 0) found else 0
+            val positionMs = if (found >= 0) startPos else 0L
+            return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, positionMs)
         }
 
         private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
