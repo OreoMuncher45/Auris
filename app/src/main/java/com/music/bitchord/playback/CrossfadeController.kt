@@ -2665,6 +2665,9 @@ class CrossfadeController(
     private var loopPlanKey: String? = null
     private var loopPlanned: LoopMix.Plan? = null
 
+    /** The earliest loop start [loopPlanned] was searched from, in track seconds. */
+    private var loopPlanEarliestSec = 0.0
+
     private var lastLoopVerdict = ""
     private var loopIncomingStarted = false
     private var lastLoopPositionMs = -1L
@@ -2742,11 +2745,21 @@ class CrossfadeController(
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
         }
-        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}"
+        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" +
+            "|$durationMs|$nextDurationMs"
         val cached = loopPlanned
+        val earliestOutSec = player.currentPosition / 1000.0 + LOOP_SETUP_SECONDS
         // Kept while its loop is still far enough ahead to set up; a seek past
-        // that plans again from the new playhead.
-        if (key == loopPlanKey && (cached == null || cached.out.loopStart * 1000 - player.currentPosition >= LOOP_MIN_LEAD_MS)) {
+        // that plans again from the new playhead. A refusal is kept until a
+        // seek back opens up part of the song it was never asked about.
+        if (key == loopPlanKey && (
+                if (cached == null) {
+                    earliestOutSec >= loopPlanEarliestSec - LOOP_REPLAN_BACK_SECONDS
+                } else {
+                    cached.out.loopStart * 1000 - player.currentPosition >= LOOP_MIN_LEAD_MS
+                }
+                )
+        ) {
             return cached
         }
         val why = StringBuilder()
@@ -2755,13 +2768,14 @@ class CrossfadeController(
             outDuration = durationMs / 1000.0,
             inn = nextAnalysis,
             inDuration = nextDurationMs / 1000.0,
-            earliestOutSec = player.currentPosition / 1000.0 + LOOP_SETUP_SECONDS,
+            earliestOutSec = earliestOutSec,
             sungOut = outLyrics.spans,
             sungIn = inLyrics.spans,
             why = why,
         )
         loopPlanKey = key
         loopPlanned = plan
+        loopPlanEarliestSec = earliestOutSec
         val lyricsNote = "lyrics ${if (outLyrics.spans != null) "out" else "-"}/${if (inLyrics.spans != null) "in" else "-"}"
         noteLoopVerdict(pair, plan, if (plan == null) "$why; $lyricsNote" else null)
         return plan
@@ -4549,6 +4563,10 @@ class CrossfadeController(
         const val LOOP_SETUP_SECONDS = 15.0
         const val LOOP_ARM_LEAD_MS = 12_000L
         const val LOOP_MIN_LEAD_MS = 9_000L
+
+        /** How far back the playhead must go before a refused loop mix is planned again. */
+        const val LOOP_REPLAN_BACK_SECONDS = 1.0
+
         const val LOOP_BUILD_TIMEOUT_MS = 8_000L
 
         /** After the incoming player starts, how long its clock settles before it is measured against the deck. */
