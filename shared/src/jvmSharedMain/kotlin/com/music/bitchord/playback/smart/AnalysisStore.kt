@@ -71,6 +71,14 @@ class AnalysisStore(
      */
     private val known = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Serialises reads that may delete a file with writes of one. The restore
+     * lane and the analysis lane both load; one that read an outdated file and
+     * then paused could otherwise delete the replacement the other had just
+     * saved under the same name.
+     */
+    private val files = Any()
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -81,6 +89,10 @@ class AnalysisStore(
         if (trackId.isBlank()) return null
         if (known[trackId] == false) return null
         val file = File(directory, fileNameFor(trackId))
+        return synchronized(files) { loadLocked(trackId, file) }
+    }
+
+    private fun loadLocked(trackId: String, file: File): TrackAnalysis? {
         if (!file.exists()) {
             known[trackId] = false
             return null
@@ -111,20 +123,25 @@ class AnalysisStore(
      */
     fun save(trackId: String, analysis: TrackAnalysis) {
         if (trackId.isBlank() || !analysis.isUsable) return
+        val encoded = runCatching { json.encodeToString(Stored.serializer(), Stored.of(analysis)) }
+            .onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
+            .getOrNull() ?: return
         runCatching {
             directory.mkdirs()
             val file = File(directory, fileNameFor(trackId))
             // Written aside and moved into place, so a kill mid-write leaves the old entry
             // rather than a truncated one.
             val temporary = File(directory, file.name + ".tmp")
-            try {
-                temporary.writeText(json.encodeToString(Stored.serializer(), Stored.of(analysis)))
-                moveInto(temporary, file)
-            } finally {
-                // A no-op once the move has taken it.
-                temporary.delete()
+            synchronized(files) {
+                try {
+                    temporary.writeText(encoded)
+                    moveInto(temporary, file)
+                } finally {
+                    // A no-op once the move has taken it.
+                    temporary.delete()
+                }
+                known[trackId] = true
             }
-            known[trackId] = true
         }.onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
         prune()
     }
