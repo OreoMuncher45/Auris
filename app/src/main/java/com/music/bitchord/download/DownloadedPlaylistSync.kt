@@ -147,6 +147,11 @@ object DownloadedPlaylistSync {
         val app = context.applicationContext
         scope.launch {
             if (AppSettings.effectiveOffline.value) return@launch
+            // Wi-Fi only on mobile data: [Downloads.enqueueAll] would refuse
+            // every track, and the pass would still write them into the
+            // record as asked for, so the next pass on Wi-Fi took them for
+            // handled and they never arrived. Left for that pass instead.
+            if (!AppSettings.downloadsAllowedNow) return@launch
             if (!force && !refreshDue(playlistId)) return@launch
             mutex.withLock {
                 if (!force && !refreshDue(playlistId)) return@withLock
