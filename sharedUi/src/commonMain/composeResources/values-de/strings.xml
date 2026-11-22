@@ -269,4 +269,5 @@
     <string name="queue_removed_songs">Removed %1$d songs</string>
     <string name="queue_undo_action">Undo</string>
     <string name="queue_cleared">Next in queue cleared</string>
+    <string name="mixes_yours">Deine Mixe</string>
 </resources>

@@ -989,6 +989,7 @@ internal fun BitChordApp(
     val searchSource by searchSourceState
     LaunchedEffect(nav.selectedTab) {
         if (nav.selectedTab == TAB_RADIO || nav.showGenres) viewModel.ensureExploreLoaded()
+        viewModel.setRadioShown(nav.selectedTab == TAB_RADIO)
         if (nav.selectedTab == TAB_SEARCH) {
             searchVisualActive = true
         } else {
@@ -2617,6 +2618,26 @@ internal fun BitChordApp(
                     },
                 )
             }
+        }
+    }
+
+    /**
+     * Plays a mix card from the top: Radio's Your Mixes, where a tap plays
+     * rather than opens. The tracks are fetched first, as the card's Play in
+     * the playlist menu fetches them.
+     */
+    val playMix: (ShelfItem) -> Unit = { item ->
+        withBrowseSongs(
+            BrowseTarget(
+                browseId = item.browseId,
+                title = item.title,
+                subtitle = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+                type = BrowseType.PLAYLIST,
+            ),
+        ) { songs ->
+            setShuffleForNextQueue(false)
+            play(songs, 0)
         }
     }
 
@@ -4253,6 +4274,7 @@ internal fun BitChordApp(
             openBrowseMenu = openBrowseMenu,
             onBrowseLongPress = onBrowseLongPress,
             onShelfLongPress = onShelfLongPress,
+            playMix = playMix,
             onLibraryItemClick = onLibraryItemClick,
             isOnDevice = isOnDevice,
             shelfSong = shelfSong,
@@ -5328,6 +5350,7 @@ private fun RootPage(
     val flowBanned by com.music.bitchord.data.flow.FlowStore.bannedIds.collectAsStateWithLifecycle()
     val results by viewModel.results.collectAsStateWithLifecycle()
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+    val radioMixes by viewModel.radioMixes.collectAsStateWithLifecycle()
     val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
     val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
     val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
@@ -6250,6 +6273,9 @@ private fun RootPage(
             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
             pullState = scroll.explorePull,
             contentPadding = listPadding,
+            mixes = radioMixes,
+            onMixClick = pageActions.playMix,
+            onMixLongPress = pageActions.onShelfLongPress,
         )
         TAB_SEARCH -> SearchScreen(
             query = query,
@@ -6706,6 +6732,7 @@ private data class PageActions(
     val openBrowseMenu: (BrowseTarget) -> Unit,
     val onBrowseLongPress: (ShelfItem) -> Unit,
     val onShelfLongPress: (ShelfItem) -> Unit,
+    val playMix: (ShelfItem) -> Unit,
     val onLibraryItemClick: (ShelfItem) -> Unit,
     val isOnDevice: (String) -> Boolean,
     val shelfSong: (ShelfItem) -> Song?,

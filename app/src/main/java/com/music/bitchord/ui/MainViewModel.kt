@@ -70,6 +70,7 @@ import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.podcast.PodcastShelfCache
 import com.music.bitchord.data.podcast.PodcastShelfCache.toHomeShelves
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.yourMixes
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.SubscriptionState
@@ -2450,7 +2451,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (feed in _refreshing.value) return
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
-        if (feed == Feed.EXPLORE) exploreRequested = true
+        if (feed == Feed.EXPLORE) {
+            exploreRequested = true
+            // Radio's pull refreshes its Your Mixes too, alongside the
+            // stations rather than after them.
+            refreshRadioMixes()
+        }
         _refreshing.value = _refreshing.value + feed
         viewModelScope.launch {
             when (feed) {
@@ -2656,6 +2662,102 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var exploreRequested = false
+
+    /**
+     * Radio's "Your Mixes" carousel: the signed-in listener's own mixes and
+     * the named ones (Discover, New Release, Replay) out of YouTube Music's
+     * "Mixed for you" page. Empty, and so hidden, when signed out or before
+     * anything has arrived.
+     *
+     * Fetched the first time Radio is shown for a listener (account and
+     * profile), and again on a pull to refresh. Last launch's cards for the
+     * same listener are drawn from disk while the fresh ones are fetched, the
+     * way Home's page is, so the carousel is usually there on the first visit
+     * and never holds up Radio's first frame.
+     */
+    private val _radioMixes = MutableStateFlow<List<ShelfItem>>(emptyList())
+    val radioMixes: StateFlow<List<ShelfItem>> = _radioMixes.asStateFlow()
+
+    /** Whether Radio is the tab on screen; set by the page. */
+    private val radioShown = MutableStateFlow(false)
+
+    /** The listener the carousel holds, or was last asked for; null for no one. */
+    private var radioMixesFor: String? = null
+
+    /** Each listener's cards fetched this session, so switching back shows them at once. */
+    private val radioMixesByListener = mutableMapOf<String, List<ShelfItem>>()
+    private var radioMixesJob: Job? = null
+
+    fun setRadioShown(shown: Boolean) {
+        radioShown.value = shown
+    }
+
+    init {
+        // A sign-in, sign-out or account switch while Radio is up is a
+        // different listener's mixes, so this watches the listener as well.
+        viewModelScope.launch {
+            combine(radioShown, _signedIn, _activeAccountId, _activeProfileId) { shown, signedIn, _, _ ->
+                shown to signedIn
+            }.collect { (shown, signedIn) ->
+                when {
+                    !signedIn || listenerKey() == null -> clearRadioMixes()
+                    radioMixesFor != listenerKey() -> {
+                        // Never another listener's cards, even for a frame.
+                        _radioMixes.value = radioMixesByListener[listenerKey()].orEmpty()
+                        if (shown) loadRadioMixes()
+                        else radioMixesFor = null
+                    }
+                }
+            }
+        }
+    }
+
+    private fun clearRadioMixes() {
+        radioMixesJob?.cancel()
+        radioMixesFor = null
+        _radioMixes.value = emptyList()
+    }
+
+    private fun refreshRadioMixes() {
+        if (_signedIn.value && listenerKey() != null) loadRadioMixes()
+    }
+
+    private fun loadRadioMixes() {
+        val identity = listenerKey() ?: return
+        radioMixesFor = identity
+        radioMixesJob?.cancel()
+        val seen = radioMixesByListener[identity]
+        if (seen != null) _radioMixes.value = seen
+        radioMixesJob = viewModelScope.launch {
+            // The disk copy is read beside the request rather than before it,
+            // and only drawn into a carousel nothing fresher has filled.
+            val restore = if (seen == null) launch {
+                val kept = withContext(Dispatchers.IO) {
+                    HomeFeedCache.load(getApplication(), RADIO_MIXES_CACHE, identity)
+                }?.shelves?.firstOrNull()?.items ?: return@launch
+                if (identity == listenerKey() && _radioMixes.value.isEmpty()) _radioMixes.value = kept
+            } else null
+            val fresh = YtMusicRepository.mixedForYouKeyed().getOrNull()?.let(::yourMixes)
+            if (identity != listenerKey()) return@launch
+            if (fresh == null) {
+                // A failure keeps what is on screen, last launch's cards
+                // included, and the next visit asks again.
+                radioMixesFor = null
+                return@launch
+            }
+            restore?.cancel()
+            radioMixesByListener[identity] = fresh
+            _radioMixes.value = fresh
+            if (fresh.isNotEmpty()) withContext(Dispatchers.IO) {
+                HomeFeedCache.save(
+                    getApplication(),
+                    RADIO_MIXES_CACHE,
+                    identity,
+                    HomeFeedCache.Snapshot(listOf(HomeShelf(title = RADIO_MIXES_CACHE, items = fresh))),
+                )
+            }
+        }
+    }
 
     private suspend fun fetchExplore() {
         val state = YtMusicRepository.moodAndGenres().fold(
@@ -4053,6 +4155,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** [HomeFeedCache]'s name for Radio's Your Mixes: kept like a page of one shelf. */
+        private const val RADIO_MIXES_CACHE = "radio_mixes"
+
         /** How many tracks YouTube's edit endpoint takes in one request. */
         private const val ADD_TO_PLAYLIST_BATCH = 50
 
