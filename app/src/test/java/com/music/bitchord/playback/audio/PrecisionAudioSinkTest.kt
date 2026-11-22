@@ -42,6 +42,8 @@ class PrecisionAudioSinkTest {
         var lastHandledBuffer: ByteBuffer? = null
         var handleBufferCallCount: Int = 0
         var lastPresentationTimeUs: Long = C.TIME_UNSET
+        /** Every write: its presentation time and its byte count. */
+        val writes = mutableListOf<Pair<Long, Int>>()
         var lastEncodedAccessUnitCount: Int = 0
 
         var formatSupportReturn: Int = AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
@@ -85,6 +87,7 @@ class PrecisionAudioSinkTest {
             encodedAccessUnitCount: Int,
         ): Boolean {
             handleBufferCallCount++
+            writes += presentationTimeUs to buffer.remaining()
             lastHandledBuffer = buffer
             lastPresentationTimeUs = presentationTimeUs
             lastEncodedAccessUnitCount = encodedAccessUnitCount
@@ -546,7 +549,8 @@ class PrecisionAudioSinkTest {
         port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
         port.requestShift(-480) // 10 ms of silence ahead of the song
         assertTrue(sink.handleBuffer(block(), 0L, 1))
-        assertEquals(10_000L, fakeDelegate.lastPresentationTimeUs)
+        // The silence really went out, then the song's block after it.
+        assertEquals(listOf(0L to 480 * 2 * 2, 10_000L to 480 * 2 * 2), fakeDelegate.writes)
 
         port.disarm()
         val next = block()
