@@ -685,6 +685,11 @@ class PrecisionAudioSink(
             }
         }
         if (!isPrecisionActive) {
+            // Nothing here can mute or shift a stream that never decodes to
+            // PCM, so a loop mix armed on it can't hand over: it is called off
+            // (the controller reads interrupted) rather than heard over the mix.
+            val port = loop
+            if (port.inArm != null || port.outArm != null) port.interrupted = true
             return delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
         }
 
