@@ -67,6 +67,9 @@ object MixWaveform {
         var l2 = 0f
         var h1 = 0f
         var h2 = 0f
+        // Whether any decoded sample fell inside the window: a request past
+        // the audio's end can decode from an earlier sync point and bin nothing.
+        var binned = false
         // Filters settle in a few ms; audio further ahead of the window than
         // this is skipped whole rather than filtered for nothing.
         val warmFrom = fromSeconds - WARM_UP_SECONDS
@@ -91,6 +94,7 @@ object MixWaveform {
                 if (position < 0.0) continue
                 val bin = position.toInt()
                 if (bin >= bins) break
+                binned = true
                 val lo = abs(l2)
                 val mi = abs(h2 - l2)
                 val hi = abs(x - h2)
@@ -99,6 +103,7 @@ object MixWaveform {
                 if (hi > high[bin]) high[bin] = hi
             }
         } ?: return null
+        if (!binned) return null
         normalize(low, 1f)
         normalize(mid, 0.82f)
         normalize(high, 0.5f)
