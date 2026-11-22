@@ -895,7 +895,7 @@ class PrecisionAudioSink(
             val loopBlockUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
             var tookOverHere = false
             if (outArm != null) {
-                tookOverHere = spliceLoop(outArm, loopBlockUs, decodedFrames)
+                tookOverHere = spliceLoop(outArm, loopBlockUs, decodedFrames, refuse = skipDsp)
             } else if (inArm != null) {
                 silenceUntilHandover(inArm, loopBlockUs, decodedFrames)
             }
@@ -1035,7 +1035,7 @@ class PrecisionAudioSink(
      * from its decks' pre-roll on, and from 25 ms before mix frame 0 crosses the
      * song's own audio over to it. True once the block reaches frame 0.
      */
-    private fun spliceLoop(arm: LoopMixPort.OutArm, blockUs: Long, frames: Int): Boolean {
+    private fun spliceLoop(arm: LoopMixPort.OutArm, blockUs: Long, frames: Int, refuse: Boolean): Boolean {
         if (blockUs == C.TIME_UNSET || frames <= 0 || audioBlock.channelCount != 2) return false
         val trackUs = blockUs - loop.streamOffsetUs
         val start = Math.round((trackUs - arm.takeoverUs) * arm.sampleRate / 1_000_000.0)
@@ -1046,9 +1046,15 @@ class PrecisionAudioSink(
             loop.interrupted = true
             return false
         }
+        val handover = (LOOP_HANDOVER_SECONDS * arm.sampleRate).toLong()
+        if (refuse && start < -handover) {
+            // Bit-perfect came on before the crossing began: the song plays on
+            // untouched. Once the crossing has started, it is finished instead.
+            loop.interrupted = true
+            return false
+        }
         loopRendering = true
         arm.renderer.render(start, loopScratch, 0, frames)
-        val handover = (LOOP_HANDOVER_SECONDS * arm.sampleRate).toLong()
         val samples = audioBlock.samples
         val port = loop
         val capture = LoopMixPort.SPLICE_CAPTURE
