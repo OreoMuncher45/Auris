@@ -339,6 +339,7 @@ object AudioDecoder {
                 // neither side could move.
                 var progressed = false
                 while (!inputDone) {
+                    if (abort()) return null
                     val inputIndex = codec.dequeueInputBuffer(0L)
                     if (inputIndex < 0) break
                     val inputBuffer = codec.getInputBuffer(inputIndex) ?: break
@@ -356,6 +357,9 @@ object AudioDecoder {
 
                 var timeout = if (progressed) 0L else TIMEOUT_US
                 while (!outputDone) {
+                    // Also polled per buffer: a long drain, or one that ends
+                    // the stream, otherwise runs on past a yield.
+                    if (abort()) return null
                     val outputIndex = codec.dequeueOutputBuffer(bufferInfo, timeout)
                     if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break
                     timeout = 0L
@@ -396,7 +400,7 @@ object AudioDecoder {
                 }
             }
 
-            if (!sawFirstSample || outputRate <= 0) return null
+            if (!sawFirstSample || outputRate <= 0 || abort()) return null
             return outputRate.toDouble() to actualStartSeconds
         } catch (error: Exception) {
             Log.w(TAG, "Region decode failed", error)
