@@ -2371,7 +2371,9 @@ class PlaybackService : MediaLibraryService() {
                 // Crossfade is unconditional: the setting that used to gate it
                 // is gone, so the only thing that can decline the fade is having
                 // no standby player to fade with.
-                val canCrossfade = standbyPlayer != null &&
+                // Nor under the sleep timer's fade, which owns the volume: the
+                // swap goes in directly and keeps the faded level.
+                val canCrossfade = standbyPlayer != null && !SleepTimer.fadingOut &&
                     (activePlayer.isPlaying || activePlayer.playbackState == Player.STATE_READY)
 
                 if (!canCrossfade || standbyPlayer == null) {
@@ -2893,6 +2895,8 @@ class PlaybackService : MediaLibraryService() {
         // two checks are cheap and neither may be armed under this fade.
         if (upgradeFadeActive || versionSwapJob?.isActive == true) return UpgradeSwap.Abandoned
         if (crossfade?.isTransitioning() == true) return UpgradeSwap.Abandoned
+        // The sleep timer's fade owns the volume; the direct swap keeps it.
+        if (SleepTimer.fadingOut) return UpgradeSwap.Fallback
         if (crossfade == null) return UpgradeSwap.Fallback
 
         val active = player ?: return UpgradeSwap.Fallback
@@ -7832,9 +7836,12 @@ class PlaybackService : MediaLibraryService() {
                         // No new blend from here on — see [SleepTimer.fadingOut].
                         // One already running owns the volumes until it lands,
                         // so the fade starts after it, over what time is left,
-                        // rather than jumping the new track down mid-rise.
+                        // rather than jumping the new track down mid-rise. A
+                        // version swap or quality upgrade fade is waited out the
+                        // same way: both write the two players' volumes too.
                         SleepTimer.fadingOut = true
-                        while (crossfade?.isTransitioning() == true &&
+                        while ((crossfade?.isTransitioning() == true ||
+                                versionSwapJob?.isActive == true || upgradeFadeActive) &&
                             SystemClock.elapsedRealtime() < deadline
                         ) {
                             delay(FADE_STEP_MS)
