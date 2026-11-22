@@ -258,4 +258,15 @@
     <string name="home_chip_all">All</string>
     <string name="best_part">Best Part</string>
     <string name="best_part_description">Skip to the best part</string>
+    <string name="queue_select">เลือก</string>
+    <string name="queue_select_all">เลือกทั้งหมด</string>
+    <string name="queue_selected_count">เลือก %1$d รายการ</string>
+    <string name="queue_close_selection">ปิดโหมดเลือก</string>
+    <string name="queue_selection_remove">นำออก</string>
+    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_download">ดาวน์โหลด</string>
+    <string name="queue_removed_song">Removed %1$s</string>
+    <string name="queue_removed_songs">Removed %1$d songs</string>
+    <string name="queue_undo_action">Undo</string>
+    <string name="queue_cleared">Next in queue cleared</string>
 </resources>

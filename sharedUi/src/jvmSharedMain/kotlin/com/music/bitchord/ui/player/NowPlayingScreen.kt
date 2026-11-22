@@ -2059,6 +2059,7 @@ fun NowPlayingScreen(
         pipelineOpen = overlays.audioPipeline,
         castOpen = overlays.cast,
         panelScrolling = panelScrolling,
+        queueOpen = panels.queueOpen,
         controlsLocked = controlsLocked,
         swipeThreshold = swipeThreshold,
         haptics = haptics,
