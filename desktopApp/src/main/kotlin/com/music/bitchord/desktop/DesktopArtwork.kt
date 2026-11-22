@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -48,13 +49,18 @@ internal object DesktopArtworkCache {
     suspend fun load(url: String?): ImageBitmap? {
         if (url.isNullOrBlank()) return null
         images.get(url)?.let { return it }
-        return runCatching {
-            URI(url).toURL().openConnection().apply {
-                connectTimeout = 10_000
-                readTimeout = 10_000
-            }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }
-        }.getOrNull()?.also { images.put(url, it) }
+        // A YouTube cover asked for larger than an old upload has 404s; the
+        // copy every video has is drawn in its place, cached under this URL.
+        return (fetch(url) ?: youTubeThumbnailFallback(url)?.let { fetch(it) })
+            ?.also { images.put(url, it) }
     }
+
+    private fun fetch(url: String): ImageBitmap? = runCatching {
+        URI(url).toURL().openConnection().apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
+        }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }
+    }.getOrNull()
 }
 
 /** Artwork, fetched at the size the surface drawing it actually needs. */

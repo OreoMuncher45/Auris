@@ -1,4 +1,4 @@
-package com.music.bitchord.data
+package com.music.bitchord.ui.components
 
 import coil3.intercept.Interceptor
 import coil3.network.HttpException

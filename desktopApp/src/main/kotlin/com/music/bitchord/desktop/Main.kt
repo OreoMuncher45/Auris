@@ -8,6 +8,9 @@ import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.ui.components.YouTubeThumbnailFallback
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,6 +32,11 @@ fun main() {
     // The player is the phone's, from the shared UI module; this is what it reads underneath.
     PlayerPlatform.install(DesktopPlayerHost)
     com.music.bitchord.ui.AppUi.install(DesktopAppUiHost)
+    // The shared player asks YouTube for covers at maxresdefault, which old
+    // uploads 404 for; fall back to hqdefault as the phone does.
+    SingletonImageLoader.setSafe { context ->
+        ImageLoader.Builder(context).components { add(YouTubeThumbnailFallback()) }.build()
+    }
     // The data layer both apps share logs through here, and keeps translated
     // lyrics beside the rest of the desktop's cache.
     DebugLog.sink = DebugLog.Sink { level, tag, message, error ->

@@ -1,6 +1,6 @@
 package com.music.bitchord
 
-import com.music.bitchord.data.YouTubeThumbnailFallback
+import com.music.bitchord.ui.components.YouTubeThumbnailFallback
 import android.app.Application
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi

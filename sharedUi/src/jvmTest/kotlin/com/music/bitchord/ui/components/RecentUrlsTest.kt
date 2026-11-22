@@ -1,4 +1,4 @@
-package com.music.bitchord.data
+package com.music.bitchord.ui.components
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
