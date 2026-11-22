@@ -688,6 +688,8 @@ class PlaybackService : MediaLibraryService() {
             fresh.forEach { songCache[it.videoId] = it }
             // Until Media3 has installed the folder, the queue is the one it replaces.
             withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
+            // The wait can be long enough for the account to change.
+            if (context.listener != null && context.listener != currentListener()) return
             val exoPlayer = player?.takeIf { it === installedOn } ?: return
             if (castPlayback.active) return
             val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
