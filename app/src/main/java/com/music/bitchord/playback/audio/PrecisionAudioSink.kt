@@ -534,6 +534,8 @@ class PrecisionAudioSink(
         val input = inputPcmEncoding
         val output = targetOutputEncoding
         if (input != null && output != null) publishTelemetry(input, output)
+        // Back on the float path the exclusive route had taken a loop mix off.
+        if (isPrecisionActive && loop.sampleRate > 0) loop.precision = true
         if (resume && playing) runCatching { delegate.play() }
     }
 
