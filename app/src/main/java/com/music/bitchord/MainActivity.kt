@@ -4900,7 +4900,10 @@ internal fun BitChordApp(
                     if (scrollToTop) {
                         val list = currentListState
                         tabScrollJob[0]?.cancel()
-                        tabScrollJob[0] = scope.launch { list.scrollToTopSmoothly() }
+                        tabScrollJob[0] = scope.launch {
+                            // Reduce animation: straight to the top, no scroll to follow.
+                            if (reducePlayerMotion) list.scrollToItem(0) else list.scrollToTopSmoothly()
+                        }
                     }
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
