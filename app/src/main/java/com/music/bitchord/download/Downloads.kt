@@ -534,17 +534,24 @@ object Downloads {
      *
      * @param automatic whether this is the app asking rather than the listener.
      *   See [enqueue]: an automatic ask never clears a [deletedByHand] mark.
+     * @return the ids that are queued or already downloading after the call.
+     *   A song refused by Wi-Fi only, or dropped because the service could not
+     *   start, is left out, so a caller keeping a record can try it again.
      */
-    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false) {
-        if (songs.isEmpty()) return
+    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false): Set<String> {
+        if (songs.isEmpty()) return emptySet()
         val app = context.applicationContext
         val accepted = mutableListOf<Song>()
         val refused = mutableListOf<Song>()
+        val already = mutableSetOf<String>()
         if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
             for (song in songs) {
                 val id = song.videoId
-                if (id in pending || id in running) continue
+                if (id in pending || id in running) {
+                    already += id
+                    continue
+                }
                 if (!AppSettings.downloadsAllowedNow && id !in fromCache) {
                     refused += song
                     continue
@@ -565,14 +572,15 @@ object Downloads {
             DownloadSession.queued(song, from)
             fail(song.videoId, WIFI_ONLY_REFUSAL)
         }
-        if (accepted.isEmpty()) return
-        runCatching {
+        if (accepted.isEmpty()) return already
+        val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
         }.onFailure {
             Log.w(TAG, "could not start the download service: ${it.message}")
             synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
             accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
-        }
+        }.isSuccess
+        return if (started) already + accepted.map { it.videoId } else already
     }
 
     /**
@@ -816,7 +824,7 @@ object Downloads {
      * tracks is actually on disk is answered where it is read — see
      * [collectionsAmong].
      */
-    fun rememberCollection(target: DownloadTarget, songs: List<Song>) {
+    fun rememberCollection(target: DownloadTarget, songs: List<Song>, keepSwitch: Boolean = false) {
         if (songs.isEmpty()) return
         val ids = songs.map { it.videoId }.distinct()
         recordCollections { current ->
@@ -836,6 +844,9 @@ object Downloads {
                 // rather than the second replacing the first — but the new order
                 // leads, since it is the one just seen on screen.
                 videoIds = (ids + (existing?.videoIds ?: emptyList())).distinct(),
+                // The sync passes [keepSwitch]: a switch turned off while its
+                // pass was reading must not come back on with the record.
+                autoDownload = if (keepSwitch) existing?.autoDownload ?: true else true,
             )
             current + (target.id to record)
         }

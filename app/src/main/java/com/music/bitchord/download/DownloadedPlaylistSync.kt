@@ -243,19 +243,26 @@ object DownloadedPlaylistSync {
             // Liked Music kept by the setting, with no record yet: the first
             // fill. Filed whole, like a tap on the page's download button, so
             // the liked songs already on the device are in it too.
-            val firstFill = samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC) &&
-                collection.id !in Downloads.collections.value
+            val liked = samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)
+            val firstFill = liked && collection.id !in Downloads.collections.value
             // Switched off, or the download deleted, while this pass was reading.
-            if (firstFill && !AppSettings.downloadLikedSongs.value) continue
+            val stillWanted = (liked && AppSettings.downloadLikedSongs.value) ||
+                Downloads.collections.value[collection.id]?.autoDownload == true
+            if (!stillWanted) continue
             if (missing.isEmpty() && !firstFill) continue
+            var refused = emptySet<String>()
             if (missing.isNotEmpty()) {
                 Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
-                Downloads.markRequested(collection.id, missing.map { it.videoId })
-                Downloads.enqueueAll(context, missing, collection.title, automatic = true)
+                val asked = missing.map { it.videoId }
+                val admitted = Downloads.enqueueAll(context, missing, collection.title, automatic = true)
+                Downloads.markRequested(collection.id, asked.filter { it in admitted })
+                refused = asked.toSet() - admitted
             }
             // The record grows with what was asked for, so the next pass knows
             // these are not new any more — whether or not the download itself
-            // finished.
+            // finished. A song the queue turned away (Wi-Fi only came back on,
+            // or the service could not start) is left out, so the next pass
+            // still sees it as missing.
             Downloads.rememberCollection(
                 DownloadTarget(
                     id = collection.id,
@@ -264,7 +271,8 @@ object DownloadedPlaylistSync {
                     thumbnailUrl = collection.thumbnailUrl,
                     playlist = collection.playlist,
                 ),
-                if (firstFill) remote else missing,
+                (if (firstFill) remote else missing).filter { it.videoId !in refused },
+                keepSwitch = true,
             )
         }
     }
