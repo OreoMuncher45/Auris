@@ -1071,20 +1071,26 @@ class PlaybackService : MediaLibraryService() {
                 val combined = parsePageItems(tracksObj?.spArr("items")).toMutableList()
                 var nextUrl = tracksObj?.spStr("next")?.takeIf { it.isNotBlank() }
                 var pages = 1
+                var paginationFailed = false
                 while (nextUrl != null && pages < 10) {
-                    val pageRoot = spotifyGetJson(nextUrl, headers, callTimeoutMs = 4_000L) ?: break
+                    val pageRoot = spotifyGetJson(nextUrl, headers, callTimeoutMs = 4_000L)
+                    if (pageRoot == null) {
+                        paginationFailed = true
+                        break
+                    }
                     combined += parsePageItems(pageRoot.spArr("items"))
                     nextUrl = pageRoot.spStr("next")?.takeIf { it.isNotBlank() }
                     pages++
                 }
-                combined.distinctBy { it.id }
+                val deduped = combined.distinctBy { it.id }
+                if (deduped.isNotEmpty() && !paginationFailed) {
+                    spotifyAlbumTracksCache[albumId] = deduped
+                    deduped.forEach { spotifyTrackCache[it.id] = it }
+                }
+                deduped
             } ?: emptyList()
         } catch (_: Exception) {
             emptyList()
-        }
-        if (tracks.isNotEmpty()) {
-            spotifyAlbumTracksCache[albumId] = tracks
-            tracks.forEach { spotifyTrackCache[it.id] = it }
         }
         return tracks
     }
@@ -11239,7 +11245,8 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            val response = computeSearchResponse(query).also { storeSearchResponse(query, it) }
+            val response = autoSearchCache[query]
+                ?: computeSearchResponse(query).also { storeSearchResponse(query, it) }
             val items = buildSearchDisplayItems(query, response)
             val returnParams = LibraryParams.Builder().setExtras(
                 buildContentStyleBundle(
@@ -11935,17 +11942,6 @@ class PlaybackService : MediaLibraryService() {
         val browses = results.mapNotNull { (it as? SearchResult.Browse)?.item }
             .distinctBy { it.browseId }
         return songs to browses
-    }
-
-    private fun storeSearchResults(query: String, songs: List<Song>, browses: List<BrowseItem>) {
-        while (searchResults.size >= MAX_AUTO_SEARCH_CACHE_ENTRIES) {
-            val key = searchResults.keys.firstOrNull() ?: break
-            searchResults.remove(key)
-            searchBrowseResults.remove(key)
-        }
-        searchResults[query] = songs
-        searchBrowseResults[query] = browses
-        songs.forEach { songCache[it.videoId] = it }
     }
 
     private fun browseItemToGridItem(item: BrowseItem): MediaItem = createGridPlaylistItem(
