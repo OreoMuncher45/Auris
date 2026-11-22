@@ -2702,6 +2702,7 @@ object AudioCache {
                         .getOrNull() ?: 0L
                 }
                 val want = analysisHeadSize(total)
+                var fetched = copy
                 analysisHeadWant[videoId] = want
                 val already = cachedBytesOf(key, want)
                 TrackLog.w(
@@ -2748,9 +2749,10 @@ object AudioCache {
                     // row's own address *is* the copy, so pulling it again
                     // would ask the same server for the same bytes.
                     clearPartialHead(key, want)
+                    fetched = Uri.parse("bitchord://watch?v=$videoId")
                     pull(
                         key,
-                        Uri.parse("bitchord://watch?v=$videoId"),
+                        fetched,
                         0,
                         want,
                         pinKey = true,
@@ -2760,8 +2762,9 @@ object AudioCache {
                 // is fetched from rather than borrowed from the player's
                 // stream: the two are different encodings and their sizes
                 // differ, and the analyser only calls a rendition complete
-                // once the cache knows how long it is.
-                val measured = measureUpstream(copy)
+                // once the cache knows how long it is. After the fallback
+                // above that is the substitute's stream, not the Opus one.
+                val measured = measureUpstream(fetched)
                 if (measured > 0L) recordContentLength(key, measured)
                 // The analyser's own copy, marked as such, so the purge can
                 // throw it away once the track is done with it.
