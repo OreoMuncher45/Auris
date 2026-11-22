@@ -2714,12 +2714,33 @@ class CrossfadeController(
     private class LyricSpans(val spans: List<LoopMix.Span>?)
 
     private val lyricSpans = java.util.concurrent.ConcurrentHashMap<String, LyricSpans>()
-    private val lyricsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    /** Asks for [item]'s synced lyrics once; a loop they vouch for needs no vocal mask. */
+    /** When a media id's lyrics were last asked for, with synced lyrics on or off, and how often. */
+    private class LyricAsk(val at: Long, val synced: Boolean, val tries: Int)
+    private val lyricsAsked = java.util.concurrent.ConcurrentHashMap<String, LyricAsk>()
+
+    /**
+     * Asks for [item]'s synced lyrics; a loop they vouch for needs no vocal mask.
+     * Once, unless the answer was none: that may have been a timeout or synced
+     * lyrics being off, so it is asked again when that setting changes, and a
+     * few times more after [LYRIC_RETRY_MS]. Until an answer comes, the last
+     * one (or the mask) stands.
+     */
     private fun askLyrics(item: MediaItem, durationMs: Long) {
         val id = item.mediaId
-        if (!lyricsAsked.add(id)) return
+        val synced = AppSettings.syncedLyrics.value
+        val now = SystemClock.elapsedRealtime()
+        val last = lyricsAsked[id]
+        if (last != null) {
+            val settingChanged = last.synced != synced
+            val answeredNone = lyricSpans[id]?.let { it.spans == null } == true
+            val retry = settingChanged ||
+                (answeredNone && last.tries < LYRIC_RETRIES && now - last.at >= LYRIC_RETRY_MS)
+            if (!retry) return
+            lyricsAsked[id] = LyricAsk(now, synced, if (settingChanged) 1 else last.tries + 1)
+        } else {
+            lyricsAsked[id] = LyricAsk(now, synced, 1)
+        }
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -4635,6 +4656,10 @@ class CrossfadeController(
 
         /** Past the incoming player's takeover, before the outgoing one is retired. */
         const val LOOP_END_MARGIN_SECONDS = 0.3
+
+        /** A track whose lyrics came back empty is asked again after this, at most [LYRIC_RETRIES] times in all. */
+        const val LYRIC_RETRY_MS = 60_000L
+        const val LYRIC_RETRIES = 3
 
         /** A position this far back is a loop wrap; and how often the ramp re-anchors controllers. */
         const val LOOP_WRAP_MS = 400L
