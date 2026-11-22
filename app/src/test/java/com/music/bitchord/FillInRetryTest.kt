@@ -27,6 +27,20 @@ class FillInRetryTest {
     }
 
     @Test
+    fun `a closed page stops the retries instead of waiting out each one`() = runTest {
+        var tries = 0
+        var open = true
+        val page = retryingOrNull(longArrayOf(2_000L, 5_000L, 15_000L), stop = { !open }) {
+            tries++
+            open = false // closed after the first failure
+            null
+        }
+        assertNull(page)
+        assertEquals(1, tries)
+        assertEquals(2_000L, currentTime)
+    }
+
+    @Test
     fun `a page that comes at once is not waited on`() = runTest {
         assertEquals("page", retryingOrNull(longArrayOf(2_000L)) { "page" })
         assertEquals(0L, currentTime)
