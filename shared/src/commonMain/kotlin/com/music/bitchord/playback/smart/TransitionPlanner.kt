@@ -962,7 +962,10 @@ fun planWsolaTransition(
 
     val audibleStart = incomingAudibleStart(nextAnalysis)
     val availableFadeBeats = max(0.0, incomingDropTime - audibleStart) / incomingBeatSeconds
-    val cappedByOverlap = floor(floor(MAX_OVERLAP_SECONDS / incomingBeatSeconds) / 4).toInt() * 4
+    // The fade plays on the outgoing timeline at its own speed, so the cap has to
+    // hold there as well as on the incoming media it reads.
+    val cappedByOverlap =
+        floor(floor(MAX_OVERLAP_SECONDS / max(incomingBeatSeconds, outgoingBeatSeconds)) / 4).toInt() * 4
     if (cappedByOverlap < MIN_FADE_BEATS) return WsolaPlanResult.Refused("overlap-too-long")
     var fadeBeats = minOf(
         MAX_FADE_BEATS,
