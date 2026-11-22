@@ -5854,7 +5854,13 @@ private fun RootPage(
             autoDownloadSongs = downloadedCollection?.autoDownload,
             onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
                 {
-                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    // Liked Music's switch is also the Downloads setting's, so
+                    // it goes through the one place that keeps the two in step.
+                    if (com.music.bitchord.download.samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)) {
+                        com.music.bitchord.download.DownloadedPlaylistSync.setKeepLiked(context, !collection.autoDownload)
+                    } else {
+                        Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    }
                 }
             },
             // A Super Mix has no last page: it grows a page at a

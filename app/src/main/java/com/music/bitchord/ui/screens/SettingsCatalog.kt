@@ -105,6 +105,7 @@ object SettingsCatalog {
             "downloads.quality",
             "downloads.wifi_only",
             "downloads.export_compatible",
+            "downloads.liked_songs",
             "downloads.concurrent",
         ),
         SettingsCategory.NOW_PLAYING to listOf(

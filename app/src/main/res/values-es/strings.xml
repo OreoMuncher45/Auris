@@ -1623,4 +1623,6 @@
     <string name="sleep_timer_fade_out_subtitle">Baja el volumen poco a poco en los últimos 30 segundos</string>
     <string name="youtube_premium_audio">Audio de YouTube Premium</string>
     <string name="youtube_premium_audio_subtitle">Tengo Premium: reproducir el Opus de mayor calidad a ~256 kbps en lugar de los 160 kbps habituales</string>
+    <string name="download_liked_songs">Descargar canciones que te gustan</string>
+    <string name="download_liked_songs_subtitle">Descarga tus canciones que te gustan y cada canción que marques a partir de ahora</string>
 </resources>

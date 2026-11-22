@@ -76,6 +76,7 @@ at once.
 - [x] `downloads.quality` — Download quality
 - [x] `downloads.wifi_only` — Download on Wi-Fi only
 - [x] `downloads.export_compatible` — Export compatible downloads
+- [x] `downloads.liked_songs` — Download liked songs
 - [x] `downloads.concurrent` — Concurrent downloads
 
 ### Now Playing

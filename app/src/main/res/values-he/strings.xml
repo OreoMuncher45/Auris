@@ -1656,4 +1656,6 @@
     <string name="sleep_timer_fade_out_subtitle">מנמיך את עוצמת הקול בהדרגה ב־30 השניות האחרונות</string>
     <string name="youtube_premium_audio">אודיו של YouTube Premium</string>
     <string name="youtube_premium_audio_subtitle">יש לי Premium: הזרמת Opus באיכות גבוהה יותר של ~256 kbps במקום 160 kbps הרגילים</string>
+    <string name="download_liked_songs">הורדת שירים שאהבת</string>
+    <string name="download_liked_songs_subtitle">מוריד את המוזיקה שאהבת וכל שיר שתאהב מעכשיו</string>
 </resources>

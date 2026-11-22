@@ -126,7 +126,7 @@ class SettingsCatalogTest {
             "playback.automix_performance", "playback.skip_silence",
             "playback.spatial_audio", "playback.simulated_atmos", "playback.smart_version_alignment",
             "playback.play_next_on_swipe", "playback.dont_repeat_songs", "playback.stop_music_on_close",
-            "downloads.quality", "downloads.wifi_only", "downloads.export_compatible", "downloads.concurrent",
+            "downloads.quality", "downloads.wifi_only", "downloads.export_compatible", "downloads.liked_songs", "downloads.concurrent",
             "now_playing.full_screen_cover_art", "now_playing.legacy_mesh_gradient",
             "now_playing.animated_cover_art", "now_playing.animated_cover_cellular",
             "now_playing.spotify_canvas", "now_playing.synced_lyrics",

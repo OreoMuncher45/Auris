@@ -4006,6 +4006,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 LikeState.set(resolved, target)
                 YtMusicRepository.rate(resolved, target)
+                    .onSuccess { followLikeIntoDownloads(target) }
                     .onFailure {
                         LikeState.set(videoId, previous)
                         LikeState.set(resolved, previous)
@@ -4018,12 +4019,28 @@ class PlaybackService : MediaLibraryService() {
 
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
+                .onSuccess { followLikeIntoDownloads(target) }
                 .onFailure {
                     LikeState.set(videoId, previous)
                     refreshCustomLayouts()
                     TrackLog.w("BitChord", "notification favorite failed: ${it.message}", about = videoId)
                 }
         }
+    }
+
+    /**
+     * A like from the notification belongs on the device when Liked Music is
+     * kept downloaded, the same as one from the player — see
+     * [com.music.bitchord.ui.MainViewModel]'s `writeLike`. The refresh itself
+     * does nothing when it is not.
+     */
+    private fun followLikeIntoDownloads(target: LikeStatus) {
+        if (target != LikeStatus.LIKE) return
+        com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+            this,
+            YtMusicRepository.LIKED_MUSIC,
+            force = true,
+        )
     }
 
     /**

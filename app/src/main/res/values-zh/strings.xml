@@ -1628,4 +1628,6 @@
     <string name="sleep_timer_fade_out_subtitle">在最后 30 秒内逐渐降低音量</string>
     <string name="youtube_premium_audio">YouTube Premium 音频</string>
     <string name="youtube_premium_audio_subtitle">我有 Premium：串流更高音质的约 256 kbps Opus，而不是标准的 160 kbps</string>
+    <string name="download_liked_songs">下载喜欢的歌曲</string>
+    <string name="download_liked_songs_subtitle">下载你喜欢的音乐，以及今后你喜欢的每首歌曲</string>
 </resources>

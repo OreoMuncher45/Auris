@@ -1628,4 +1628,6 @@
     <string name="sleep_timer_fade_out_subtitle">Menurunkan volume perlahan selama 30 detik terakhir</string>
     <string name="youtube_premium_audio">Audio YouTube Premium</string>
     <string name="youtube_premium_audio_subtitle">Saya punya Premium: putar Opus berkualitas lebih tinggi ~256 kbps, bukan 160 kbps standar</string>
+    <string name="download_liked_songs">Unduh lagu yang disukai</string>
+    <string name="download_liked_songs_subtitle">Mengunduh Musik yang Disukai dan setiap lagu yang kamu sukai mulai sekarang</string>
 </resources>

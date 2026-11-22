@@ -1503,4 +1503,6 @@
     <string name="sleep_timer_fade_out_subtitle">Gradually lowers volume over the last 30 seconds</string>
     <string name="youtube_premium_audio">YouTube Premium audio</string>
     <string name="youtube_premium_audio_subtitle">I have Premium: stream the higher-quality ~256 kbps Opus instead of the standard 160 kbps</string>
+    <string name="download_liked_songs">Download liked songs</string>
+    <string name="download_liked_songs_subtitle">Downloads your Liked Music and every song you like from now on</string>
 </resources>

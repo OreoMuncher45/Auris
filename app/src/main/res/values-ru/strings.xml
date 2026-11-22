@@ -1683,4 +1683,6 @@
     <string name="sleep_timer_fade_out_subtitle">Плавно уменьшает громкость в последние 30 секунд</string>
     <string name="youtube_premium_audio">Звук YouTube Premium</string>
     <string name="youtube_premium_audio_subtitle">У меня есть Premium: воспроизводить Opus повышенного качества ~256 кбит/с вместо стандартных 160 кбит/с</string>
+    <string name="download_liked_songs">Скачивать понравившиеся треки</string>
+    <string name="download_liked_songs_subtitle">Скачивает понравившиеся треки и каждый трек, который вам понравится в дальнейшем</string>
 </resources>

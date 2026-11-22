@@ -2,6 +2,7 @@ package com.music.bitchord.download
 
 import android.content.Context
 import android.util.Log
+import com.music.bitchord.R
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -39,6 +40,11 @@ import java.util.concurrent.ConcurrentHashMap
  * the Liked Songs page *is*, and downloading it records a collection under
  * that id like any other, so the newest like is picked up by exactly the same
  * walk.
+ *
+ * It can also be asked for without the tap: [AppSettings.downloadLikedSongs]
+ * stands in for downloading the page, so the first pass allowed to download
+ * fetches the whole of it and files it as that collection — see
+ * [collectionsToSync] and [setKeepLiked].
  *
  * ## Why it has to be told when to look
  *
@@ -162,6 +168,21 @@ object DownloadedPlaylistSync {
         }
     }
 
+    /**
+     * Turns "keep liked songs downloaded" on or off, from Settings or from the
+     * Liked Music page's own switch, so the two never disagree.
+     *
+     * On, the first fill starts now if downloads are allowed, and otherwise
+     * waits for the next pass that is. Off, nothing already here is deleted:
+     * the next like simply stops arriving, as with any playlist's switch.
+     */
+    fun setKeepLiked(context: Context, on: Boolean) {
+        AppSettings.setDownloadLikedSongs(on)
+        Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
+            ?.let { Downloads.setAutoDownloadNewSongs(it.id, on) }
+        if (on) refresh(context, YtMusicRepository.LIKED_MUSIC, force = true)
+    }
+
     /** When each playlist was last looked at, so one is not walked twice. */
     private val refreshedAt = ConcurrentHashMap<String, Long>()
 
@@ -188,8 +209,12 @@ object DownloadedPlaylistSync {
         // exactly the answer that makes this pass a no-op. So the pass waits
         // for the answer it is going to act on.
         Downloads.awaitIndexReady()
-        val collections = Downloads.syncableCollections()
-            .filter { only == null || samePlaylist(it.id, only) }
+        val collections = collectionsToSync(
+            syncable = Downloads.syncableCollections(),
+            all = Downloads.collections.value,
+            keepLiked = AppSettings.downloadLikedSongs.value,
+            likedTitle = context.getString(R.string.auto_liked),
+        ).filter { only == null || samePlaylist(it.id, only) }
         if (collections.isEmpty()) return
         // What is really on the disk, not what the record claims: a file
         // deleted from a file manager leaves its record behind, and a track
@@ -215,10 +240,19 @@ object DownloadedPlaylistSync {
                 continue
             }
             val missing = missingFromPlaylist(remote, onDisk, deleted, collection.videoIds.toSet())
-            if (missing.isEmpty()) continue
-            Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
-            Downloads.markRequested(collection.id, missing.map { it.videoId })
-            Downloads.enqueueAll(context, missing, collection.title, automatic = true)
+            // Liked Music kept by the setting, with no record yet: the first
+            // fill. Filed whole, like a tap on the page's download button, so
+            // the liked songs already on the device are in it too.
+            val firstFill = samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC) &&
+                collection.id !in Downloads.collections.value
+            // Switched off, or the download deleted, while this pass was reading.
+            if (firstFill && !AppSettings.downloadLikedSongs.value) continue
+            if (missing.isEmpty() && !firstFill) continue
+            if (missing.isNotEmpty()) {
+                Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
+                Downloads.markRequested(collection.id, missing.map { it.videoId })
+                Downloads.enqueueAll(context, missing, collection.title, automatic = true)
+            }
             // The record grows with what was asked for, so the next pass knows
             // these are not new any more — whether or not the download itself
             // finished.
@@ -230,7 +264,7 @@ object DownloadedPlaylistSync {
                     thumbnailUrl = collection.thumbnailUrl,
                     playlist = collection.playlist,
                 ),
-                missing,
+                if (firstFill) remote else missing,
             )
         }
     }
@@ -287,6 +321,29 @@ internal fun missingFromPlaylist(
         song.videoId !in deletedByHand &&
         song.videoId !in alreadyRequested &&
         !song.isDeviceFile()
+}
+
+/**
+ * What a pass walks: the downloaded playlists whose switch is on, and Liked
+ * Music while [keepLiked] says to keep it downloaded.
+ *
+ * With [keepLiked] and no record of Liked Music yet, an empty one stands in for
+ * it, named [likedTitle]. The walk then finds every liked song missing, and
+ * writing down what it asked for is what files the collection — the same
+ * record a tap on the page's download button would have left. With a record
+ * already on file that one is walked, whatever its own switch says, since
+ * [keepLiked] is the listener's later word on it.
+ */
+internal fun collectionsToSync(
+    syncable: List<SavedCollection>,
+    all: Map<String, SavedCollection>,
+    keepLiked: Boolean,
+    likedTitle: String,
+): List<SavedCollection> {
+    if (!keepLiked) return syncable
+    val liked = all.values.firstOrNull { samePlaylist(it.id, YtMusicRepository.LIKED_MUSIC) }
+        ?: SavedCollection(id = YtMusicRepository.LIKED_MUSIC, title = likedTitle, playlist = true)
+    return syncable.filterNot { samePlaylist(it.id, liked.id) } + liked
 }
 
 /** Whether two ids name the same playlist, with or without YouTube's `VL`. */

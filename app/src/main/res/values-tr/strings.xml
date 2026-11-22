@@ -1608,4 +1608,6 @@
     <string name="sleep_timer_fade_out_subtitle">Son 30 saniyede sesi yavaş yavaş kısar</string>
     <string name="youtube_premium_audio">YouTube Premium sesi</string>
     <string name="youtube_premium_audio_subtitle">Premium\'um var: standart 160 kbps yerine daha yüksek kaliteli ~256 kbps Opus akışı</string>
+    <string name="download_liked_songs">Beğenilen şarkıları indir</string>
+    <string name="download_liked_songs_subtitle">Beğendiğin müzikleri ve bundan sonra beğendiğin her şarkıyı indirir</string>
 </resources>

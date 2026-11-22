@@ -878,6 +878,10 @@ object Downloads {
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
         val record = _collections.value[id] ?: return false
+        // Deleting the liked songs while they are kept downloaded would have
+        // the next pass fetch every one of them again. Taking them off the
+        // device says the listener no longer wants that, so it ends here.
+        if (samePlaylist(id, YtMusicRepository.LIKED_MUSIC)) AppSettings.setDownloadLikedSongs(false)
         var any = false
         record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
         forgetCollection(id)

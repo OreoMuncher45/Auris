@@ -1651,4 +1651,6 @@
     <string name="sleep_timer_fade_out_subtitle">Senkt die Lautstärke in den letzten 30 Sekunden langsam ab</string>
     <string name="youtube_premium_audio">YouTube Premium-Audio</string>
     <string name="youtube_premium_audio_subtitle">Ich habe Premium: das hochwertigere Opus mit ~256 kbps statt der üblichen 160 kbps streamen</string>
+    <string name="download_liked_songs">Lieblingssongs herunterladen</string>
+    <string name="download_liked_songs_subtitle">Lädt deine „Mag ich“-Musik und jeden Song herunter, den du ab jetzt likest</string>
 </resources>
