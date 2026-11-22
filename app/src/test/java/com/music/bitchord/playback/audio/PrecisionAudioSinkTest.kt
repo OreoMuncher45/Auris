@@ -1088,6 +1088,7 @@ class PrecisionAudioSinkTest {
         sink.flush()
         assertTrue(fakeDelegate.flushed)
         assertTrue(sink.isPrecisionActive) // flush maintains configured format
+        assertTrue(sink.dspChain.transition.loop.supportsLoopMix)
 
         // Reset
         sink.reset()
@@ -1096,6 +1097,7 @@ class PrecisionAudioSinkTest {
         assertNull(sink.inputPcmEncoding)
         assertNull(sink.targetOutputEncoding)
         assertNull(sink.activeFormat)
+        assertFalse(sink.dspChain.transition.loop.supportsLoopMix)
     }
 
     @Test

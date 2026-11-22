@@ -1241,6 +1241,8 @@ class PrecisionAudioSink(
         targetOutputEncoding = null
         activeFormat = null
         configuredSampleRate = 0
+        // Unconfigured, it can't take a loop mix (a flush keeps the format; a reset doesn't).
+        publishLoopFormat(0, 0, false)
         if (isAudible()) {
             AudioOutputStatus.publishOutputExactness(exact = false, detail = null)
             AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
