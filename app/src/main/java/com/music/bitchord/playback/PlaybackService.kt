@@ -9925,6 +9925,8 @@ class PlaybackService : MediaLibraryService() {
          * rearranges the queue itself (see [QueueShuffle]).
          */
         override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) {
+            // Shuffle reorders the queue, like the queue edits below.
+            if (locked()) return
             if (shuffleModeEnabled != QueueShuffle.enabled.value) onShuffleRequest()
         }
 
