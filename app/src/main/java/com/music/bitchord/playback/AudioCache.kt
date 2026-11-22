@@ -2563,7 +2563,9 @@ object AudioCache {
         if (headRoundsInFlight(videoId) == 0) {
             analysisHeads.remove(videoId)
         }
-        requestAnalysisHead(opus)
+        // Past the background backoff: that spaces out rounds nobody is
+        // waiting on, and this wait has its own deadline and its own bound.
+        requestAnalysisHead(opus, ignoreBackoff = true)
         var rounds = 1
         var askedAt = SystemClock.elapsedRealtime()
         val deadline = askedAt + timeoutMs
@@ -2586,8 +2588,10 @@ object AudioCache {
                     // [MAX_ALIGNMENT_HEAD_ROUNDS] still bounds how often.
                     if (alignmentPrefixBytes(videoId) < MIN_ALIGNMENT_PREFIX_BYTES) {
                         analysisHeads.remove(videoId)
-                        requestAnalysisHead(opus)
-                        rounds++
+                        // Only a round that really started counts towards the
+                        // bound: one turned away starts nothing and spends no
+                        // attempt.
+                        if (requestAnalysisHead(opus, ignoreBackoff = true)) rounds++
                     }
                     askedAt = now
                 }
@@ -2640,18 +2644,23 @@ object AudioCache {
     /**
      * Asks for the copy the analyser reads, for [uri]: the whole recording, so
      * its whole-track pass has something to measure — see [analysisHeadSize].
+     *
+     * @param ignoreBackoff start a round even while an earlier short round's
+     *   backoff runs, for a caller that is waiting on the answer with its own
+     *   deadline and its own bound on retries.
+     * @return whether this call started a round.
      */
-    fun requestAnalysisHead(uri: Uri) {
+    fun requestAnalysisHead(uri: Uri, ignoreBackoff: Boolean = false): Boolean {
         // Each of these gates used to stop a head dead with nothing in the
         // log to show for it: an unwired cache or upstream looked from the
         // outside exactly like a network that refuses everything.
         if (!::cache.isInitialized) {
             TrackLog.w(TAG, "analysis head for $uri not started: cache is not initialised")
-            return
+            return false
         }
         if (upstreamFactory == null) {
             TrackLog.w(TAG, "analysis head for $uri not started: no upstream yet")
-            return
+            return false
         }
         // A track served by an addon has no YouTube copy to ask for: the
         // analyser reads whatever copy the track itself will play from, and
@@ -2664,7 +2673,7 @@ object AudioCache {
         // Read defensively: [Uri.getQueryParameter] throws on an opaque URI,
         // and a source-backed track's URI is whatever the addon handed over.
         val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
-        if (videoId == null) return
+        if (videoId == null) return false
         // The head is a YouTube copy, fetched under the analysis-only marker —
         // see [AutomixAnalysisSource] — and read to measure a tempo rather
         // than to be played. The YouTube *source* switch is about what the
@@ -2680,7 +2689,7 @@ object AudioCache {
         // sources are asked for it by name, and the switch that matters is
         // the source's own, read where the row is resolved. Asking YouTube
         // about it answered nothing and stopped the measurement.
-        if (!isCatalogueRow(videoId) && !SourceRegistry.youtubeAnalysisEnabled()) return
+        if (!isCatalogueRow(videoId) && !SourceRegistry.youtubeAnalysisEnabled()) return false
         // The copy the analyser reads — see [analysisCopyFor]. For a YouTube
         // row that is YouTube's own Opus encoding; for a catalogue row it is
         // the row's own address, which carries the name the sources are
@@ -2689,12 +2698,14 @@ object AudioCache {
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
-        analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return }
-        if (analysisHeads.putIfAbsent(videoId, true) != null) return
+        if (!ignoreBackoff) {
+            analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return false }
+        }
+        if (analysisHeads.putIfAbsent(videoId, true) != null) return false
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
         // top of a fetch that is still running.
-        if (!beginHeadRound(videoId)) return
+        if (!beginHeadRound(videoId)) return false
         // The analyser's own key. Not the player's: the two used to be the
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
@@ -2831,6 +2842,7 @@ object AudioCache {
         // A round cancelled before its body ran never reaches the finally above.
         round.invokeOnCompletion { analysisJobs.remove(videoId, round) }
         round.start()
+        return true
     }
 
     /**
