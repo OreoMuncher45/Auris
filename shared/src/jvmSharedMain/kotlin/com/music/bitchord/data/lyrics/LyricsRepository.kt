@@ -78,13 +78,15 @@ object LyricsRepository {
      * missing from it (an upgrade that added one after the order was last
      * saved) falls in after everything named, in [LyricsSource]'s own order.
      *
-     * [prioritizeSyllableSync] decides what happens once *something* has come
-     * back: off, the highest-priority source's own answer is taken as-is,
+     * [prioritizeSyllableSync] decides what happens once something timed has
+     * come back: off, the highest-priority timed answer is taken as-is,
      * word-synced or not — priority is priority, and second-guessing it with
      * more network calls after it has already answered is not what "first"
      * was supposed to mean. On, a merely line-synced answer is kept only as a
      * fallback, and the search keeps going through the rest of [order] for a
-     * word-synced one, taking the top-priority source that has one.
+     * word-synced one, taking the top-priority source that has one. Either
+     * way plain, untimed lyrics are only a fallback for when no source has
+     * timed ones: see [pick].
      */
     suspend fun lyrics(
         videoId: String,
