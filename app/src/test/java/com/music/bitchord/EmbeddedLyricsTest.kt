@@ -86,6 +86,14 @@ class EmbeddedLyricsTest {
     }
 
     @Test
+    fun `a v2_4 frame's group id and data length are unsynchronised too`() {
+        // Group FF then a length starting 00: unsynchronisation puts a zero between them.
+        val body = byteArrayOf(0) + "eng".toByteArray() + byteArrayOf(0) + "hello".toByteArray()
+        val fields = byteArrayOf(0xFF.toByte()) + syncsafe(body.size)
+        assertEquals("hello", EmbeddedLyrics.fromBytes(id3v24Frame(0x43, unsync(fields + body))))
+    }
+
+    @Test
     fun `a compressed v2_4 frame reads as no lyrics`() {
         val body = byteArrayOf(3) + "eng".toByteArray() + byteArrayOf(0) + "zlib bytes".toByteArray()
         assertNull(EmbeddedLyrics.fromBytes(id3v24Frame(0x09, syncsafe(body.size) + body)))

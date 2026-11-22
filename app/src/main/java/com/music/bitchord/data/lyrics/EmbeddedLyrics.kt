@@ -428,13 +428,15 @@ object EmbeddedLyrics {
             return if (start < until) usltText(bytes, start, until) else null
         }
         if (format and 0x0C != 0) return null // compressed or encrypted
+        // v2.4 unsynchronises per frame, the group id and data length
+        // included; the tag-level flag means every frame is.
+        val unsync = format and 0x02 != 0 || tagFlags and 0x80 != 0
+        val body = if (unsync) deUnsync(bytes, from, until) else bytes
+        start = if (unsync) 0 else from
+        val end = if (unsync) body.size else until
         if (format and 0x40 != 0) start += 1 // group id
         if (format and 0x01 != 0) start += 4 // data length indicator
-        if (start >= until) return null
-        // v2.4 unsynchronises per frame; the tag-level flag means every frame is.
-        if (format and 0x02 == 0 && tagFlags and 0x80 == 0) return usltText(bytes, start, until)
-        val plain = deUnsync(bytes, start, until)
-        return usltText(plain, 0, plain.size)
+        return if (start < end) usltText(body, start, end) else null
     }
 
     /** encoding, three-letter language, a terminated description, then the lyrics. */
