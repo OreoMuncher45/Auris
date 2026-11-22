@@ -17,27 +17,26 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
     private val handle = AtomicLong(if (available) nativeCreate(sampleRate) else 0L)
 
     /**
-     * Native calls under way. [close] frees the renderer only once none is,
-     * so a playback thread that read the handle just before a close finishes
-     * its block on live memory, and the last call out frees it.
+     * Native calls under way, plus [CLOSED] once [close] has run: one word, so
+     * a call is admitted and a close is seen in a single step. [close] frees
+     * the renderer only once no call is under way, so a playback thread that
+     * read the handle just before a close finishes its block on live memory,
+     * and the last call out frees it.
      */
-    private val inFlight = AtomicInteger()
-
-    @Volatile
-    private var closed = false
+    private val state = AtomicInteger()
 
     val isValid: Boolean get() = handle.get() != 0L
 
     private inline fun <T> withHandle(otherwise: T, call: (Long) -> T): T {
-        inFlight.incrementAndGet()
+        // Admitted only if the close had not happened when the count went up;
+        // a call that sees it backs out without touching the renderer.
+        val admitted = state.incrementAndGet() and CLOSED == 0
         try {
-            // Read after the count is up: a close that saw it at zero has
-            // already said so, and this call goes no further.
-            if (closed) return otherwise
+            if (!admitted) return otherwise
             val h = handle.get()
             return if (h != 0L) call(h) else otherwise
         } finally {
-            if (inFlight.decrementAndGet() == 0 && closed) destroy()
+            if (state.decrementAndGet() == CLOSED) destroy()
         }
     }
 
@@ -97,11 +96,18 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
 
     /** Frees the renderer now, or as the native call still under way returns. */
     override fun close() {
-        closed = true
-        if (inFlight.get() == 0) destroy()
+        while (true) {
+            val now = state.get()
+            if (now and CLOSED != 0) return
+            if (state.compareAndSet(now, now or CLOSED)) {
+                if (now == 0) destroy()
+                return
+            }
+        }
     }
 
     companion object {
+        private const val CLOSED = 1 shl 30
         const val OUT = 0
         const val IN = 1
         const val KIND_GAIN = 0
