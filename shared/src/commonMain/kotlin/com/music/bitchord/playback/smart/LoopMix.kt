@@ -413,7 +413,8 @@ object LoopMix {
     fun maskStats(windows: List<CurveWindow>, from: Double, to: Double): MaskStats? {
         var sung = 0
         var n = 0
-        var covered = 0.0
+        // Measured stretches, merged below: windows overlap at their seams.
+        val spans = ArrayList<Pair<Double, Double>>(windows.size)
         var run = 0
         var longest = 0
         var fps = 1.0
@@ -431,9 +432,17 @@ object LoopMix {
                 }
             }
             if (b > a) {
-                covered += (b - a) / window.frameRate
+                spans += (window.startTime + a / window.frameRate) to (window.startTime + b / window.frameRate)
                 fps = window.frameRate
             }
+        }
+        spans.sortBy { it.first }
+        var covered = 0.0
+        var reach = Double.NEGATIVE_INFINITY
+        for ((start, end) in spans) {
+            if (end <= reach) continue
+            covered += end - max(start, reach)
+            reach = end
         }
         return if (n > 0 && covered >= (to - from) * MIN_MASK_COVERAGE) {
             MaskStats(sung.toDouble() / n, longest / fps)

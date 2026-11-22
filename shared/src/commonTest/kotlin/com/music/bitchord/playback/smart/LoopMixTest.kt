@@ -185,6 +185,15 @@ class LoopMixTest {
     }
 
     @Test
+    fun maskCoverageCountsOverlappingWindowsOnce() {
+        // Two windows overlapping over 6-10 s, then nothing measured: 4-14 s is
+        // measured for 6 of its 10 seconds, not the 10 the two windows add up to.
+        val windows = listOf(vocals(0.0, 10.0, 0.05f), vocals(6.0, 10.0, 0.05f))
+        assertNull(LoopMix.maskStats(windows, 4.0, 14.0))
+        assertNotNull(LoopMix.maskStats(windows, 2.0, 10.0))
+    }
+
+    @Test
     fun positionIsNothingBeforeTheMixAndTheLoopStartOnItsFirstBeat() {
         val plan = assertNotNull(plan(analysis(111.0, 200.0), analysis(169.0, 180.0)))
         val clock = LoopMix.Clock(plan)
