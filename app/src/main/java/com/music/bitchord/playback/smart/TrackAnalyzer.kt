@@ -198,6 +198,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val sourceResolutionRetryAt = ConcurrentHashMap<String, Long>()
     private val sourceResolutionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * The rendition each track's published grid was measured on, by track id,
+     * so [loopRegion] cuts its deck from the same bytes. Set when an analysis
+     * of this session is published; a result restored from an earlier session
+     * has none, and reads the copy [copyToRead] picks.
+     */
+    private val measuredCopies = ConcurrentHashMap<String, String>()
+
+    /** The copy [analyze] read, handed to the publish in [request]. */
+    private val analysedCopies = ConcurrentHashMap<String, String>()
+
     /** Tracks whose result came from [analyzeHead] and is waiting to be superseded. */
     private val provisional = ConcurrentHashMap.newKeySet<String>()
 
@@ -495,8 +506,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 if (usableComplete) {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val whole = outcome.analysis
+                    val measuredOn = analysedCopies.remove(trackId)
                     if (whole != null) {
                         results[trackId] = whole
+                        if (measuredOn != null) measuredCopies[trackId] = measuredOn
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
                         // Only the whole-track pass is persisted. A head result
@@ -531,6 +544,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     if (head != null) {
                         provisional.add(trackId)
                         results[trackId] = head
+                        measuredCopies[trackId] = headRendition.key
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
                         // same prefix gets another go once the decoder is free.
@@ -1174,6 +1188,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // success alone would leave a failure looking permanently reopenable and
         // re-decode the same file on every tick.
         triedRenditions.add(copy.key)
+        analysedCopies[trackId] = copy.key
         val openSource = copy.open
 
         var effectiveDuration = durationSeconds
@@ -1690,7 +1705,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     ): com.music.bitchord.playback.loopmix.LoopRegion? {
         if (uri.getQueryParameter("v") == null && uri.authority == "source") return null
         val began = SystemClock.elapsedRealtime()
-        val copy = runCatching { copyToRead(trackId, uri, durationSeconds) }.getOrNull() ?: return null
+        val copy = runCatching { loopCopy(trackId, uri, durationSeconds) }.getOrNull() ?: return null
         val (stereo, start) = copy.open()?.use { source ->
             AudioDecoder.decodeRegionStereo(source, max(0.0, fromSeconds), toSeconds) { stopped }
         } ?: return null
@@ -1712,6 +1727,24 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 "at ${stereo.sampleRate.toInt()}->$sampleRate Hz in ${SystemClock.elapsedRealtime() - began}ms",
         )
         return com.music.bitchord.playback.loopmix.LoopRegion(left, right, start)
+    }
+
+    /**
+     * The copy a loop deck is cut from: the rendition the track's grid was
+     * measured on, never another one — a copy of the same length is not the
+     * same timing. Null when that rendition has gone, so the pair gets an
+     * ordinary blend. A grid restored from an earlier session names no copy,
+     * and reads the one [copyToRead] picks.
+     */
+    private fun loopCopy(trackId: String, uri: Uri, durationSeconds: Double): Copy? {
+        val measured = measuredCopies[trackId]
+        if (measured == null || LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
+        val rendition = cache.renditionsOf(uri).firstOrNull { it.key == measured && it.key !in badRenditions }
+        if (rendition == null) {
+            Log.d(TAG, "No loop region for $trackId: the copy its grid was measured on ($measured) is gone")
+            return null
+        }
+        return Copy(key = rendition.key, rendition = rendition) { cache.renditionDataSource(uri, rendition) }
     }
 
     /**
