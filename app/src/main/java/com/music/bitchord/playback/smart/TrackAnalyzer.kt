@@ -1403,12 +1403,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /** One beat list across the windows: at each overlap, the earlier window's beats before its midpoint, the later's after. */
-    private class Beats(val beats: List<Double>, val downbeats: List<Double>, val confidence: Double)
+    private class Beats(
+        val beats: List<Double>,
+        val downbeats: List<Double>,
+        /** The grid confidence of the window each of [beats] was kept from, in the same order. */
+        val beatConfidences: List<Double>,
+        val confidence: Double,
+    )
 
     private fun seamBeats(regions: List<Region>): Beats {
         val graded = regions.filter { it.grid != null }.sortedBy { it.start }
-        if (graded.isEmpty()) return Beats(emptyList(), emptyList(), 0.0)
-        val beats = ArrayList<Double>()
+        if (graded.isEmpty()) return Beats(emptyList(), emptyList(), emptyList(), 0.0)
+        val beats = ArrayList<Pair<Double, Double>>()
         val downbeats = ArrayList<Double>()
         var weighted = 0.0
         var count = 0
@@ -1421,24 +1427,33 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             val until = next?.let { (region.start + region.seconds + it.start) / 2 }
                 ?.takeIf { it < region.start + region.seconds } ?: Double.POSITIVE_INFINITY
             val kept = grid.beats.filter { it >= from && it < until }
-            beats += kept
+            kept.mapTo(beats) { it to grid.beatConfidence }
             downbeats += grid.downbeats.filter { it >= from && it < until }
             weighted += grid.beatConfidence * kept.size
             count += kept.size
         }
-        return Beats(beats.sorted(), downbeats.sorted(), if (count > 0) weighted / count else 0.0)
+        beats.sortBy { it.first }
+        return Beats(
+            beats.map { it.first },
+            downbeats.sorted(),
+            beats.map { it.second },
+            if (count > 0) weighted / count else 0.0,
+        )
     }
 
     /** The model's grid over [from]..[to], or null where it found too few beats there. */
     private fun beatSide(all: Beats, from: Double, to: Double): BeatSide? {
-        val beats = all.beats.filter { it >= from && it <= to }
+        val inside = all.beats.indices.filter { all.beats[it] >= from && all.beats[it] <= to }
+        val beats = inside.map { all.beats[it] }
         val bpm = BeatTracker.tempoFromBeats(beats)
         if (bpm <= 0) return null
         return BeatSide(
             beats = beats,
             downbeats = all.downbeats.filter { it >= from && it <= to },
             bpm = bpm,
-            confidence = all.confidence,
+            // This side's own beats only: pooled across the track, a long
+            // confident tail made a weak head look reliable, and the reverse.
+            confidence = inside.sumOf { all.beatConfidences[it] } / inside.size,
         )
     }
 
