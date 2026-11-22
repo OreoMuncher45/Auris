@@ -110,7 +110,7 @@ class DspChain(
         }
 
         sing.process(block)
-        spatial.process(block)
+        val widened = spatial.process(block)
         simAtmos.process(block)
         equalizer.process(block)
         jamesDsp.process(block)
@@ -118,9 +118,10 @@ class DspChain(
         // The spatial widener's makeup gain does not cover every widened peak,
         // and it leaves those overs for the stages after it to see; the
         // loudness stage's limiter is what catches whatever survives, so it
-        // stays engaged while spatial audio is on even when normalization
-        // has nothing to do.
-        loudness.holdLimiter = spatial.enabled
+        // stays engaged for every widened block even when normalization has
+        // nothing to do. Taken from the block itself rather than re-reading
+        // the switch, which can flip while the stages in between run.
+        loudness.holdLimiter = widened
         loudness.process(block)
     }
 

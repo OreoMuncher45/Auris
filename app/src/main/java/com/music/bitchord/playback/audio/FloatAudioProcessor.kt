@@ -36,8 +36,9 @@ fun com.music.bitchord.playback.SpatialAudioProcessor.asFloatAudioProcessor(): F
     object : FloatAudioProcessor {
         override fun configure(sampleRate: Int, channelCount: Int) =
             this@asFloatAudioProcessor.configure(sampleRate, channelCount)
-        override fun process(block: AudioBlock) =
+        override fun process(block: AudioBlock) {
             this@asFloatAudioProcessor.process(block)
+        }
         @Suppress("DEPRECATION")
         override fun flush() = this@asFloatAudioProcessor.flush()
         override fun reset() = this@asFloatAudioProcessor.reset()

@@ -223,7 +223,7 @@ class FloatDspChainTest {
         }
         block.reset(frames)
 
-        spatial.process(block)
+        assertTrue("A widened block reports it, for the limiter hold", spatial.process(block))
 
         // After the delay buffer fills (>700 frames), the right channel must have crossfeed signal
         var rightEnergy = 0.0
@@ -246,7 +246,7 @@ class FloatDspChainTest {
         }
         block.reset(frames)
 
-        spatial.process(block)
+        assertFalse("A block left alone is not reported widened", spatial.process(block))
 
         for (i in 0 until frames * 2) {
             assertEquals((i + 1) * 0.01f, block.samples[i], 0.0f)

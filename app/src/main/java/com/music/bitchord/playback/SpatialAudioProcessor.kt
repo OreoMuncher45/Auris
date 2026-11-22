@@ -78,14 +78,17 @@ class SpatialAudioProcessor : BaseAudioProcessor() {
     /**
      * Processes interleaved Float32 audio samples in [block] in-place.
      * Preserves dynamic headroom without clamping to [-1.0f, +1.0f].
+     *
+     * Returns whether this block was widened. [enabled] is read once, here,
+     * so the answer holds even if the switch flips while the block is processed.
      */
-    fun process(block: AudioBlock) {
-        if (!enabled || block.frameCount == 0) return
-        if (block.channelCount < 2) return // Spatial widening applies to the front L/R pair
+    fun process(block: AudioBlock): Boolean {
+        if (!enabled || block.frameCount == 0) return false
+        if (block.channelCount < 2) return false // Spatial widening applies to the front L/R pair
 
         val channels = block.channelCount
         val delaySize = delayLeft.size
-        if (delaySize == 0) return
+        if (delaySize == 0) return false
 
         var dIdx = delayIndex
         var lpL = lowpassLeft
@@ -121,6 +124,7 @@ class SpatialAudioProcessor : BaseAudioProcessor() {
         delayIndex = dIdx
         lowpassLeft = lpL
         lowpassRight = lpR
+        return true
     }
 
     /**
