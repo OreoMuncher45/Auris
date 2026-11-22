@@ -364,6 +364,13 @@ class LoopMixTest {
     }
 
     @Test
+    fun aGridTooUncertainToBeatMatchGetsNoLoopMix() {
+        val unsure = analysis(120.0, 200.0).copy(beatConfidence = 0.0)
+        assertNull(plan(unsure, analysis(120.0, 180.0)))
+        assertNull(plan(analysis(120.0, 200.0), analysis(120.0, 180.0).copy(beatConfidence = 0.0)))
+    }
+
+    @Test
     fun noMaskAndNoLyricsMeansNoLoop() {
         assertNull(plan(analysis(120.0, 200.0), analysis(120.0, 180.0), null, null))
     }
