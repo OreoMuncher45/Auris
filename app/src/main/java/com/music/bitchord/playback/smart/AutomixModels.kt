@@ -166,8 +166,19 @@ object AutomixModels {
     private fun unpacked(model: Model, file: File): String {
         if (file.length() != model.bytes) {
             val source = assets ?: throw FileNotFoundException("AutomixModels.install was never called")
-            source.open(model.fileName).use { input ->
-                file.outputStream().use { output -> input.copyTo(output) }
+            // Unpacked aside and renamed into place, so a reader opening the
+            // model while another call unpacks it sees the old whole file or
+            // the new one, never one being truncated and rewritten.
+            val staging = File(file.parentFile, "${model.fileName}.unpack-${System.nanoTime()}")
+            try {
+                source.open(model.fileName).use { input ->
+                    staging.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (!staging.renameTo(file) && file.length() != model.bytes) {
+                    throw java.io.IOException("could not move ${model.fileName} into place")
+                }
+            } finally {
+                staging.delete()
             }
         }
         return file.absolutePath
