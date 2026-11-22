@@ -210,7 +210,10 @@ object LoopMix {
 
         val fold = doubleArrayOf(1.0, 2.0, 0.5).minBy { abs(ln(inBpm / it / outBpm)) }
         val target = inBpm / fold
-        val rampBars = ceil(abs(target - outBpm) / MAX_BPM_PER_BAR).toInt().coerceIn(MIN_RAMP_BARS, MAX_RAMP_BARS)
+        val neededBars = ceil(abs(target - outBpm) / MAX_BPM_PER_BAR).toInt()
+        // A tempo gap the longest ramp can't cover at MAX_BPM_PER_BAR would lurch: no loop mix.
+        if (neededBars > MAX_RAMP_BARS) return null.also { why?.append("tempo gap too wide to ramp") }
+        val rampBars = neededBars.coerceAtLeast(MIN_RAMP_BARS)
         // the incoming loop lets go only at its own loop boundary: round the mix up to whole incoming loops
         val inLoopOutBars = inPick.bars / fold
         val totalBars = (ceil((ENTER_BARS + rampBars + EXIT_BARS) / inLoopOutBars) * inLoopOutBars).roundToInt()

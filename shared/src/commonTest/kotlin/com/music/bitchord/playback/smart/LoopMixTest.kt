@@ -120,9 +120,15 @@ class LoopMixTest {
         assertEquals(0.5, slow.fold)
         // the incoming loop can only let go at its own boundary
         for (p in listOf(near, wide, slow)) {
-            val inLoopOutBars = LoopMix.LOOP_BARS / p.fold
+            val inLoopOutBars = p.inn.bars / p.fold
             assertEquals(0.0, p.totalBars % inLoopOutBars, 1e-9)
         }
+    }
+
+    @Test
+    fun aTempoGapTooWideForTheLongestRampGetsNoLoopMix() {
+        // 215 -> 150: the closest fold is double time (300), 85 BPM away, 34 bars at 2.5 BPM a bar, past the 24-bar ramp.
+        assertNull(plan(analysis(215.0, 200.0), analysis(150.0, 180.0)))
     }
 
     @Test
