@@ -36,6 +36,7 @@ import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -317,11 +318,15 @@ object AudioCache {
         // memo lists keys with nothing behind them. Cleared with the disk so
         // the first switch after a wipe asks for its head from a clean slate —
         // [discardBadRendition] clears one track's claim for the same reason.
+        val analysing = analysisJobs.values.toList()
+        analysing.forEach { it.cancel() }
         analysisHeads.clear()
         analysisHeadRounds.clear()
         analysisHeadWant.clear()
         renditionKeys.clear()
         scope.launch {
+            // A round still writing would put its bytes back into the wiped cache.
+            analysing.forEach { it.join() }
             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
             _contentsChanged.value++
             withContext(Dispatchers.Main) { onComplete() }
@@ -2269,6 +2274,14 @@ object AudioCache {
     /** Claims a head round for [videoId]; false when one is already running. */
     private fun beginHeadRound(videoId: String): Boolean = analysisHeadRounds.add(videoId)
 
+    /**
+     * The whole-track analysis fetches in the air, by video id. Kept so
+     * [clear] can stop them before wiping the disk — they run outside the
+     * queue's jobs — and so a round finishing after a newer one has claimed
+     * the same track leaves the newer one's claim alone.
+     */
+    private val analysisJobs = ConcurrentHashMap<String, Job>()
+
     /** Releases a head round claimed by [beginHeadRound]. */
     private fun endHeadRound(videoId: String) {
         analysisHeadRounds.remove(videoId)
@@ -2669,7 +2682,8 @@ object AudioCache {
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
         val key = analysisKeyOfVideo(videoId)
-        scope.launch {
+        lateinit var round: Job
+        round = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 // The copy's own length.
                 //
@@ -2772,9 +2786,15 @@ object AudioCache {
                     )
                 }
             } finally {
-                endHeadRound(videoId)
+                // Only this round's own claim: after a clear, a newer round
+                // may hold the track's.
+                if (analysisJobs.remove(videoId, round)) endHeadRound(videoId)
             }
         }
+        analysisJobs[videoId] = round
+        // A round cancelled before its body ran never reaches the finally above.
+        round.invokeOnCompletion { analysisJobs.remove(videoId, round) }
+        round.start()
     }
 
     /**
