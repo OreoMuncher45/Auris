@@ -302,7 +302,9 @@ object AudioDecoder {
 
             val startUs = (startSeconds * 1_000_000).toLong()
             val endUs = (endSeconds * 1_000_000).toLong()
-            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            // At or before the start, never after it: callers want coverage from
+            // the start, and the returned real start lets them drop the extra.
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             codec = runCatching { MediaCodec.createDecoderByType(mime) }
                 .onFailure { Log.w(TAG, "No decoder for $mime", it) }
