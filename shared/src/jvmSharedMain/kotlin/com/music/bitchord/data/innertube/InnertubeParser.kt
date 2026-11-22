@@ -628,6 +628,11 @@ object InnertubeParser {
         val playlistScope: JsonElement? = scope.o("musicPlaylistShelfContinuation")
             ?: appended?.takeIf { scope === it }?.let { action ->
                 JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
+                    // Only track rows and the next-page token: anything else (a
+                    // podcast episode) is left to the general reading.
+                    .takeIf { items ->
+                        items.all { it.o("musicResponsiveListItemRenderer") != null || it.o("continuationItemRenderer") != null }
+                    }
             }
             ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
         val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")

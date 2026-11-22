@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * A playlist's second page as YouTube Music sends it now: rows appended by an
@@ -74,5 +75,19 @@ class PlaylistShelfContinuationTest {
         assertEquals(listOf("aaaaaaaaaaa"), page.songs.map { it.videoId })
         assertEquals(listOf("sssssssssss"), page.suggested.map { it.videoId })
         assertEquals("PAGE3", page.continuation)
+    }
+
+    private val appendedEpisodes = Json.parseToJsonElement(
+        """
+        { "onResponseReceivedActions": [ { "appendContinuationItemsAction": { "continuationItems": [
+          { "musicMultiRowListItemRenderer": { "title": { "runs": [ { "text": "Episode" } ] } } },
+          { "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "PAGE3" } } } }
+        ] } } ] }
+        """,
+    )
+
+    @Test
+    fun `an appended page of episodes is left to the general reading`() {
+        assertNull(InnertubeParser.parsePlaylistShelf(appendedEpisodes))
     }
 }
