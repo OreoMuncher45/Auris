@@ -71,6 +71,9 @@ class BeatTracker(
     )
 
     @Volatile private var session: OrtSession? = null
+
+    /** The options [session] was opened with: native memory of their own, closed after it. */
+    @Volatile private var sessionOptions: OrtSession.SessionOptions? = null
     @Volatile private var sessionThreads = 0
     private val lock = Any()
 
@@ -82,6 +85,8 @@ class BeatTracker(
             session?.takeIf { sessionThreads == threads }?.let { return it }
             runCatching { session?.close() }
             session = null
+            runCatching { sessionOptions?.close() }
+            sessionOptions = null
             return runCatching {
                 val path = File(modelPath()).absolutePath
                 // The Android runtime is built with only the operators this model needs (see
@@ -115,7 +120,13 @@ class BeatTracker(
             setCPUArenaAllocator(false)
             setMemoryPatternOptimization(false)
         }
-        return OrtEnvironment.getEnvironment().createSession(path, options)
+        // Closed here if the session never opens; on success they belong with it.
+        return try {
+            OrtEnvironment.getEnvironment().createSession(path, options).also { sessionOptions = options }
+        } catch (error: Throwable) {
+            runCatching { options.close() }
+            throw error
+        }
     }
 
     /**
@@ -223,6 +234,8 @@ class BeatTracker(
         synchronized(lock) {
             runCatching { session?.close() }
             session = null
+            runCatching { sessionOptions?.close() }
+            sessionOptions = null
             sessionThreads = 0
         }
     }
