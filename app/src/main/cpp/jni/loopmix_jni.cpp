@@ -39,7 +39,10 @@ JNIEXPORT jlong JNICALL
 Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeCreate(JNIEnv*, jclass, jint sampleRate) {
   try {
     return reinterpret_cast<jlong>(new (std::nothrow) Renderer(sampleRate));
-  } catch (const std::bad_alloc&) {
+  } catch (...) {
+    // Not only allocation: each deck's stretcher seeds itself from
+    // std::random_device, which can throw. No exception may leave JNI; a zero
+    // handle makes the session fall back to an ordinary blend.
     return 0;
   }
 }
