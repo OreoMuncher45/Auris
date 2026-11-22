@@ -3226,6 +3226,9 @@ object AppSettings {
         "downloaded_collections",
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
+        // Whether this install's old Automix store has been cleared: a backup
+        // from before the move would otherwise run it again over the new one.
+        com.music.bitchord.playback.smart.AutomixMigration.KEY_DONE,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
