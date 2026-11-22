@@ -4989,6 +4989,9 @@ internal fun BitChordApp(
                             },
                             controlsLocked = controlsLocked,
                             onBlockedControl = showHostOnlyNotice,
+                            // Still in the tree under the full player: no motion
+                            // there for a tap nobody can see.
+                            animationsActive = !showNowPlaying,
                             dock = activeDock,
                             pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                         )
@@ -5045,6 +5048,7 @@ internal fun BitChordApp(
                                     controlsLocked = controlsLocked,
                                     onBlockedControl = showHostOnlyNotice,
                                     dock = activeDock,
+                                    animationsActive = !showNowPlaying,
                                     pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
@@ -8688,6 +8692,7 @@ private fun AppGlassNav(
     onBlockedControl: () -> Unit,
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
+    animationsActive: Boolean,
 ) {
     if (useFoldingNav) {
         GlassFoldingNavBar(
@@ -8708,6 +8713,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     } else {
@@ -8727,6 +8733,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     }

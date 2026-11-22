@@ -833,6 +833,8 @@ internal fun TransportRow(
      * so the caller widens it there.
      */
     spacing: Dp = TRANSPORT_SPACING,
+    /** False where the row is on screen but not being looked at; the glyphs then swap without motion. */
+    animationsActive: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     // The play glyph is back at the size it had before the transport was
@@ -854,6 +856,15 @@ internal fun TransportRow(
     val playSize = 30.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
+    // Reduced motion swaps the glyphs outright, as they always did.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val previousMotion = rememberPlayerSkipMotion(active = animationsActive, reduceMotion = reduceAnimation)
+    val nextMotion = rememberPlayerSkipMotion(active = animationsActive, reduceMotion = reduceAnimation)
+    val playPauseMotion = rememberExpandedPlayPauseMotion(
+        isPlaying = isPlaying,
+        active = animationsActive && !isLoading,
+        reduceMotion = reduceAnimation,
+    )
     Row(
         // The gap that puts the three buttons' centres 263px apart on a
         // 1080px screen, as the reference does: the boxes are 53dp and 92dp,
@@ -873,6 +884,7 @@ internal fun TransportRow(
             onClick = onPrevious,
             enabled = previousEnabled,
             haptic = Haptic.SkipPrevious,
+            skipMotion = previousMotion,
         )
         if (isLoading) {
             // Same footprint as the play/pause target — a smaller box here
@@ -893,6 +905,7 @@ internal fun TransportRow(
                 smoothness = smoothness,
                 onClick = onPlayPause,
                 haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
+                playPauseMotion = playPauseMotion,
             )
         }
         TransportGlyph(
@@ -905,6 +918,7 @@ internal fun TransportRow(
             onClick = onNext,
             enabled = nextEnabled,
             haptic = Haptic.SkipNext,
+            skipMotion = nextMotion,
         )
     }
 }
@@ -1248,8 +1262,13 @@ private fun TransportGlyph(
     heightScale: Float = 1f,
     /** Corner softness for [shape]; ignored by icon glyphs. */
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
+    /** The conveyor for a [TransportShape.NEXT] / [TransportShape.PREVIOUS] glyph. */
+    skipMotion: PlayerSkipMotion? = null,
+    /** The shrink-and-blur hand-off for the play/pause glyph. */
+    playPauseMotion: ExpandedPlayPauseMotion? = null,
 ) {
     val haptics = rememberHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
     // The ink, like every other mark on the screen, unless the listener pinned
     // an accent colour for the transport.
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
@@ -1258,15 +1277,40 @@ private fun TransportGlyph(
         targetValue = if (enabled) 1f else 0.3f,
         label = "transportAlpha",
     )
+    val tint = ink.copy(alpha = alpha)
     Box(
         modifier = Modifier
             .size(touchSize)
+            // Draw-only: the press disc paints behind the glyph and may reach
+            // a little past the touch box, which itself does not change.
+            .then(
+                when {
+                    skipMotion != null -> Modifier.playerSkipPressCircle(
+                        motion = skipMotion,
+                        interactionSource = interactionSource,
+                        enabled = enabled,
+                        tint = tint,
+                        glyphSize = size,
+                        diameter = PLAYER_PRESS_CIRCLE_DIAMETER,
+                    )
+                    playPauseMotion != null -> Modifier.expandedPlayPausePressCircle(
+                        motion = playPauseMotion,
+                        interactionSource = interactionSource,
+                        tint = tint,
+                        glyphSize = size,
+                        diameter = PLAYER_PRESS_CIRCLE_DIAMETER,
+                    )
+                    else -> Modifier
+                },
+            )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 enabled = enabled,
             ) {
                 haptics.play(haptic)
+                skipMotion?.onTap()
+                playPauseMotion?.onTap()
                 onClick()
             },
         contentAlignment = Alignment.Center,
@@ -1275,81 +1319,42 @@ private fun TransportGlyph(
             .size(size)
             .then(if (heightScale != 1f) Modifier.graphicsLayer { scaleY = heightScale } else Modifier)
         when {
-            shape != null -> {
-                // The play and pause glyphs are two different shapes, and this
-                // is the button people press most. A hard swap between a
-                // triangle and two bars reads as a glitch; one handing over to
-                // the other, each growing into its place, reads as the same
-                // button changing its mind.
-                if (shape == TransportShape.PLAY || shape == TransportShape.PAUSE) {
-                    val pause by animateFloatAsState(
-                        targetValue = if (shape == TransportShape.PAUSE) 1f else 0f,
-                        animationSpec = tween(
-                            durationMillis = 220,
-                            easing = FastOutSlowInEasing,
-                        ),
-                        label = "transportShape",
-                    )
-                    Box(
-                        modifier = glyphModifier.clearAndSetSemantics {
-                            this.contentDescription = contentDescription
-                        },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        TransportShapeGlyph(
-                            shape = TransportShape.PLAY,
-                            tint = ink.copy(alpha = alpha),
-                            contentDescription = null,
-                            smoothness = smoothness,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    // The outgoing glyph grows a little as it
-                                    // goes, the incoming one shrinks into
-                                    // place: the same movement in opposite
-                                    // directions, which is what makes the two
-                                    // read as one thing changing rather than
-                                    // one thing being replaced.
-                                    val s = 1f + 0.14f * pause
-                                    scaleX = s
-                                    scaleY = s
-                                    this.alpha = 1f - pause
-                                },
-                        )
-                        TransportShapeGlyph(
-                            shape = TransportShape.PAUSE,
-                            tint = ink.copy(alpha = alpha),
-                            contentDescription = null,
-                            smoothness = smoothness,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val s = 0.86f + 0.14f * pause
-                                    scaleX = s
-                                    scaleY = s
-                                    this.alpha = pause
-                                },
-                        )
-                    }
-                } else {
-                    TransportShapeGlyph(
-                        shape = shape,
-                        tint = ink.copy(alpha = alpha),
-                        contentDescription = contentDescription,
-                        smoothness = smoothness,
-                        modifier = glyphModifier,
-                    )
-                }
-            }
+            playPauseMotion != null -> ExpandedPlayPauseGlyph(
+                motion = playPauseMotion,
+                interactionSource = interactionSource,
+                contentDescription = contentDescription,
+                tint = tint,
+                smoothness = smoothness,
+                modifier = glyphModifier,
+            )
+            skipMotion != null && (shape == TransportShape.NEXT || shape == TransportShape.PREVIOUS) ->
+                TransportSkipGlyph(
+                    motion = skipMotion,
+                    previous = shape == TransportShape.PREVIOUS,
+                    contentDescription = contentDescription,
+                    tint = tint,
+                    smoothness = smoothness,
+                    modifier = glyphModifier,
+                )
+            shape != null -> TransportShapeGlyph(
+                shape = shape,
+                tint = tint,
+                contentDescription = contentDescription,
+                smoothness = smoothness,
+                modifier = glyphModifier,
+            )
             icon != null -> Icon(
                 painter = icon.painter(),
                 contentDescription = contentDescription,
-                tint = ink.copy(alpha = alpha),
+                tint = tint,
                 modifier = glyphModifier,
             )
         }
     }
 }
+
+/** Draw-only diameter shared by the full player's transport press discs; hit targets stay unchanged. */
+private val PLAYER_PRESS_CIRCLE_DIAMETER = 60.dp
 
 /**
  * The skip glyphs' width and touch box, beside the larger play button, and

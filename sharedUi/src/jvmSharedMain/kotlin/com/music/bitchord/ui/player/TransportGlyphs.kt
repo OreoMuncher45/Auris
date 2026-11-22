@@ -128,6 +128,31 @@ private fun maxCorner(shape: TransportShape): Float = when (shape) {
 
 /** Two solid arrows, the second offset; [mirrored] points them left. */
 private fun Path.appendSkipPair(radius: Float, unit: Float, mirrored: Boolean) {
+    val (back, front) = skipArrowPoints(mirrored)
+    appendRoundedPolygon(back, radius, unit)
+    appendRoundedPolygon(front, radius, unit)
+}
+
+/**
+ * The skip pair's two arrowheads as separate contours, exactly as
+ * [TransportShapeGlyph] draws them in a [side]-wide square: the one the pair
+ * points away from first (the back), then the leading one (the front). For the
+ * skip motion, which moves and scales them apart; built once per size.
+ */
+internal fun transportSkipArrowPaths(side: Float, smoothness: Float, mirrored: Boolean): Pair<Path, Path> {
+    val unit = side / 24f
+    val shape = if (mirrored) TransportShape.PREVIOUS else TransportShape.NEXT
+    val softness = smoothness.coerceIn(0f, 1f)
+    val corner = (0.15f + (maxCorner(shape) - 0.15f) * softness) * unit
+    val (back, front) = skipArrowPoints(mirrored)
+    return Pair(
+        Path().apply { appendRoundedPolygon(back, corner, unit) },
+        Path().apply { appendRoundedPolygon(front, corner, unit) },
+    )
+}
+
+/** Back arrowhead, then front, on the 24-unit grid; [mirrored] points them left. */
+private fun skipArrowPoints(mirrored: Boolean): Pair<List<Offset>, List<Offset>> {
     val first = listOf(
         Offset(2.0f, 4.9f),
         Offset(11.5f, 12f),
@@ -143,8 +168,7 @@ private fun Path.appendSkipPair(radius: Float, unit: Float, mirrored: Boolean) {
     } else {
         points.map { Offset(24f - it.x, it.y) }.reversed()
     }
-    appendRoundedPolygon(mirror(first), radius, unit)
-    appendRoundedPolygon(mirror(second), radius, unit)
+    return Pair(mirror(first), mirror(second))
 }
 
 /**
