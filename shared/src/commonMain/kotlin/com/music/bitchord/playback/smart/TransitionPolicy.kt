@@ -74,7 +74,7 @@ const val MAX_INCOMING_RATE = 1.25
  * into the outgoing octave first): above 1 speeds it up.
  */
 fun incomingRateBetween(outgoingBpm: Double, incomingBpm: Double): Double {
-    if (outgoingBpm <= 0 || incomingBpm <= 0) return Double.NaN
+    if (!validBpm(outgoingBpm) || !validBpm(incomingBpm)) return Double.NaN
     return outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
 }
 
@@ -158,12 +158,15 @@ private val MIX_OUT_TYPE_SCORE = mapOf(
  fun clamp(value: Double, min: Double, max: Double): Double =
     if (value.isFinite()) max(min, min(max, value)) else min
 
+private fun validBpm(bpm: Double) = bpm.isFinite() && bpm > 0
+
 /**
  * Halves or doubles [incomingBpm] until it is as close as possible to
  * [outgoingBpm], the way a DJ counts a 63 BPM track against a 126 BPM one.
  */
 fun alignTempoOctave(outgoingBpm: Double, incomingBpm: Double): Double {
-    if (outgoingBpm <= 0 || incomingBpm <= 0) return incomingBpm
+    // Infinity halves or doubles to itself: folding it would never end.
+    if (!validBpm(outgoingBpm) || !validBpm(incomingBpm)) return incomingBpm
     var aligned = incomingBpm
     while (aligned / outgoingBpm > 1.5) aligned /= 2
     while (aligned / outgoingBpm < 0.67) aligned *= 2

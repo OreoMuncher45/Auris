@@ -184,6 +184,14 @@ class AdvancedAutomixPlannerTest {
     }
 
     @Test
+    fun anInfiniteTempoIsNeverReachableAndDoesNotHang() {
+        assertTrue(incomingRateBetween(120.0, Double.POSITIVE_INFINITY).isNaN())
+        assertTrue(incomingRateBetween(Double.POSITIVE_INFINITY, 120.0).isNaN())
+        assertTrue(!stretchReachable(120.0, Double.POSITIVE_INFINITY))
+        assertTrue(!stretchReachable(Double.NaN, 120.0))
+    }
+
+    @Test
     fun tempiPastTheStretchWindowAreNotBeatMatched() {
         val current = track("a", 120.0, "C major", vocal = 0.1)
         val next = track("b", 136.0, "C major", vocal = 0.1)
