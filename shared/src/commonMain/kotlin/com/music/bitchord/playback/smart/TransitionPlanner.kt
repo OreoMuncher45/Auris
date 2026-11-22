@@ -578,8 +578,7 @@ private fun phraseBarPlan(
     if (overlapSeconds <= 0) return null
 
     // Tempo handling mirrors the adaptive blend: fold the incoming tempo into
-    // the outgoing octave, stretch only what a speed-up can meet, and never slow
-    // the incoming deck under Advanced.
+    // the outgoing octave and stretch only what the stretch window can meet.
     val policy = assessTransitionTier(analysis, nextAnalysis, advanced)
     val beatmatched = policy.tier == TransitionTier.BEATMATCHED
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1733,14 +1732,14 @@ private fun mixPlan(
         analysis, nextAnalysis, traits, energy, filterVariant,
     )
     val handoffBpm = if (currentBpm > 0) currentBpm else nextBpm
-    // Advanced also blends any pair a speed-up matches on two trusted grids —
-    // the 5-10% apart that used to be left to a filter ride.
-    val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0) && (
+    // Advanced also blends any pair the stretch window matches on two trusted
+    // grids, slowed down or sped up — the 5-10% apart that used to be left to
+    // a filter ride.
+    val sameBeatBlend =
         currentBpm > 0 && nextBpm > 0 &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
             (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
             traits?.phaseLockable == true
-        )
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
             min(ARRANGEMENT_OVERLAP_BEATS * 60 / currentBpm, MAX_DISCARDED_MUSIC_SECONDS)

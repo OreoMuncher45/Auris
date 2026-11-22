@@ -179,8 +179,19 @@ class AdvancedAutomixPlannerTest {
         assertEquals(1.0, plan.outgoingPlaybackRate, "an audible deck must never change speed")
         // Inside the window (130: slowed by 7.7%) both modes slow the incoming song down.
         val near = track("c", 130.0, "C major", vocal = 0.1)
-        assertTrue(plan(current, near, advanced = false).incomingPlaybackRate < 1.0)
+        assertEquals(120.0 / 130.0, plan(current, near, advanced = false).incomingPlaybackRate, 1e-3)
+        assertEquals(120.0 / 130.0, plan(current, near, advanced = true).incomingPlaybackRate, 1e-3)
         assertEquals(1.0, plan(current, near, advanced = true).outgoingPlaybackRate)
+    }
+
+    @Test
+    fun aSlowdownInsideTheWindowIsBlendedNotFiltered() {
+        // No trusted keys, so no phrase switch: the adaptive plan takes the pair.
+        val current = track("a", 120.0, "", vocal = 0.1)
+        val next = track("b", 130.0, "", vocal = 0.1)
+        val plan = plan(current, next, advanced = true)
+        assertEquals(120.0 / 130.0, plan.incomingPlaybackRate, 1e-3)
+        assertEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle, "a reachable slowdown should beat-match")
     }
 
     @Test
