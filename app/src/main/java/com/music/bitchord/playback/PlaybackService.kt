@@ -593,6 +593,13 @@ class PlaybackService : MediaLibraryService() {
     private var autoContinuationJob: Job? = null
 
     /**
+     * Media ids that job has appended. A station request compares the queue
+     * without them, so a folder page landing during its lookup reads as the
+     * same queue rather than a user edit. Main thread only.
+     */
+    private val autoContinuationAdded = HashSet<String>()
+
+    /**
      * [songs] as Auto rows whose ids name this very listing, so a tap plays
      * the folder from that row — see [AutoBrowseContexts].
      *
@@ -631,6 +638,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun followAutoBrowseContinuation(context: AutoBrowseContext) {
         autoContinuationJob?.cancel()
+        autoContinuationAdded.clear()
         val first = context.continuation ?: return
         val sourceId = context.source.id ?: return
         val installedOn = player ?: return
@@ -708,7 +716,10 @@ class PlaybackService : MediaLibraryService() {
                         playbackSourceId = sourceId,
                     ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
                 }
-            if (additions.isNotEmpty()) exoPlayer.addMediaItems(last + 1, additions)
+            if (additions.isNotEmpty()) {
+                additions.mapTo(autoContinuationAdded) { it.mediaId }
+                exoPlayer.addMediaItems(last + 1, additions)
+            }
         }
     }
 
@@ -2249,8 +2260,10 @@ class PlaybackService : MediaLibraryService() {
                 .map { activePlayer.getMediaItemAt(it) }
                 .filterNot { it.fromAutoplay }
                 .map { it.mediaId }
+            // A folder page appended meanwhile is not the driver's edit.
             if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId ||
-                activeManualQueue != originalManualQueue
+                activeManualQueue.filterNot { it in autoContinuationAdded } !=
+                originalManualQueue.filterNot { it in autoContinuationAdded }
             ) {
                 return@launch
             }
@@ -7378,6 +7391,7 @@ class PlaybackService : MediaLibraryService() {
         // it came from: a pending page of that folder would land behind it.
         autoContinuationJob?.cancel()
         autoContinuationJob = null
+        autoContinuationAdded.clear()
         autoplaySeed = null
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
