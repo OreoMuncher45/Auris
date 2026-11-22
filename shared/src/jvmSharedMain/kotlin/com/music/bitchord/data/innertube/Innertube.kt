@@ -110,9 +110,16 @@ object Innertube {
 
     private const val TAG = "BitChord"
 
+    /**
+     * Guards every write to the state [listener] is built from (cookie, scope,
+     * adopted identity, channel override) together with the rebuild, so a
+     * rebuild can never publish from a read another thread has since replaced.
+     */
+    private val identityLock = Any()
+
     /** Session cookie captured by the login WebView; null = browse as guest. */
     var cookie: String? = null
-        set(value) {
+        set(value) = synchronized(identityLock) {
             if (field != value) {
                 // Both belong to the session that just left. A scope kept across
                 // a sign-in would credit the new account's plays to the old one,
@@ -141,17 +148,32 @@ object Innertube {
     var listener: String? = null
         private set
 
-    private fun refreshListener() {
+    /**
+     * Bumped each time [listener] changes. Unlike the listener itself it tells
+     * an A→B→A switch apart from no switch at all, so an answer requested
+     * before the change is never kept as the current listener's.
+     */
+    @Volatile
+    var listenerGeneration: Long = 0L
+        private set
+
+    private fun refreshListener() = synchronized(identityLock) {
         val session = cookie
-        listener = session?.let {
+        val fresh = session?.let {
             val channel = channelOverride
             when {
-                channel != null -> "${channel.pageId}/${channel.dataSyncId}/${channel.authUser}|$it"
+                // The account index requests actually send: the scope's when
+                // the channel doesn't name one.
+                channel != null -> "${channel.pageId}/${channel.dataSyncId}/${authUserFor(scope)}|$it"
                 // A scope taken from a signed-in page can name another account
                 // under the same cookie; requests then go out as that one.
                 adoptedIdentity != null -> "$adoptedIdentity|$it"
                 else -> it
             }
+        }
+        if (fresh != listener) {
+            listener = fresh
+            listenerGeneration++
         }
     }
 
@@ -309,12 +331,14 @@ object Innertube {
      * default. Takes effect on the next request — nothing is cached from it.
      */
     fun selectChannel(pageId: String?, dataSyncId: String?, authUser: String? = null) {
-        channelOverride = if (pageId == null && dataSyncId == null) {
-            null
-        } else {
-            ChannelSelection(pageId, dataSyncId, authUser)
+        synchronized(identityLock) {
+            channelOverride = if (pageId == null && dataSyncId == null) {
+                null
+            } else {
+                ChannelSelection(pageId, dataSyncId, authUser)
+            }
+            refreshListener()
         }
-        refreshListener()
         Log.d(
             TAG,
             "acting as channel pageId=${pageId ?: "none"} authUser=${authUser ?: "as-is"} " +
@@ -341,6 +365,17 @@ object Innertube {
      * cannot tie to the session is answered with 401 on every request.
      */
     fun adoptSessionScope(
+        pageId: String?,
+        dataSyncId: String?,
+        authUser: String?,
+        visitorData: String?,
+        clientVersion: String?,
+        loggedIn: Boolean,
+    ) {
+        synchronized(identityLock) { adoptSessionScopeLocked(pageId, dataSyncId, authUser, visitorData, clientVersion, loggedIn) }
+    }
+
+    private fun adoptSessionScopeLocked(
         pageId: String?,
         dataSyncId: String?,
         authUser: String?,
@@ -423,11 +458,17 @@ object Innertube {
                     // flight. Never install the old cookie's answer under the
                     // new one: that is a guaranteed 401 and, worse, can credit
                     // a play to the profile that just left.
-                    if (cookie != session) {
+                    val installed = synchronized(identityLock) {
+                        if (cookie != session) return@synchronized false
+                        scope = fresh
+                        // Its account index can be what the listener names.
+                        refreshListener()
+                        true
+                    }
+                    if (!installed) {
                         Log.d(TAG, "discarding a session scope from an account that is no longer active")
                         return@let
                     }
-                    scope = fresh
                     channelOverride?.let { selected ->
                         if (selected.pageId != fresh.pageId || selected.dataSyncId != fresh.dataSyncId) {
                             Log.w(TAG, "server shell identity differs from selected profile; retaining override")
@@ -448,10 +489,12 @@ object Innertube {
     suspend fun refreshSessionScope() {
         if (cookie == null) return
         scopeLock.withLock {
-            scope = null
-            adoptedIdentity = null
+            synchronized(identityLock) {
+                scope = null
+                adoptedIdentity = null
+                refreshListener()
+            }
         }
-        refreshListener()
         ensureSessionScope()
     }
 

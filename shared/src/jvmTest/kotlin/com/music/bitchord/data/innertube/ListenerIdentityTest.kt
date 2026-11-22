@@ -43,6 +43,31 @@ class ListenerIdentityTest {
     }
 
     @Test
+    fun `a chosen channel without its own account index follows the scope's`() {
+        Innertube.cookie = "SID=one"
+        Innertube.selectChannel(pageId = "brand", dataSyncId = "brand||owner")
+        Innertube.adoptSessionScope("brand", "brand||owner", "0", null, null, loggedIn = true)
+        val first = Innertube.listener
+        Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
+        assertNotEquals(first, Innertube.listener)
+    }
+
+    @Test
+    fun `switching away and back is a new generation though the listener is the same`() {
+        Innertube.cookie = "SID=one"
+        val listener = Innertube.listener
+        val generation = Innertube.listenerGeneration
+        Innertube.cookie = "SID=two"
+        Innertube.cookie = "SID=one"
+        assertEquals(listener, Innertube.listener)
+        assertNotEquals(generation, Innertube.listenerGeneration)
+        // Nothing changed: same generation.
+        val now = Innertube.listenerGeneration
+        Innertube.selectChannel(pageId = null, dataSyncId = null)
+        assertEquals(now, Innertube.listenerGeneration)
+    }
+
+    @Test
     fun `a page scope for another account under one cookie is a different listener`() {
         Innertube.cookie = "SID=one"
         val shell = Innertube.listener
