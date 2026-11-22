@@ -278,6 +278,34 @@ class FloatDspChainTest {
         assertTrue("The limiter should turn the over down, not mute it (got $peak)", peak > 0.8f)
     }
 
+    @Test
+    fun `loudness limiter catches a loop mix's summed overs when normalization is idle`() {
+        val chain = DspChain()
+        chain.configure(sampleRate, 2)
+        chain.flush()
+
+        val frames = 512
+        fun block() = AudioBlock(channelCount = 2, capacityFrames = frames).also { block ->
+            // Two decks' peaks added together, past full scale.
+            for (i in 0 until frames * 2) block.samples[i] = 1.4f * sin(2.0 * PI * 100.0 * (i / 2) / sampleRate).toFloat()
+            block.reset(frames)
+        }
+        fun peakOf(block: AudioBlock): Float {
+            var peak = 0f
+            for (i in 0 until frames * 2) peak = maxOf(peak, abs(block.samples[i]))
+            return peak
+        }
+
+        val plain = block()
+        chain.process(plain)
+        assertTrue("Without a mix the parked limiter leaves the block alone", peakOf(plain) > 1.3f)
+
+        chain.mixing = true
+        val mixed = block()
+        chain.process(mixed)
+        assertTrue("A loop-mix block must stay under the limiter ceiling (got ${peakOf(mixed)})", peakOf(mixed) <= 0.985f + 1e-5f)
+    }
+
     // ── TransitionFilterProcessor Float32 Tests ─────────────────────────────
 
     @Test

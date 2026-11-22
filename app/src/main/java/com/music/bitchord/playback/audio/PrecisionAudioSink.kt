@@ -902,6 +902,7 @@ class PrecisionAudioSink(
 
             // Process normalized Float32 samples through custom DSP chain
             if (!skipDsp) {
+                dspChain.mixing = outArm != null && loopRendering
                 dspChain.process(audioBlock)
             } else if (userGain < 0.999f) {
                 scaleBlock(audioBlock, userGain)
@@ -1095,6 +1096,7 @@ class PrecisionAudioSink(
             audioBlock.reset(frames)
             arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)
             loopNextFrame += frames
+            dspChain.mixing = true
             dspChain.process(audioBlock)
             outputByteBuffer.clear()
             PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)

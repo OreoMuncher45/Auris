@@ -121,9 +121,16 @@ class DspChain(
         // stays engaged for every widened block even when normalization has
         // nothing to do. Taken from the block itself rather than re-reading
         // the switch, which can flip while the stages in between run.
-        loudness.holdLimiter = widened
+        loudness.holdLimiter = widened || mixing
         loudness.process(block)
     }
+
+    /**
+     * Set by the sink for each block of an Automix loop mix: the renderer sums
+     * two songs with no peak limit of its own, so the limiter has to stay on
+     * for those blocks too. Audio thread only.
+     */
+    var mixing = false
 
     @Suppress("DEPRECATION")
     override fun flush() {
