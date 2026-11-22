@@ -1276,6 +1276,8 @@ class CrossfadeController(
         }
 
         lastSmartPlan = plan
+        lastSmartPlanFrom = currentItem.mediaId
+        lastSmartPlanTo = nextItem.mediaId
         publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
 
         // The loop mix first: a pair it can do never reaches the blend below.
@@ -1467,7 +1469,11 @@ class CrossfadeController(
             ?: TrackAnalysisState.WAITING
         // The plan's own size and style, and only while it is the plan for
         // this pair: a blocked plan has no overlap to describe.
-        val plan = lastSmartPlan?.takeIf { !it.blocked && AppSettings.smartFadeEnabled.value }
+        val plan = lastSmartPlan?.takeIf {
+            !it.blocked && AppSettings.smartFadeEnabled.value &&
+                currentItem != null && nextItem != null &&
+                currentItem.mediaId == lastSmartPlanFrom && nextItem.mediaId == lastSmartPlanTo
+        }
         val state = SmartAnalysis(
             current = currentState,
             next = nextState,
@@ -3161,6 +3167,10 @@ class CrossfadeController(
 
     /** The last plan the smart path made, for the stats line's planned size and style. */
     private var lastSmartPlan: TransitionPlan? = null
+
+    /** The pair [lastSmartPlan] was made for; its size and style describe nothing else. */
+    private var lastSmartPlanFrom: String? = null
+    private var lastSmartPlanTo: String? = null
 
     // ---- Lifecycle of a transition -----------------------------------------
 
