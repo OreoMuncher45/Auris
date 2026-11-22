@@ -4775,13 +4775,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
             page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
+        // The page stays on the stack across a profile or account switch, so a
+        // walk (and its retries) still running then must neither ask for the
+        // new listener nor publish into its page or Liked Music cache.
+        val listener = listenerKey()
         viewModelScope.launch {
             followContinuations(
                 token = token,
                 // One dropped request used to end the walk for good, leaving a
                 // long playlist cut short on screen and in its menu.
                 fetch = { next ->
-                    retryingOrNull(FILL_IN_RETRIES_MS) { YtMusicRepository.moreSongs(next).getOrNull() }
+                    retryingOrNull(FILL_IN_RETRIES_MS) {
+                        if (listenerKey() != listener) return@retryingOrNull null
+                        YtMusicRepository.moreSongs(next).getOrNull()
+                    }
                 },
                 nextToken = { fetched ->
                     // A page with nothing new on it means the feed has looped
@@ -4797,6 +4804,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // this no longer adds to the time the full list takes.
                 holdFirstMillis = 150,
             ) { batch ->
+                if (listenerKey() != listener) return@followContinuations false
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
                 if (index < 0) return@followContinuations false
