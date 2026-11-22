@@ -1,3 +1,4 @@
+// IMA Android Auto + Spotify + Voice Search PlaybackService
 package com.music.bitchord.playback
 
 import android.app.PendingIntent
@@ -219,6 +220,13 @@ const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QU
 
 /** Session command behind the player menu's "Upgrade quality". */
 const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
+
+/** Session command used by GeminiMediaRouterActivity to forward voice searches and Spotify URIs. */
+const val ACTION_PLAY_EXTERNAL_REQUEST = "com.music.bitchord.action.PLAY_EXTERNAL_REQUEST"
+const val EXTRA_EXTERNAL_QUERY = "bitchord.external.query"
+const val EXTRA_EXTERNAL_URI = "bitchord.external.uri"
+const val EXTRA_EXTERNAL_FOCUS = "bitchord.external.focus"
+const val EXTRA_EXTERNAL_PLAYLIST = "bitchord.external.playlist"
 
 /**
  * App-side gate for explicit quality retries.
@@ -1006,6 +1014,7 @@ class PlaybackService : MediaLibraryService() {
     private val swapVersionCommand = SessionCommand(ACTION_SWAP_VERSION, Bundle.EMPTY)
     private val reorderQueueCommand = SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY)
     private val queueDragCommand = SessionCommand(ACTION_QUEUE_DRAG, Bundle.EMPTY)
+    private val playExternalRequestCommand = SessionCommand(ACTION_PLAY_EXTERNAL_REQUEST, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
     private var stationActionJob: Job? = null
@@ -5330,6 +5339,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(swapVersionCommand)
                 .add(reorderQueueCommand)
                 .add(queueDragCommand)
+                .add(playExternalRequestCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
@@ -5378,6 +5388,7 @@ class PlaybackService : MediaLibraryService() {
                         partySync?.endQueueDrag()
                     }
                 }
+                ACTION_PLAY_EXTERNAL_REQUEST -> handleExternalPlayRequest(args)
                 ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
                     toggleFavoriteFromNotification(it)
                 }
@@ -6114,69 +6125,31 @@ class PlaybackService : MediaLibraryService() {
             val resolved = mutableListOf<MediaItem>()
             for (item in mediaItems) {
                 val id = item.mediaId
-                val searchQuery = item.requestMetadata.searchQuery
+                val reqExtras = item.requestMetadata.extras
+                val rawSearchQuery = item.requestMetadata.searchQuery
+                val structuredQuery = buildQueryFromExtras(reqExtras)
+                val effectiveQuery = rawSearchQuery?.takeIf { it.isNotBlank() } ?: structuredQuery
+                val spotifyUriRef = extractSpotifyUriRef(id, item.requestMetadata.mediaUri)
                 when {
-                    !searchQuery.isNullOrBlank() -> {
-                        val q = searchQuery.trim()
-                        val matchedFromSpotify = mutableListOf<MediaItem>()
-                        if (AppSettings.spotifySpdcToken.value.isNotBlank()) {
-                            if (q.contains("daylist", ignoreCase = true)) {
-                                val dlTracks = loadSpotifyPlaylistTracks(SPOTIFY_DAYLIST_ID).take(10)
-                                matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(dlTracks, 2_500L))
-                            } else {
-                                val (spTracks, spPlaylists, _) = searchSpotify(q)
-                                val wantsPlaylist = q.contains("playlist", ignoreCase = true) ||
-                                    q.contains("mix", ignoreCase = true)
-                                if (wantsPlaylist && spPlaylists.isNotEmpty()) {
-                                    val plTracks = loadSpotifyPlaylistTracks(spPlaylists.first().id).take(10)
-                                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(plTracks, 2_500L))
-                                } else if (spTracks.isNotEmpty()) {
-                                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(spTracks.take(6), 3_000L))
-                                } else if (spPlaylists.isNotEmpty()) {
-                                    val plTracks = loadSpotifyPlaylistTracks(spPlaylists.first().id).take(8)
-                                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(plTracks, 2_500L))
-                                }
-                            }
-                        }
-                        if (matchedFromSpotify.isNotEmpty()) {
-                            resolved.addAll(matchedFromSpotify)
-                        } else {
-                            val cached = searchResults[searchQuery]
-                            val songs = if (!cached.isNullOrEmpty()) {
-                                cached
-                            } else {
-                                try {
-                                    withTimeoutOrNull(3000L) {
-                                        YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
-                                            ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
-                                    } ?: emptyList()
-                                } catch (_: Exception) {
-                                    emptyList()
-                                }
-                            }
-                            songs.forEach { songCache[it.videoId] = it }
-                            if (songs.isNotEmpty()) {
-                                resolved.addAll(songs.map { it.toMediaItem() })
-                            }
+                    spotifyUriRef != null -> {
+                        val itemsFromUri = resolveSpotifyUriRef(spotifyUriRef.first, spotifyUriRef.second)
+                        if (itemsFromUri.isNotEmpty()) {
+                            resolved.addAll(itemsFromUri)
                         }
                     }
-                    extractSpotifyUriRef(id, item.requestMetadata.mediaUri) != null -> {
-                        val (kind, spId) = extractSpotifyUriRef(id, item.requestMetadata.mediaUri)!!
-                        when (kind) {
-                            "track" -> {
-                                val track = fetchSpotifyTrackById(spId)
-                                if (track != null) {
-                                    resolved.addAll(matchSpotifyTracksToMediaItems(listOf(track), 5_000L))
-                                }
-                            }
-                            "playlist" -> {
-                                val tracks = loadSpotifyPlaylistTracks(spId).take(10)
-                                resolved.addAll(matchSpotifyTracksToMediaItems(tracks, 2_500L))
-                            }
-                            "album" -> {
-                                val tracks = loadSpotifyAlbumTracks(spId).take(10)
-                                resolved.addAll(matchSpotifyTracksToMediaItems(tracks, 2_500L))
-                            }
+                    !effectiveQuery.isNullOrBlank() -> {
+                        val focus = reqExtras?.getString("android.intent.extra.focus")
+                        val playlistHint = reqExtras?.getString("android.intent.extra.playlist")
+                        val itemsFromQuery = resolveVoiceSearchQuery(effectiveQuery, focus, playlistHint)
+                        if (itemsFromQuery.isNotEmpty()) {
+                            resolved.addAll(itemsFromQuery)
+                        }
+                    }
+                    rawSearchQuery != null && rawSearchQuery.isBlank() -> {
+                        // Empty voice query ("Play music on Spotify / IMA") -> start Daylist or Flow
+                        val fallbackItems = resolveDefaultVoicePlayback()
+                        if (fallbackItems.isNotEmpty()) {
+                            resolved.addAll(fallbackItems)
                         }
                     }
                     id == MEDIA_FLOW_PLAY_ID -> {
@@ -6475,6 +6448,143 @@ class PlaybackService : MediaLibraryService() {
         return out
     }
 
+    private fun handleExternalPlayRequest(args: Bundle) {
+        val rawUri = args.getString(EXTRA_EXTERNAL_URI)?.takeIf { it.isNotBlank() }
+        val rawQuery = args.getString(EXTRA_EXTERNAL_QUERY)?.takeIf { it.isNotBlank() }
+        val focus = args.getString(EXTRA_EXTERNAL_FOCUS)?.takeIf { it.isNotBlank() }
+        val playlistHint = args.getString(EXTRA_EXTERNAL_PLAYLIST)?.takeIf { it.isNotBlank() }
+        scope.launch(Dispatchers.IO) {
+            val parsedUri = rawUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            val ref = extractSpotifyUriRef(rawUri.orEmpty(), parsedUri)
+            val resolvedItems: List<MediaItem> = when {
+                ref != null -> resolveSpotifyUriRef(ref.first, ref.second)
+                !rawQuery.isNullOrBlank() -> resolveVoiceSearchQuery(rawQuery, focus, playlistHint)
+                !playlistHint.isNullOrBlank() -> resolveVoiceSearchQuery(playlistHint, focus, playlistHint)
+                else -> resolveDefaultVoicePlayback()
+            }
+            withContext(Dispatchers.Main) {
+                val exoPlayer = player ?: return@withContext
+                if (resolvedItems.isNotEmpty()) {
+                    exoPlayer.setMediaItems(resolvedItems, 0, 0L)
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+                    val firstTitle = resolvedItems.first().mediaMetadata.title?.toString()
+                    if (!firstTitle.isNullOrBlank()) {
+                        Toast.makeText(applicationContext, "IMA: Playing $firstTitle", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    val label = rawQuery ?: playlistHint ?: rawUri ?: "music"
+                    Toast.makeText(applicationContext, "IMA: No results for $label", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun buildQueryFromExtras(extras: Bundle?): String? {
+        if (extras == null) return null
+        val direct = extras.getString("query")?.takeIf { it.isNotBlank() }
+        if (direct != null) return direct.trim()
+        val playlist = extras.getString("android.intent.extra.playlist")?.takeIf { it.isNotBlank() }
+        val title = extras.getString("android.intent.extra.title")?.takeIf { it.isNotBlank() }
+        val artist = extras.getString("android.intent.extra.artist")?.takeIf { it.isNotBlank() }
+        val album = extras.getString("android.intent.extra.album")?.takeIf { it.isNotBlank() }
+        val genre = extras.getString("android.intent.extra.genre")?.takeIf { it.isNotBlank() }
+        return when {
+            playlist != null -> playlist.trim()
+            title != null && artist != null -> "$title $artist".trim()
+            title != null -> title.trim()
+            album != null && artist != null -> "$album $artist".trim()
+            album != null -> album.trim()
+            artist != null -> artist.trim()
+            genre != null -> genre.trim()
+            else -> null
+        }
+    }
+
+    private suspend fun resolveSpotifyUriRef(kind: String, spId: String): List<MediaItem> = when (kind) {
+        "track" -> {
+            val track = fetchSpotifyTrackById(spId)
+            if (track != null) matchSpotifyTracksToMediaItems(listOf(track), 5_000L) else emptyList()
+        }
+        "playlist" -> {
+            val tracks = loadSpotifyPlaylistTracks(spId).take(10)
+            matchSpotifyTracksToMediaItems(tracks, 2_500L)
+        }
+        "album" -> {
+            val tracks = loadSpotifyAlbumTracks(spId).take(10)
+            matchSpotifyTracksToMediaItems(tracks, 2_500L)
+        }
+        "search" -> resolveVoiceSearchQuery(spId, null, null)
+        else -> emptyList()
+    }
+
+    private suspend fun resolveDefaultVoicePlayback(): List<MediaItem> {
+        if (AppSettings.spotifySpdcToken.value.isNotBlank()) {
+            val dlTracks = loadSpotifyPlaylistTracks(SPOTIFY_DAYLIST_ID).take(10)
+            val matched = matchSpotifyTracksToMediaItems(dlTracks, 2_500L)
+            if (matched.isNotEmpty()) return matched
+        }
+        val flowSongs = com.music.bitchord.data.flow.FlowStore.readSnapshot()
+            ?.let { (songs, _) -> songs }
+            ?.takeIf { it.isNotEmpty() }
+            ?: cachedQuickPicksSongs()
+        flowSongs.forEach { songCache[it.videoId] = it }
+        return flowSongs.map { it.toMediaItem() }
+    }
+
+    private suspend fun resolveVoiceSearchQuery(
+        query: String,
+        focus: String?,
+        playlistHint: String?,
+    ): List<MediaItem> {
+        val q = query.trim()
+        if (q.isEmpty()) return resolveDefaultVoicePlayback()
+        val matchedFromSpotify = mutableListOf<MediaItem>()
+        if (AppSettings.spotifySpdcToken.value.isNotBlank()) {
+            if (q.contains("daylist", ignoreCase = true) || q.contains("day list", ignoreCase = true)) {
+                val dlTracks = loadSpotifyPlaylistTracks(SPOTIFY_DAYLIST_ID).take(10)
+                matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(dlTracks, 2_500L))
+            } else {
+                val (spTracks, spPlaylists, spAlbums) = searchSpotify(q)
+                val wantsPlaylist = !playlistHint.isNullOrBlank() ||
+                    focus == "vnd.android.cursor.item/playlist" ||
+                    q.contains("playlist", ignoreCase = true) ||
+                    q.contains("mix", ignoreCase = true)
+                val wantsAlbum = focus == "vnd.android.cursor.item/album"
+                if (wantsPlaylist && spPlaylists.isNotEmpty()) {
+                    val plTracks = loadSpotifyPlaylistTracks(spPlaylists.first().id).take(10)
+                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(plTracks, 2_500L))
+                } else if (wantsAlbum && spAlbums.isNotEmpty()) {
+                    val albTracks = loadSpotifyAlbumTracks(spAlbums.first().id).take(10)
+                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(albTracks, 2_500L))
+                } else if (spTracks.isNotEmpty()) {
+                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(spTracks.take(6), 3_000L))
+                } else if (spPlaylists.isNotEmpty()) {
+                    val plTracks = loadSpotifyPlaylistTracks(spPlaylists.first().id).take(8)
+                    matchedFromSpotify.addAll(matchSpotifyTracksToMediaItems(plTracks, 2_500L))
+                }
+            }
+        }
+        if (matchedFromSpotify.isNotEmpty()) {
+            return matchedFromSpotify
+        }
+        val cached = searchResults[q]
+        val songs = if (!cached.isNullOrEmpty()) {
+            cached
+        } else {
+            try {
+                withTimeoutOrNull(3_500L) {
+                    YtMusicRepository.search(q, SearchFilter.SONGS).getOrNull()
+                        ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
+                } ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        songs.forEach { songCache[it.videoId] = it }
+        return songs.map { it.toMediaItem() }
+    }
+
     private fun extractSpotifyUriRef(mediaId: String, mediaUri: Uri?): Pair<String, String>? {
         val candidates = listOfNotNull(mediaId.takeIf { it.isNotBlank() }, mediaUri?.toString())
         for (raw in candidates) {
@@ -6490,13 +6600,17 @@ class PlaybackService : MediaLibraryService() {
                 val id = raw.removePrefix("spotify:album:").substringBefore("?").trim()
                 if (id.isNotEmpty()) return "album" to id
             }
+            if (raw.startsWith("spotify:search:")) {
+                val q = Uri.decode(raw.removePrefix("spotify:search:").substringBefore("?")).trim()
+                if (q.isNotEmpty()) return "search" to q
+            }
             if (raw.contains("open.spotify.com/")) {
                 val u = runCatching { Uri.parse(raw) }.getOrNull() ?: continue
                 val segs = u.pathSegments.filterNot { it.startsWith("intl-") }
-                val idx = segs.indexOfFirst { it == "track" || it == "playlist" || it == "album" }
+                val idx = segs.indexOfFirst { it == "track" || it == "playlist" || it == "album" || it == "search" }
                 if (idx >= 0 && idx + 1 < segs.size) {
-                    val id = segs[idx + 1].trim()
-                    if (id.isNotEmpty()) return segs[idx] to id
+                    val value = Uri.decode(segs[idx + 1]).trim()
+                    if (value.isNotEmpty()) return segs[idx] to value
                 }
             }
         }

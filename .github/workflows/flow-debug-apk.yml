@@ -16,128 +16,325 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Configure IMA name, Spotify package ID, and voice intents
+      - name: Configure IMA name, com.ima.music package ID, and voice router
         run: |
           python3 - <<'PY'
           import pathlib, re
           import xml.etree.ElementTree as ET
 
-          root = pathlib.Path("app")
+          repo = pathlib.Path(".")
+          app = repo / "app"
           changed = []
 
-          # 1. Rename app_name to IMA in all strings.xml files
-          for xml in root.rglob("strings.xml"):
-              text = xml.read_text(encoding="utf-8")
+          # 1. Generate standalone GeminiMediaRouterActivity.kt so MainActivity.kt stays untouched
+          router_path = app / "src" / "main" / "java" / "com" / "music" / "bitchord" / "GeminiMediaRouterActivity.kt"
+          router_path.parent.mkdir(parents=True, exist_ok=True)
+          router_code = """package com.music.bitchord
+
+          import android.app.Activity
+          import android.app.SearchManager
+          import android.content.ComponentName
+          import android.content.Intent
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.MediaStore
+          import android.widget.Toast
+          import androidx.media3.common.util.UnstableApi
+          import androidx.media3.session.MediaController
+          import androidx.media3.session.SessionCommand
+          import androidx.media3.session.SessionToken
+          import com.google.common.util.concurrent.ListenableFuture
+          import com.music.bitchord.playback.ACTION_PLAY_EXTERNAL_REQUEST
+          import com.music.bitchord.playback.EXTRA_EXTERNAL_FOCUS
+          import com.music.bitchord.playback.EXTRA_EXTERNAL_PLAYLIST
+          import com.music.bitchord.playback.EXTRA_EXTERNAL_QUERY
+          import com.music.bitchord.playback.EXTRA_EXTERNAL_URI
+          import com.music.bitchord.playback.PlaybackService
+          import java.util.concurrent.Executor
+
+          @UnstableApi
+          class GeminiMediaRouterActivity : Activity() {
+
+              private val mainHandler = Handler(Looper.getMainLooper())
+              private var controllerFuture: ListenableFuture<MediaController>? = null
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  handleIncomingIntent(intent)
+              }
+
+              override fun onNewIntent(intent: Intent) {
+                  super.onNewIntent(intent)
+                  setIntent(intent)
+                  handleIncomingIntent(intent)
+              }
+
+              private fun handleIncomingIntent(incoming: Intent?) {
+                  if (incoming == null) {
+                      openMainAndFinish()
+                      return
+                  }
+                  val action = incoming.action.orEmpty()
+                  val dataUri = incoming.data?.toString()?.takeIf {
+                      it.startsWith("spotify:", ignoreCase = true) ||
+                          it.contains("open.spotify.com", ignoreCase = true)
+                  }
+                  val query = extractQuery(incoming)
+                  val focus = incoming.getStringExtra(MediaStore.EXTRA_MEDIA_FOCUS)
+                  val playlist = incoming.getStringExtra("android.intent.extra.playlist")
+
+                  val isVoiceOrSearch = action == MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH ||
+                      action == Intent.ACTION_SEARCH ||
+                      action == "com.google.android.gms.actions.SEARCH_ACTION"
+
+                  if (!isVoiceOrSearch && dataUri == null && query.isNullOrBlank()) {
+                      openMainAndFinish()
+                      return
+                  }
+
+                  val label = query ?: playlist ?: dataUri ?: "music"
+                  Toast.makeText(applicationContext, "IMA: Loading $label", Toast.LENGTH_SHORT).show()
+
+                  val args = Bundle().apply {
+                      if (!query.isNullOrBlank()) putString(EXTRA_EXTERNAL_QUERY, query)
+                      if (!dataUri.isNullOrBlank()) putString(EXTRA_EXTERNAL_URI, dataUri)
+                      if (!focus.isNullOrBlank()) putString(EXTRA_EXTERNAL_FOCUS, focus)
+                      if (!playlist.isNullOrBlank()) putString(EXTRA_EXTERNAL_PLAYLIST, playlist)
+                  }
+
+                  val token = SessionToken(
+                      applicationContext,
+                      ComponentName(applicationContext, PlaybackService::class.java),
+                  )
+                  val future = MediaController.Builder(applicationContext, token).buildAsync()
+                  controllerFuture = future
+
+                  val mainExecutor = Executor { runnable -> mainHandler.post(runnable) }
+                  future.addListener(
+                      {
+                          try {
+                              val controller = future.get()
+                              controller.sendCustomCommand(
+                                  SessionCommand(ACTION_PLAY_EXTERNAL_REQUEST, Bundle.EMPTY),
+                                  args,
+                              )
+                          } catch (_: Exception) {
+                              // Fall through to opening MainActivity even if controller binding failed
+                          }
+                          openMain()
+                          mainHandler.postDelayed(
+                              {
+                                  releaseController()
+                                  finish()
+                              },
+                              1_500L,
+                          )
+                      },
+                      mainExecutor,
+                  )
+              }
+
+              private fun extractQuery(incoming: Intent): String? {
+                  val direct = incoming.getStringExtra(SearchManager.QUERY)?.takeIf { it.isNotBlank() }
+                      ?: incoming.getStringExtra("query")?.takeIf { it.isNotBlank() }
+                  if (direct != null) return direct.trim()
+
+                  val playlist = incoming.getStringExtra("android.intent.extra.playlist")?.takeIf { it.isNotBlank() }
+                  val title = incoming.getStringExtra(MediaStore.EXTRA_MEDIA_TITLE)?.takeIf { it.isNotBlank() }
+                  val artist = incoming.getStringExtra(MediaStore.EXTRA_MEDIA_ARTIST)?.takeIf { it.isNotBlank() }
+                  val album = incoming.getStringExtra(MediaStore.EXTRA_MEDIA_ALBUM)?.takeIf { it.isNotBlank() }
+                  val genre = incoming.getStringExtra("android.intent.extra.genre")?.takeIf { it.isNotBlank() }
+
+                  return when {
+                      playlist != null -> playlist.trim()
+                      title != null && artist != null -> "$title $artist".trim()
+                      title != null -> title.trim()
+                      album != null && artist != null -> "$album $artist".trim()
+                      album != null -> album.trim()
+                      artist != null -> artist.trim()
+                      genre != null -> genre.trim()
+                      else -> null
+                  }
+              }
+
+              private fun openMain() {
+                  val launch = Intent(this, MainActivity::class.java).apply {
+                      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                  }
+                  startActivity(launch)
+              }
+
+              private fun openMainAndFinish() {
+                  openMain()
+                  finish()
+              }
+
+              private fun releaseController() {
+                  controllerFuture?.let {
+                      MediaController.releaseFuture(it)
+                      controllerFuture = null
+                  }
+              }
+
+              override fun onDestroy() {
+                  releaseController()
+                  super.onDestroy()
+              }
+          }
+          """
+          router_lines = [line[10:] if line.startswith("          ") else line for line in router_code.splitlines()]
+          router_path.write_text("\n".join(router_lines).lstrip("\n") + "\n", encoding="utf-8")
+          changed.append(str(router_path))
+
+          # 2. Patch app_name and BitChord Next label across ALL XML resource files
+          for xml in repo.rglob("*.xml"):
+              if "build" in xml.parts or ".gradle" in xml.parts:
+                  continue
+              if "res" not in xml.parts:
+                  continue
+              text = xml.read_text(encoding="utf-8", errors="ignore")
               updated = re.sub(
-                  r'(<string\b[^>]*\bname="app_name"[^>]*>)([^<]*)(</string>)',
+                  r'(<string\b[^>]*\bname="[^"]*app_name[^"]*"[^>]*>)([^<]*)(</string>)',
                   r'\1IMA\3',
                   text,
+              )
+              updated = re.sub(
+                  r'(<string\b[^>]*>)\s*BitChord Next\s*(</string>)',
+                  r'\1IMA\2',
+                  updated,
               )
               if updated != text:
                   xml.write_text(updated, encoding="utf-8")
                   changed.append(str(xml))
 
-          # 2. Set applicationId to com.spotify.music, strip suffixes, and set app_name to IMA in Gradle
-          for gradle in [root / "build.gradle.kts", root / "build.gradle"]:
+          # 3. Set applicationId = "com.ima.music", strip applicationIdSuffix, and force IMA app_name in Gradle
+          for gradle in [app / "build.gradle.kts", app / "build.gradle"]:
               if not gradle.exists():
                   continue
               text = gradle.read_text(encoding="utf-8")
               updated = text
 
-              # Set applicationId = "com.spotify.music" (keep namespace untouched!)
               updated = re.sub(
                   r'(applicationId\s*=\s*)"[^"]*"',
-                  r'\1"com.spotify.music"',
+                  r'\1"com.ima.music"',
                   updated,
               )
               updated = re.sub(
                   r'(applicationId\s+)"[^"]*"',
-                  r'\1"com.spotify.music"',
+                  r'\1"com.ima.music"',
                   updated,
               )
-
-              # Remove applicationIdSuffix so the APK package is strictly com.spotify.music
               updated = re.sub(
                   r'^[^\n]*applicationIdSuffix[^\n]*\n?',
                   '',
                   updated,
                   flags=re.MULTILINE,
               )
-
-              # Set app_name resValue / manifestPlaceholders to IMA
               updated = re.sub(
-                  r'resValue\(\s*"string"\s*,\s*"app_name"\s*,\s*"[^"]*"\s*\)',
+                  r'resValue\(\s*"string"\s*,\s*"[^"]*app_name[^"]*"\s*,\s*"[^"]*"\s*\)',
                   'resValue("string", "app_name", "IMA")',
                   updated,
               )
               updated = re.sub(
-                  r'resValue\s+"string"\s*,\s*"app_name"\s*,\s*"[^"]*"',
+                  r'resValue\s+"string"\s*,\s*"[^"]*app_name[^"]*"\s*,\s*"[^"]*"',
                   'resValue "string", "app_name", "IMA"',
                   updated,
               )
               updated = re.sub(
-                  r'(manifestPlaceholders\["appName"\]\s*=\s*)"[^"]*"',
+                  r'(manifestPlaceholders\[\s*"[^"]*(?:appName|appLabel|label)[^"]*"\s*\]\s*=\s*)"[^"]*"',
                   r'\1"IMA"',
                   updated,
+                  flags=re.IGNORECASE,
               )
               updated = updated.replace('"BitChord Next"', '"IMA"')
+              updated = updated.replace("'BitChord Next'", "'IMA'")
               updated = updated.replace('"Auris Dev"', '"IMA"')
 
               if updated != text:
                   gradle.write_text(updated, encoding="utf-8")
                   changed.append(str(gradle))
 
-          # 3. Update AndroidManifest.xml with voice search + Spotify deep link filters and safe provider authorities
-          manifest = root / "src" / "main" / "AndroidManifest.xml"
-          if manifest.exists():
+          # 4. Patch AndroidManifest.xml: IMA label, safe provider authorities, MediaBrowserService, and GeminiMediaRouterActivity
+          for manifest in app.rglob("AndroidManifest.xml"):
+              if "build" in manifest.parts:
+                  continue
               text = manifest.read_text(encoding="utf-8")
               updated = text
 
-              # Avoid FileProvider / ContentProvider authority conflicts with official Auris
+              updated = re.sub(
+                  r'(<application\b[^>]*\bandroid:label=)"[^"]*"',
+                  r'\1"IMA"',
+                  updated,
+                  flags=re.DOTALL,
+              )
+              updated = re.sub(
+                  r'(<activity\b[^>]*MainActivity[^>]*\bandroid:label=)"[^"]*"',
+                  r'\1"IMA"',
+                  updated,
+                  flags=re.DOTALL,
+              )
+              updated = updated.replace('android:label="BitChord Next"', 'android:label="IMA"')
               updated = updated.replace(
                   'android:authorities="com.music.bitchord',
                   'android:authorities="${applicationId}',
               )
 
-              # Add MEDIA_PLAY_FROM_SEARCH and Spotify URI filters inside MainActivity if missing
-              if "MEDIA_PLAY_FROM_SEARCH" not in updated:
-                  extra_filters = """
-                      <intent-filter>
-                          <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                      </intent-filter>
-                      <intent-filter>
-                          <action android:name="android.intent.action.VIEW" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                          <category android:name="android.intent.category.BROWSABLE" />
-                          <data android:scheme="spotify" />
-                      </intent-filter>
-                      <intent-filter>
-                          <action android:name="android.intent.action.VIEW" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                          <category android:name="android.intent.category.BROWSABLE" />
-                          <data android:scheme="https" android:host="open.spotify.com" />
-                      </intent-filter>
-                  """
-                  # Insert right before the closing </activity> of MainActivity
-                  pattern = re.compile(
-                      r'(<activity\b[^>]*MainActivity[^>]*>.*?)(</activity>)',
-                      re.DOTALL,
-                  )
-                  if pattern.search(updated):
-                      updated = pattern.sub(
-                          lambda m: m.group(1) + extra_filters + m.group(2),
-                          updated,
-                          count=1,
+              if manifest == app / "src" / "main" / "AndroidManifest.xml":
+                  # Ensure PlaybackService exposes legacy MediaBrowserService for Assistant/Auto binding
+                  if "android.media.browse.MediaBrowserService" not in updated:
+                      updated = updated.replace(
+                          '<action android:name="androidx.media3.session.MediaLibraryService" />',
+                          '<action android:name="androidx.media3.session.MediaLibraryService" />\n                <action android:name="android.media.browse.MediaBrowserService" />',
+                      )
+                      updated = updated.replace(
+                          '<action android:name="androidx.media3.session.MediaLibraryService"/>',
+                          '<action android:name="androidx.media3.session.MediaLibraryService" />\n                <action android:name="android.media.browse.MediaBrowserService" />',
                       )
 
+                  if "GeminiMediaRouterActivity" not in updated:
+                      router_xml = """
+              <activity
+                  android:name="com.music.bitchord.GeminiMediaRouterActivity"
+                  android:label="IMA"
+                  android:exported="true"
+                  android:launchMode="singleTask"
+                  android:excludeFromRecents="true"
+                  android:theme="@android:style/Theme.Translucent.NoTitleBar">
+                  <intent-filter>
+                      <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                  </intent-filter>
+                  <intent-filter>
+                      <action android:name="android.intent.action.SEARCH" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                  </intent-filter>
+                  <intent-filter>
+                      <action android:name="com.google.android.gms.actions.SEARCH_ACTION" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                  </intent-filter>
+                  <intent-filter>
+                      <action android:name="android.intent.action.VIEW" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <category android:name="android.intent.category.BROWSABLE" />
+                      <data android:scheme="spotify" />
+                  </intent-filter>
+                  <intent-filter>
+                      <action android:name="android.intent.action.VIEW" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <category android:name="android.intent.category.BROWSABLE" />
+                      <data android:scheme="https" android:host="open.spotify.com" />
+                  </intent-filter>
+              </activity>
+          """
+                      updated = updated.replace("</application>", router_xml + "\n    </application>", 1)
+
               if updated != text:
-                  # Verify well-formed XML before saving
                   ET.fromstring(updated)
                   manifest.write_text(updated, encoding="utf-8")
                   changed.append(str(manifest))
 
-          print("Patched files:", changed)
+          print("Patched files for IMA (com.ima.music):", changed)
           PY
 
       - run: chmod +x gradlew
@@ -145,9 +342,19 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDevDebug
 
+      - name: Verify APK label and package
+        run: |
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt2 2>/dev/null | sort -V | tail -n 1)
+          for apk in app/build/outputs/apk/**/*.apk; do
+            echo "=== Built APK: $apk ==="
+            if [ -n "$AAPT" ]; then
+              "$AAPT" dump badging "$apk" | grep -E "^(package:|application-label)" || true
+            fi
+          done
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ima-spotify-aa-apk
+          name: ima-music-apk
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
