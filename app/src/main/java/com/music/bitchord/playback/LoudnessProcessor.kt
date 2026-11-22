@@ -183,7 +183,15 @@ class LoudnessProcessor {
             }
             peak *= scale
             val wanted = if (peak > LIMIT) LIMIT / peak else 1f
-            gr = if (wanted < gr) wanted else gr + (wanted - gr) * releaseCoef
+            gr = if (wanted < gr) {
+                wanted
+            } else {
+                // Near the end of a release the step rounds away in Float and
+                // gr would stall just short of unity, where the limiter can
+                // never park again: snap the last bit instead.
+                val released = gr + (wanted - gr) * releaseCoef
+                if (released == gr) wanted else released
+            }
             val applied = scale * gr
             for (channel in 0 until channels) {
                 samples[index + channel] *= applied
