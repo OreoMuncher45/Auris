@@ -5,7 +5,6 @@ import coil3.network.HttpException
 import coil3.request.ErrorResult
 import coil3.request.ImageResult
 import com.music.bitchord.data.model.youTubeThumbnailFallback
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Falls back to a YouTube video's `hqdefault` when the larger cover
@@ -17,16 +16,17 @@ import java.util.concurrent.ConcurrentHashMap
  * without this its cover went blank in exactly the places it is drawn largest,
  * where `hqdefault` had shown before.
  *
- * A URL YouTube answers 404 for is remembered for the process, so the same cover isn't
- * asked for in vain on every recomposition. Every other request passes through
- * untouched.
+ * The last [MISSES_KEPT] URLs YouTube answered 404 for are remembered, so the
+ * same cover isn't asked for in vain on every recomposition; older ones are
+ * forgotten rather than kept for the life of the process. Every other request
+ * passes through untouched.
  */
 class YouTubeThumbnailFallback : Interceptor {
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
         val request = chain.request
         val url = request.data as? String ?: return chain.proceed()
         val fallback = youTubeThumbnailFallback(url) ?: return chain.proceed()
-        if (url !in missing) {
+        if (!missing.contains(url)) {
             val result = chain.proceed()
             if (result !is ErrorResult) return result
             // Only YouTube saying the size doesn't exist is worth remembering.
@@ -38,6 +38,18 @@ class YouTubeThumbnailFallback : Interceptor {
     }
 
     private companion object {
-        val missing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+        const val MISSES_KEPT = 512
+        val missing = RecentUrls(MISSES_KEPT)
     }
+}
+
+/** The last [capacity] URLs [add]ed, least recently seen dropped first. Thread-safe. */
+internal class RecentUrls(private val capacity: Int) {
+    private val urls = object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?) = size > capacity
+    }
+
+    @Synchronized fun contains(url: String): Boolean = urls[url] != null
+
+    @Synchronized fun add(url: String) { urls[url] = Unit }
 }
