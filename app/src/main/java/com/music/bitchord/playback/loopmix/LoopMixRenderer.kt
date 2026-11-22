@@ -1,6 +1,8 @@
 package com.music.bitchord.playback.loopmix
 
 import android.util.Log
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The native loop-mix renderer (native/loopmix/): two Signalsmith Stretch
@@ -12,10 +14,37 @@ import android.util.Log
  */
 class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
 
-    @Volatile
-    private var handle: Long = if (available) nativeCreate(sampleRate) else 0L
+    private val handle = AtomicLong(if (available) nativeCreate(sampleRate) else 0L)
 
-    val isValid: Boolean get() = handle != 0L
+    /**
+     * Native calls under way. [close] frees the renderer only once none is,
+     * so a playback thread that read the handle just before a close finishes
+     * its block on live memory, and the last call out frees it.
+     */
+    private val inFlight = AtomicInteger()
+
+    @Volatile
+    private var closed = false
+
+    val isValid: Boolean get() = handle.get() != 0L
+
+    private inline fun <T> withHandle(otherwise: T, call: (Long) -> T): T {
+        inFlight.incrementAndGet()
+        try {
+            // Read after the count is up: a close that saw it at zero has
+            // already said so, and this call goes no further.
+            if (closed) return otherwise
+            val h = handle.get()
+            return if (h != 0L) call(h) else otherwise
+        } finally {
+            if (inFlight.decrementAndGet() == 0 && closed) destroy()
+        }
+    }
+
+    private fun destroy() {
+        val h = handle.getAndSet(0L)
+        if (h != 0L) nativeDestroy(h)
+    }
 
     /** One deck: the region (planar, at [sampleRate]), its loop, and its beat knots. */
     class DeckSetup(
@@ -39,34 +68,36 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
         val level: Float,
     )
 
-    fun setDeck(index: Int, deck: DeckSetup) = nativeSetDeck(
-        handle, index, deck.left, deck.right, deck.regionStart, deck.loopStart, deck.loopEnd, deck.releaseAt,
-        deck.knotFrames, deck.knotPositions, deck.runOn, deck.stopAt, deck.preroll, deck.level,
-    )
+    fun setDeck(index: Int, deck: DeckSetup) = withHandle(Unit) { h ->
+        nativeSetDeck(
+            h, index, deck.left, deck.right, deck.regionStart, deck.loopStart, deck.loopEnd, deck.releaseAt,
+            deck.knotFrames, deck.knotPositions, deck.runOn, deck.stopAt, deck.preroll, deck.level,
+        )
+    }
 
     /** Automation over mix seconds: [KIND_GAIN] (linear), [KIND_LOW_DB] (250 Hz shelf), [KIND_HIGH_PASS_HZ]. */
     fun setEnvelope(index: Int, kind: Int, times: DoubleArray, values: FloatArray, exponential: Boolean = false) =
-        nativeSetEnvelope(handle, index, kind, times, values, exponential)
+        withHandle(Unit) { nativeSetEnvelope(it, index, kind, times, values, exponential) }
 
-    fun prepare() = nativePrepare(handle)
+    fun prepare() = withHandle(Unit) { nativePrepare(it) }
 
     /** The earliest mix frame anything renders at; negative, before t0. */
-    fun firstFrame(): Long = nativeFirstFrame(handle)
+    fun firstFrame(): Long = withHandle(0L) { nativeFirstFrame(it) }
 
     /** Renders [frames] stereo frames from mix frame [frame] into [interleaved] at frame [offset]. */
     fun render(frame: Long, interleaved: FloatArray, offset: Int, frames: Int) =
-        nativeRender(handle, frame, interleaved, offset, frames)
+        withHandle(Unit) { nativeRender(it, frame, interleaved, offset, frames) }
 
     /** Fade [index] out over 25 ms once it plays track second [trackSeconds] after its release. */
-    fun setFadeOut(index: Int, trackSeconds: Double) = nativeSetFadeOut(handle, index, trackSeconds)
+    fun setFadeOut(index: Int, trackSeconds: Double) = withHandle(Unit) { nativeSetFadeOut(it, index, trackSeconds) }
 
     /** Track seconds [index] played at the end of the last rendered block. */
-    fun heard(index: Int): Double = nativeHeard(handle, index)
+    fun heard(index: Int): Double = withHandle(0.0) { nativeHeard(it, index) }
 
+    /** Frees the renderer now, or as the native call still under way returns. */
     override fun close() {
-        val h = handle
-        handle = 0L
-        if (h != 0L) nativeDestroy(h)
+        closed = true
+        if (inFlight.get() == 0) destroy()
     }
 
     companion object {
