@@ -1852,6 +1852,9 @@ class CrossfadeController(
         // plainly, as Settings now says it will.
         if (AppSettings.bitPerfect.value) return bail()
         if (!stillWorthFading()) return bail()
+        // The sleep timer's fade owns the volume from here: an armed blend
+        // that hasn't started is dropped, and the track runs on faded.
+        if (SleepTimer.fadingOut) return bail()
         // Paused while armed: the transition is no longer imminent, and holding
         // a prepared decoder open against a stopped player is worse than arming
         // again when playback resumes.
@@ -2955,6 +2958,11 @@ class CrossfadeController(
                     loopBail("Automix was switched off", settle = false)
                     return@launch
                 }
+                // The sleep timer's fade took the volume while they built.
+                if (SleepTimer.fadingOut) {
+                    loopBail("the sleep timer is fading out", settle = false)
+                    return@launch
+                }
                 // The queue may have changed under the build: the decks are for
                 // [inItem], so it must still be the very next entry.
                 val liveNext = out.nextMediaItemIndex
@@ -3027,6 +3035,7 @@ class CrossfadeController(
         if (session == null) {
             // Switched off while the decks build: cancel the build, nothing was armed.
             if (!AppSettings.smartFadeEnabled.value) return loopBail("Automix was switched off", settle = false)
+            if (SleepTimer.fadingOut) return loopBail("the sleep timer is fading out", settle = false)
             if (SystemClock.elapsedRealtime() > armDeadline) loopFallBack("the decks took too long")
             return
         }
@@ -3035,6 +3044,9 @@ class CrossfadeController(
         if (!session.outPort.tookOver && AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = false)
         if (!session.outPort.tookOver && !AppSettings.smartFadeEnabled.value) {
             return loopBail("Automix was switched off", settle = false)
+        }
+        if (!session.outPort.tookOver && SleepTimer.fadingOut) {
+            return loopBail("the sleep timer is fading out", settle = false)
         }
         if (session.outPort.tookOver) {
             phase = Phase.LOOP_RUNNING
