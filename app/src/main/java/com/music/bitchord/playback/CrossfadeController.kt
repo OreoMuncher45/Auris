@@ -801,8 +801,9 @@ class CrossfadeController(
             if (phase == Phase.FADING && !handedOff && into != null) {
                 // The blend is running and the incoming track is already
                 // playing under it: this is just the handoff, a little late.
-                handOff(held, into)
-                return
+                // A queue edit that took the incoming track away bails it, and
+                // the queue moves on below.
+                if (handOff(held, into)) return
             }
             // No blend to hand to. Let the queue move on as it would have.
             releaseHold()
@@ -1918,18 +1919,22 @@ class CrossfadeController(
      * point it becomes the louder of the two. From here [outgoing] is the idle
      * player, still audible, being faded away.
      */
+    /** False when it bailed instead: the queue no longer has the incoming track next. */
     private fun handOff(
         out: ExoPlayer,
         into: ExoPlayer,
         visualAudioSeconds: Double? = null,
         visualEndSeconds: Double? = null,
-    ) {
-        if (handedOff) return
+    ): Boolean {
+        if (handedOff) return true
         // AutoPlay may have appended to the queue since the standby was loaded
         // with a copy of it — during arming or the first half of the blend,
         // both of which the outgoing player owned — and those tracks would
         // otherwise be lost at the swap.
-        reconcileQueue(out, into)
+        if (!reconcileQueue(out, into)) {
+            bail(recover = false)
+            return false
+        }
 
         TrackLog.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
 
@@ -1984,6 +1989,7 @@ class CrossfadeController(
         if (heldAtEnd === out && out.mediaItemCount > out.currentMediaItemIndex + 1) {
             out.removeMediaItems(out.currentMediaItemIndex + 1, out.mediaItemCount)
         }
+        return true
     }
 
     /**
@@ -2000,13 +2006,21 @@ class CrossfadeController(
      * A pure append is copied across as it is. An edit further up — a folder's
      * next page inserted ahead of what AutoPlay appended — is matched entry by
      * entry: the standby's queue is replaced from the first entry that differs,
-     * as long as that is after the incoming track. Anything that reaches the
-     * playing or incoming track — a queue replaced, the next item removed —
-     * changes what the incoming track *is*, and [listener] has already bailed
-     * the transition for it.
+     * as long as that is after the incoming track, and entries removed from
+     * the end are removed from the standby too. An edit that reaches the
+     * playing or incoming track — the next item removed or replaced — changes
+     * what the incoming track *is*. A replaced queue or a new playing item is
+     * bailed by [listener]; an edit that leaves the playing item in place
+     * reports no item transition, so it is caught here, and false tells
+     * [handOff] not to swap onto a standby holding the wrong track.
      */
-    private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
-        val queue = runCatching { (0 until out.mediaItemCount).map(out::getMediaItemAt) }.getOrNull() ?: return
+    private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer): Boolean {
+        val queue = runCatching { (0 until out.mediaItemCount).map(out::getMediaItemAt) }.getOrNull() ?: return true
+        val liveNext = queue.getOrNull(out.nextMediaItemIndex)
+        if (liveNext == null || !sameQueueEntry(liveNext, into.currentMediaItem)) {
+            TrackLog.w(TAG, "the queue no longer has the incoming track next; not handing off")
+            return false
+        }
         val held = into.mediaItemCount
         val shared = minOf(queue.size, held)
         val firstDifference = (0 until shared).firstOrNull { !sameQueueEntry(queue[it], into.getMediaItemAt(it)) }
@@ -2014,18 +2028,22 @@ class CrossfadeController(
             if (queue.size > held) {
                 into.addMediaItems(queue.subList(held, queue.size))
                 TrackLog.d(TAG, "reconciled ${queue.size - held} appended item(s) onto the incoming player")
+            } else if (queue.size < held && queue.size > into.currentMediaItemIndex) {
+                into.removeMediaItems(queue.size, held)
+                TrackLog.d(TAG, "reconciled ${held - queue.size} removed item(s) off the incoming player")
             }
             queuedItemCount = queue.size
-            return
+            return true
         }
         if (firstDifference <= into.currentMediaItemIndex) {
             TrackLog.w(TAG, "queue changed at $firstDifference, at or before the incoming track; not reconciled")
-            return
+            return true
         }
         into.removeMediaItems(firstDifference, held)
         into.addMediaItems(queue.subList(firstDifference, queue.size))
         queuedItemCount = queue.size
         TrackLog.d(TAG, "reconciled the queue from entry $firstDifference onto the incoming player")
+        return true
     }
 
     private fun effectiveFadeSpan(player: ExoPlayer): Long {
@@ -2113,7 +2131,7 @@ class CrossfadeController(
         val visualEnd = wallSpan / 1000.0
         val visualTime = progress * wallSpan / 1000.0
         if (!handedOff && (progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
-            handOff(out, player, visualTime, visualEnd)
+            if (!handOff(out, player, visualTime, visualEnd)) return
         }
         AutoMixVisualFeed.advance(visualGeneration, visualTime, visualEnd)
         if (progress >= 1f) AutoMixVisualFeed.complete(visualGeneration)
@@ -2141,7 +2159,7 @@ class CrossfadeController(
         if (done) {
             // A blend cut short before its midpoint still ends on the incoming
             // track — it is the one playing on, and what [finish] keeps.
-            handOff(out, player)
+            if (!handOff(out, player)) return
             finish()
         }
     }
@@ -3011,7 +3029,7 @@ class CrossfadeController(
             // otherwise the deck hands over to a player with nothing to give.
             // Not ready yet, the outgoing song is kept, at its mix position.
             if (into.playbackState != Player.STATE_READY) return loopBail("the incoming player wasn't ready", settle = true)
-            handOff(out, into, m, visualEnd)
+            if (!handOff(out, into, m, visualEnd)) return
         }
         if (m >= 0.0) {
             AutoMixVisualFeed.advance(visualGeneration, m.coerceAtMost(visualEnd), visualEnd)
