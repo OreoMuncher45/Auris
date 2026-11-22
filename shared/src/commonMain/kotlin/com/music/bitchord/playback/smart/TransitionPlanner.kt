@@ -109,10 +109,10 @@ private val SPOKEN_TEXT = Regex(
  * refused a mix, and a refused pair gets no seek-bar marker either.
  */
 private val LIVE_TEXT = Regex(
-    // A bracketed tag: "(Live)", "(Acoustic Live)", "[Live at Wembley]", "(Live Version)".
-    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s+(?:at|from|in|on|version|session|recording|performance|edit)\b[^)\]]*)?\s*[)\]]""" +
-        // A dash suffix: "Song - Live", "Song – Live from the Garden".
-        """|[-–—]\s*live(?:\s+(?:at|from|in|on|version|session|recording|performance|edit)\b.*)?\s*$""" +
+    // A bracketed tag: "(Live)", "(Acoustic Live)", "[Live at Wembley]", "(Live Version)", "(Live 2016)".
+    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
+        // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016".
+        """|[-–—]\s*live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit)|\d{4})\b.*)?\s*$""" +
         // A live album: "Live at Wembley", "Live: At The Hall".
         """|^\s*live\s*(?::|\s(?:at|from|in|on)\b)""",
     RegexOption.IGNORE_CASE,
