@@ -62,6 +62,10 @@ class AutomixMigrationTest {
         assertEquals(2, deferred.size)
         // What was handed off still holds the old files until the deleter runs.
         assertTrue(deferred.all { it.exists() && it.name.contains(".retired-") })
+        val analysis = deferred.single { it.name.startsWith("${AutomixMigration.RETIRED_ANALYSIS_DIRECTORY}.retired-") }
+        val profiles = deferred.single { it.name.startsWith("${AutomixMigration.RETIRED_PROFILE_DIRECTORY}.retired-") }
+        assertTrue(File(analysis, "123_11.json").isFile)
+        assertTrue(File(profiles, "p.json").isFile)
         deferred.forEach { it.deleteRecursively() }
         assertEquals(emptyList<String>(), filesDir.list()!!.toList())
     }
