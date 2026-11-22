@@ -1644,4 +1644,14 @@
     <string name="automix_models_failed">无法下载模型。请检查网络连接后重试。</string>
     <string name="automix_model_delete_title">删除 Automix 模型？</string>
     <string name="automix_model_delete_warning">这将释放 %1$d MB 并关闭 Automix。再次开启 Automix 时会重新下载模型。</string>
+    <string name="song_info">歌曲信息</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">专辑</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">暂无信息</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">重试</string>
 </resources>

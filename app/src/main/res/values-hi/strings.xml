@@ -1667,4 +1667,14 @@
     <string name="automix_models_failed">मॉडल डाउनलोड नहीं हो सका। अपना कनेक्शन जांचें और फिर से कोशिश करें।</string>
     <string name="automix_model_delete_title">Automix मॉडल हटाएं?</string>
     <string name="automix_model_delete_warning">इससे %1$d MB खाली होंगे और Automix बंद हो जाएगा। Automix फिर से चालू करने पर मॉडल दोबारा डाउनलोड होगा।</string>
+    <string name="song_info">गाने की जानकारी</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">एल्बम</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">उपलब्ध नहीं</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">फिर से कोशिश करें</string>
 </resources>

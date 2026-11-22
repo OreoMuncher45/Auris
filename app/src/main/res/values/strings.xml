@@ -1519,4 +1519,14 @@
     <string name="automix_models_failed">Couldn\'t download the model. Check your connection and retry.</string>
     <string name="automix_model_delete_title">Delete Automix model?</string>
     <string name="automix_model_delete_warning">This frees %1$d MB and turns Automix off. Turning Automix on again downloads the model again.</string>
+    <string name="song_info">Song info</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">Album</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">Not available</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">Retry</string>
 </resources>

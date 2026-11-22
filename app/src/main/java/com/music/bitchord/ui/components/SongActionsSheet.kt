@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -257,6 +258,10 @@ fun SongActionsSheet(
     presentation: SongActionsPresentation = SongActionsPresentation.Menu,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
+    // The dialog is its own window, so it shows over the menu wherever the
+    // menu hangs — the player's included — and the menu stays as it was.
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
+    if (showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     val glass = presentation == SongActionsPresentation.Glass
     // A menu over a page stays in the theme's colours: it floats over
     // whatever the page is, and an accent pitched against one sleeve is not
@@ -437,6 +442,9 @@ fun SongActionsSheet(
                 stringResource(R.string.open_artist),
                 accent = palette.accent,
             ) { onOpenArtist(id) }
+        }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
         }
         if (showSleepTimer) {
             ActionRow(

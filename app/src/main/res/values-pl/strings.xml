@@ -1707,4 +1707,14 @@
     <string name="automix_models_failed">Nie udało się pobrać modelu. Sprawdź połączenie i spróbuj ponownie.</string>
     <string name="automix_model_delete_title">Usunąć model Automix?</string>
     <string name="automix_model_delete_warning">Zwolni to %1$d MB i wyłączy Automix. Ponowne włączenie Automix pobierze model jeszcze raz.</string>
+    <string name="song_info">Informacje o utworze</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">Album</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">Niedostępne</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">Spróbuj ponownie</string>
 </resources>

@@ -1672,4 +1672,14 @@
     <string name="automix_models_failed">לא ניתן היה להוריד את המודל. בדוק את החיבור ונסה שוב.</string>
     <string name="automix_model_delete_title">למחוק את מודל Automix?</string>
     <string name="automix_model_delete_warning">פעולה זו תפנה %1$d MB ותכבה את Automix. הפעלה מחדש של Automix תוריד את המודל שוב.</string>
+    <string name="song_info">מידע על השיר</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">אלבום</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">לא זמין</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">ניסיון חוזר</string>
 </resources>

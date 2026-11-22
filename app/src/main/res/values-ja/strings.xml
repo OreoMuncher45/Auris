@@ -1645,4 +1645,14 @@
     <string name="automix_models_failed">モデルをダウンロードできませんでした。接続を確認して再試行してください。</string>
     <string name="automix_model_delete_title">Automix モデルを削除しますか？</string>
     <string name="automix_model_delete_warning">%1$d MB が解放され、Automix はオフになります。再びオンにするとモデルが再度ダウンロードされます。</string>
+    <string name="song_info">曲の情報</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">アルバム</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">情報なし</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">再試行</string>
 </resources>

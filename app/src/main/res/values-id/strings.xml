@@ -1644,4 +1644,14 @@
     <string name="automix_models_failed">Tidak dapat mengunduh model. Periksa koneksi Anda dan coba lagi.</string>
     <string name="automix_model_delete_title">Hapus model Automix?</string>
     <string name="automix_model_delete_warning">Ini mengosongkan %1$d MB dan menonaktifkan Automix. Mengaktifkan Automix lagi akan mengunduh model kembali.</string>
+    <string name="song_info">Info lagu</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">Album</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">Tidak tersedia</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">Coba lagi</string>
 </resources>
