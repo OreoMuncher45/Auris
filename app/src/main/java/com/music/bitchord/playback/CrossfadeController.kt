@@ -716,6 +716,10 @@ class CrossfadeController(
         visualCurrentIndex = C.INDEX_UNSET
     }
 
+    /** The same queue entry, not just the same song: a song can be queued twice. */
+    private fun sameQueueEntry(expected: MediaItem, actual: MediaItem?): Boolean =
+        actual != null && expected.mediaId == actual.mediaId && expected.queueEntryId == actual.queueEntryId
+
     // MediaMetadata.equals does not compare the contents of extras.
     private fun sameVisualQueueItem(expected: MediaItem, actual: MediaItem?): Boolean =
         actual != null && expected == actual && expected.queueEntryId == actual.queueEntryId &&
@@ -2805,29 +2809,51 @@ class CrossfadeController(
             "loop build ${outItem.mediaId}->${inItem.mediaId} at ${sampleRate}Hz, loop at " +
                 "${"%.2f".format(Locale.ROOT, plan.out.loopStart)}s, playhead ${out.currentPosition}ms",
         )
+        // The built session until [armLoop] takes it: a skip or a timeout can
+        // cancel this job after the worker built it and before the result
+        // comes back, and the finally below is all that can close it then.
+        val built = java.util.concurrent.atomic.AtomicReference<LoopMixSession?>()
         loopBuildJob = scope.launch {
-            val began = SystemClock.elapsedRealtime()
-            val session = withContext(Dispatchers.Default) {
-                runCatching {
-                    LoopMixSession.build(plan, outItem.mediaId, inItem.mediaId, sampleRate, inLevel) { side, from, to ->
-                        if (side == LoopMix.Side.OUT) {
-                            loopRegion(outItem, durationMs, from, to, sampleRate)
-                        } else {
-                            loopRegion(inItem, nextDurationMs, from, to, sampleRate)
+            try {
+                val began = SystemClock.elapsedRealtime()
+                val session = withContext(Dispatchers.Default) {
+                    runCatching {
+                        LoopMixSession.build(plan, outItem.mediaId, inItem.mediaId, sampleRate, inLevel) { side, from, to ->
+                            if (side == LoopMix.Side.OUT) {
+                                loopRegion(outItem, durationMs, from, to, sampleRate)
+                            } else {
+                                loopRegion(inItem, nextDurationMs, from, to, sampleRate)
+                            }
                         }
-                    }
-                }.onFailure { TrackLog.w(TAG, "loop build failed", it) }.getOrNull()
+                    }.onFailure { TrackLog.w(TAG, "loop build failed", it) }.getOrNull()?.also(built::set)
+                }
+                if (phase != Phase.LOOP_ARMING || outgoing !== out) return@launch
+                if (session == null) {
+                    loopFallBack("the decks would not build")
+                    return@launch
+                }
+                // Turned on while the decks were building: no blend of any kind.
+                if (AppSettings.bitPerfect.value) {
+                    loopBail("bit-perfect is on", settle = false)
+                    return@launch
+                }
+                // The queue may have changed under the build: the decks are for
+                // [inItem], so it must still be the very next entry.
+                val liveNext = out.nextMediaItemIndex
+                val stillNext = sameQueueEntry(outItem, out.currentMediaItem) &&
+                    liveNext != C.INDEX_UNSET &&
+                    sameQueueEntry(inItem, runCatching { out.getMediaItemAt(liveNext) }.getOrNull())
+                if (!stillNext) {
+                    loopFallBack("the queue changed while the decks were building")
+                    return@launch
+                }
+                TrackLog.d(TAG, "loop decks built in ${SystemClock.elapsedRealtime() - began}ms")
+                built.set(null)
+                outgoingItemIndex = out.currentMediaItemIndex
+                armLoop(session, out, into, liveNext, outPort, inPort)
+            } finally {
+                built.getAndSet(null)?.close()
             }
-            if (phase != Phase.LOOP_ARMING || outgoing !== out) {
-                session?.close()
-                return@launch
-            }
-            if (session == null) {
-                loopFallBack("the decks would not build")
-                return@launch
-            }
-            TrackLog.d(TAG, "loop decks built in ${SystemClock.elapsedRealtime() - began}ms")
-            armLoop(session, out, into, nextIndex, outPort, inPort)
         }
     }
 
@@ -2885,6 +2911,8 @@ class CrossfadeController(
             return
         }
         if (session.outPort.interrupted) return loopBail("the outgoing sink was flushed", settle = false)
+        // Bit-perfect turned on before the takeover: the song plays on untouched.
+        if (!session.outPort.tookOver && AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = false)
         if (session.outPort.tookOver) {
             phase = Phase.LOOP_RUNNING
             AppSettings.smartTransitionWindow.value = null
