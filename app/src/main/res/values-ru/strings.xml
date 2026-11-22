@@ -1711,4 +1711,5 @@
     <string name="song_info_retry">Повторить</string>
     <string name="find_a_playlist">Найти плейлист</string>
     <string name="no_playlists_match">Нет плейлистов по запросу «%1$s»</string>
+    <string name="sort_track_number">Номер трека</string>
 </resources>

@@ -1596,4 +1596,5 @@
     <string name="song_info_retry">Thử lại</string>
     <string name="find_a_playlist">Tìm danh sách phát</string>
     <string name="no_playlists_match">Không có danh sách phát nào khớp với “%1$s”</string>
+    <string name="sort_track_number">Số thứ tự bài hát</string>
 </resources>

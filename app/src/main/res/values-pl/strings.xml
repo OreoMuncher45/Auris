@@ -1719,4 +1719,5 @@
     <string name="song_info_retry">Spróbuj ponownie</string>
     <string name="find_a_playlist">Znajdź playlistę</string>
     <string name="no_playlists_match">Brak playlist pasujących do „%1$s”</string>
+    <string name="sort_track_number">Numer utworu</string>
 </resources>

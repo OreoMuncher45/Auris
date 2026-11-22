@@ -205,6 +205,12 @@ enum class LocalMusicSort {
     TITLE_DESC,
     DATE_ADDED,
     DATE_MODIFIED,
+
+    /**
+     * Album by album, each in its release order by the files' own disc and
+     * track tags. Only offered when some file carries a track tag.
+     */
+    TRACK_NUMBER,
 }
 
 /**

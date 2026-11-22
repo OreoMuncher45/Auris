@@ -1656,4 +1656,5 @@
     <string name="song_info_retry">Coba lagi</string>
     <string name="find_a_playlist">Cari playlist</string>
     <string name="no_playlists_match">Tidak ada playlist yang cocok dengan “%1$s”</string>
+    <string name="sort_track_number">Nomor trek</string>
 </resources>

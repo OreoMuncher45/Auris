@@ -1656,4 +1656,5 @@
     <string name="song_info_retry">重试</string>
     <string name="find_a_playlist">查找播放列表</string>
     <string name="no_playlists_match">没有与“%1$s”匹配的播放列表</string>
+    <string name="sort_track_number">曲目编号</string>
 </resources>

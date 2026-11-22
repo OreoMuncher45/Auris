@@ -1679,4 +1679,5 @@
     <string name="song_info_retry">फिर से कोशिश करें</string>
     <string name="find_a_playlist">प्लेलिस्ट खोजें</string>
     <string name="no_playlists_match">“%1$s” से कोई प्लेलिस्ट मेल नहीं खाती</string>
+    <string name="sort_track_number">ट्रैक नंबर</string>
 </resources>

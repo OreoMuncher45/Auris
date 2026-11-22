@@ -1684,4 +1684,5 @@
     <string name="song_info_retry">ניסיון חוזר</string>
     <string name="find_a_playlist">חיפוש פלייליסט</string>
     <string name="no_playlists_match">אין פלייליסטים שתואמים ל־“%1$s”</string>
+    <string name="sort_track_number">מספר רצועה</string>
 </resources>

@@ -118,6 +118,15 @@ data class Song(    val videoId: String,
     val localDateAddedSeconds: Long? = null,
     val localDateModifiedSeconds: Long? = null,
     /**
+     * Track number within its disc, from the file's own tags (`TRACK` in
+     * MediaStore, `CD_TRACK_NUMBER` via the retriever). Null when the tags
+     * don't say; remote catalogue rows never carry one. Lets Local Music
+     * sort an album into its release order.
+     */
+    val trackNumber: Int? = null,
+    /** Disc number from the same tags, for albums of more than one disc. */
+    val discNumber: Int? = null,
+    /**
      * What a non-YouTube source says it can serve this recording at, as one of
      * `LOSSLESS`, `HIGH` or `LOW` — null for every row that didn't come from
      * one.
@@ -182,6 +191,8 @@ data class Song(    val videoId: String,
         localPath: String? = null,
         localDateAddedSeconds: Long? = null,
         localDateModifiedSeconds: Long? = null,
+        trackNumber: Int? = null,
+        discNumber: Int? = null,
         sourceQuality: String? = null,
         isExplicit: Boolean? = null,
         playbackSource: String? = null,
@@ -208,6 +219,8 @@ data class Song(    val videoId: String,
         localPath = localPath,
         localDateAddedSeconds = localDateAddedSeconds,
         localDateModifiedSeconds = localDateModifiedSeconds,
+        trackNumber = trackNumber,
+        discNumber = discNumber,
         sourceQuality = sourceQuality,
         isExplicit = isExplicit,
         playbackSource = playbackSource,

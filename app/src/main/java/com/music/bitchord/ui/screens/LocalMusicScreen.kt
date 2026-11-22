@@ -202,6 +202,9 @@ fun LocalMusicScreen(
         AppSettings.localMusicViewType.collectAsStateWithLifecycle()
     }
     val sortedSongs = remember(songs, sortOrder) { songs.sortedForLibrary(sortOrder) }
+    // Only files carry track tags, and only some of them do: with none there
+    // is nothing for a track-number sort to go by.
+    val hasTrackNumbers = remember(songs) { songs.any { it.trackNumber != null } }
     var selectedDownloadIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     // Kept separately from the tracks selected for deletion: different albums
     // can share tracks, so inferring an album's selection from those track ids
@@ -298,6 +301,7 @@ fun LocalMusicScreen(
             query = searchQuery,
             onQueryChange = { searchQuery = it },
             sortOrder = sortOrder,
+            offerTrackNumber = hasTrackNumbers,
             onSortOrderChange = {
                 if (isDownloads) AppSettings.setDownloadedMusicSort(it)
                 else AppSettings.setLocalMusicSort(it)
@@ -1512,7 +1516,7 @@ internal fun Song.matchesSearch(query: String): Boolean =
         artist.contains(query, ignoreCase = true) ||
         albumName?.contains(query, ignoreCase = true) == true
 
-private fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = when (order) {
+internal fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = when (order) {
     LocalMusicSort.TITLE_ASC -> sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
     LocalMusicSort.TITLE_DESC -> sortedWith(compareByDescending<Song> { it.title.lowercase(Locale.ROOT) })
     LocalMusicSort.DATE_ADDED -> sortedWith(
@@ -1521,6 +1525,15 @@ private fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = whe
     )
     LocalMusicSort.DATE_MODIFIED -> sortedWith(
         compareByDescending<Song> { it.localDateModifiedSeconds ?: Long.MIN_VALUE }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+    )
+    // Album by album, each in disc then track order. Rows with no tag go
+    // after their album's tagged ones, by title; rows with no album last.
+    LocalMusicSort.TRACK_NUMBER -> sortedWith(
+        compareBy<Song> { it.albumName == null }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.albumName.orEmpty() }
+            .thenBy { it.discNumber ?: 1 }
+            .thenBy { it.trackNumber ?: Int.MAX_VALUE }
             .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
     )
 }
@@ -1537,6 +1550,7 @@ private fun LocalSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     sortOrder: LocalMusicSort,
+    offerTrackNumber: Boolean,
     onSortOrderChange: (LocalMusicSort) -> Unit,
     viewType: LibraryViewType,
     onViewTypeToggle: () -> Unit,
@@ -1624,18 +1638,20 @@ private fun LocalSearchField(
                 .clickable {
                     menuHost?.open(sortOrigin.boundsInWindow()) { close ->
                         val selectedLabel = stringResource(R.string.selected)
-                        LocalMusicSort.entries.forEach { option ->
-                            MenuChoiceRow(
-                                label = option.localizedLabel(),
-                                selected = option == sortOrder,
-                                ink = MaterialTheme.colorScheme.onSurface,
-                                accent = MaterialTheme.colorScheme.primary,
-                                selectedDescription = selectedLabel,
-                            ) {
-                                onSortOrderChange(option)
-                                close()
+                        LocalMusicSort.entries
+                            .filter { offerTrackNumber || it != LocalMusicSort.TRACK_NUMBER }
+                            .forEach { option ->
+                                MenuChoiceRow(
+                                    label = option.localizedLabel(),
+                                    selected = option == sortOrder,
+                                    ink = MaterialTheme.colorScheme.onSurface,
+                                    accent = MaterialTheme.colorScheme.primary,
+                                    selectedDescription = selectedLabel,
+                                ) {
+                                    onSortOrderChange(option)
+                                    close()
+                                }
                             }
-                        }
                     }
                 },
             contentAlignment = Alignment.Center,
@@ -1656,6 +1672,7 @@ private fun LocalMusicSort.localizedLabel(): String = when (this) {
     LocalMusicSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
     LocalMusicSort.DATE_ADDED -> stringResource(R.string.sort_date_added)
     LocalMusicSort.DATE_MODIFIED -> stringResource(R.string.sort_date_modified)
+    LocalMusicSort.TRACK_NUMBER -> stringResource(R.string.sort_track_number)
 }
 
 /** The Downloads-only replacement for the usual search and sort controls. */

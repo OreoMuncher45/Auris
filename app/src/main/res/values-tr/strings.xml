@@ -1636,4 +1636,5 @@
     <string name="song_info_retry">Tekrar dene</string>
     <string name="find_a_playlist">Çalma listesi bul</string>
     <string name="no_playlists_match">“%1$s” ile eşleşen çalma listesi yok</string>
+    <string name="sort_track_number">Parça numarası</string>
 </resources>

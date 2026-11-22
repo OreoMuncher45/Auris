@@ -1680,4 +1680,5 @@
     <string name="song_info_retry">Réessayer</string>
     <string name="find_a_playlist">Rechercher une playlist</string>
     <string name="no_playlists_match">Aucune playlist ne correspond à « %1$s »</string>
+    <string name="sort_track_number">Numéro de piste</string>
 </resources>

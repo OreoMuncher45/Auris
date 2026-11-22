@@ -1662,4 +1662,5 @@
     <string name="song_info_retry">ลองอีกครั้ง</string>
     <string name="find_a_playlist">ค้นหาเพลย์ลิสต์</string>
     <string name="no_playlists_match">ไม่มีเพลย์ลิสต์ที่ตรงกับ “%1$s”</string>
+    <string name="sort_track_number">Track number</string>
 </resources>

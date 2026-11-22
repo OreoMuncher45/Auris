@@ -1684,4 +1684,5 @@
     <string name="song_info_retry">Tentar novamente</string>
     <string name="find_a_playlist">Buscar playlist</string>
     <string name="no_playlists_match">Nenhuma playlist corresponde a “%1$s”</string>
+    <string name="sort_track_number">Número da faixa</string>
 </resources>

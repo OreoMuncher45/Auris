@@ -1651,4 +1651,5 @@
     <string name="song_info_retry">Reintentar</string>
     <string name="find_a_playlist">Buscar una lista</string>
     <string name="no_playlists_match">Ninguna lista coincide con «%1$s»</string>
+    <string name="sort_track_number">Número de pista</string>
 </resources>
