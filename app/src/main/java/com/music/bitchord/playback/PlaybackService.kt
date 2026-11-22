@@ -10735,8 +10735,8 @@ class PlaybackService : MediaLibraryService() {
             // parent folder: rebuild it so the queue follows the playlist's
             // own order and AutoPlay only starts after its last track.
             expandPlaylistContext(mediaItems, startIndex)?.let { return@future it }
-            val resolved = resolveMediaItems(mediaItems)
-            val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+            val (resolved, resolvedStart) = resolveMediaItemsFrom(mediaItems, startIndex)
+            val validIndex = resolvedStart.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
             MediaSession.MediaItemsWithStartPosition(
                 ImmutableList.copyOf(resolved),
                 validIndex,
@@ -10751,6 +10751,15 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<List<MediaItem>> = scope.future(Dispatchers.IO) {
             resolveMediaItems(mediaItems)
         }
+
+        private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> =
+            resolveMediaItemsFrom(mediaItems, 0).first
+
+        /**
+         * [mediaItems] resolved to tracks, and where the item at [startIndex]
+         * landed among them: a row before it can expand to several tracks or
+         * drop out (a stale Auto row), so its input index no longer names it.
+         */
 
         /**
          * The queue for a tapped Auto row: its whole folder listing, labelled
@@ -10832,9 +10841,14 @@ class PlaybackService : MediaLibraryService() {
             return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
         }
 
-        private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
+        private suspend fun resolveMediaItemsFrom(
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+        ): Pair<List<MediaItem>, Int> {
             val resolved = mutableListOf<MediaItem>()
-            for (item in mediaItems) {
+            var resolvedStart = 0
+            for ((itemIndex, item) in mediaItems.withIndex()) {
+                if (itemIndex == startIndex) resolvedStart = resolved.size
                 val id = item.mediaId
                 val searchQuery = item.requestMetadata.searchQuery
                 when {
@@ -10961,9 +10975,12 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
+            if (startIndex >= mediaItems.size) resolvedStart = resolved.size
+            if (resolved.isNotEmpty()) return resolved to resolvedStart
             // A stale browse row has no track behind it; never hand it back
             // to the player as if it were one.
-            return if (resolved.isEmpty()) mediaItems.filterNot { AutoBrowseContexts.isAutoBrowseId(it.mediaId) } else resolved
+            val kept = mediaItems.withIndex().filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) }
+            return kept.map { it.value } to kept.count { it.index < startIndex }
         }
     }
 
