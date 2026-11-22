@@ -1115,6 +1115,7 @@ suspend fun MediaController.playSongs(
         queue.map { it.toMediaItem() }
     }
     if (!stillCurrent()) return
+    if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
     play()

@@ -36,6 +36,17 @@ class QueueShuffleTierTest {
     }
 
     @Test
+    fun `a superseded build's starting order does not replace the saved order`() {
+        val installed = listOf(testSong("a"), testSong("b"))
+        QueueShuffle.rememberStartingOrder(installed)
+
+        // A build that loses to a newer request computes its order but never installs it.
+        QueueShuffle.startingOrder(listOf(testSong("x"), testSong("y")), startIndex = 0)
+
+        assertEquals(listOf("entry-a", "entry-b"), QueueShuffle.savedOrder)
+    }
+
+    @Test
     fun `startingOrder preserves USER_QUEUE items at front and shuffles context`() {
         val selected = testSong("selected", tier = QueueTier.CONTEXT)
         val u1 = testSong("u1", tier = QueueTier.USER_QUEUE)
