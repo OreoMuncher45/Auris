@@ -165,7 +165,7 @@ class PlayerInkRecompositionTest {
 
         fun canvasOver(argb: Int): LivePalette {
             val bands = IntArray(INK_BANDS) { argb }
-            return LivePalette(NowPlayingPalette(fg = Color.White), LiveColorSource.CANVAS, canvasInkSurface(BandBounds(bands, bands)))
+            return LivePalette(LiveColorSource.CANVAS, canvasInkSurface(BandBounds(bands, bands)))
         }
 
         /** The ink the screen settles on over [live], with the harness's white sleeve. */
