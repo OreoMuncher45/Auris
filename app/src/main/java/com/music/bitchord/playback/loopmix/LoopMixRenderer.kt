@@ -79,7 +79,8 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
     fun setEnvelope(index: Int, kind: Int, times: DoubleArray, values: FloatArray, exponential: Boolean = false) =
         withHandle(Unit) { nativeSetEnvelope(it, index, kind, times, values, exponential) }
 
-    fun prepare() = withHandle(Unit) { nativePrepare(it) }
+    /** Sizes the render buffers for blocks of up to [maxFrames]; call once the decks are set. */
+    fun prepare(maxFrames: Int) = withHandle(Unit) { nativePrepare(it, maxFrames) }
 
     /** The earliest mix frame anything renders at; negative, before t0. */
     fun firstFrame(): Long = withHandle(0L) { nativeFirstFrame(it) }
@@ -121,7 +122,7 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
         @JvmStatic private external fun nativeSetEnvelope(
             handle: Long, index: Int, kind: Int, times: DoubleArray, values: FloatArray, exponential: Boolean,
         )
-        @JvmStatic private external fun nativePrepare(handle: Long)
+        @JvmStatic private external fun nativePrepare(handle: Long, maxFrames: Int)
         @JvmStatic private external fun nativeFirstFrame(handle: Long): Long
         @JvmStatic private external fun nativeRender(handle: Long, frame: Long, interleaved: FloatArray, offset: Int, frames: Int)
         @JvmStatic private external fun nativeSetFadeOut(handle: Long, index: Int, trackSeconds: Double)

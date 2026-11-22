@@ -110,7 +110,10 @@ double Deck::knotRate(double t) const {
 
 Renderer::Renderer(int sampleRate) : sampleRate_(sampleRate) {}
 
-void Renderer::prepare() {
+void Renderer::prepare(int maxFrames) {
+  // A deck reads at most eight input samples per output sample, and its
+  // first block reads a seek's worth.
+  size_t inputSamples = size_t(std::max(maxFrames, 0)) * 8;
   for (Deck& deck : decks_) {
     // The cheaper preset with its computation spread evenly: the mix is
     // written well ahead of the speaker, so latency costs nothing, and an even
@@ -122,7 +125,15 @@ void Renderer::prepare() {
     deck.highPass.bypass();
     deck.shelfDb = 0;
     deck.highPassFreq = 0;
+    inputSamples = std::max(inputSamples, size_t(std::max(deck.stretch.seekLength(), 0)));
   }
+  const size_t frames = size_t(std::max(maxFrames, 0));
+  mixLeft_.resize(std::max(mixLeft_.size(), frames));
+  mixRight_.resize(std::max(mixRight_.size(), frames));
+  outLeft_.resize(std::max(outLeft_.size(), frames));
+  outRight_.resize(std::max(outRight_.size(), frames));
+  inLeft_.resize(std::max(inLeft_.size(), inputSamples));
+  inRight_.resize(std::max(inRight_.size(), inputSamples));
 }
 
 int64_t Renderer::firstFrame() const {

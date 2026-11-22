@@ -23,13 +23,25 @@ Deck* DeckOf(jlong handle, jint index) {
   return &From(handle)->deck(index);
 }
 
+// Setup allocates; a failure becomes an OutOfMemoryError the caller's
+// runCatching turns into an ordinary blend, rather than a C++ exception
+// crossing into the VM.
+void ThrowOutOfMemory(JNIEnv* env) {
+  jclass error = env->FindClass("java/lang/OutOfMemoryError");
+  if (error != nullptr) env->ThrowNew(error, "loop mix renderer");
+}
+
 }  // namespace
 
 extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeCreate(JNIEnv*, jclass, jint sampleRate) {
-  return reinterpret_cast<jlong>(new (std::nothrow) Renderer(sampleRate));
+  try {
+    return reinterpret_cast<jlong>(new (std::nothrow) Renderer(sampleRate));
+  } catch (const std::bad_alloc&) {
+    return 0;
+  }
 }
 
 JNIEXPORT void JNICALL
@@ -46,17 +58,22 @@ Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeSetDeck(
   Deck* deck = DeckOf(handle, index);
   if (deck == nullptr) return;
   const jsize frames = std::min(env->GetArrayLength(left), env->GetArrayLength(right));
-  deck->left.resize(frames);
-  deck->right.resize(frames);
+  const jsize knots = std::min(env->GetArrayLength(knotFrames), env->GetArrayLength(knotPositions));
+  try {
+    deck->left.resize(frames);
+    deck->right.resize(frames);
+    deck->knotTimes.resize(knots);
+    deck->knotPositions.resize(knots);
+  } catch (const std::bad_alloc&) {
+    ThrowOutOfMemory(env);
+    return;
+  }
   env->GetFloatArrayRegion(left, 0, frames, deck->left.data());
   env->GetFloatArrayRegion(right, 0, frames, deck->right.data());
   deck->regionStart = regionStart;
   deck->loopStart = loopStart;
   deck->loopEnd = loopEnd;
   deck->releaseAt = releaseAt;
-  const jsize knots = std::min(env->GetArrayLength(knotFrames), env->GetArrayLength(knotPositions));
-  deck->knotTimes.resize(knots);
-  deck->knotPositions.resize(knots);
   env->GetDoubleArrayRegion(knotFrames, 0, knots, deck->knotTimes.data());
   env->GetDoubleArrayRegion(knotPositions, 0, knots, deck->knotPositions.data());
   deck->runOn = runOn;
@@ -74,16 +91,27 @@ Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeSetEnvelope(
   Envelope* envelope = kind == 0 ? &deck->gain : kind == 1 ? &deck->lowDb : kind == 2 ? &deck->highPassHz : nullptr;
   if (envelope == nullptr) return;
   const jsize points = std::min(env->GetArrayLength(times), env->GetArrayLength(values));
-  envelope->times.resize(points);
-  envelope->values.resize(points);
+  try {
+    envelope->times.resize(points);
+    envelope->values.resize(points);
+  } catch (const std::bad_alloc&) {
+    ThrowOutOfMemory(env);
+    return;
+  }
   env->GetDoubleArrayRegion(times, 0, points, envelope->times.data());
   env->GetFloatArrayRegion(values, 0, points, envelope->values.data());
   envelope->exponential = exponential;
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativePrepare(JNIEnv*, jclass, jlong handle) {
-  if (handle != 0) From(handle)->prepare();
+Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativePrepare(JNIEnv* env, jclass, jlong handle,
+                                                                       jint maxFrames) {
+  if (handle == 0) return;
+  try {
+    From(handle)->prepare(maxFrames);
+  } catch (const std::bad_alloc&) {
+    ThrowOutOfMemory(env);
+  }
 }
 
 JNIEXPORT jlong JNICALL
@@ -98,7 +126,14 @@ Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeRender(
   // Critical access: no copy of the block, and render() itself never calls back into Java.
   auto* samples = static_cast<jfloat*>(env->GetPrimitiveArrayCritical(interleaved, nullptr));
   if (samples == nullptr) return;
-  From(handle)->render(frame, samples + 2 * offsetFrames, frames);
+  // [prepare] sized every buffer for the sink's blocks, so this never
+  // allocates; should a larger block ever come, a failed allocation is a
+  // silent block, and the critical array is always released.
+  try {
+    From(handle)->render(frame, samples + 2 * offsetFrames, frames);
+  } catch (const std::bad_alloc&) {
+    std::fill(samples + 2 * offsetFrames, samples + 2 * (offsetFrames + frames), 0.f);
+  }
   env->ReleasePrimitiveArrayCritical(interleaved, samples, 0);
 }
 

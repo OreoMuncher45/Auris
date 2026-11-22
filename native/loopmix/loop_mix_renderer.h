@@ -113,8 +113,13 @@ class Renderer {
   Deck& deck(int index) { return decks_[index]; }
   int sampleRate() const { return sampleRate_; }
 
-  /** Call once both decks are filled in, before the first [render]. */
-  void prepare();
+  /**
+   * Call once both decks are filled in, before the first [render]. Sizes
+   * every buffer [render] uses for blocks of up to [maxFrames], so the
+   * playback thread never allocates (it renders inside a JNI critical
+   * section, where an allocation failure could not be reported).
+   */
+  void prepare(int maxFrames);
 
   /** The earliest mix frame anything renders at (negative: before t0). */
   int64_t firstFrame() const;
