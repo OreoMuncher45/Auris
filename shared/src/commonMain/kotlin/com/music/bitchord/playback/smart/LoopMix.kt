@@ -428,7 +428,8 @@ object LoopMix {
             val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 n++
-                if (window.values[i] > VOCAL_ACTIVE_THRESHOLD) {
+                // Inclusive, as the transition policy reads the same threshold.
+                if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {
                     sung++
                     run++
                     longest = max(longest, run)

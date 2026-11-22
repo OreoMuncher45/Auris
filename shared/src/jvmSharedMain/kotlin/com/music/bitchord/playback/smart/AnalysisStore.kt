@@ -261,7 +261,7 @@ class AnalysisStore(
                 vocalProbability = analysis.vocalProbability,
                 headBeats = analysis.headBeats?.let(StoredBeats::of),
                 tailBeats = analysis.tailBeats?.let(StoredBeats::of),
-                vocalWindows = analysis.vocalWindows.map(StoredCurve::of),
+                vocalWindows = analysis.vocalWindows.map { StoredCurve.of(it, keepingSidesOf = VOCAL_ACTIVE_THRESHOLD) },
                 levelWindows = analysis.levelWindows.map(StoredCurve::of),
             )
         }
@@ -298,18 +298,31 @@ class AnalysisStore(
     /**
      * Values in hundredths, clamped to 0..1: the mask is a soft estimate and the
      * level is only ever compared with itself, and this keeps a window to a few
-     * kilobytes.
+     * kilobytes. A vocal window keeps each value on its own side of the active
+     * threshold: 0.254 stays sung (0.26) and 0.246 stays clear (0.24), where
+     * plain rounding made both 0.25.
      */
     @Serializable
     private data class StoredCurve(val startTime: Double, val frameRate: Double, val values: List<Int>) {
         fun toWindow() = CurveWindow(startTime, frameRate, FloatArray(values.size) { values[it] / 100f })
 
         companion object {
-            fun of(window: CurveWindow) = StoredCurve(
-                round(window.startTime),
-                window.frameRate,
-                window.values.map { (it.coerceIn(0f, 1f) * 100).roundToInt() },
-            )
+            fun of(window: CurveWindow, keepingSidesOf: Double? = null): StoredCurve {
+                val threshold = keepingSidesOf?.let { (it * 100).roundToInt() }
+                return StoredCurve(
+                    round(window.startTime),
+                    window.frameRate,
+                    window.values.map { value ->
+                        val stored = (value.coerceIn(0f, 1f) * 100).roundToInt()
+                        when {
+                            threshold == null -> stored
+                            value >= keepingSidesOf && stored < threshold -> threshold
+                            value < keepingSidesOf && stored >= threshold -> threshold - 1
+                            else -> stored
+                        }
+                    },
+                )
+            }
         }
     }
 
