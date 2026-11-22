@@ -1605,7 +1605,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
             // The seek count first: report() publishes it with the reading, so a
             // seek's landing position must not go out under the count before it.
             playerPosition.seeks = it.seeks
-            playerPosition.report(it.positionMs, it.positionSampledAtNanos)
+            playerPosition.report(it.positionMs, it.positionSampledAtNanos, it.isPlaying)
             playerPosition.advancing = !it.awaitingAudio
         }
     }
