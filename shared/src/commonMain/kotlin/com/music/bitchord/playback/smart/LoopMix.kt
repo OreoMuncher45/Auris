@@ -416,42 +416,36 @@ object LoopMix {
      * run; null when its windows cover under [MIN_MASK_COVERAGE] of it.
      */
     fun maskStats(windows: List<CurveWindow>, from: Double, to: Double): MaskStats? {
-        var sung = 0
-        var n = 0
-        // Measured stretches, merged below: windows overlap at their seams.
-        val spans = ArrayList<Pair<Double, Double>>(windows.size)
-        var run = 0
-        var longest = 0
-        var fps = 1.0
-        for (window in windows) {
+        // One merged timeline: windows overlap at their seams, so a frame time an
+        // earlier window already measured is not counted again, and a sung run
+        // ends where nothing was measured.
+        var sungSec = 0.0
+        var measuredSec = 0.0
+        var runSec = 0.0
+        var longestSec = 0.0
+        var reach = Double.NEGATIVE_INFINITY
+        for (window in windows.sortedBy { it.startTime }) {
+            val frameSec = 1 / window.frameRate
             val a = max(0, ceil((from - window.startTime) * window.frameRate).toInt())
             val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
-                n++
+                val t = window.startTime + i * frameSec
+                if (t < reach - frameSec * 0.5) continue
+                if (t > reach + frameSec * 0.5) runSec = 0.0
+                measuredSec += frameSec
                 // Inclusive, as the transition policy reads the same threshold.
                 if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {
-                    sung++
-                    run++
-                    longest = max(longest, run)
+                    sungSec += frameSec
+                    runSec += frameSec
+                    longestSec = max(longestSec, runSec)
                 } else {
-                    run = 0
+                    runSec = 0.0
                 }
-            }
-            if (b > a) {
-                spans += (window.startTime + a / window.frameRate) to (window.startTime + b / window.frameRate)
-                fps = window.frameRate
+                reach = t + frameSec
             }
         }
-        spans.sortBy { it.first }
-        var covered = 0.0
-        var reach = Double.NEGATIVE_INFINITY
-        for ((start, end) in spans) {
-            if (end <= reach) continue
-            covered += end - max(start, reach)
-            reach = end
-        }
-        return if (n > 0 && covered >= (to - from) * MIN_MASK_COVERAGE) {
-            MaskStats(sung.toDouble() / n, longest / fps)
+        return if (measuredSec > 0 && measuredSec >= (to - from) * MIN_MASK_COVERAGE - 1e-9) {
+            MaskStats(sungSec / measuredSec, longestSec)
         } else {
             null
         }

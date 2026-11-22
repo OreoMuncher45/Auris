@@ -205,6 +205,28 @@ class LoopMixTest {
     }
 
     @Test
+    fun maskShareCountsOverlappingQuietFramesOnce() {
+        // 0-9 s and 5-10 s overlap over 5-9 s; four frames after 9 s are sung.
+        // That is 4 of 100 distinct frames, not 4 of the 140 the windows add up to.
+        val first = vocals(0.0, 9.0, 0.05f)
+        val second = CurveWindow(5.0, 10.0, FloatArray(50) { if (it >= 40 && it % 2 == 0 && it < 48) 0.8f else 0.05f })
+        assertEquals(0.04, LoopMix.maskStats(listOf(first, second), 0.0, 10.0)!!.share, 1e-9)
+    }
+
+    @Test
+    fun aSungRunEndsWhereNothingWasMeasured() {
+        // Sung for the last 0.2 s of 0-9 s and the first 0.2 s of 10-20 s, nothing measured between.
+        val first = vocals(0.0, 9.0, 0.05f, emptyList()).let { w ->
+            CurveWindow(w.startTime, w.frameRate, FloatArray(w.values.size) { if (it >= w.values.size - 2) 0.8f else 0.05f })
+        }
+        val second = CurveWindow(10.0, 10.0, FloatArray(100) { if (it < 2) 0.8f else 0.05f })
+        assertEquals(0.2, LoopMix.maskStats(listOf(first, second), 0.0, 20.0)!!.longestRunSec, 1e-9)
+        // and a run that carries straight on into the next window is still one run
+        val third = CurveWindow(9.0, 10.0, FloatArray(10) { if (it < 2) 0.8f else 0.05f })
+        assertEquals(0.4, LoopMix.maskStats(listOf(first, third), 0.0, 10.0)!!.longestRunSec, 1e-9)
+    }
+
+    @Test
     fun positionIsNothingBeforeTheMixAndTheLoopStartOnItsFirstBeat() {
         val plan = assertNotNull(plan(analysis(111.0, 200.0), analysis(169.0, 180.0)))
         val clock = LoopMix.Clock(plan)
