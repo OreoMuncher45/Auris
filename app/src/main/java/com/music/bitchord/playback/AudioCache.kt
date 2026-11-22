@@ -40,12 +40,12 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -3591,11 +3591,21 @@ object AudioCache {
             withContext(Dispatchers.IO) {
                 // CacheWriter blocks in a read loop and checks this flag between
                 // reads; cancelling the coroutine alone would leave it running.
-                val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
+                // Signalled the moment cancellation starts: a completion handler
+                // only runs once the job has finished, which the blocking
+                // cache() below keeps it from doing, so a cancelled fetch used to
+                // run to its end (and [clear], which joins it, waited on that).
+                val watcher = launch {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        writer.cancel()
+                    }
+                }
                 try {
                     writer.cache()
                 } finally {
-                    handle.dispose()
+                    watcher.cancel()
                 }
             }
         }.onFailure {
