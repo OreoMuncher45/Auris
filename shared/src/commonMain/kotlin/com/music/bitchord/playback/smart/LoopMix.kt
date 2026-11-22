@@ -256,12 +256,17 @@ object LoopMix {
      * loop runs from a detected beat 1 to the detected beat 1 [bars] bars on, so
      * its seam is the music's own bar line however the tempo wanders; one whose
      * end lands more than a quarter beat from [bars] bars on (a missed or
-     * misplaced downbeat between) is skipped. Without them (or where the model
-     * found too few), the constant grid.
+     * misplaced downbeat between) is skipped. Without them (where the model
+     * found under two bar lines in the search), the constant grid.
+     *
+     * A side the model measured never falls back to the constant grid, even
+     * for a length it has no loop of: the grid is counted from the song's
+     * opening, and a song that drifted or resumed off it would loop off its
+     * own bar lines. [firstClean] tries the shorter measured loops instead.
      */
     private fun loopsBetween(side: BeatSide?, grid: Grid, from: Double, to: Double, bars: Int): List<Loop> {
         val loops = ArrayList<Loop>()
-        if (side != null && side.bpm > 0 && side.downbeats.size >= bars + 1) {
+        if (side != null && side.bpm > 0 && side.downbeats.count { it in from..to } >= 2) {
             val beat = 60 / side.bpm
             val downs = side.downbeats
             for (start in downs) {
@@ -271,7 +276,7 @@ object LoopMix {
                 if (abs(end - target) > beat / 4 || end > to) continue
                 loops += Loop(start, end)
             }
-            if (loops.isNotEmpty()) return loops
+            return loops
         }
         if (to < from) return loops
         val bar = grid.barSec

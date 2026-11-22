@@ -149,6 +149,17 @@ class LoopMixTest {
     }
 
     @Test
+    fun aMeasuredTailOffTheOpeningGridLoopsOnItsOwnBarLines() {
+        // The opening grid has bar lines at 0.5 + 2k s; the tail resumed a
+        // quarter second late, and the model found only two bars of it.
+        val downbeats = listOf(146.25, 148.25, 150.25)
+        val out = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        val plan = assertNotNull(plan(out, analysis(120.0, 180.0)))
+        assertTrue(plan.out.loopStart in downbeats, "loop start ${plan.out.loopStart}")
+        assertTrue(plan.out.loopEnd in downbeats, "loop end ${plan.out.loopEnd}")
+    }
+
+    @Test
     fun clockWrapsOnlyAtLoopEndsAndTheIncomingSongArrivesAtItsOwnSpeed() {
         val plan = assertNotNull(plan(analysis(111.0, 200.0), analysis(169.0, 180.0)))
         val clock = LoopMix.Clock(plan)
