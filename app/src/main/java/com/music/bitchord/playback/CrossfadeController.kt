@@ -1271,9 +1271,15 @@ class CrossfadeController(
         publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
 
         // The loop mix first: a pair it can do never reaches the blend below.
-        val loop = loopPlanFor(
-            player, currentItem, nextItem, currentAnalysis, nextAnalysis, duration, nextDuration, analysisState,
-        )
+        // A pair the planner refuses outright (speech, a live recording, a
+        // track too short to mix) gets no loop mix either.
+        val loop = if (plan.blocked) {
+            null
+        } else {
+            loopPlanFor(
+                player, currentItem, nextItem, currentAnalysis, nextAnalysis, duration, nextDuration, analysisState,
+            )
+        }
         // Never under Bit-perfect, which only lets the sleep timer's fade through.
         if (loop != null && !AppSettings.bitPerfect.value && nextStreamReady(nextItem)) {
             val loopStartMs = (loop.out.loopStart * 1000).roundToLong()
