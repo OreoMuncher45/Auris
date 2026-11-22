@@ -138,16 +138,16 @@ class VocalTracker(
     }
 
     private fun open(path: String, threads: Int, level: OrtSession.SessionOptions.OptLevel): OrtSession {
-        val options = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(threads)
-            setOptimizationLevel(level)
+        val options = OrtSession.SessionOptions()
+        // Closed here if the session never opens, a setter that throws
+        // included; on success they belong with it.
+        return try {
+            options.setIntraOpNumThreads(threads)
+            options.setOptimizationLevel(level)
             // Same reasoning as BeatTracker: the arena retains every block it allocates for
             // the life of the session, which a backgrounded music player cannot justify.
-            setCPUArenaAllocator(false)
-            setMemoryPatternOptimization(false)
-        }
-        // Closed here if the session never opens; on success they belong with it.
-        return try {
+            options.setCPUArenaAllocator(false)
+            options.setMemoryPatternOptimization(false)
             OrtEnvironment.getEnvironment().createSession(path, options).also { sessionOptions = options }
         } catch (error: Throwable) {
             runCatching { options.close() }

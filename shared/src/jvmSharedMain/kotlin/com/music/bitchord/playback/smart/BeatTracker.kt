@@ -109,19 +109,19 @@ class BeatTracker(
     }
 
     private fun open(path: String, threads: Int, level: OrtSession.SessionOptions.OptLevel): OrtSession {
-        val options = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(threads)
-            setOptimizationLevel(level)
+        val options = OrtSession.SessionOptions()
+        // Closed here if the session never opens, a setter that throws
+        // included; on success they belong with it.
+        return try {
+            options.setIntraOpNumThreads(threads)
+            options.setOptimizationLevel(level)
             // ORT's arena allocator keeps every block it has ever needed, which for this
             // graph is tens of megabytes of native heap retained for the life of the
             // session, far past the model's own size, on a process that also has to
             // survive in the background. Analysis runs a handful of times per track, so
             // allocating per run is the right trade.
-            setCPUArenaAllocator(false)
-            setMemoryPatternOptimization(false)
-        }
-        // Closed here if the session never opens; on success they belong with it.
-        return try {
+            options.setCPUArenaAllocator(false)
+            options.setMemoryPatternOptimization(false)
             OrtEnvironment.getEnvironment().createSession(path, options).also { sessionOptions = options }
         } catch (error: Throwable) {
             runCatching { options.close() }
