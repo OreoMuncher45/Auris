@@ -1721,7 +1721,7 @@ internal fun BitChordApp(
         if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return@playFrom
         val songs = allSongs.filterNot { it.isUnresolvedSpotify }
         val index = songs.indexOf(allSongs.getOrNull(allIndex)).coerceAtLeast(0)
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1745,7 +1745,7 @@ internal fun BitChordApp(
                     source = source,
                     upcomingPartyTracks = upcomingPartyTracks,
                 )
-                c.playSongs(timeline, 0)
+                c.playSongs(timeline, 0) { request == playRequestGeneration }
             } else {
                 val result = QueueCoordinator.buildContextQueue(
                     currentTimeline = currentTimeline,
@@ -1754,7 +1754,7 @@ internal fun BitChordApp(
                     selectedIndex = index,
                     contextSource = source,
                 )
-                c.playSongs(result.timeline, result.startIndex)
+                c.playSongs(result.timeline, result.startIndex) { request == playRequestGeneration }
             }
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
@@ -1935,7 +1935,7 @@ internal fun BitChordApp(
      * where the surrounding list *is* the thing the user asked for.
      */
     val playRadio: (Song, QueueSource) -> Unit = { song, source ->
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1949,7 +1949,7 @@ internal fun BitChordApp(
                 tappedSong = song,
                 source = source,
             )
-            c.playSongs(oneOffQueue, 0)
+            c.playSongs(oneOffQueue, 0) { request == playRequestGeneration }
             // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
@@ -1964,7 +1964,7 @@ internal fun BitChordApp(
      * shows: the shelf is what fits on a screen, the queue is what plays.
      */
     val playOfflineLibrary: (Song, QueueSource) -> Unit = { song, source ->
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1985,7 +1985,7 @@ internal fun BitChordApp(
                     playbackSourceId = source.id,
                 ).asQueueEntry(QueueTier.CONTEXT)
             }
-            c.playSongs(queue, 0)
+            c.playSongs(queue, 0) { request == playRequestGeneration }
         }
     }
 
@@ -2064,7 +2064,7 @@ internal fun BitChordApp(
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
-                    activeController.playSongs(listOf(seed) + related, 0)
+                    activeController.playSongs(listOf(seed) + related, 0) { request == playRequestGeneration }
                 }
                 // Make this station — never the queue from before it — what a
                 // fresh process restores, even if it is killed immediately.
@@ -2118,7 +2118,7 @@ internal fun BitChordApp(
                     return@launch
                 }
                 activeController.beginRadioQueue()
-                activeController.playSongs(tracks, 0)
+                activeController.playSongs(tracks, 0) { request == playRequestGeneration }
                 activeController.commitRadioQueue()
                 Toast.makeText(
                     context,
@@ -2484,7 +2484,7 @@ internal fun BitChordApp(
     val playQuickPicks: (Boolean) -> Unit = { shuffled ->
         val songs = quickPicksSongsState.value
         if (songs.isNotEmpty()) {
-            playRequestGeneration++
+            val request = ++playRequestGeneration
             activeRadioSeed = null
             scope.launch {
                 if (refusedByHost()) return@launch
@@ -2502,7 +2502,7 @@ internal fun BitChordApp(
                         playbackSourceType = source.type,
                     ).asQueueEntry(QueueTier.CONTEXT)
                 }
-                c.playSongs(queue, 0)
+                c.playSongs(queue, 0) { request == playRequestGeneration }
             }
         }
     }
