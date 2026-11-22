@@ -10828,6 +10828,14 @@ class PlaybackService : MediaLibraryService() {
             val index = (0 until selection.index).count { !context.songs[it].isUnresolvedSpotify }
             songs.forEach { songCache[it.videoId] = it }
             val built = withContext(Dispatchers.Main) {
+                // The account can change between the IO-side select and here.
+                if (!context.belongsTo(currentListener())) {
+                    mediaSession.sendError(
+                        controller,
+                        SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
+                    )
+                    return@withContext null
+                }
                 val exoPlayer = player
                 val timeline = if (exoPlayer == null) emptyList() else {
                     (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
@@ -10835,7 +10843,7 @@ class PlaybackService : MediaLibraryService() {
                 val currentIndex = exoPlayer?.currentMediaItemIndex ?: -1
                 QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
                     .also { followAutoBrowseContinuation(context) }
-            }
+            } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return MediaSession.MediaItemsWithStartPosition(
                 ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
                 built.startIndex,
