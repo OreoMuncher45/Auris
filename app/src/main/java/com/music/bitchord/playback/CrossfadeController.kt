@@ -2956,6 +2956,11 @@ class CrossfadeController(
         val visualEnd = session.clock.releaseAt
         if (m >= 0.0) AutoMixVisualFeed.start(visualGeneration, m.coerceAtMost(visualEnd))
         if (!handedOff && m >= session.clock.handoffAt) {
+            // The incoming player has to be able to play before the session
+            // is moved onto it, as a plain crossfade requires of its standby:
+            // otherwise the deck hands over to a player with nothing to give.
+            // Not ready yet, the outgoing song is kept, at its mix position.
+            if (into.playbackState != Player.STATE_READY) return loopBail("the incoming player wasn't ready", settle = true)
             handOff(out, into, m, visualEnd)
         }
         if (m >= 0.0) {
