@@ -101,6 +101,27 @@ class PhraseBarAutomixTest {
     }
 
     @Test
+    fun sevenLongBarsAreNotPassedOffAsEight() {
+        // Past 150 s each bar runs 8/7 as long, so the 7th measured bar line sits
+        // exactly 8 nominal bars on. That is 7 bars, not the 8 asked for.
+        val current = track("a", 120.0, "C major", vocal = 0.1, lateBarStretch = 8.0 / 7.0)
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+        val plan = plan(current, next, PHRASE_BARS_SHORT)
+        if (plan.reason.endsWith("phrase-8-bar")) {
+            val start = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
+            val end = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 }
+            assertEquals(PHRASE_BARS_SHORT, end - start, "a phrase plan must span 8 measured bars")
+        }
+    }
+
+    @Test
+    fun anUntrustedOutgoingGridGetsTheAdaptivePlan() {
+        val current = track("a", 120.0, "C major", vocal = 0.1).copy(beatConfidence = 0.1)
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+        assertTrue(!plan(current, next, PHRASE_BARS_SHORT).reason.endsWith("phrase-8-bar"))
+    }
+
+    @Test
     fun sixteenBarsIsExactlySixteenBarsOnTheGrid() {
         val current = track("a", 120.0, "C major", vocal = 0.1)
         val next = track("b", 120.0, "C major", vocal = 0.1)

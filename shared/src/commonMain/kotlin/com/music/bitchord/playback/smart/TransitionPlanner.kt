@@ -538,8 +538,10 @@ private fun phraseBarPlan(
     // track's first bar lands on a downbeat rather than mid-phrase.
     val contentEnd = analysis.contentEndTime.orZero().takeIf { it != 0.0 } ?: length
     val anchor = min(mixAnchor, contentEnd).coerceAtMost(length)
-    val gridTrusted = analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE
-    val mixEnd = if (gridTrusted) onDownbeatBefore(analysis, anchor, BEATS_PER_BAR * beatSeconds) else anchor
+    // Both edges go on the outgoing grid; one too uncertain to place them gets
+    // the adaptive plan rather than a phrase of arithmetic bars.
+    if (analysis.beatConfidence.orZero() < MIN_DJ_CONFIDENCE) return null
+    val mixEnd = onDownbeatBefore(analysis, anchor, BEATS_PER_BAR * beatSeconds)
     if (mixEnd <= 0) return null
 
     // Both edges on the grid: snap the start to a phrase boundary or downbeat at
@@ -547,27 +549,27 @@ private fun phraseBarPlan(
     // measured downbeat there, so the overlap is the bars that were asked for.
     val latestStart = mixEnd - requestedOverlap
     if (latestStart < MIN_CLEARANCE_SECONDS) return null
-    val transitionStart = if (gridTrusted) {
-        alignedTransitionStart(
-            analysis,
-            latestStart,
-            mixEnd - 0.05,
-            preferEarlier = true,
-            minimum = MIN_CLEARANCE_SECONDS,
-        )
-    } else {
-        latestStart
-    }
+    val transitionStart = alignedTransitionStart(
+        analysis,
+        latestStart,
+        mixEnd - 0.05,
+        preferEarlier = true,
+        minimum = MIN_CLEARANCE_SECONDS,
+    )
     val nominalEnd = transitionStart + requestedOverlap
     // Where the grid is measured there, the end is its downbeat: a tempo that
-    // drifts even slightly puts start-plus-nominal off the bar line. Half a
-    // beat out is a different bar count, not drift, and the adaptive plan
-    // takes the pair instead.
-    val measuredEnd = if (gridTrusted) {
-        analysis.downbeats.minByOrNull { abs(it - nominalEnd) }
-            ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
+    // drifts even slightly puts start-plus-nominal off the bar line. From a
+    // start on a measured downbeat the end is counted [phraseBars] measured
+    // bar lines on, so a near miss can't pass for the asked-for bar count.
+    // Half a beat out is a different bar count, not drift, and the adaptive
+    // plan takes the pair instead.
+    val downbeats = analysis.downbeats
+    val startIndex = downbeats.indexOfFirst { abs(it - transitionStart) <= beatSeconds / 8 }
+    val measuredEnd = if (startIndex >= 0) {
+        downbeats.getOrNull(startIndex + phraseBars) ?: return null
     } else {
-        null
+        downbeats.minByOrNull { abs(it - nominalEnd) }
+            ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
     }
     if (measuredEnd != null && abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
     val transitionEnd = measuredEnd ?: nominalEnd
@@ -651,7 +653,7 @@ private fun phraseBarPlan(
         vocalOverlap = vocalOverlap,
         outgoingBpm = outgoingBpm,
         incomingBpm = alignedIncomingBpm,
-        beatSeconds = if (gridTrusted) beatSeconds else 0.0,
+        beatSeconds = beatSeconds,
         // Tempo is fixed once either deck is audible; see [mixPlan].
         phaseLock = false,
         echoSeconds = 0.0,
