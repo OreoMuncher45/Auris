@@ -756,7 +756,7 @@ class CrossfadeController(
             // The listener moving the playhead is something no half-finished
             // crossfade should survive. Nothing this class does registers here
             // any more: the handoff is a role swap, not a seek.
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) bail()
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) bail(recover = false)
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -767,8 +767,8 @@ class CrossfadeController(
                 // does *not* fire when AutoPlay appends to the end, since the
                 // playing item doesn't change: extending the queue mid-fade is
                 // harmless and shouldn't cost the listener the blend.
-                Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> bail()
-                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> bail()
+                Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> bail(recover = false)
+                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> bail(recover = false)
                 Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> {
                     cancelAutoMixVisual()
                     ranOutBeforeHandoff()
@@ -3076,8 +3076,13 @@ class CrossfadeController(
      * whichever song is ahead in it, at the mix's own position for it — or,
      * when [settle] is false, leaves the session player where something else
      * already put it.
+     *
+     * Once the outgoing sink has taken over, its player's own position is
+     * wherever its decoder stopped, so even an unsettled bail puts it back at
+     * the mix's position — unless [recover] is false: the listener seeked or
+     * replaced the queue, and the player is already where they asked.
      */
-    private fun loopBail(reason: String, settle: Boolean = true) {
+    private fun loopBail(reason: String, settle: Boolean = true, recover: Boolean = true) {
         cancelAutoMixVisual()
         val session = loopSession
         TrackLog.d(TAG, "loop mix stops ($phase): $reason")
@@ -3106,7 +3111,7 @@ class CrossfadeController(
         // The session player, after [finish]: idle by then, so the seek's own
         // discontinuity can't come back here as another bail.
         val sessionPlayer = if (wasHandedOff) into else out
-        if (sessionPlayer != null && target != null && (settle || (!wasHandedOff && tookOver))) {
+        if (sessionPlayer != null && target != null && (settle || (recover && !wasHandedOff && tookOver))) {
             sessionPlayer.seekTo(target)
         }
     }
@@ -3148,11 +3153,11 @@ class CrossfadeController(
      * has been announced), so the only thing left is to take the outgoing track
      * away gracefully.
      */
-    private fun bail() {
+    private fun bail(recover: Boolean = true) {
         cancelAutoMixVisual()
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
         if (phase == Phase.LOOP_ARMING || phase == Phase.LOOP_RUNNING) {
-            loopBail("interrupted", settle = false)
+            loopBail("interrupted", settle = false, recover = recover)
             return
         }
         TrackLog.d(TAG, "bail from $phase")
