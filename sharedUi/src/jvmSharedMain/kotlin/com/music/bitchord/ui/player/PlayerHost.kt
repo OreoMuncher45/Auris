@@ -208,6 +208,8 @@ interface PlayerSettingsSource {
     val fullBleedArtwork: StateFlow<Boolean>
     /** Whether the album art is drawn a little smaller inside its card. */
     val zoomOutAlbumArt: StateFlow<Boolean>
+    /** Whether the scrubber's right label is the track's length rather than the time left. */
+    val showTotalDuration: StateFlow<Boolean>
     val hideSongStatus: StateFlow<Boolean>
     /** Hide the device status bar while the player is up. Always false where there is none. */
     val hideStatusBar: StateFlow<Boolean>

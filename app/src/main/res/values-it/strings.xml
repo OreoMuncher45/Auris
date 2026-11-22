@@ -1584,4 +1584,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Mostra durata totale</string>
+    <string name="show_total_duration_subtitle">Mostra la durata completa del brano invece del tempo rimanente</string>
 </resources>

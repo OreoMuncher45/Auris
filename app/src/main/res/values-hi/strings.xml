@@ -1645,4 +1645,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">कुल अवधि दिखाएँ</string>
+    <string name="show_total_duration_subtitle">बचे हुए समय की जगह गाने की पूरी अवधि दिखाता है</string>
 </resources>

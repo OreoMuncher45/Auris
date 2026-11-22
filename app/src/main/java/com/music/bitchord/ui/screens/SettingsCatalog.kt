@@ -119,6 +119,7 @@ object SettingsCatalog {
             "now_playing.hide_volume_bar",
             "now_playing.hide_song_status",
             "now_playing.colors",
+            "now_playing.show_total_duration",
             "now_playing.text_glow",
             "now_playing.show_lyrics",
             "now_playing.next_track_status",

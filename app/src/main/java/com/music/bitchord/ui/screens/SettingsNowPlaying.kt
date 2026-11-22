@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -65,6 +66,7 @@ internal fun NowPlayingSettings(
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val zoomOutAlbumArt by AppSettings.zoomOutAlbumArt.collectAsStateWithLifecycle()
+    val showTotalDuration by AppSettings.showTotalDuration.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
@@ -89,6 +91,21 @@ internal fun NowPlayingSettings(
                 title = nowPlayingColorsTitle,
                 subtitle = stringResource(R.string.custom_now_playing_help),
                 onClick = { sheets.showPlayerColors = true },
+            )
+        }
+        val showTotalDurationTitle = stringResource(R.string.show_total_duration)
+        row(showTotalDurationTitle, "seek bar", "remaining time", "duration", "song length") {
+            SettingsRow(
+                icon = Icons.Rounded.Timer,
+                title = showTotalDurationTitle,
+                subtitle = stringResource(R.string.show_total_duration_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = showTotalDuration,
+                        onCheckedChange = AppSettings::setShowTotalDuration,
+                    )
+                },
+                onClick = { AppSettings.setShowTotalDuration(!showTotalDuration) },
             )
         }
         val textGlowTitle = stringResource(R.string.custom_text_glow)

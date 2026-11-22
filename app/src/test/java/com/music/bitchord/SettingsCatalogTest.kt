@@ -132,7 +132,7 @@ class SettingsCatalogTest {
             "now_playing.spotify_canvas", "now_playing.synced_lyrics",
             "now_playing.blur_unfocused_lyrics", "now_playing.lyrics_sources",
             "now_playing.translation_language", "now_playing.hide_volume_bar",
-            "now_playing.hide_song_status", "now_playing.colors", "now_playing.text_glow",
+            "now_playing.hide_song_status", "now_playing.colors", "now_playing.show_total_duration", "now_playing.text_glow",
             "now_playing.show_lyrics", "now_playing.next_track_status", "now_playing.upgrade_badge",
             "now_playing.lossless_badge", "now_playing.hires_badge", "now_playing.transport_smoothness",
             "home_library.show_flow_on_home", "home_library.shelf_order", "home_library.show_replay",

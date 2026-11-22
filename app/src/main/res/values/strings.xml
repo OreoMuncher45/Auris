@@ -1497,4 +1497,6 @@
     <string name="removed_from_cache">Removed from the song cache</string>
     <string name="remove_from_history">Remove from history</string>
     <string name="remove_from_history_failed">Couldn\'t remove from history</string>
+    <string name="show_total_duration">Show total duration</string>
+    <string name="show_total_duration_subtitle">Shows the song\'s full length instead of the time remaining</string>
 </resources>

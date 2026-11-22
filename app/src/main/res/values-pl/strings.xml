@@ -1685,4 +1685,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Pokazuj całkowity czas</string>
+    <string name="show_total_duration_subtitle">Pokazuje pełną długość utworu zamiast pozostałego czasu</string>
 </resources>

@@ -1623,4 +1623,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">合計時間を表示</string>
+    <string name="show_total_duration_subtitle">残り時間の代わりに曲の長さを表示します</string>
 </resources>

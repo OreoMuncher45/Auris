@@ -79,6 +79,7 @@ at once.
 
 ### Now Playing
 - [x] `now_playing.colors` — Player colours (buttons, seekbar, text, lyrics)
+- [x] `now_playing.show_total_duration` — Show total duration
 - [x] `now_playing.text_glow` — Text glow
 - [x] `now_playing.show_lyrics` — Lyric line
 - [x] `now_playing.next_track_status` — Next track status

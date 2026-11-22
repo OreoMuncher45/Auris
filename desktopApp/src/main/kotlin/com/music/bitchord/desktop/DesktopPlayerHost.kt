@@ -185,6 +185,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
     override val zoomOutAlbumArt = MutableStateFlow(false)
+    override val showTotalDuration = MutableStateFlow(false)
     override val hideSongStatus = MutableStateFlow(false)
     // A desktop window has no status bar to hide.
     override val hideStatusBar = MutableStateFlow(false)

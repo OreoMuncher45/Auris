@@ -1602,4 +1602,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Toplam süreyi göster</string>
+    <string name="show_total_duration_subtitle">Kalan süre yerine şarkının tam uzunluğunu gösterir</string>
 </resources>

@@ -1562,4 +1562,6 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Hiện tổng thời lượng</string>
+    <string name="show_total_duration_subtitle">Hiện toàn bộ thời lượng bài hát thay vì thời gian còn lại</string>
 </resources>
