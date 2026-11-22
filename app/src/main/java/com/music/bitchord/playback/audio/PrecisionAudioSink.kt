@@ -812,12 +812,20 @@ class PrecisionAudioSink(
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
-            val accepted = delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
+            // Still on the delegate's clock after a loop mix shifted this
+            // player: the silence it inserted, or the frames it dropped, stay
+            // counted until a flush, and the position reports take them off.
+            val delegateTimeUs = if (presentationTimeUs != C.TIME_UNSET) {
+                presentationTimeUs + delegateOffsetUs
+            } else {
+                presentationTimeUs
+            }
+            val accepted = delegate.handleBuffer(inputBuffer, delegateTimeUs, encodedAccessUnitCount)
             if (!accepted || inputBuffer.hasRemaining()) {
                 // Keep the buffer (not a copy) so isEnded/hasPendingData answer
                 // for the bytes still in the delegate's hands.
                 passthroughBuffer = inputBuffer
-                passthroughPresentationTimeUs = presentationTimeUs
+                passthroughPresentationTimeUs = delegateTimeUs
                 passthroughAccessUnitCount = encodedAccessUnitCount
                 return false
             }

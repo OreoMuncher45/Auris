@@ -517,6 +517,45 @@ class PrecisionAudioSinkTest {
         assertSame(input, fakeDelegate.lastHandledBuffer)
     }
 
+    /**
+     * A loop mix that lined the incoming player up by inserting silence leaves
+     * the delegate's clock that far ahead of the track until a flush. Once the
+     * loop disarms, the buffer forwarded untouched must still carry the
+     * shifted time, or the delegate sees a gap and resyncs.
+     */
+    @Test
+    fun `the forwarded buffer keeps the loop mix's shift after it disarms`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480 * 2) { _ -> it.putShort(0) }
+            it.flip()
+        }
+
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        port.requestShift(-480) // 10 ms of silence ahead of the song
+        assertTrue(sink.handleBuffer(block(), 0L, 1))
+        assertEquals(10_000L, fakeDelegate.lastPresentationTimeUs)
+
+        port.disarm()
+        val next = block()
+        assertTrue(sink.handleBuffer(next, 10_000L, 1))
+
+        assertSame("forwarded untouched", next, fakeDelegate.lastHandledBuffer)
+        assertEquals(20_000L, fakeDelegate.lastPresentationTimeUs)
+    }
+
     /** Switched on, the chain is reached and does colour the audio. */
     @Test
     fun `the DSP chain is reached when it is switched on`() {
