@@ -369,6 +369,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // whole path rather than being re-earned from audio the cache may since
         // have evicted, or waiting on a lookup that is still out or has failed.
         restoreOnce(trackId)
+        // Already measured, and not a head-only placeholder: nothing below
+        // would replace it, so the catalogue search [analysisUriFor] can start
+        // is not worth starting either.
+        results[trackId]?.let { if (it.isUsable && trackId !in provisional) return }
         if (overheated) return
         // Only the canonical YouTube rendition of this recording will do, not
         // the source substitute the player happens to be on: see
