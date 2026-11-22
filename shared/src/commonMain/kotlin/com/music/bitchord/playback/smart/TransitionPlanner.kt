@@ -1417,8 +1417,8 @@ private fun analysisReadyForTrack(analysis: TrackAnalysis, track: TransitionTrac
  *   to fit it — falls back to the ordinary smart plan rather than forcing a
  *   ragged one.
  * @param mixWindow Confine the mix to the last and first [MIX_WINDOW_SECONDS] of the pair — see
- *   [clampToMixWindow]. The desktop asks for it; the phone leaves it off, so its plans are
- *   unchanged.
+ *   [clampToMixWindow]. Nothing turns it on at present: the desktop and the phone both leave it
+ *   off, so their plans skip the clamp.
  */
 fun planTransition(
     analysis: TrackAnalysis = TrackAnalysis(),
