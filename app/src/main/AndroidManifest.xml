@@ -266,6 +266,11 @@
                     android:scheme="https"
                     android:host="bitchord.kushagrasingh.in"
                     android:pathPattern="/invite/......" />
+                <!-- Any capitalisation of /invite/, as the parser accepts.
+                     Android 12+; older versions ignore it and keep the line above. -->
+                <data
+                    android:pathAdvancedPattern="/[iI][nN][vV][iI][tT][eE]/[A-Za-z0-9]{6}"
+                    tools:targetApi="31" />
             </intent-filter>
 
             <!-- Custom scheme for Listen Together invites on custom server deployments. -->
