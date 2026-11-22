@@ -1632,4 +1632,6 @@
     <string name="show_total_duration_subtitle">แสดงความยาวเต็มของเพลงแทนเวลาที่เหลือ</string>
     <string name="sleep_timer_fade_out">ค่อยๆ ลดเสียงก่อนหยุดชั่วคราว</string>
     <string name="sleep_timer_fade_out_subtitle">ค่อยๆ ลดระดับเสียงในช่วง 30 วินาทีสุดท้าย</string>
+    <string name="youtube_premium_audio">เสียง YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">ฉันมี Premium: สตรีม Opus คุณภาพสูงกว่า ~256 kbps แทน 160 kbps มาตรฐาน</string>
 </resources>

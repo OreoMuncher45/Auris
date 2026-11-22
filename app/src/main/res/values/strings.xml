@@ -1501,4 +1501,6 @@
     <string name="show_total_duration_subtitle">Shows the song\'s full length instead of the time remaining</string>
     <string name="sleep_timer_fade_out">Fade out before pausing</string>
     <string name="sleep_timer_fade_out_subtitle">Gradually lowers volume over the last 30 seconds</string>
+    <string name="youtube_premium_audio">YouTube Premium audio</string>
+    <string name="youtube_premium_audio_subtitle">I have Premium: stream the higher-quality ~256 kbps Opus instead of the standard 160 kbps</string>
 </resources>

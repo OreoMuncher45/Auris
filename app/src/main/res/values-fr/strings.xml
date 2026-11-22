@@ -1650,4 +1650,6 @@
     <string name="show_total_duration_subtitle">Affiche la durée complète du titre au lieu du temps restant</string>
     <string name="sleep_timer_fade_out">Fondu avant la pause</string>
     <string name="sleep_timer_fade_out_subtitle">Baisse progressivement le volume pendant les 30 dernières secondes</string>
+    <string name="youtube_premium_audio">Audio YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">J\'ai Premium : diffuser l\'Opus de meilleure qualité à ~256 kbps au lieu des 160 kbps standard</string>
 </resources>

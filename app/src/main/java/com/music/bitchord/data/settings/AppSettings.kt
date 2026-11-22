@@ -12,6 +12,7 @@ import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
@@ -328,6 +329,19 @@ object AppSettings {
      * during the overlap, so it is only turned on after a confirmation.
      */
     val seamlessQualityUpgrade = MutableStateFlow(false)
+
+    /**
+     * The listener's word that their YouTube account has Premium, and that
+     * YouTube playback should take the signed-in route that reaches Premium's
+     * ~256kbps Opus (itag 774) instead of the anonymous 251 — the route
+     * age-restricted tracks already take. See
+     * [InnerTubeXResolver.extract][com.music.bitchord.data.innertube.InnerTubeXResolver.extract].
+     *
+     * Off by default and asked rather than detected: nothing InnerTubeX
+     * exposes confirms the entitlement, and claiming it for an account
+     * without Premium only costs that account the faster anonymous route.
+     */
+    val youtubePremiumAudio = MutableStateFlow(false)
 
     /**
      * Whether the songs kept on the device are upgraded to a better copy
@@ -1618,6 +1632,7 @@ object AppSettings {
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
+        youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
         autoUpgradeLocalStorage.value = prefs.getBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
@@ -2159,6 +2174,13 @@ object AppSettings {
     fun setSeamlessQualityUpgrade(value: Boolean) {
         seamlessQualityUpgrade.value = value
         prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
+    fun setYoutubePremiumAudio(value: Boolean) {
+        youtubePremiumAudio.value = value
+        prefs.edit().putBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, value).apply()
+        // Remembered URLs were picked under the old route; the next play asks again.
+        StreamResolver.forgetResolved()
     }
 
     /**
@@ -3296,6 +3318,7 @@ object AppSettings {
     private const val KEY_SMART_FADE = "smart_fade_enabled"
     private const val KEY_SLEEP_TIMER_FADE_OUT = "sleep_timer_fade_out"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
+    private const val KEY_YOUTUBE_PREMIUM_AUDIO = "youtube_premium_audio"
     private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"

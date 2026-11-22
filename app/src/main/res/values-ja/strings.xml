@@ -1627,4 +1627,6 @@
     <string name="show_total_duration_subtitle">残り時間の代わりに曲の長さを表示します</string>
     <string name="sleep_timer_fade_out">一時停止前にフェードアウト</string>
     <string name="sleep_timer_fade_out_subtitle">最後の30秒で音量を徐々に下げます</string>
+    <string name="youtube_premium_audio">YouTube Premium オーディオ</string>
+    <string name="youtube_premium_audio_subtitle">Premium に加入済み：標準の 160 kbps ではなく、高音質の約 256 kbps Opus で再生します</string>
 </resources>

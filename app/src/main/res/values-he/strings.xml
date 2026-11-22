@@ -1654,4 +1654,6 @@
     <string name="show_total_duration_subtitle">מציג את האורך המלא של השיר במקום הזמן שנותר</string>
     <string name="sleep_timer_fade_out">עמעום לפני השהיה</string>
     <string name="sleep_timer_fade_out_subtitle">מנמיך את עוצמת הקול בהדרגה ב־30 השניות האחרונות</string>
+    <string name="youtube_premium_audio">אודיו של YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">יש לי Premium: הזרמת Opus באיכות גבוהה יותר של ~256 kbps במקום 160 kbps הרגילים</string>
 </resources>

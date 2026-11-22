@@ -1689,4 +1689,6 @@
     <string name="show_total_duration_subtitle">Pokazuje pełną długość utworu zamiast pozostałego czasu</string>
     <string name="sleep_timer_fade_out">Wyciszanie przed pauzą</string>
     <string name="sleep_timer_fade_out_subtitle">Stopniowo ścisza dźwięk przez ostatnie 30 sekund</string>
+    <string name="youtube_premium_audio">Dźwięk YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">Mam Premium: odtwarzaj Opus wyższej jakości ~256 kb/s zamiast standardowych 160 kb/s</string>
 </resources>

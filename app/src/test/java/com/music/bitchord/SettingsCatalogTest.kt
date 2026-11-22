@@ -117,7 +117,7 @@ class SettingsCatalogTest {
             "pass.card",
             "account.integrations", "account.listen_together",
             "account.community_discord", "account.community_reddit",
-            "audio.source", "audio.offline_mode", "audio.wifi", "audio.mobile_data",
+            "audio.source", "audio.offline_mode", "audio.wifi", "audio.mobile_data", "audio.youtube_premium",
             "audio.output_precision", "audio.bit_perfect", "audio.prefer_usb_dac",
             "audio.loudness_normalization", "audio.loudness_off_on_speaker",
             "audio.seamless_quality_upgrades", "audio.auto_upgrade_local_storage",

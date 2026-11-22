@@ -1566,4 +1566,6 @@
     <string name="show_total_duration_subtitle">Hiện toàn bộ thời lượng bài hát thay vì thời gian còn lại</string>
     <string name="sleep_timer_fade_out">Giảm dần âm lượng trước khi tạm dừng</string>
     <string name="sleep_timer_fade_out_subtitle">Giảm âm lượng từ từ trong 30 giây cuối</string>
+    <string name="youtube_premium_audio">Âm thanh YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">Tôi có Premium: phát Opus chất lượng cao hơn ~256 kbps thay vì 160 kbps tiêu chuẩn</string>
 </resources>

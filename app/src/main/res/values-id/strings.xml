@@ -1626,4 +1626,6 @@
     <string name="show_total_duration_subtitle">Menampilkan durasi penuh lagu, bukan sisa waktu</string>
     <string name="sleep_timer_fade_out">Pelankan sebelum jeda</string>
     <string name="sleep_timer_fade_out_subtitle">Menurunkan volume perlahan selama 30 detik terakhir</string>
+    <string name="youtube_premium_audio">Audio YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">Saya punya Premium: putar Opus berkualitas lebih tinggi ~256 kbps, bukan 160 kbps standar</string>
 </resources>

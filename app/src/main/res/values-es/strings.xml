@@ -1621,4 +1621,6 @@
     <string name="show_total_duration_subtitle">Muestra la duración completa de la canción en lugar del tiempo restante</string>
     <string name="sleep_timer_fade_out">Bajar el volumen antes de pausar</string>
     <string name="sleep_timer_fade_out_subtitle">Baja el volumen poco a poco en los últimos 30 segundos</string>
+    <string name="youtube_premium_audio">Audio de YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">Tengo Premium: reproducir el Opus de mayor calidad a ~256 kbps en lugar de los 160 kbps habituales</string>
 </resources>

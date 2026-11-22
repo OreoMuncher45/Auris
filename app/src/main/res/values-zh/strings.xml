@@ -1626,4 +1626,6 @@
     <string name="show_total_duration_subtitle">显示歌曲的完整时长，而不是剩余时间</string>
     <string name="sleep_timer_fade_out">暂停前淡出</string>
     <string name="sleep_timer_fade_out_subtitle">在最后 30 秒内逐渐降低音量</string>
+    <string name="youtube_premium_audio">YouTube Premium 音频</string>
+    <string name="youtube_premium_audio_subtitle">我有 Premium：串流更高音质的约 256 kbps Opus，而不是标准的 160 kbps</string>
 </resources>

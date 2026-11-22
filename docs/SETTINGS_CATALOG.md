@@ -48,6 +48,7 @@ at once.
 - [x] `audio.offline_mode` — Offline mode
 - [x] `audio.wifi` — On Wi-Fi
 - [x] `audio.mobile_data` — On mobile data
+- [x] `audio.youtube_premium` — YouTube Premium audio
 - [x] `audio.output_precision` — Output precision
 - [x] `audio.bit_perfect` — Bit-perfect
 - [x] `audio.prefer_usb_dac` — Prefer USB DAC

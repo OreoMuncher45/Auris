@@ -77,6 +77,7 @@ object SettingsCatalog {
             "audio.offline_mode",
             "audio.wifi",
             "audio.mobile_data",
+            "audio.youtube_premium",
             "audio.output_precision",
             "audio.bit_perfect",
             "audio.prefer_usb_dac",
