@@ -4789,6 +4789,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 fetch = { next ->
                     retryingOrNull(FILL_IN_RETRIES_MS) {
                         if (listenerKey() != listener) return@retryingOrNull null
+                        // Closed while a retry waited: nothing left to fill in.
+                        if (_detailStack.value.none { it.browseId == browseId }) return@retryingOrNull null
                         YtMusicRepository.moreSongs(next).getOrNull()
                     }
                 },
