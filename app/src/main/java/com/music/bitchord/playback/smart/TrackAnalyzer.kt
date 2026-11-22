@@ -336,21 +336,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (stopped) return
         if (trackId in running) return
         // A track measured in an earlier session costs nothing to restore, so
-        // only the work below waits for the phone to cool.
-        if (overheated) {
-            restoreOnce(trackId)
-            return
-        }
-        val analysisUri = analysisUriFor(trackId, uri) ?: return
-
+        // only the work below waits for the phone to cool. Queued before the
+        // cache is even consulted, and before a source-backed track's catalogue
+        // match, so a track measured in an earlier session short-circuits the
+        // whole path rather than being re-earned from audio the cache may since
+        // have evicted, or waiting on a lookup that is still out or has failed.
+        restoreOnce(trackId)
+        if (overheated) return
         // Only the canonical YouTube rendition of this recording will do, not
         // the source substitute the player happens to be on: see
         // [chooseRendition]. Waiting on the live URI is what made analysis
         // arrive after the transition that needed it.
-        // Queued before the cache is even consulted, so a track measured in an
-        // earlier session short-circuits the whole path rather than being
-        // re-earned from audio the cache may since have evicted.
-        restoreOnce(trackId)
+        val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // A track playing off the device is not a download in progress. Every
         // byte of it is already there, and none of those bytes are in the cache:
