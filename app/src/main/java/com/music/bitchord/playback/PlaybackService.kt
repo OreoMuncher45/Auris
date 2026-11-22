@@ -644,7 +644,7 @@ class PlaybackService : MediaLibraryService() {
         autoContinuationJob = scope.launch {
             // [scope] is the main thread's, which the listener is removed on.
             try {
-                followAutoBrowsePages(context, first, sourceId, installedOn, installed)
+                followAutoBrowsePages(context, first, sourceId, installed)
             } finally {
                 installedOn.removeListener(installListener)
             }
@@ -655,7 +655,6 @@ class PlaybackService : MediaLibraryService() {
         context: AutoBrowseContext,
         first: String,
         sourceId: String,
-        installedOn: Player,
         installed: CompletableDeferred<Unit>,
     ) {
         val seen = context.songs.mapTo(HashSet()) { it.videoId }
@@ -690,7 +689,10 @@ class PlaybackService : MediaLibraryService() {
             withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
             // The wait can be long enough for the account to change.
             if (context.listener != null && context.listener != currentListener()) return
-            val exoPlayer = player?.takeIf { it === installedOn } ?: return
+            // Not tied to the player it was installed on: a crossfade hands the same queue to the
+            // other player. Whether the queue still holds this folder is what
+            // decides, below.
+            val exoPlayer = player ?: return
             if (castPlayback.active) return
             val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
             val last = queuedSongs
