@@ -119,6 +119,7 @@ object Innertube {
                 // and a visitor id minted under the old session is not bound to
                 // the new one — see [SessionScope] and [visitorData].
                 scope = null
+                adoptedIdentity = null
                 visitorData = null
                 visitorDataIsSessionBound = false
                 // The chosen channel belonged to the account that just left.
@@ -144,9 +145,23 @@ object Innertube {
         val session = cookie
         listener = session?.let {
             val channel = channelOverride
-            if (channel == null) it else "${channel.pageId}/${channel.dataSyncId}/${channel.authUser}|$it"
+            when {
+                channel != null -> "${channel.pageId}/${channel.dataSyncId}/${channel.authUser}|$it"
+                // A scope taken from a signed-in page can name another account
+                // under the same cookie; requests then go out as that one.
+                adoptedIdentity != null -> "$adoptedIdentity|$it"
+                else -> it
+            }
         }
     }
+
+    /**
+     * The identity [adoptSessionScope] took from a page, while its scope is
+     * the one requests use. The shell's own default ([ensureSessionScope]) is
+     * not one: it is what the cookie alone already names.
+     */
+    @Volatile
+    private var adoptedIdentity: String? = null
 
     /**
      * Google's per-session visitor id.
@@ -337,6 +352,8 @@ object Innertube {
         if (!loggedIn) {
             Log.w(TAG, "captured page was signed out; not scoping requests to it")
             scope = version?.let { SessionScope(null, null, "0", it) }
+            adoptedIdentity = null
+            refreshListener()
             return
         }
         scope = SessionScope(
@@ -344,7 +361,8 @@ object Innertube {
             pageId = pageId?.takeIf { it.isNotBlank() },
             authUser = authUser?.takeIf { it.isNotBlank() } ?: "0",
             clientVersion = version,
-        )
+        ).also { adoptedIdentity = "${it.pageId}/${it.dataSyncId}/${it.authUser}" }
+        refreshListener()
         // The page's own visitor id, bound to this session — strictly better
         // than the anonymous one [fetchVisitorData] mints. See [visitorData].
         visitorData?.takeIf { it.isNotBlank() }?.let {
@@ -429,7 +447,11 @@ object Innertube {
     /** Re-read request context once after an authenticated rejection. */
     suspend fun refreshSessionScope() {
         if (cookie == null) return
-        scopeLock.withLock { scope = null }
+        scopeLock.withLock {
+            scope = null
+            adoptedIdentity = null
+        }
+        refreshListener()
         ensureSessionScope()
     }
 

@@ -41,4 +41,19 @@ class ListenerIdentityTest {
         Innertube.cookie = "SID=two"
         assertNotEquals(first, Innertube.listener)
     }
+
+    @Test
+    fun `a page scope for another account under one cookie is a different listener`() {
+        Innertube.cookie = "SID=one"
+        val shell = Innertube.listener
+        Innertube.adoptSessionScope("pageA", "syncA", "0", null, null, loggedIn = true)
+        val first = Innertube.listener
+        assertNotEquals(shell, first)
+        Innertube.adoptSessionScope("pageB", "syncB", "1", null, null, loggedIn = true)
+        assertNotEquals(first, Innertube.listener)
+        // The same scope again is the same listener.
+        val second = Innertube.listener
+        Innertube.adoptSessionScope("pageB", "syncB", "1", null, null, loggedIn = true)
+        assertEquals(second, Innertube.listener)
+    }
 }
