@@ -991,8 +991,7 @@ class PrecisionAudioSink(
         }
         val port = loop
         if (port.outArm != null || port.inArm != null) {
-            port.positionUs = position - port.streamOffsetUs
-            port.positionNanos = System.nanoTime()
+            port.publishPosition(position - port.streamOffsetUs, System.nanoTime())
         }
         return position
     }

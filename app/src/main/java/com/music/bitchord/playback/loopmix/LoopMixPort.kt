@@ -95,13 +95,40 @@ class LoopMixPort {
      * resolution, read on every renderer tick.
      */
     @Volatile var positionUs: Long = C.TIME_UNSET
+        private set
     @Volatile var positionNanos: Long = 0L
+        private set
+
+    /**
+     * Odd while [publishPosition] is between its two writes. The pair is read
+     * as one: a new position with the old time would extrapolate it ahead by
+     * the gap between readings, a whole correction's worth of error.
+     */
+    @Volatile private var positionSeq = 0
+
+    /** Records a reading; the sink's playback thread is the only writer. */
+    fun publishPosition(us: Long, nanos: Long) {
+        positionSeq++
+        positionUs = us
+        positionNanos = nanos
+        positionSeq++
+    }
 
     /** Where the presented audio is now, in track seconds, extrapolated from the last reading. */
     fun presentedSeconds(nowNanos: Long, playing: Boolean): Double? {
-        val position = positionUs
+        var position = positionUs
+        var at = positionNanos
+        // A handful of tries: the writer is two field stores long. Should it be
+        // descheduled mid-way, the reading in hand is used rather than spun on.
+        for (attempt in 0 until 64) {
+            val seq = positionSeq
+            if (seq and 1 != 0) continue
+            position = positionUs
+            at = positionNanos
+            if (positionSeq == seq) break
+        }
         if (position == C.TIME_UNSET) return null
-        val elapsed = if (playing) (nowNanos - positionNanos) / 1e9 else 0.0
+        val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
         return position / 1e6 + elapsed
     }
 
