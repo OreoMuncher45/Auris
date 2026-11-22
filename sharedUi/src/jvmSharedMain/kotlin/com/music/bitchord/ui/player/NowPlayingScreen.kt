@@ -662,6 +662,9 @@ internal fun rememberPlayerInk(
             .mapLatest { withContext(Dispatchers.Default) { inkOutcome(it, fromClip) } }
             .distinctUntilChanged()
             .collectLatest { out ->
+                com.music.bitchord.data.PerfCounters.bump(
+                    com.music.bitchord.data.PerfCounters.Counter.INK_CHANGE,
+                )
                 coroutineScope {
                     launch { ink.animateTo(out.fg, inkSpec) }
                     launch { mainBlack.animateTo(out.mainBlack, washSpec) }
