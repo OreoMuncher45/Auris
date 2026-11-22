@@ -919,9 +919,13 @@ class CrossfadeController(
         loopSession?.let {
             it.outPort.disarm()
             it.inPort.disarm()
-            closeLater(it.renderer)
+            // Now, not later: a sink still inside a block keeps the renderer
+            // until that call returns (see [LoopMixRenderer.close]).
+            it.renderer.close()
         }
         loopSession = null
+        pendingCloses.forEach { it.close() }
+        pendingCloses.clear()
         endEase(clickless = false)
         releaseHold()
         active().volume = 1f
@@ -3086,12 +3090,18 @@ class CrossfadeController(
         loopBail(reason, settle = false)
     }
 
-    /** Frees the renderer once the retired sink is certain to have stopped calling it. */
+    /** Renderers waiting out [closeLater]'s delay, so [release] can free them at once. */
+    private val pendingCloses = HashSet<LoopMixRenderer>()
+    private val closeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Frees the renderer once the retired sink has stopped calling it. On the
+     * main looper rather than [scope]: the service cancels its scope before
+     * [release], and a close waiting in it would never run.
+     */
     private fun closeLater(renderer: LoopMixRenderer) {
-        scope.launch {
-            delay(LOOP_RENDERER_CLOSE_DELAY_MS)
-            renderer.close()
-        }
+        pendingCloses += renderer
+        closeHandler.postDelayed({ if (pendingCloses.remove(renderer)) renderer.close() }, LOOP_RENDERER_CLOSE_DELAY_MS)
     }
 
     /** The last plan the smart path made, for the stats line's planned size and style. */
