@@ -63,7 +63,7 @@ int64_t Deck::sampleAt(int64_t unwrapped) const {
   int64_t index = unwrapped;
   const int64_t length = loopEnd - loopStart;
   if (length > 0 && unwrapped >= loopEnd) {
-    if (unwrapped < int64_t(releaseAt)) {
+    if (unwrapped < int64_t(std::floor(releaseAt))) {
       index = loopStart + (unwrapped - loopStart) % length;
     } else {
       // Let go: the song carries on from the loop's end.
@@ -77,17 +77,19 @@ double Deck::trackSecondsAt(double unwrapped, double sampleRate) const {
   double position = unwrapped;
   const double length = double(loopEnd - loopStart);
   if (length > 0 && unwrapped >= double(loopEnd)) {
-    if (unwrapped < releaseAt) {
+    // The same whole-sample release point sampleAt() reads from.
+    const double release = std::floor(releaseAt);
+    if (unwrapped < release) {
       position = loopStart + std::fmod(unwrapped - loopStart, length);
     } else {
-      position = loopEnd + (unwrapped - releaseAt);
+      position = loopEnd + (unwrapped - release);
     }
   }
   return regionStart + position / sampleRate;
 }
 
 double Deck::releasedPositionOf(double seconds, double sampleRate) const {
-  return releaseAt + ((seconds - regionStart) * sampleRate - double(loopEnd));
+  return std::floor(releaseAt) + ((seconds - regionStart) * sampleRate - double(loopEnd));
 }
 
 double Deck::knotHeard(double t) const {
