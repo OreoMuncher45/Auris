@@ -41,8 +41,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.settings.MixBlend
@@ -191,6 +193,34 @@ fun ThinSlider(
     val liveWindow by rememberUpdatedState(transitionWindow)
     val liveLongPress by rememberUpdatedState(onTransitionWindowLongPress)
 
+    // A blend lights the fill it is already expanding. Keep the soft falloff
+    // cached; only its draw alpha follows the pulse. The canvas and track stay
+    // their existing sizes, so scrubbing and the transition-window geometry
+    // are untouched.
+    val density = LocalDensity.current
+    val haloOutset = with(density) { SEEK_GLOW_HALO_OUTSET.toPx() }
+    val trackHeight = with(density) { height.toPx() }
+    val canvasHeight = with(density) { (activeHeight + 6.dp).toPx() }
+    val haloHeight = trackHeight * (1f + SEEK_GLOW_EXTRA_HEIGHT_FRACTION) + 2f * haloOutset
+    val haloTop = (canvasHeight - haloHeight) / 2f
+    val halo = if (mixPulse != null) {
+        remember(trackHeight, haloOutset, canvasHeight) {
+            val feather = haloOutset / haloHeight
+            val ramp = (0..4).map { step ->
+                val t = step / 4f
+                val alpha = SEEK_GLOW_HALO_ALPHA * seekGlowEase(t)
+                t * feather to Color.White.copy(alpha = alpha)
+            }
+            Brush.verticalGradient(
+                colorStops = (ramp + ramp.asReversed().map { (t, color) -> 1f - t to color }).toTypedArray(),
+                startY = haloTop,
+                endY = haloTop + haloHeight,
+            )
+        }
+    } else {
+        null
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -334,15 +364,33 @@ fun ThinSlider(
             val filled = size.width * fraction * fillFactor
             if (filled > 0f) {
                 val alpha = if (dragging) activeColor.alpha else mixPulse?.alpha(activeColor.alpha) ?: activeColor.alpha
-                drawRoundRect(
-                    color = activeColor.copy(alpha = alpha),
-                    topLeft = Offset(0f, barTop),
-                    size = Size(
-                        filled.coerceAtLeast(barHeight * fillFactor).coerceAtMost(size.width),
-                        barHeight,
-                    ),
-                    cornerRadius = radius,
-                )
+                val fillColor = activeColor.copy(alpha = alpha)
+                val fillWidth = filled.coerceAtLeast(barHeight * fillFactor).coerceAtMost(size.width)
+                val glow = if (dragging || sheenVisible) 0f else mixPulse?.cover ?: 0f
+                if (glow > 0f && halo != null) {
+                    val extraHeight = barHeight * SEEK_GLOW_EXTRA_HEIGHT_FRACTION * glow
+                    val coreHeight = barHeight + extraHeight
+                    drawRoundRect(
+                        brush = halo,
+                        alpha = glow,
+                        topLeft = Offset(0f, haloTop),
+                        size = Size(fillWidth, haloHeight),
+                        cornerRadius = CornerRadius(haloHeight / 2f),
+                    )
+                    drawRoundRect(
+                        color = lerp(fillColor, Color.White, glow),
+                        topLeft = Offset(0f, barTop - extraHeight / 2f),
+                        size = Size(fillWidth, coreHeight),
+                        cornerRadius = CornerRadius(coreHeight / 2f),
+                    )
+                } else {
+                    drawRoundRect(
+                        color = fillColor,
+                        topLeft = Offset(0f, barTop),
+                        size = Size(fillWidth, barHeight),
+                        cornerRadius = radius,
+                    )
+                }
             }
         }
         // Composed only while switching or mixing. The infinite animation therefore costs no
@@ -368,6 +416,13 @@ fun ThinSlider(
 }
 
 private const val SHEEN_BAND_FRACTION = 0.34f
+
+/** The blend glow's small core swell, soft outset and peak halo opacity. */
+private const val SEEK_GLOW_EXTRA_HEIGHT_FRACTION = 0.12f
+private val SEEK_GLOW_HALO_OUTSET = 4.dp
+private const val SEEK_GLOW_HALO_ALPHA = 0.26f
+
+private fun seekGlowEase(progress: Float): Float = progress * progress * (3f - 2f * progress)
 
 /**
  * One beat clock for everything that pulses with an Automix blend — the seek bar's fill and

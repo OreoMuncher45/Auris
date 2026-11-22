@@ -1,8 +1,11 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -10,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
@@ -48,18 +52,38 @@ internal fun TransportShapeGlyph(
     tint: Color,
     contentDescription: String?,
     smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
+    /** A soft copy of the glyph itself, never a disc behind it. Transparent draws no extra layer. */
+    glow: Color = Color.Transparent,
     modifier: Modifier = Modifier,
 ) {
+    val semantics = if (contentDescription != null) {
+        Modifier.semantics { this.contentDescription = contentDescription }
+    } else {
+        Modifier
+    }
+    if (glow.alpha > 0f) {
+        Box(modifier.then(semantics)) {
+            TransportShapeGlyph(
+                shape = shape,
+                tint = glow,
+                contentDescription = null,
+                smoothness = smoothness,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(TRANSPORT_GLOW_BLUR, BlurredEdgeTreatment.Unbounded),
+            )
+            TransportShapeGlyph(
+                shape = shape,
+                tint = tint,
+                contentDescription = null,
+                smoothness = smoothness,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        return
+    }
     val softness = smoothness.coerceIn(0f, 1f)
-    Canvas(
-        modifier = modifier.then(
-            if (contentDescription != null) {
-                Modifier.semantics { this.contentDescription = contentDescription }
-            } else {
-                Modifier
-            },
-        ),
-    ) {
+    Canvas(modifier = modifier.then(semantics)) {
         // Everything below is authored on the 24-unit grid the rest of the
         // player icons use, then scaled once so a 38dp play button and a 53dp
         // skip button share the same proportions.
@@ -113,6 +137,9 @@ internal fun TransportShapeGlyph(
         drawPath(path, tint)
     }
 }
+
+/** Small enough to read as a lit edge, not a separate halo around the button. */
+private val TRANSPORT_GLOW_BLUR = 5.dp
 
 /**
  * The widest radius a shape can take without the corner arcs eating each

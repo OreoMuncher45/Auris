@@ -1283,6 +1283,9 @@ private fun TransportGlyph(
     // The ink, like every other mark on the screen, unless the listener pinned
     // an accent colour for the transport.
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current.value
+    // The existing ink halo follows both the palette and the listener's glow
+    // switch. It is static, so reduced motion needs no additional animation.
+    val glow = LocalPlayerInkGlow.current.value
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
@@ -1331,6 +1334,7 @@ private fun TransportGlyph(
                             tint = ink.copy(alpha = alpha),
                             contentDescription = null,
                             smoothness = smoothness,
+                            glow = glow.copy(alpha = glow.alpha * alpha),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -1351,6 +1355,7 @@ private fun TransportGlyph(
                             tint = ink.copy(alpha = alpha),
                             contentDescription = null,
                             smoothness = smoothness,
+                            glow = glow.copy(alpha = glow.alpha * alpha),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -1367,6 +1372,7 @@ private fun TransportGlyph(
                         tint = ink.copy(alpha = alpha),
                         contentDescription = contentDescription,
                         smoothness = smoothness,
+                        glow = glow.copy(alpha = glow.alpha * alpha),
                         modifier = glyphModifier,
                     )
                 }
