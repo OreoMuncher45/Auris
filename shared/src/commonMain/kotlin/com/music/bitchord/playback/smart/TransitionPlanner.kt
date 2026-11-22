@@ -958,11 +958,24 @@ fun planWsolaTransition(
     )
     if (fadeBeats < MIN_FADE_BEATS) fadeBeats = MIN_FADE_BEATS
 
+    val coverableBeats = floor(max(0.0, incomingDropTime - audibleStart) / incomingBeatSeconds).toInt()
+    val incomingHandoffTarget = min(
+        incomingDropTime + ARRANGEMENT_OVERLAP_BEATS * incomingBeatSeconds,
+        incomingLength - MIN_CLEARANCE_SECONDS,
+    )
+
+    // Measured where a fade of [beats] would really sit: the incoming side
+    // from its cue to the handoff (the drop plus the arrangement overlap, not
+    // the drop itself), the outgoing side from the downbeat it would start on.
     fun clashOver(beats: Int): Boolean {
-        val outStart = overlapEndTarget - beats * outgoingBeatSeconds
-        val inStart = max(audibleStart, incomingDropTime - beats * incomingBeatSeconds)
-        val outVocal = vocalActivityBetween(analysis, outStart, overlapEndTarget)
-        val inVocal = vocalActivityBetween(nextAnalysis, inStart, incomingDropTime)
+        val heard = min(beats, coverableBeats).coerceAtLeast(1)
+        val outTarget = overlapEndTarget - heard * outgoingBeatSeconds
+        val outStart = nearestAtOrBefore(analysis.downbeats, outTarget) ?: outTarget
+        val outEnd = outStart + heard * outgoingBeatSeconds
+        val inEnd = incomingHandoffTarget
+        val inStart = max(audibleStart, inEnd - heard * incomingBeatSeconds)
+        val outVocal = vocalActivityBetween(analysis, outStart, outEnd)
+        val inVocal = vocalActivityBetween(nextAnalysis, inStart, inEnd)
 
         // Instant-by-instant first, because it is the question actually being
         // asked. The mean-based test below only fires when *both* windows average
@@ -975,7 +988,7 @@ fun planWsolaTransition(
             outgoing = analysis,
             incoming = nextAnalysis,
             outStart = outStart,
-            outEnd = overlapEndTarget,
+            outEnd = outEnd,
             inStart = inStart,
             rate = if (outgoingBeatSeconds > 0) incomingBeatSeconds / outgoingBeatSeconds else 1.0,
         )
@@ -984,7 +997,7 @@ fun planWsolaTransition(
         if (isVocalClash(outVocal, inVocal)) return true
 
         if (beats > 8 && outVocal != null && outVocal >= VOCAL_ACTIVE_THRESHOLD) {
-            val deepVocal = vocalActivityBetween(analysis, outStart, overlapEndTarget - 8 * outgoingBeatSeconds)
+            val deepVocal = vocalActivityBetween(analysis, outStart, outEnd - 8 * outgoingBeatSeconds)
             if (deepVocal != null && deepVocal >= VOCAL_ACTIVE_THRESHOLD) {
                 return true
             }
@@ -997,7 +1010,6 @@ fun planWsolaTransition(
         fadeVocalClash = clashOver(fadeBeats)
     }
 
-    val coverableBeats = floor(max(0.0, incomingDropTime - audibleStart) / incomingBeatSeconds).toInt()
     val overlapBeats = min(fadeBeats, coverableBeats)
     if (overlapBeats < 1) return WsolaPlanResult.Refused("incoming-no-intro")
 
@@ -1082,6 +1094,9 @@ private fun phraseSwitch(
     // the audible outgoing song is never retimed. A phrase switch that needs
     // more degrades to the vocal-aware filter planner below.
     if (planned.stretchRatio !in MIN_INCOMING_RATE..MAX_INCOMING_RATE) return null
+    // Two voices still land together at the shortest phrase: the same
+    // vocal-aware fallback takes it.
+    if (planned.vocalClash) return null
 
     val overlap = planned.transitionEnd - planned.transitionStart
     val renderedIncomingRate = incomingRateFor(planned.stretchRatio, advanced)

@@ -127,6 +127,21 @@ class AdvancedAutomixPlannerTest {
     }
 
     @Test
+    fun aPhraseSwitchChecksVocalsWhereTheIncomingSongIsReallyHeard() {
+        // The outgoing song sings to its end. The incoming one is clear up to
+        // its drop (8.5 s) and sings from 9 s, inside the arrangement overlap
+        // that moves the cue and the handoff past the drop.
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+            .let { it.copy(vocalActivityMask = it.energyCurve.map { 1.0 }) }
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+            .let { a -> a.copy(vocalActivityMask = a.energyCurve.map { if (it.time >= 9.0) 1.0 else 0.0 }) }
+        val planned = planWsolaTransition(current, next, current.duration, next.duration, advanced = true)
+        assertTrue(planned is WsolaPlanResult.Planned, "planned: $planned")
+        assertTrue(planned.incomingHandoffTime > 9.0)
+        assertTrue(planned.vocalClash, "the incoming vocal lands under the outgoing one")
+    }
+
+    @Test
     fun twoVocalTracksOverrideTheGestureWithVocalSafeSweep() {
         // Within the stretch window, but the incoming grid is too weak to
         // beatmatch on, so this is a filter ride — with two singers on it.
