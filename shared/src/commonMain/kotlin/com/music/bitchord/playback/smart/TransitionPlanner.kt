@@ -1606,25 +1606,29 @@ private fun planTransitionInner(
         val transitionStart = max(0.0, finalMixAnchor - standardFade)
         val incomingCueTime = incomingStartPoint(nextAnalysis)
         val started = playbackTime >= transitionStart
-        return TransitionPlan(
-            shouldStart = started,
-            markerVisible = true,
-            transitionStart = transitionStart,
-            transitionEnd = finalMixAnchor,
-            fadeSeconds = finalMixAnchor - transitionStart,
-            transitionStyle = TransitionStyle.EQUAL_POWER,
-            incomingCueTime = incomingCueTime,
-            incomingHandoffTime = incomingCueTime,
-            vocalOverlap = plannedVocalOverlap(
-                analysis = analysis,
-                nextAnalysis = nextAnalysis,
+        return capIncomingSkip(
+            TransitionPlan(
+                shouldStart = started,
+                markerVisible = true,
                 transitionStart = transitionStart,
                 transitionEnd = finalMixAnchor,
+                fadeSeconds = finalMixAnchor - transitionStart,
+                transitionStyle = TransitionStyle.EQUAL_POWER,
                 incomingCueTime = incomingCueTime,
-                incomingPlaybackRate = 1.0,
+                incomingHandoffTime = incomingCueTime,
+                vocalOverlap = plannedVocalOverlap(
+                    analysis = analysis,
+                    nextAnalysis = nextAnalysis,
+                    transitionStart = transitionStart,
+                    transitionEnd = finalMixAnchor,
+                    incomingCueTime = incomingCueTime,
+                    incomingPlaybackRate = 1.0,
+                ),
+                policyReasons = policy.reasons + "unmixable-pair",
+                reason = if (started) "smart-unmixable-crossfade" else "before-unmixable-crossfade",
             ),
-            policyReasons = policy.reasons + "unmixable-pair",
-            reason = if (started) "smart-unmixable-crossfade" else "before-unmixable-crossfade",
+            nextAnalysis,
+            nextLength,
         )
     }
 

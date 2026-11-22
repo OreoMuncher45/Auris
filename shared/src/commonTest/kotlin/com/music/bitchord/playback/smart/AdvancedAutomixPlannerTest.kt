@@ -215,6 +215,17 @@ class AdvancedAutomixPlannerTest {
     }
 
     @Test
+    fun anUnmixablePairStillKeepsTheIncomingSkipLimit() {
+        // Too far apart in tempo and clashing in key, into a 60 s song that only
+        // starts sounding at 20 s: it may be cued at most a quarter of the way in.
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+        val next = track("b", 160.0, "F♯ major", vocal = 0.1, duration = 60.0).copy(audibleStartTime = 20.0)
+        val plan = plan(current, next, advanced = true)
+        assertTrue("unmixable-pair" in plan.policyReasons, "reasons ${plan.policyReasons}")
+        assertTrue(plan.incomingCueTime <= 15.0 + 1e-9, "cue ${plan.incomingCueTime}")
+    }
+
+    @Test
     fun tempiPastTheStretchWindowAreNotBeatMatched() {
         val current = track("a", 120.0, "C major", vocal = 0.1)
         val next = track("b", 136.0, "C major", vocal = 0.1)
