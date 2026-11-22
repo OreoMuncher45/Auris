@@ -148,6 +148,9 @@ object AudioCache {
      */
     private const val MAX_ANALYSIS_HEAD_BYTES = 4L * 1024 * 1024
 
+    /** First wait before a short analysis fetch is retried; doubles per failure, to 16 minutes. */
+    private const val ANALYSIS_RETRY_BASE_MS = 30_000L
+
     /**
      * The most read-ahead will pull of a source-backed track's *own* copy.
      *
@@ -323,6 +326,8 @@ object AudioCache {
         analysisHeads.clear()
         analysisHeadRounds.clear()
         analysisHeadWant.clear()
+        analysisHeadFailures.clear()
+        analysisHeadRetryAt.clear()
         renditionKeys.clear()
         scope.launch {
             // A round still writing would put its bytes back into the wiped cache.
@@ -1103,6 +1108,8 @@ object AudioCache {
         analysisHeads.remove(mediaId)
         analysisHeadRounds.remove(mediaId)
         analysisHeadWant.remove(mediaId)
+        analysisHeadFailures.remove(mediaId)
+        analysisHeadRetryAt.remove(mediaId)
         renditionKeys.remove(mediaId)
         var removed = 0
         keysOf(mediaId).forEach { key ->
@@ -2282,6 +2289,15 @@ object AudioCache {
      */
     private val analysisJobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * Rounds that ended short, per video id, and when the next may start
+     * ([SystemClock.elapsedRealtime]). A short round gives its claim on
+     * [analysisHeads] back, so a dropped connection is not the end of the
+     * track's analysis for the session; this keeps the retries spaced.
+     */
+    private val analysisHeadFailures = ConcurrentHashMap<String, Int>()
+    private val analysisHeadRetryAt = ConcurrentHashMap<String, Long>()
+
     /** Releases a head round claimed by [beginHeadRound]. */
     private fun endHeadRound(videoId: String) {
         analysisHeadRounds.remove(videoId)
@@ -2673,6 +2689,7 @@ object AudioCache {
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
+        analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return }
         if (analysisHeads.putIfAbsent(videoId, true) != null) return
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
@@ -2684,6 +2701,7 @@ object AudioCache {
         val key = analysisKeyOfVideo(videoId)
         lateinit var round: Job
         round = scope.launch(start = CoroutineStart.LAZY) {
+            var complete = false
             try {
                 // The copy's own length.
                 //
@@ -2775,6 +2793,8 @@ object AudioCache {
                 // phone fills up.
                 tagAnalysisCopy(key, videoId, uri)
                 val after = cachedBytesOf(key, want)
+                // A copy shorter than a size-unknown round's guess is whole too.
+                complete = after >= want || (measured > 0L && after >= measured)
                 if (after < want) {
                     // The one line that says *this* fetch failed, as opposed to
                     // the read-ahead chatter around it: every cause below
@@ -2791,7 +2811,20 @@ object AudioCache {
             } finally {
                 // Only this round's own claim: after a clear, a newer round
                 // may hold the track's.
-                if (analysisJobs.remove(videoId, round)) endHeadRound(videoId)
+                if (analysisJobs.remove(videoId, round)) {
+                    if (complete) {
+                        analysisHeadFailures.remove(videoId)
+                        analysisHeadRetryAt.remove(videoId)
+                    } else if (!round.isCancelled) {
+                        // Short or skipped: asked for again later, from the
+                        // top — a retry clears the partial copy first.
+                        val failures = analysisHeadFailures.merge(videoId, 1, Int::plus)!!
+                        analysisHeadRetryAt[videoId] = SystemClock.elapsedRealtime() +
+                            (ANALYSIS_RETRY_BASE_MS shl (failures - 1).coerceAtMost(5))
+                        analysisHeads.remove(videoId)
+                    }
+                    endHeadRound(videoId)
+                }
             }
         }
         analysisJobs[videoId] = round
