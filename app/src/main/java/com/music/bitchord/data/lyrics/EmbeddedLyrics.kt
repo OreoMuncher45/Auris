@@ -82,8 +82,10 @@ object EmbeddedLyrics {
      * MP3's `USLT` usually holds (#1020). Null when there is nothing to show.
      */
     internal fun linesOf(raw: String): List<LyricLine>? {
-        val synced = LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
-        if (synced != null) return synced
+        val synced = LrcLib.parseLrc(raw)
+        // Stamps with no words under any of them are an empty LRC, not plain
+        // lyrics to show the stamps of.
+        if (synced.isNotEmpty()) return synced.takeIf { lines -> lines.any { it.text.isNotBlank() } }
         // An LRC header with no stamped lines under it (`[ar:…]`, `[ti:…]`,
         // `[length:…]`) is metadata, not words to sing.
         return raw.lineSequence().map { it.trim() }

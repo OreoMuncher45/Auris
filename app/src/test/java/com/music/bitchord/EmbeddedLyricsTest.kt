@@ -116,6 +116,11 @@ class EmbeddedLyricsTest {
     }
 
     @Test
+    fun `stamps with no words are no lyrics`() {
+        assertNull(EmbeddedLyrics.linesOf("[00:12.00]\n[00:45.00]\n"))
+    }
+
+    @Test
     fun `only timed lyrics count as synced`() {
         assertTrue(EmbeddedLyrics.isSynced(EmbeddedLyrics.linesOf(lrc)!!))
         assertFalse(EmbeddedLyrics.isSynced(EmbeddedLyrics.linesOf("first line\nsecond line")!!))
