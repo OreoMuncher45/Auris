@@ -55,10 +55,13 @@ internal object AutoMixVisualFeed {
             when {
                 previous.artworkProgress >= 1f || it.endSeconds <= endSeconds -> it
                 // A late decoder duration can shorten the effective fade. Before the window,
-                // consume the lag first; once started, keep its start or drop the dissolve.
+                // consume the lag first; once started, keep its start, or drop the dissolve
+                // if it hasn't begun. One already under way finishes on the incoming artwork
+                // rather than snapping back to the outgoing one.
                 previous.artworkProgress == 0f && at <= it.startSeconds -> windowAfter(at, endSeconds)
                 endSeconds - it.startSeconds >= AutoMixArtworkTuning.MIN_WINDOW_SECONDS ->
                     it.copy(endSeconds = endSeconds)
+                previous.artworkProgress > 0f -> it.copy(endSeconds = maxOf(endSeconds, at))
                 else -> null
             }
         }
