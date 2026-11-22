@@ -469,7 +469,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // started while the track ahead of it was being measured. Every
                 // task behind that one turns into this return, which drains the
                 // backlog without needing to reach into the executor's queue.
-                if (stopped) return@execute
+                if (stopped) {
+                    // Never reached the decoder: the head it claimed is still untried.
+                    headRendition?.let { headAttempts.remove(it.key, it.cachedPrefix) }
+                    return@execute
+                }
                 if (usableComplete) {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val whole = outcome.analysis
@@ -505,9 +509,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // Marked before it is published, so a reader on the playback
                     // thread can never see a provisional result that is not
                     // flagged as one.
-                    analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)?.let { head ->
+                    val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
+                    if (head != null) {
                         provisional.add(trackId)
                         results[trackId] = head
+                    } else if (stopped) {
+                        // Given up for the player (or a party), not failed: the
+                        // same prefix gets another go once the decoder is free.
+                        headAttempts.remove(headRendition.key, headRendition.cachedPrefix)
                     }
                 }
             } catch (error: Throwable) {
