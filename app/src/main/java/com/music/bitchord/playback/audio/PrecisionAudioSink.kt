@@ -764,7 +764,12 @@ class PrecisionAudioSink(
         // arms one (the crossfade controller refuses every blend under it).
         val port = loop
         if (port.generation != loopGeneration) adoptLoopGeneration(port)
-        val outArm = port.outArm
+        // An arm a flush interrupted is over here and now, not on the
+        // controller's next tick: pre-roll buffers that come back in the
+        // meantime would feed the renderer a region it has already played.
+        // One that never processed anything is not marked interrupted, so the
+        // start-up flush still leaves it armed.
+        val outArm = port.outArm?.takeIf { !port.interrupted }
         if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding)
         val inArm = port.inArm
 
