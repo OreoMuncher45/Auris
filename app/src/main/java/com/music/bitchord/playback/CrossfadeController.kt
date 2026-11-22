@@ -1041,8 +1041,9 @@ class CrossfadeController(
      * restored paused when the app opens, or paused before its first tick
      * planned, showed a bare bar with both tracks analysed. This plans for the
      * marker alone, at most once a [PAUSED_MARKER_STEP_MS]; nothing is armed
-     * or held, and anything that would clear the marker while
-     * playing is left for the playing path to decide.
+     * or held. A pair that can't have a transition at all (bit-perfect,
+     * repeat-one, a party, no next track) clears the marker as the playing
+     * path would.
      */
     private fun refreshMarkerWhilePaused(player: ExoPlayer) {
         if (!AppSettings.smartFadeEnabled.value) return
@@ -1052,8 +1053,15 @@ class CrossfadeController(
         val step = if (AppSettings.mixViewOpen.value) IDLE_STEP_MS else PAUSED_MARKER_STEP_MS
         if (now - pausedMarkerAt < step) return
         pausedMarkerAt = now
-        if (versionSwapActive() || ListenTogether.state.value.inParty || AppSettings.bitPerfect.value) return
-        if (!player.hasNextMediaItem() || player.repeatMode == Player.REPEAT_MODE_ONE) return
+        if (versionSwapActive()) return
+        // What the playing path clears the marker for, cleared here too: the
+        // ticker stops soon after a pause, so it would sit there until play.
+        if (ListenTogether.state.value.inParty || AppSettings.bitPerfect.value ||
+            !player.hasNextMediaItem() || player.repeatMode == Player.REPEAT_MODE_ONE
+        ) {
+            AppSettings.smartTransitionWindow.value = null
+            return
+        }
         // A queue restored paused is not prepared yet, so the player has no
         // duration until play: the runtime the item was queued with stands in,
         // then the analysed one.
