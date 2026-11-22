@@ -394,6 +394,8 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening.
+        if (listener != currentListener()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedRecents = it }
     }
@@ -420,6 +422,8 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening.
+        if (listener != currentListener()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedQuickPicks = it }
     }
@@ -462,6 +466,8 @@ class PlaybackService : MediaLibraryService() {
         }
         val songs = page?.songs.orEmpty()
         if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening.
+        if (listener != currentListener()) return null
         songs.forEach { songCache[it.videoId] = it }
         LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
@@ -490,6 +496,7 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             null
         } ?: return null
+        if (listener != currentListener()) return null
         cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, listener)
         feed
     }
