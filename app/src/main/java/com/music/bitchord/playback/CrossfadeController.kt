@@ -2707,6 +2707,7 @@ class CrossfadeController(
         SleepTimer.afterTrack.value -> "sleep timer"
         state.current != TrackAnalysisState.ANALYSED || state.next != TrackAnalysisState.ANALYSED -> "waiting on analysis"
         isSourceBacked(current) || isSourceBacked(next) -> "analysed off another recording"
+        isUpgraded(current) || isUpgraded(next) -> "playing an upgraded copy"
         loopPortOf(player)?.supportsLoopMix != true -> "this output can't take it"
         loopPortOf(standby()) == null -> "no standby sink"
         else -> null
@@ -2716,6 +2717,18 @@ class CrossfadeController(
     private fun isSourceBacked(item: MediaItem): Boolean {
         val uri = item.localConfiguration?.uri ?: return true
         return uri.getQueryParameter("v") == null && uri.authority == "source"
+    }
+
+    /**
+     * A track the quality upgrade moved onto another master. Its analysis and
+     * the loop's decoded regions come from the original YouTube cut, and the
+     * two timelines need not agree, so a loop would land off the beat by
+     * whatever the offset is.
+     */
+    private fun isUpgraded(item: MediaItem): Boolean {
+        val uri = item.localConfiguration?.uri ?: return false
+        val tag = runCatching { QualityUpgrade.cacheTag(uri) }.getOrNull() ?: return false
+        return tag == "hifi" || tag.startsWith("hifi-")
     }
 
     /**
