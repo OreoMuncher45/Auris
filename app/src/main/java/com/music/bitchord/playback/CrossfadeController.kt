@@ -2905,6 +2905,10 @@ class CrossfadeController(
                     loopBail("bit-perfect is on", settle = false)
                     return@launch
                 }
+                if (!AppSettings.smartFadeEnabled.value) {
+                    loopBail("Automix was switched off", settle = false)
+                    return@launch
+                }
                 // The queue may have changed under the build: the decks are for
                 // [inItem], so it must still be the very next entry.
                 val liveNext = out.nextMediaItemIndex
@@ -2975,12 +2979,17 @@ class CrossfadeController(
         if (!out.playWhenReady) return loopBail("paused before the loop")
         val session = loopSession
         if (session == null) {
+            // Switched off while the decks build: cancel the build, nothing was armed.
+            if (!AppSettings.smartFadeEnabled.value) return loopBail("Automix was switched off", settle = false)
             if (SystemClock.elapsedRealtime() > armDeadline) loopFallBack("the decks took too long")
             return
         }
         if (session.outPort.interrupted) return loopBail("the outgoing sink was flushed", settle = false)
-        // Bit-perfect turned on before the takeover: the song plays on untouched.
+        // Bit-perfect turned on, or Automix off, before the takeover: the song plays on untouched.
         if (!session.outPort.tookOver && AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = false)
+        if (!session.outPort.tookOver && !AppSettings.smartFadeEnabled.value) {
+            return loopBail("Automix was switched off", settle = false)
+        }
         if (session.outPort.tookOver) {
             phase = Phase.LOOP_RUNNING
             AppSettings.smartTransitionWindow.value = null
