@@ -334,7 +334,11 @@ internal fun isYouTubeThumbnailHost(url: String): Boolean {
 }
 
 /** YouTube's thumbnail renditions, smallest to largest. Every video has `hqdefault`. */
-private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)\\.([a-zA-Z0-9]+)")
+private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)\\.([a-zA-Z0-9]+)$")
+
+/** The rendition named by [url]'s last path segment; never one in its query. */
+private fun thumbnailRendition(url: String): MatchResult? =
+    YT_THUMB_NAME_REGEX.find(url.substringBefore('?').substringBefore('#'))
 
 /** The renditions an old or low-resolution upload doesn't have: each answers 404 for it. */
 private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault")
@@ -348,7 +352,7 @@ private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault"
  * size. Old uploads lack the larger renditions; see [youTubeThumbnailFallback].
  */
 internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
-    val match = YT_THUMB_NAME_REGEX.find(url) ?: return url
+    val match = thumbnailRendition(url) ?: return url
     val current = match.groupValues[1]
     val target = when {
         // 1280px for what is drawn larger than a card; a card's 480px is
@@ -371,7 +375,7 @@ internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
  */
 fun youTubeThumbnailFallback(url: String): String? {
     if (!isYouTubeThumbnailHost(url)) return null
-    val match = YT_THUMB_NAME_REGEX.find(url) ?: return null
+    val match = thumbnailRendition(url) ?: return null
     if (match.groupValues[1] !in YT_UPGRADED_RENDITIONS) return null
     return withRendition(url, match, "hqdefault")
 }

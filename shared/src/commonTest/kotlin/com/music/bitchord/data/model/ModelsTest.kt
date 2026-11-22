@@ -127,6 +127,13 @@ class ModelsTest {
     }
 
     @Test
+    fun aRenditionNamedOnlyInTheQueryIsNotRewritten() {
+        val url = "https://i.ytimg.com/vi/abc/0.jpg?ref=/hqdefault.jpg"
+        assertEquals(url, url.artworkAt(720))
+        assertEquals(null, youTubeThumbnailFallback("https://i.ytimg.com/vi/abc/0.jpg?x=/sddefault.jpg"))
+    }
+
+    @Test
     fun userInformationIsNotTheHost() {
         val url = "https://img.youtube.com:pw@images.example.test/vi/abc/hqdefault.jpg?token=abc"
         assertEquals(url, url.artworkAt(720))
