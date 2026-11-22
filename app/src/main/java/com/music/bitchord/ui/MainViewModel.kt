@@ -729,7 +729,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val key = LyricsLookupKey(
             videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
         )
-        if (lyricsFor == key) return
+        if (lyricsFor == key) {
+            // The lookup is already running, perhaps still reading the file
+            // without a length; keep the length for when it needs one.
+            if (durationMs > 0L) currentLyricsRequest = currentLyricsRequest
+                ?.takeIf { it.videoId == videoId && it.durationMs <= 0L }?.copy(durationMs = durationMs)
+                ?: currentLyricsRequest
+            return
+        }
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
         // lookup first and giving it up asynchronously means the very re-trigger
@@ -781,13 +788,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     embeddedPlain = embedded
                 }
             }
-            if (durationMs <= 0L) {
+            // A length that came in while the file was read.
+            val lengthMs = durationMs.takeIf { it > 0L }
+                ?: currentLyricsRequest?.takeIf { it.videoId == videoId }?.durationMs ?: 0L
+            if (lengthMs <= 0L) {
                 // Duration arrives a beat after the track does; wait for it.
                 lyricsFor = null
                 return@launch
             }
             val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
+                videoId, title, artist, lengthMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
                 onSourceStarted = { source -> providerStarted(generation, source) },
                 onSourceResult = { source, result ->
