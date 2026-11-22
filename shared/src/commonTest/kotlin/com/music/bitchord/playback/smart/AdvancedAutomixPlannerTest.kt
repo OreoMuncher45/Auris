@@ -112,13 +112,17 @@ class AdvancedAutomixPlannerTest {
 
     @Test
     fun anUnmatchedPairNeverEchoesAndEntersAtItsIntro() {
-        val current = track("a", 120.0, "C major", vocal = 0.1).let {
-            it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
-        }
-        for (index in 0 until 24) {
-            val next = track("echo-$index", 94.0, "C major", vocal = 0.1, bass = 1.0)
+        // Both fallback gestures: bass on both songs (a bass handoff) and none
+        // measured on the outgoing one (a sweep).
+        for (outgoingBass in listOf(1.0, null)) {
+            val current = track("a", 120.0, "C major", vocal = 0.1, bass = outgoingBass).let {
+                it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
+            }
+            val next = track("b", 94.0, "C major", vocal = 0.1, bass = 1.0)
                 .let { it.copy(vocalActivityMask = it.energyCurve.map { 0.0 }) }
             val plan = plan(current, next, advanced = true)
+            val expected = if (outgoingBass == null) FilterTransitionVariant.SWEEP else FilterTransitionVariant.BASS_HANDOFF
+            assertEquals(expected, plan.filterVariant)
             assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
             assertEquals(0.0, plan.echoSeconds)
             assertNotEquals(FilterTransitionVariant.ECHO_RIDE, plan.filterVariant)
