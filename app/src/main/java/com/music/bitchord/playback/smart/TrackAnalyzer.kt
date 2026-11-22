@@ -1374,7 +1374,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
             // As few windows as cover the span with at least the overlap between
             // neighbours, spread evenly from its start to its end.
+            // At least two: a span a hair over one window rounds down to one
+            // here, and one window has no stride to spread by.
             val count = ceil((length - WINDOW_OVERLAP_SECONDS) / (span - WINDOW_OVERLAP_SECONDS) - 1e-6).toInt()
+                .coerceAtLeast(2)
             val stride = (length - span) / (count - 1)
             for (index in 0 until count) {
                 val start = from + index * stride
