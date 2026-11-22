@@ -3061,6 +3061,9 @@ class CrossfadeController(
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {
+            // The incoming sink called the loop off before it was heard (it
+            // isn't decoding to PCM): the outgoing song plays on instead.
+            if (session.inPort.interrupted) return loopBail("the incoming sink can't take the loop", settle = true)
             into.playWhenReady = true
             loopIncomingStarted = true
         }
