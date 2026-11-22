@@ -11331,12 +11331,19 @@ class PlaybackService : MediaLibraryService() {
             // it. Rebuild the folder so the queue follows the playlist's own
             // order and AutoPlay only starts after its last track.
             expandPlaylistContext(mediaItems, startIndex, startPositionMs)?.let { return@future it }
-            val resolved = resolveMediaItems(mediaItems)
-            val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+            val targetIndex = startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
+            var mappedStartIndex: Int? = null
+            val resolved = resolveMediaItems(mediaItems) { inputIndex, outputStartIndex, addedCount ->
+                if (inputIndex == targetIndex && addedCount > 0) {
+                    mappedStartIndex = outputStartIndex
+                }
+            }
+            val validIndex = mappedStartIndex ?: startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+            val validPositionMs = if (mappedStartIndex != null) startPositionMs.coerceAtLeast(0L) else 0L
             MediaSession.MediaItemsWithStartPosition(
                 ImmutableList.copyOf(resolved),
                 validIndex,
-                startPositionMs.coerceAtLeast(0L),
+                validPositionMs,
             )
         }
 
@@ -11429,9 +11436,13 @@ class PlaybackService : MediaLibraryService() {
             return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, positionMs)
         }
 
-        private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
+        private suspend fun resolveMediaItems(
+            mediaItems: List<MediaItem>,
+            onItemResolved: ((inputIndex: Int, outputStartIndex: Int, addedCount: Int) -> Unit)? = null,
+        ): List<MediaItem> {
             val resolved = mutableListOf<MediaItem>()
-            for (item in mediaItems) {
+            for ((inputIndex, item) in mediaItems.withIndex()) {
+                val startOffset = resolved.size
                 val id = item.mediaId
                 val searchQuery = item.requestMetadata.searchQuery
                 val spotifyUriRef = extractSpotifyUriRef(id, item.requestMetadata.mediaUri)
@@ -11639,6 +11650,7 @@ class PlaybackService : MediaLibraryService() {
                         }
                     }
                 }
+                onItemResolved?.invoke(inputIndex, startOffset, resolved.size - startOffset)
             }
             return resolved
         }
