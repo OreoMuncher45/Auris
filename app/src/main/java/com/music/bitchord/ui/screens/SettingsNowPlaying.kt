@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Speed
@@ -78,6 +79,7 @@ internal fun NowPlayingSettings(
     val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
+    val showBestPart by AppSettings.showBestPart.collectAsStateWithLifecycle()
     val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
     val showLosslessBadge by AppSettings.showLosslessBadge.collectAsStateWithLifecycle()
     val showHiResBadge by AppSettings.showHiResBadge.collectAsStateWithLifecycle()
@@ -151,6 +153,21 @@ internal fun NowPlayingSettings(
                     )
                 },
                 onClick = { AppSettings.setShowNextTrackStatus(!showNextTrackStatus) },
+            )
+        }
+        val bestPartTitle = stringResource(R.string.show_best_part)
+        row(bestPartTitle, "best part", "chorus", "skip", "replayed", "highlight") {
+            SettingsRow(
+                icon = Icons.Rounded.MusicNote,
+                title = bestPartTitle,
+                subtitle = stringResource(R.string.show_best_part_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = showBestPart,
+                        onCheckedChange = AppSettings::setShowBestPart,
+                    )
+                },
+                onClick = { AppSettings.setShowBestPart(!showBestPart) },
             )
         }
         val upgradeBadgeTitle = stringResource(R.string.custom_upgrade_badge)

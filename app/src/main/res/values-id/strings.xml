@@ -1630,4 +1630,6 @@
     <string name="youtube_premium_audio_subtitle">Saya punya Premium: putar Opus berkualitas lebih tinggi ~256 kbps, bukan 160 kbps standar</string>
     <string name="download_liked_songs">Unduh lagu yang disukai</string>
     <string name="download_liked_songs_subtitle">Mengunduh Musik yang Disukai dan setiap lagu yang kamu sukai mulai sekarang</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

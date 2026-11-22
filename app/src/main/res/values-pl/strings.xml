@@ -1693,4 +1693,6 @@
     <string name="youtube_premium_audio_subtitle">Mam Premium: odtwarzaj Opus wyższej jakości ~256 kb/s zamiast standardowych 160 kb/s</string>
     <string name="download_liked_songs">Pobieraj polubione utwory</string>
     <string name="download_liked_songs_subtitle">Pobiera Twoje polubione utwory i każdy utwór, który polubisz od teraz</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

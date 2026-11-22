@@ -1570,4 +1570,6 @@
     <string name="youtube_premium_audio_subtitle">Tôi có Premium: phát Opus chất lượng cao hơn ~256 kbps thay vì 160 kbps tiêu chuẩn</string>
     <string name="download_liked_songs">Tải xuống bài hát đã thích</string>
     <string name="download_liked_songs_subtitle">Tải xuống nhạc đã thích và mọi bài hát bạn thích từ giờ trở đi</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

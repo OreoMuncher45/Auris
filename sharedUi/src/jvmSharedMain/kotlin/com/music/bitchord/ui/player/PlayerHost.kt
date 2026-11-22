@@ -44,6 +44,18 @@ interface PlayerHost {
     /** Looks a Canvas up for [song]; null is the normal answer. */
     suspend fun canvasFor(song: Song): CanvasArtwork?
 
+    /**
+     * Where [song]'s best part starts, in ms: the stretch listeners replay most,
+     * or failing that its chorus. Null when neither is known — a guess is not
+     * worth a button — and for local files. [lyrics] waits for the words the
+     * player is already loading, so the lookup never fetches lyrics of its own.
+     */
+    suspend fun bestPartMs(
+        song: Song,
+        durationMs: Long,
+        lyrics: suspend () -> List<LyricLine>?,
+    ): Long? = null
+
     /** The looping clip over the cover, decoded however this platform decodes video. */
     @Composable
     fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier)
@@ -233,6 +245,8 @@ interface PlayerSettingsSource {
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
+    /** Whether the "Best Part" button is offered on the artwork. */
+    val showBestPart: StateFlow<Boolean>
     /** Whether the Automix "this song / next song" line under the sleeve is drawn. */
     val showNextTrackStatus: StateFlow<Boolean>
     /** Whether the "Upgrading quality" badge is drawn while a better copy is sought. */

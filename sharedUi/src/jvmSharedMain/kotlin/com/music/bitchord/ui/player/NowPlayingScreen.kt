@@ -2502,6 +2502,18 @@ fun NowPlayingScreen(
                 sleeveLayer = sleeveLayer,
                 dockHost = dockHost,
                 modifier = modifier,
+                bestPart = { pillModifier ->
+                    BestPartPill(
+                        song = song,
+                        position = position,
+                        isLoading = isLoading,
+                        durationMs = durationMs,
+                        lyrics = { lyrics },
+                        lyricsUnavailable = { lyricsUnavailable },
+                        onSeek = onSeek,
+                        modifier = pillModifier,
+                    )
+                },
             )
         }
         return
@@ -3184,6 +3196,18 @@ fun NowPlayingScreen(
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
+                    bestPart = { pillModifier ->
+                        BestPartPill(
+                            song = song,
+                            position = position,
+                            isLoading = isLoading,
+                            durationMs = durationMs,
+                            lyrics = { lyrics },
+                            lyricsUnavailable = { lyricsUnavailable },
+                            onSeek = onSeek,
+                            modifier = pillModifier,
+                        )
+                    },
                 )
 
                 // ---- Title + menu ----

@@ -1654,4 +1654,6 @@
     <string name="youtube_premium_audio_subtitle">J\'ai Premium : diffuser l\'Opus de meilleure qualité à ~256 kbps au lieu des 160 kbps standard</string>
     <string name="download_liked_songs">Télécharger les titres likés</string>
     <string name="download_liked_songs_subtitle">Télécharge tes titres likés et chaque titre que tu likeras désormais</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

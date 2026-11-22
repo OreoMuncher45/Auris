@@ -291,6 +291,8 @@ internal fun BoxScope.PortraitSleeve(
     song: Song,
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
+    /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
+    bestPart: @Composable (Modifier) -> Unit = {},
 ) {
     // The cover on its way out until it has gone, then the playing track's —
     // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
@@ -785,17 +787,25 @@ internal fun BoxScope.PortraitSleeve(
         // Measured stats stay on the sleeve's bottom centre. They
         // fade away with Spotify's lower control deck rather than
         // following the compact credits to the bottom edge.
+        //
+        // The Best Part pill stacks above them: the column is pinned to the
+        // bottom, so the pill coming and going never moves the stats.
         WhileShown({ !collapsePastHalf() }) {
-            SleeveNerdStats(
-                song = song,
-                isPlaying = isPlaying,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .graphicsLayer {
                         alpha = (1f - p() * 2f) * spotifyChromeAlpha()
                     },
-            )
+            ) {
+                bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                SleeveNerdStats(
+                    song = song,
+                    isPlaying = isPlaying,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 
@@ -944,3 +954,6 @@ internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
     }
     return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }
+
+/** The Best Part pill's gap above the foot of the artwork. */
+internal val BEST_PART_INSET = 14.dp

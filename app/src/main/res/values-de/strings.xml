@@ -1653,4 +1653,6 @@
     <string name="youtube_premium_audio_subtitle">Ich habe Premium: das hochwertigere Opus mit ~256 kbps statt der üblichen 160 kbps streamen</string>
     <string name="download_liked_songs">Lieblingssongs herunterladen</string>
     <string name="download_liked_songs_subtitle">Lädt deine „Mag ich“-Musik und jeden Song herunter, den du ab jetzt likest</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

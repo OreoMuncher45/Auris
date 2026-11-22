@@ -1592,4 +1592,6 @@
     <string name="youtube_premium_audio_subtitle">Ho Premium: riproduci l\'Opus di qualità superiore a ~256 kbps invece dei 160 kbps standard</string>
     <string name="download_liked_songs">Scarica i brani che ti piacciono</string>
     <string name="download_liked_songs_subtitle">Scarica i brani che ti piacciono e ogni brano a cui metti mi piace da ora in poi</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

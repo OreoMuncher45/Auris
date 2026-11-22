@@ -1685,4 +1685,6 @@
     <string name="youtube_premium_audio_subtitle">У меня есть Premium: воспроизводить Opus повышенного качества ~256 кбит/с вместо стандартных 160 кбит/с</string>
     <string name="download_liked_songs">Скачивать понравившиеся треки</string>
     <string name="download_liked_songs_subtitle">Скачивает понравившиеся треки и каждый трек, который вам понравится в дальнейшем</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

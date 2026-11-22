@@ -1636,4 +1636,6 @@
     <string name="youtube_premium_audio_subtitle">ฉันมี Premium: สตรีม Opus คุณภาพสูงกว่า ~256 kbps แทน 160 kbps มาตรฐาน</string>
     <string name="download_liked_songs">ดาวน์โหลดเพลงที่ชอบ</string>
     <string name="download_liked_songs_subtitle">ดาวน์โหลดเพลงที่คุณชอบ และทุกเพลงที่คุณกดชอบนับจากนี้</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>

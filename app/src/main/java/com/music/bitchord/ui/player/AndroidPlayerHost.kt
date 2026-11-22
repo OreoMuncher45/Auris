@@ -20,6 +20,8 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.ui.replay.year.BestPartStart
+import com.music.bitchord.ui.replay.year.BestParts
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -90,6 +92,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val reduceAnimation get() = AppSettings.reduceAnimation
         override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
         override val showNerdStats get() = AppSettings.showNerdStats
+        override val showBestPart get() = AppSettings.showBestPart
         override val showNextTrackStatus get() = AppSettings.showNextTrackStatus
         override val showUpgradeBadge get() = AppSettings.showUpgradeBadge
         override val showLosslessBadge get() = AppSettings.showLosslessBadge
@@ -115,6 +118,19 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
+
+    override suspend fun bestPartMs(
+        song: Song,
+        durationMs: Long,
+        lyrics: suspend () -> List<LyricLine>?,
+    ): Long? {
+        // A file on the phone has no replay curve, and its own chorus is not
+        // what the button promises.
+        if (song.localUri != null) return null
+        return BestParts.startFor(app, song, durationMs, lyrics)
+            .takeIf { it.source != BestPartStart.Source.FALLBACK }
+            ?.startMs
+    }
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)

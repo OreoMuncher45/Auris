@@ -1658,4 +1658,6 @@
     <string name="youtube_premium_audio_subtitle">יש לי Premium: הזרמת Opus באיכות גבוהה יותר של ~256 kbps במקום 160 kbps הרגילים</string>
     <string name="download_liked_songs">הורדת שירים שאהבת</string>
     <string name="download_liked_songs_subtitle">מוריד את המוזיקה שאהבת וכל שיר שתאהב מעכשיו</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
 </resources>
