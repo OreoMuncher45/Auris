@@ -81,6 +81,14 @@ class NewLyricsSourceTest {
     }
 
     @Test
+    fun `a binilyrics name-search hit without an isrc is still taken`() {
+        val hit = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = null, lyricsUrl = "right")
+        assertEquals("right", BiniLyrics.best(listOf(hit), "golden hour", "JVKE", 209_000)?.lyricsUrl)
+        // Without a document there is nothing to fetch.
+        assertNull(BiniLyrics.best(listOf(hit.copy(lyricsUrl = null)), "golden hour", "JVKE", 209_000))
+    }
+
+    @Test
     fun `a binilyrics response with no results is not a match`() {
         val response = lyricsJson.decodeFromString<BiniLyrics.Response>("""{"total":0}""")
         assertNull(response.results?.firstOrNull())
