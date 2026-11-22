@@ -84,7 +84,7 @@ object BestParts {
         // length, and a lyrics lookup can't match without one. The curve covers
         // the whole video, so its length stands in: which is why the words are
         // asked for after the curve rather than alongside it.
-        val heat = heatmapFor(song)
+        val (heat, heatAnswered) = heatmapFor(song)
         val length = durationMs.takeIf { it > 0 }
             ?: song.durationText.durationMillis().takeIf { it > 0 }
             ?: heat?.durationMs
@@ -95,31 +95,36 @@ object BestParts {
             syncedLines(context, song, length)
         }.orEmpty()
         val result = BestPart.pick(heat, lines, length)
-        // A fallback is not remembered: the network may be back next time.
-        if (result.source != BestPartStart.Source.FALLBACK) starts[song.videoId] = result
+        // A fallback is not remembered: the network may be back next time. Nor
+        // is a chorus picked because the curve didn't answer: the curve may
+        // be there next time, and it outranks the chorus.
+        val settled = result.source == BestPartStart.Source.HEATMAP ||
+            (result.source == BestPartStart.Source.LYRICS && heatAnswered)
+        if (settled) starts[song.videoId] = result
         result
     }
 
     // ── The curve ───────────────────────────────────────────────────────────
 
-    private suspend fun heatmapFor(song: Song): Heatmap? {
+    /** The curve, or null, and whether that is an answer rather than a failed request. */
+    private suspend fun heatmapFor(song: Song): Pair<Heatmap?, Boolean> {
         // A file on the phone, or a row from an addon, has no YouTube video and
         // so no curve. The listening files keep such tracks under a content
         // URI or an addon key rather than an 11-character video id.
         val id = song.videoId
-        if (song.localUri != null || !isYouTubeId(id)) return null
+        if (song.localUri != null || !isYouTubeId(id)) return null to true
         // One request per video at a time: a second caller (the player
         // reopened while the first is still waiting) waits for that answer and
         // then finds it kept, rather than asking again.
         return fetchLocks.getOrPut(id) { Mutex() }.withLock { fetchHeatmap(id) }
     }
 
-    private suspend fun fetchHeatmap(id: String): Heatmap? {
+    private suspend fun fetchHeatmap(id: String): Pair<Heatmap?, Boolean> {
         val now = System.currentTimeMillis()
         stored[id]?.let { kept ->
             val heat = kept.heatmap()
             val fresh = now - kept.fetchedAt < if (heat != null) MONTH_MS else WEEK_MS
-            if (fresh) return heat
+            if (fresh) return heat to true
         }
         val answer = withTimeoutOrNull(HEATMAP_TIMEOUT_MS) {
             try {
@@ -130,11 +135,11 @@ object BestParts {
                 Log.d(TAG, "no heatmap answer for $id: ${e.message}")
                 null
             }
-        } ?: return stored[id]?.heatmap() // Stale beats nothing when the network won't answer.
+        } ?: return stored[id]?.heatmap() to false // Stale beats nothing when the network won't answer.
         val heat = BestPart.parseHeatmap(answer)
         stored[id] = StoredHeat(heat?.segmentMs ?: 0L, heat?.intensity.orEmpty(), now)
         save()
-        return heat
+        return heat to true
     }
 
     // ── The words ───────────────────────────────────────────────────────────
