@@ -88,9 +88,7 @@ class PlayerInkRecompositionTest {
             val recomposer = Recomposer(coroutineContext + clock)
             val runner = launch(clock) { recomposer.runRecomposeAndApplyChanges() }
             val sleeveInk = mutableStateOf(Color.White)
-            val live = mutableStateOf<LivePalette?>(
-                LivePalette(NowPlayingPalette(fg = LIVE_INK_BEFORE), LiveColorSource.CANVAS),
-            )
+            val live = mutableStateOf<LivePalette?>(LIVE_BEFORE)
             val composition = Composition(NoNodes, recomposer)
             composition.setContent { Screen(sleeveInk, live, fromClip) }
             var now = 0L
@@ -117,14 +115,14 @@ class PlayerInkRecompositionTest {
                 }
                 return frames
             }
-            settleOn(if (fromClip) LIVE_INK_BEFORE else Color.White)
+            settleOn(if (fromClip) clipInk(LIVE_BEFORE) else Color.White)
             screenCount = 0
             readerCount = 0
             bystanderCount = 0
 
             change(sleeveInk, live)
             Snapshot.sendApplyNotifications()
-            val frames = settleOn(NEW_INK)
+            val frames = settleOn(if (fromClip) clipInk(LIVE_AFTER) else NEW_INK)
 
             composition.dispose()
             recomposer.cancel()
@@ -135,7 +133,7 @@ class PlayerInkRecompositionTest {
     @Test
     fun liveInkChangeRecomposesOnlyItsReaders() {
         val run = drive(fromClip = true) { _, live ->
-            live.value = LivePalette(NowPlayingPalette(fg = NEW_INK), LiveColorSource.CANVAS)
+            live.value = LIVE_AFTER
         }
         println("live ink change over ${run.frames} frames: screen=${run.screen}, readers=${run.readers}, bystanders=${run.bystanders}")
         assertTrue(run.readers > READERS, "the readers should animate to the new ink")
@@ -159,7 +157,28 @@ class PlayerInkRecompositionTest {
         const val FRAME_NS = 16_666_667L
         const val SETTLE_TIMEOUT_NS = 5_000_000_000L
         const val TRAILING_FRAMES = 3
-        val LIVE_INK_BEFORE = Color(0xFFFFC0C0)
         val NEW_INK = Color(0xFF203040)
+
+        /** A Canvas frame dark behind the deck, then one bright behind it: the ink is judged again. */
+        val LIVE_BEFORE = canvasOver(0xFF101010.toInt())
+        val LIVE_AFTER = canvasOver(0xFFF0F0F0.toInt())
+
+        fun canvasOver(argb: Int): LivePalette {
+            val bands = IntArray(INK_BANDS) { argb }
+            return LivePalette(NowPlayingPalette(fg = Color.White), LiveColorSource.CANVAS, canvasInkSurface(BandBounds(bands, bands)))
+        }
+
+        /** The ink the screen settles on over [live], with the harness's white sleeve. */
+        fun clipInk(live: LivePalette): Color = inkOutcome(
+            InkInputs(
+                live = live,
+                sleeve = NowPlayingPalette(fg = Color.White),
+                main = null,
+                panel = null,
+                surface = InkSurfaceKind.MAIN,
+                portraitClip = false,
+            ),
+            fromClip = true,
+        ).fg
     }
 }

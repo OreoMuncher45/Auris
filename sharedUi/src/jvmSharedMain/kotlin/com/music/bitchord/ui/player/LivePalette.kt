@@ -88,16 +88,21 @@ internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): Li
     // Canvas, the bands the chrome stands on.
     val pixels = IntArray(frame.width * frame.height)
     frame.readPixels(pixels, startX = 0, startY = 0, width = frame.width, height = frame.height)
+    return computeLivePalette(pixels, frame.width, frame.height, source)
+}
+
+/** [computeLivePalette] off a frame's pixels, already read. */
+internal fun computeLivePalette(pixels: IntArray, width: Int, height: Int, source: LiveColorSource): LivePalette {
     // What the controls stand on when this picture is behind them: a Canvas
     // under its deck scrim, or a portrait motion cover under its own scrim.
     val surface = when (source) {
-        LiveColorSource.CANVAS -> canvasInkSurface(pixels, frame.width, frame.height)
-        LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, frame.width, frame.height))
+        LiveColorSource.CANVAS -> canvasInkSurface(pixels, width, height)
+        LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, width, height))
         LiveColorSource.STATIC_ART -> null
     }
     // A Canvas also owns the screen behind the header, under its scrim alone.
     val header = if (source == LiveColorSource.CANVAS) {
-        canvasHeaderInkSurface(pixels, frame.width, frame.height)
+        canvasHeaderInkSurface(pixels, width, height)
     } else {
         null
     }
