@@ -93,6 +93,28 @@ class AutomixMigrationTest {
     }
 
     @Test
+    fun aRetirementThatDoesNotFinishNeverReachesTheNewStore() {
+        val fresh = File(AutomixMigration.analysisHome(filesDir), "smart_analysis")
+            .apply { mkdirs() }.resolve("456_11.json")
+        fresh.writeText("{\"version\":3}")
+        oldInstall()
+        // The old directories cannot be renamed: they are emptied in place, later.
+        filesDir.setWritable(false)
+        try {
+            assertFalse(run())
+        } finally {
+            filesDir.setWritable(true)
+        }
+        assertTrue(deferred.any { it.name == AutomixMigration.RETIRED_ANALYSIS_DIRECTORY })
+        deferred.forEach { it.deleteRecursively() }
+        deferred.clear()
+        // The marker never landed; the next launch retires again.
+        assertTrue(run())
+        assertTrue(fresh.exists())
+        assertFalse(AutomixMigration.RETIRED_DIRECTORIES.any { AutomixMigration.analysisHome(filesDir).path.endsWith(it) })
+    }
+
+    @Test
     fun aFreshInstallHasNothingToMoveAndIsMarkedDone() {
         assertTrue(run())
         assertTrue(deferred.isEmpty())

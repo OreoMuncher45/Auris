@@ -245,7 +245,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val restoreAttempted = ConcurrentHashMap.newKeySet<String>()
 
     /** Results that survive the process, so a track is measured once and stays measured. */
-    private val store = AnalysisStore { context.filesDir }
+    private val store = AnalysisStore { AutomixMigration.analysisHome(context.filesDir) }
 
     /**
      * Cache keys of renditions that decoded short despite the cache calling them

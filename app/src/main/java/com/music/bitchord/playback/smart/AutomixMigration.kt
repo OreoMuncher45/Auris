@@ -25,8 +25,13 @@ import java.io.File
  * The directories are renamed out of the way on the calling thread — a rename
  * is one metadata write however many files are inside — and their contents
  * deleted by [deleteLater], so a few thousand small files never cost the first
- * frame. A rename that fails falls back to deleting in place. A renamed
- * directory a killed process left behind is deleted on the next launch.
+ * frame. A rename that fails falls back to deleting in place, also off the
+ * calling thread. A renamed directory a killed process left behind is deleted
+ * on the next launch.
+ *
+ * The new engine's store is not under any retired name — see [analysisHome] —
+ * so nothing here can reach it: a retirement that fails, or a done marker that
+ * never reached the disk, only means the old directories are looked at again.
  */
 object AutomixMigration {
 
@@ -36,10 +41,7 @@ object AutomixMigration {
     /** The removed engine switch. */
     const val KEY_RETIRED_ENGINE = "automix_engine"
 
-    /**
-     * The analysis store's directory — the same name [AnalysisStore] writes the
-     * new engine's results under, which is why this runs once and before it.
-     */
+    /** The old engine's analysis store. */
     const val RETIRED_ANALYSIS_DIRECTORY = "smart_analysis"
 
     /** Where the removed per-song Automix profiles lived. */
@@ -47,6 +49,18 @@ object AutomixMigration {
 
     /** The directories the old engine wrote under the app's files directory. */
     val RETIRED_DIRECTORIES = listOf(RETIRED_ANALYSIS_DIRECTORY, RETIRED_PROFILE_DIRECTORY)
+
+    /**
+     * Where the new engine's [AnalysisStore] lives, under the files directory.
+     *
+     * Its own directory rather than the old one's name: the two engines used
+     * to share `smart_analysis`, so a retirement that did not finish let the
+     * new store write into the directory the next launch would retire, and
+     * that took the new results with it.
+     */
+    const val ANALYSIS_HOME = "automix"
+
+    fun analysisHome(filesDir: File): File = File(filesDir, ANALYSIS_HOME)
 
     /** What a directory is renamed to before its contents are deleted, followed by a timestamp. */
     const val RETIRED_SUFFIX = ".retired-"
@@ -70,10 +84,10 @@ object AutomixMigration {
             val directory = File(filesDir, name)
             if (!directory.exists()) continue
             val retired = File(filesDir, "$name$RETIRED_SUFFIX${System.nanoTime()}")
-            if (directory.renameTo(retired)) deleteLater(retired) else directory.deleteRecursively()
+            deleteLater(if (directory.renameTo(retired)) retired else directory)
         }
-        // Not done while an old directory is still in place: the new store
-        // would be written into it, and the next launch tries again.
+        // Not done while an old directory is still in place: the next launch
+        // looks again.
         if (RETIRED_DIRECTORIES.any { File(filesDir, it).exists() }) return false
         prefs.edit()
             .remove(KEY_RETIRED_ENGINE)
