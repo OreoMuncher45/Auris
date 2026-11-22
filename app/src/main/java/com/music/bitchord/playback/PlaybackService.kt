@@ -649,6 +649,8 @@ class PlaybackService : MediaLibraryService() {
         installed: CompletableDeferred<Unit>,
     ) {
         val seen = context.songs.mapTo(HashSet()) { it.videoId }
+        // A token handed back a second time is the feed looping back.
+        val tokens = hashSetOf(first)
         var next: String? = first
         var pages = 0
         while (next != null && pages++ < AUTO_CONTINUATION_MAX_PAGES) {
@@ -665,16 +667,14 @@ class PlaybackService : MediaLibraryService() {
                 }
             } ?: return
             if (context.listener != null && context.listener != currentListener()) return
-            // A page with nothing new on it means the feed looped back. Judged
-            // before the block list: a page of only blocked songs is not the
-            // end, and the pages after it still belong to the folder.
-            val unseen = page.songs.filter { seen.add(it.videoId) }
-            if (unseen.isEmpty()) return
-            val fresh = unseen.filterNot(AppSettings::isSongBlocked)
-            if (fresh.isEmpty()) {
-                next = page.continuation
-                continue
-            }
+            // Only a missing or repeated token ends the folder: a page of songs
+            // already queued, or only blocked ones, can still have more after
+            // it. [AUTO_CONTINUATION_MAX_PAGES] bounds a feed that never ends.
+            next = page.continuation?.takeIf { tokens.add(it) }
+            val fresh = page.songs
+                .filter { seen.add(it.videoId) }
+                .filterNot(AppSettings::isSongBlocked)
+            if (fresh.isEmpty()) continue
             fresh.forEach { songCache[it.videoId] = it }
             // Until Media3 has installed the folder, the queue is the one it replaces.
             withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
@@ -695,7 +695,6 @@ class PlaybackService : MediaLibraryService() {
                     ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
                 }
             if (additions.isNotEmpty()) exoPlayer.addMediaItems(last + 1, additions)
-            next = page.continuation
         }
     }
 
