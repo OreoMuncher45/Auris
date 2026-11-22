@@ -1,7 +1,6 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
-import android.content.res.AssetManager
 import android.os.SystemClock
 import android.util.Log
 import com.music.bitchord.data.Http
@@ -13,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import okhttp3.Request
 import java.io.File
@@ -21,40 +21,38 @@ import java.io.IOException
 import java.security.MessageDigest
 
 /**
- * Where Automix's two ONNX models come from.
+ * Automix's two ONNX models, fetched once from a release instead of riding in
+ * every APK.
  *
- * Today they ride in the APK and are unpacked into `filesDir` the first time a
- * tracker asks for one: ONNX Runtime wants a file it can memory-map, and an
- * asset inside the APK is not one.
+ * They are 32 MB between them, and most installs never turn Automix on. They
+ * are fetched the first time Automix is switched on (or at launch, if it
+ * already is) into the same `filesDir` paths older versions unpacked them to
+ * from the APK, so anyone who had Automix running before keeps their copies
+ * and downloads nothing.
  *
- * BitChord fetches them once from a release instead, the first time Automix
- * is switched on, so the APK is about 30 MB lighter for the many installs that
- * never use Automix. That path is here, behind [DOWNLOAD], and off until the
- * download source is decided: with it on, the copies land at the same
- * `filesDir` paths the APK unpacks to, so an install that had the bundled
- * models keeps them and downloads nothing. Turning it on also means setting
- * [RELEASE_URL] and leaving the `.onnx` assets out of the APK.
+ * A fetch nobody tapped for follows the Wi-Fi-only download setting and
+ * offline mode, and waits for a connection they allow. A tap on Download or
+ * Retry in settings is the listener asking for it now, so only offline mode
+ * holds that back.
  *
- * Until a model is on disk the trackers simply find none, and Automix falls
+ * Until both are on disk the trackers simply find no model, and Automix falls
  * back to plain crossfades, exactly as it does for any other analysis failure.
+ * Ported from BitChord's AutomixModels.
  */
 object AutomixModels {
 
-    /**
-     * The one switch: false reads the models bundled in the APK, true fetches
-     * them from [RELEASE_URL] on first use.
-     */
-    const val DOWNLOAD = false
-
-    /**
-     * The release the weights are fetched from, each attached as
-     * `model_<file>`, or blank while the source is undecided. A copy is only
-     * kept if it matches the size and SHA-256 below, so new weights need a new
-     * app version, not just new assets.
-     */
-    private const val RELEASE_URL = ""
-
     class Model(val fileName: String, val bytes: Long, val sha256: String)
+
+    /**
+     * Where the weights come from: each is attached to this release as
+     * `model_<file>`. Pinned to BitChord v1.10, whose files match the sizes and
+     * SHA-256 below, rather than to its latest release, whose assets could
+     * change under an installed app. Point this at Auris's own release once
+     * one is public. A copy is only kept if it matches the size and hash, so
+     * new weights need a new app version, not just new assets.
+     */
+    private const val RELEASE_URL =
+        "https://github.com/kushagrasinghx/BitChord/releases/download/v1.10/model_"
 
     val BEAT = Model(
         BeatTracker.MODEL_ASSET,
@@ -68,7 +66,7 @@ object AutomixModels {
     )
     private val ALL = listOf(BEAT, VOCALS)
 
-    /** Both models together, for a line that says what is being fetched. */
+    /** Both models together, for the settings line that says what is being fetched. */
     val totalBytes: Long = ALL.sumOf { it.bytes }
 
     sealed interface State {
@@ -79,7 +77,7 @@ object AutomixModels {
         data object Failed : State
     }
 
-    private val _state = MutableStateFlow<State>(if (DOWNLOAD) State.Missing else State.Ready)
+    private val _state = MutableStateFlow<State>(State.Missing)
     val state: StateFlow<State> = _state.asStateFlow()
 
     private const val TAG = "AutomixModels"
@@ -90,28 +88,33 @@ object AutomixModels {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
     @Volatile private var filesDir: File? = null
-    @Volatile private var assets: AssetManager? = null
     private var job: Job? = null
     private var failedAt = 0L
 
     /**
-     * Records where the models live. With [DOWNLOAD] on it also settles whether
-     * they are already here and, whenever Automix is (or becomes) on without
-     * them, starts fetching them.
+     * Called once at launch. Settles whether the models are already here and,
+     * whenever Automix is (or becomes) on without them, starts fetching them
+     * as soon as the connection allows it.
      */
     fun install(context: Context) {
         synchronized(lock) {
             if (filesDir != null) return
             filesDir = context.applicationContext.filesDir
-            assets = context.applicationContext.assets
         }
-        if (!DOWNLOAD) return
         if (ALL.all(::isPresent)) _state.value = State.Ready
         scope.launch {
-            AppSettings.smartFadeEnabled.collect { on ->
+            var wasOn = false
+            combine(
+                AppSettings.smartFadeEnabled,
+                AppSettings.meteredConnection,
+                AppSettings.wifiOnlyDownloads,
+                AppSettings.effectiveOffline,
+            ) { on, _, _, _ -> on }.collect { on ->
                 // Switching Automix on is the user asking for it now, so a
-                // recent failure does not hold this attempt back.
-                if (on) request(force = true)
+                // recent failure does not hold this attempt back; a change of
+                // connection is not, so it keeps the retry spacing.
+                if (on) request(force = !wasOn, explicit = false)
+                wasOn = on
             }
         }
     }
@@ -119,32 +122,27 @@ object AutomixModels {
     /**
      * The path of [model] on disk, for a tracker about to open it.
      *
-     * Bundled, unpacked from the APK the first time it is asked for. Downloaded,
-     * throws [FileNotFoundException] while it is not there yet — the trackers
-     * treat that like any unreadable model and produce nothing — and makes sure
-     * a fetch is under way so a later pass finds it.
+     * Throws [FileNotFoundException] while it is not there — the trackers treat
+     * that like any unreadable model and produce nothing — and makes sure a
+     * fetch is under way (when the connection allows one) so a later pass
+     * finds it.
      */
     fun path(model: Model): String {
         val file = fileFor(model) ?: throw FileNotFoundException("AutomixModels.install was never called")
-        if (!DOWNLOAD) return unpacked(model, file)
         if (isPresent(model)) return file.absolutePath
-        request(force = false)
+        request(force = false, explicit = false)
         throw FileNotFoundException("${model.fileName} has not been downloaded yet")
     }
 
-    /** A Download / Retry action: fetch whatever is missing now, whether or not Automix is on. */
-    fun download() {
-        if (DOWNLOAD) request(force = true)
-    }
+    /** Settings' Download / Retry: fetch whatever is missing now, whether or not Automix is on. */
+    fun download() = request(force = true, explicit = true)
 
     /**
-     * A Delete action: removes both models (and any half-finished download) to
-     * free the space. Refused while a download is running, and with nothing to
-     * delete while the models are bundled. The caller turns Automix off first,
-     * or the next analysis pass would fetch them straight back.
+     * Settings' Delete: removes both models (and any half-finished download)
+     * to free the space. Refused while a download is running. The caller turns
+     * Automix off first, or the next analysis pass would fetch them straight back.
      */
     fun delete(): Boolean {
-        if (!DOWNLOAD) return false
         synchronized(lock) {
             if (job?.isActive == true) return false
             for (model in ALL) {
@@ -162,40 +160,33 @@ object AutomixModels {
 
     private fun fileFor(model: Model): File? = filesDir?.let { File(it, model.fileName) }
 
-    /** The bundled copy, unpacked once; a copy cut short by a crash is the wrong size and unpacked again. */
-    private fun unpacked(model: Model, file: File): String {
-        if (file.length() != model.bytes) {
-            val source = assets ?: throw FileNotFoundException("AutomixModels.install was never called")
-            // Unpacked aside and renamed into place, so a reader opening the
-            // model while another call unpacks it sees the old whole file or
-            // the new one, never one being truncated and rewritten.
-            val staging = File(file.parentFile, "${model.fileName}.unpack-${System.nanoTime()}")
-            try {
-                source.open(model.fileName).use { input ->
-                    staging.outputStream().use { output -> input.copyTo(output) }
-                }
-                if (!staging.renameTo(file) && file.length() != model.bytes) {
-                    throw java.io.IOException("could not move ${model.fileName} into place")
-                }
-            } finally {
-                staging.delete()
-            }
-        }
-        return file.absolutePath
-    }
-
     /**
      * A file of exactly the published size is taken as the model. Every copy
-     * this class downloads is checked against its SHA-256 before it is renamed
-     * into place, and the copies unpacked from the APK are the same bytes.
+     * this class writes is checked against its SHA-256 before it is renamed
+     * into place, and the copies older versions unpacked from the APK are the
+     * same bytes; a copy cut short by a crash mid-unpack is the wrong size and
+     * gets fetched again.
      */
     private fun isPresent(model: Model): Boolean = fileFor(model)?.length() == model.bytes
 
-    private fun request(force: Boolean) {
+    /**
+     * Starts a fetch of whatever is missing. [explicit] is a tap in settings,
+     * which only offline mode refuses; anything else also waits for a
+     * connection the Wi-Fi-only download setting allows.
+     */
+    private fun request(force: Boolean, explicit: Boolean) {
         synchronized(lock) {
             if (filesDir == null || job?.isActive == true) return
             if (ALL.all(::isPresent)) {
                 _state.value = State.Ready
+                return
+            }
+            if (explicit) {
+                if (AppSettings.effectiveOffline.value) {
+                    _state.value = State.Failed
+                    return
+                }
+            } else if (!AppSettings.downloadsAllowedNow) {
                 return
             }
             if (!force && failedAt != 0L && SystemClock.elapsedRealtime() - failedAt < RETRY_AFTER_MS) return
@@ -227,7 +218,6 @@ object AutomixModels {
 
     private fun fetch(model: Model, progress: (Long) -> Unit) {
         val target = fileFor(model) ?: return
-        if (RELEASE_URL.isBlank()) throw IOException("No download source for ${model.fileName}")
         val part = File(target.parentFile, "${model.fileName}.part")
         val url = RELEASE_URL + model.fileName
         val request = Request.Builder().url(url).build()

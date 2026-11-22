@@ -66,9 +66,8 @@ import java.util.Locale
 @UnstableApi
 class TrackAnalyzer(private val context: Context, private val cache: AudioCache) {
 
-    // Bundled in the APK for now, or downloaded behind the one switch in
-    // [AutomixModels]. Until a downloaded one arrives these throw, and the
-    // trackers answer with no evidence.
+    // Downloaded on first use by [AutomixModels]. Until both arrive these
+    // throw, and the trackers answer with no evidence.
     private val tracker = BeatTracker(
         modelPath = {
             java.io.File(context.filesDir, BeatTracker.RETIRED_MODEL_ASSET).delete()
