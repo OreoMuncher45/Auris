@@ -431,78 +431,81 @@ internal fun InlineQueue(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .bleedHorizontally(PLAYER_GUTTER)
-                .fadingEdges(bottomClear = { with(density) { footerPx.toDp() } }),
+                .bleedHorizontally(PLAYER_GUTTER),
         ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Without this the sheet treats the list's leftover scroll as a
-                    // drag on itself and slides the whole player away.
-                    .nestedScroll(keepScroll)
-                    .then(if (collapsePlayerOnScroll) Modifier.nestedScroll(controlsOnScroll) else Modifier),
-                contentPadding = PaddingValues(
-                    start = PLAYER_GUTTER,
-                    end = PLAYER_GUTTER,
-                    bottom = with(density) { footerPx.toDp() },
-                ),
-            ) {
-                // What is playing isn't listed: the player above shows it, and
-                // the list is what comes next.
-                if (tracks.user.isNotEmpty()) {
-                    item(key = "header-user-queue") {
-                        QueueHeading(
-                            title = stringResource(Res.string.next_in_queue),
-                            modifier = Modifier.padding(top = 12.dp, bottom = 6.dp).then(queueMotion()),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                selectChip()
-                                if (!selection.active) {
-                                    QueueClearButton(MaterialTheme.typography.labelLarge, controlsLocked, onClear)
+            // The fade is the list's own layer. The bars below sit outside it:
+            // inside, the strip it clears for them would erase them too.
+            Box(Modifier.fillMaxWidth().fadingEdges(bottomClear = { with(density) { footerPx.toDp() } })) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Without this the sheet treats the list's leftover scroll as a
+                        // drag on itself and slides the whole player away.
+                        .nestedScroll(keepScroll)
+                        .then(if (collapsePlayerOnScroll) Modifier.nestedScroll(controlsOnScroll) else Modifier),
+                    contentPadding = PaddingValues(
+                        start = PLAYER_GUTTER,
+                        end = PLAYER_GUTTER,
+                        bottom = with(density) { footerPx.toDp() },
+                    ),
+                ) {
+                    // What is playing isn't listed: the player above shows it, and
+                    // the list is what comes next.
+                    if (tracks.user.isNotEmpty()) {
+                        item(key = "header-user-queue") {
+                            QueueHeading(
+                                title = stringResource(Res.string.next_in_queue),
+                                modifier = Modifier.padding(top = 12.dp, bottom = 6.dp).then(queueMotion()),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    selectChip()
+                                    if (!selection.active) {
+                                        QueueClearButton(MaterialTheme.typography.labelLarge, controlsLocked, onClear)
+                                    }
                                 }
                             }
                         }
+                        queueSection(tracks.user, QueueSection.USER, rowScope)
                     }
-                    queueSection(tracks.user, QueueSection.USER, rowScope)
+                    if (tracks.context.isNotEmpty()) {
+                        item(key = "header-context") {
+                            QueueHeading(
+                                title = if (contextTitle != null) {
+                                    stringResource(Res.string.next_from, contextTitle)
+                                } else {
+                                    stringResource(Res.string.queue)
+                                },
+                                modifier = Modifier
+                                    .padding(top = if (tracks.user.isEmpty()) 12.dp else 16.dp, bottom = 6.dp)
+                                    .then(queueMotion()),
+                                trailing = selectChip,
+                            )
+                        }
+                        queueSection(tracks.context, QueueSection.CONTEXT, rowScope)
+                    }
+                    if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
+                        item(key = "autoplay-heading") {
+                            AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion()) {
+                                if (tracks.autoplay.isNotEmpty()) selectChip()
+                            }
+                        }
+                        queueSection(tracks.autoplay, QueueSection.AUTOPLAY, rowScope)
+                    }
                 }
-                if (tracks.context.isNotEmpty()) {
-                    item(key = "header-context") {
-                        QueueHeading(
-                            title = if (contextTitle != null) {
-                                stringResource(Res.string.next_from, contextTitle)
-                            } else {
-                                stringResource(Res.string.queue)
-                            },
-                            modifier = Modifier
-                                .padding(top = if (tracks.user.isEmpty()) 12.dp else 16.dp, bottom = 6.dp)
-                                .then(queueMotion()),
-                            trailing = selectChip,
+                // The held row, drawn over the list where the finger is. Positioned
+                // from the finger alone, so nothing the list does underneath — a
+                // swap, a relayout, a scroll — can move it.
+                drag.held?.let { held ->
+                    Box(Modifier.matchParentSize().padding(horizontal = PLAYER_GUTTER)) {
+                        InlineQueueRow(
+                            song = held.song,
+                            onClick = {},
+                            draggable = true,
+                            lifted = true,
+                            modifier = Modifier.offset { IntOffset(0, drag.heldTop.roundToInt()) },
                         )
                     }
-                    queueSection(tracks.context, QueueSection.CONTEXT, rowScope)
-                }
-                if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
-                    item(key = "autoplay-heading") {
-                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion()) {
-                            if (tracks.autoplay.isNotEmpty()) selectChip()
-                        }
-                    }
-                    queueSection(tracks.autoplay, QueueSection.AUTOPLAY, rowScope)
-                }
-            }
-            // The held row, drawn over the list where the finger is. Positioned
-            // from the finger alone, so nothing the list does underneath — a
-            // swap, a relayout, a scroll — can move it.
-            drag.held?.let { held ->
-                Box(Modifier.matchParentSize().padding(horizontal = PLAYER_GUTTER)) {
-                    InlineQueueRow(
-                        song = held.song,
-                        onClick = {},
-                        draggable = true,
-                        lifted = true,
-                        modifier = Modifier.offset { IntOffset(0, drag.heldTop.roundToInt()) },
-                    )
                 }
             }
             if (editing != null) {
