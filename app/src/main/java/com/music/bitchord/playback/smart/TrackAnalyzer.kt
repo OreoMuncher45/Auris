@@ -1616,7 +1616,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // NaN where the model's window did not reach: see [mergeVocalMasks].
         val mask = DoubleArray(curve.size) { Double.NaN }
         for (index in curve.indices) {
-            val frame = ((curve[index].time - actualStart) * VocalSpectrogram.frameRate).toInt()
+            // Checked before the conversion: toInt() truncates a point just
+            // before the window to frame 0, which the model never measured.
+            val offset = curve[index].time - actualStart
+            if (offset < 0) continue
+            val frame = (offset * VocalSpectrogram.frameRate).toInt()
             if (frame in values.indices) mask[index] = values[frame].toDouble()
         }
         return mask
