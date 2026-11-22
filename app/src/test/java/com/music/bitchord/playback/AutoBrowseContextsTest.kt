@@ -97,6 +97,15 @@ class AutoBrowseContextsTest {
     }
 
     @Test
+    fun aGuestNetworkListingPlaysSignedOutButNotAfterSignIn() {
+        val store = AutoBrowseContexts()
+        val token = store.register(context("a", listener = AutoBrowseContexts.owner(null)))
+        val id = AutoBrowseContexts.mediaId(token, 0)
+        assertTrue(store.select(id, null) is AutoBrowseContexts.Selection.Found)
+        assertEquals(AutoBrowseContexts.Selection.AccountChanged, store.select(id, "c1"))
+    }
+
+    @Test
     fun malformedIdsAndOutOfRangeIndicesAreInvalid() {
         val store = AutoBrowseContexts(newToken = counter())
         val token = store.register(context("a"))

@@ -683,7 +683,7 @@ class PlaybackService : MediaLibraryService() {
                     null
                 }
             } ?: return
-            if (context.listener != null && context.listener != currentListener()) return
+            if (!context.belongsTo(currentListener())) return
             // Only a missing or repeated token ends the folder: a page of songs
             // already queued, or only blocked ones, can still have more after
             // it. [AUTO_CONTINUATION_MAX_PAGES] bounds a feed that never ends.
@@ -696,7 +696,7 @@ class PlaybackService : MediaLibraryService() {
             // Until Media3 has installed the folder, the queue is the one it replaces.
             withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
             // The wait can be long enough for the account to change.
-            if (context.listener != null && context.listener != currentListener()) return
+            if (!context.belongsTo(currentListener())) return
             // Not tied to the player it was installed on: a crossfade hands the same queue to the
             // other player. Whether the queue still holds this folder is what
             // decides, below.
@@ -10385,7 +10385,7 @@ class PlaybackService : MediaLibraryService() {
                     if (listing != null && songs.isNotEmpty()) autoBrowseItems(
                         songs,
                         QueueSource(getString(R.string.auto_recents), PlaybackSourceType.HISTORY, parentId),
-                        listener = listing.listener,
+                        listener = AutoBrowseContexts.owner(listing.listener),
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_recents",
@@ -10421,7 +10421,7 @@ class PlaybackService : MediaLibraryService() {
                     if (listing != null && songs.isNotEmpty()) autoBrowseItems(
                         songs,
                         QueueSource(getString(R.string.auto_quick_picks), PlaybackSourceType.HOME, parentId),
-                        listener = listing.listener,
+                        listener = AutoBrowseContexts.owner(listing.listener),
                     ) else listOf(
                         createInfoItem(
                             "msg:empty_quick_picks",
@@ -10454,7 +10454,7 @@ class PlaybackService : MediaLibraryService() {
                             autoBrowseItems(
                                 songs,
                                 QueueSource(getString(R.string.auto_liked), PlaybackSourceType.BROWSE, YtMusicRepository.LIKED_MUSIC),
-                                listener = listing.listener,
+                                listener = AutoBrowseContexts.owner(listing.listener),
                                 continuation = listing.continuation,
                             )
                         } else {
@@ -10547,7 +10547,9 @@ class PlaybackService : MediaLibraryService() {
                             } catch (_: Exception) {
                                 null
                             }
-                            if (songPage == null) emptyList() else {
+                            // Discarded if the account changed during the read: the
+                            // request may have been signed as either account.
+                            if (songPage == null || listener != currentListener()) emptyList() else {
                                 songPage.songs.forEach { songCache[it.videoId] = it }
                                 // The queue is labelled as the app labels it:
                                 // the page's own title, else the card's.
@@ -10558,7 +10560,7 @@ class PlaybackService : MediaLibraryService() {
                                     songPage.songs.filterNot(AppSettings::isSongBlocked),
                                     QueueSource(title, PlaybackSourceType.BROWSE, browseId),
                                     continuation = songPage.continuation,
-                                    listener = listener,
+                                    listener = AutoBrowseContexts.owner(listener),
                                     parentBrowseId = parentId,
                                 )
                             }

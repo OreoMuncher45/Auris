@@ -10,16 +10,22 @@ import java.util.UUID
  *
  * [listener] is the account and profile the listing belongs to — see
  * [Innertube.listener][com.music.bitchord.data.innertube.Innertube.listener],
- * which a profile switch changes though the cookie stays. It is null for
- * folders that do not belong to an account (downloads, music on the device),
- * which therefore survive a sign-in, sign-out or profile switch.
+ * which a profile switch changes though the cookie stays. A network listing
+ * read while signed out carries [AutoBrowseContexts.GUEST] (see
+ * [AutoBrowseContexts.owner]), so it plays only while still signed out. It is
+ * null for folders that do not belong to an account (downloads, music on the
+ * device), which therefore survive a sign-in, sign-out or profile switch.
  */
 internal data class AutoBrowseContext(
     val songs: List<Song>,
     val continuation: String?,
     val listener: String?,
     val source: QueueSource,
-)
+) {
+    /** Whether this listing may still be played by [currentListener]. */
+    fun belongsTo(currentListener: String?): Boolean =
+        listener == null || listener == AutoBrowseContexts.owner(currentListener)
+}
 
 /**
  * The folder listings Android Auto may still start playback from.
@@ -67,7 +73,7 @@ internal class AutoBrowseContexts(
     fun select(mediaId: String, currentListener: String?): Selection {
         val (token, index) = parse(mediaId) ?: return Selection.Invalid
         val context = synchronized(entries) { entries[token] } ?: return Selection.Expired
-        if (context.listener != null && context.listener != currentListener) return Selection.AccountChanged
+        if (!context.belongsTo(currentListener)) return Selection.AccountChanged
         if (index !in context.songs.indices) return Selection.Invalid
         return Selection.Found(context, index)
     }
@@ -89,6 +95,12 @@ internal class AutoBrowseContexts(
 
     companion object {
         const val PREFIX = "auto-browse:"
+
+        /** The owner of a network listing read while signed out; never a real listener. */
+        const val GUEST = "\u0000guest"
+
+        /** Who a network listing read for [listener] belongs to: that listener, or the guest. */
+        fun owner(listener: String?): String = listener ?: GUEST
 
         /** Same bound as upstream: a few folders deep across a few roots. */
         const val DEFAULT_CAPACITY = 32
