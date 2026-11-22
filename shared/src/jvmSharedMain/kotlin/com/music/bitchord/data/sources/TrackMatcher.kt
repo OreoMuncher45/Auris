@@ -694,12 +694,23 @@ object TrackMatcher {
      * keep the accents; this is never sent anywhere.
      */
     internal fun foldLatin(text: String): String = buildString(text.length) {
+        // Whether the last letter was Latin: a mark already split off it (the
+        // dot lowercasing leaves after "İ") goes too, a mark on another
+        // script's letter stays.
+        var afterLatin = false
         text.forEach { c ->
+            val mark = Character.getType(c) == Character.NON_SPACING_MARK.toInt()
             when {
-                c == 'ı' -> append('i')
-                c.code < 0x80 || Character.UnicodeScript.of(c.code) != Character.UnicodeScript.LATIN -> append(c)
-                else -> Normalizer.normalize(c.toString(), Normalizer.Form.NFD).forEach {
-                    if (Character.getType(it) != Character.NON_SPACING_MARK.toInt()) append(it)
+                mark && afterLatin -> Unit
+                mark -> append(c)
+                c == 'ı' -> { append('i'); afterLatin = true }
+                c.code < 0x80 -> { append(c); afterLatin = c.isLetter() }
+                Character.UnicodeScript.of(c.code) != Character.UnicodeScript.LATIN -> { append(c); afterLatin = false }
+                else -> {
+                    Normalizer.normalize(c.toString(), Normalizer.Form.NFD).forEach {
+                        if (Character.getType(it) != Character.NON_SPACING_MARK.toInt()) append(it)
+                    }
+                    afterLatin = true
                 }
             }
         }

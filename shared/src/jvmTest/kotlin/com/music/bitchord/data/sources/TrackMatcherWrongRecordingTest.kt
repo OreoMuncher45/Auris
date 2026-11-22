@@ -254,6 +254,10 @@ class TrackMatcherWrongRecordingTest {
         // Folding does not touch an act genuinely called "Cover ...".
         accepted(song("Lost", "Cover Drive", "3:30"), TrackMatcher.Target("Lost", "Cover Drive", 210))
         accepted(song("Hangimiz Sevmedik", "Muslum Gurses", "3:30"), TrackMatcher.Target("Hangimiz Sevmedik", "Müslüm Gürses", 210))
+        // Lowercasing "İ" leaves a separate dot, which goes with the rest.
+        assertTrue(TrackMatcher.isImitationCredit("İbrahim Tatlıses", "Ibrahim Tatlises Cover"))
+        refused(song("Song", "Ibrahim Tatlises Cover", null), TrackMatcher.Target("Song", "İbrahim Tatlıses"))
+        accepted(song("Song", "Ibrahim Tatlises", "3:30"), TrackMatcher.Target("Song", "İbrahim Tatlıses", 210))
     }
 
     @Test
