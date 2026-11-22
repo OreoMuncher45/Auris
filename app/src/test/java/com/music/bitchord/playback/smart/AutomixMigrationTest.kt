@@ -98,4 +98,19 @@ class AutomixMigrationTest {
         assertTrue(deferred.isEmpty())
         assertTrue(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
     }
+
+    @Test
+    fun anOldDirectoryThatWillNotGoLeavesTheMoveToRunAgain() {
+        oldInstall()
+        // A directory that can be neither renamed nor emptied: here, one under a read-only parent.
+        filesDir.setWritable(false)
+        try {
+            assertFalse(run())
+            assertFalse(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
+        } finally {
+            filesDir.setWritable(true)
+        }
+        assertTrue(run())
+        assertTrue(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
+    }
 }

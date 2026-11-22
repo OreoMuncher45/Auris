@@ -47,8 +47,12 @@ object AutomixMigration {
     /** The directories the old engine wrote under the app's files directory. */
     val RETIRED_DIRECTORIES = listOf(RETIRED_ANALYSIS_DIRECTORY, RETIRED_PROFILE_DIRECTORY)
 
+    /** What a directory is renamed to before its contents are deleted, followed by a timestamp. */
+    const val RETIRED_SUFFIX = ".retired-"
+
     /**
-     * Runs the move if it has not run on this install. Returns whether it ran.
+     * Runs the move if it has not run on this install. Returns whether it ran
+     * to completion.
      */
     fun run(
         prefs: SharedPreferences,
@@ -59,9 +63,12 @@ object AutomixMigration {
         for (name in RETIRED_DIRECTORIES) {
             val directory = File(filesDir, name)
             if (!directory.exists()) continue
-            val retired = File(filesDir, "$name.retired-${System.nanoTime()}")
+            val retired = File(filesDir, "$name$RETIRED_SUFFIX${System.nanoTime()}")
             if (directory.renameTo(retired)) deleteLater(retired) else directory.deleteRecursively()
         }
+        // Not done while an old directory is still in place: the new store
+        // would be written into it, and the next launch tries again.
+        if (RETIRED_DIRECTORIES.any { File(filesDir, it).exists() }) return false
         prefs.edit()
             .remove(KEY_RETIRED_ENGINE)
             .putBoolean(KEY_DONE, true)
