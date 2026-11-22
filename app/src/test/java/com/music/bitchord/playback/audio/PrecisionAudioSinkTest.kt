@@ -556,6 +556,44 @@ class PrecisionAudioSinkTest {
         assertEquals(20_000L, fakeDelegate.lastPresentationTimeUs)
     }
 
+    /**
+     * A flush after the incoming side started ends the mix: the next buffer is
+     * neither muted nor shifted for it, even before the controller disarms.
+     */
+    @Test
+    fun `an incoming arm a flush interrupted is no longer applied`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480 * 2) { _ -> it.putShort(1000) }
+            it.flip()
+        }
+
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        assertTrue(sink.handleBuffer(block(), 0L, 1))
+        assertNotNull(fakeDelegate.lastHandledBuffer)
+
+        sink.flush()
+        assertTrue(port.interrupted)
+        port.requestShift(-480)
+        val next = block()
+        assertTrue(sink.handleBuffer(next, 0L, 1))
+
+        assertSame("forwarded untouched, not muted", next, fakeDelegate.lastHandledBuffer)
+        assertEquals(0L, fakeDelegate.lastPresentationTimeUs)
+    }
+
     /** Switched on, the chain is reached and does colour the audio. */
     @Test
     fun `the DSP chain is reached when it is switched on`() {

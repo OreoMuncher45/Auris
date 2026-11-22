@@ -771,7 +771,9 @@ class PrecisionAudioSink(
         // start-up flush still leaves it armed.
         val outArm = port.outArm?.takeIf { !port.interrupted }
         if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding)
-        val inArm = port.inArm
+        // Likewise the incoming side: no more muting or shifting once a flush
+        // has ended the mix it was lining up for.
+        val inArm = port.inArm?.takeIf { !port.interrupted }
 
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
