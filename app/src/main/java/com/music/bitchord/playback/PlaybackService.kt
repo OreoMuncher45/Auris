@@ -467,17 +467,21 @@ class PlaybackService : MediaLibraryService() {
         AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
     }
 
-    private var cachedHome: Pair<Long, com.music.bitchord.data.model.HomeFeed>? = null
-    /** The [Innertube.listener] [cachedHome] was read for. */
-    private var cachedHomeListener: String? = null
+    /**
+     * The home feed, when it was read and the [Innertube.listener] it was read
+     * for, published as one record so a reader never pairs one account's feed
+     * with another's listener.
+     */
+    private class CachedHome(val at: Long, val feed: com.music.bitchord.data.model.HomeFeed, val listener: String?)
+    private var cachedHome: CachedHome? = null
     private val homeMutex = Mutex()
     private val HOME_CACHE_TTL_MS = 60_000L
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
         val listener = currentListener()
-        cachedHome?.takeIf { cachedHomeListener == listener }?.let { (at, feed) ->
-            if (SystemClock.elapsedRealtime() - at < HOME_CACHE_TTL_MS) return feed
+        cachedHome?.takeIf { it.listener == listener }?.let {
+            if (SystemClock.elapsedRealtime() - it.at < HOME_CACHE_TTL_MS) return it.feed
         }
         val feed = try {
             withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
@@ -486,8 +490,7 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             null
         } ?: return null
-        cachedHome = SystemClock.elapsedRealtime() to feed
-        cachedHomeListener = listener
+        cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, listener)
         feed
     }
 
@@ -573,8 +576,8 @@ class PlaybackService : MediaLibraryService() {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
     }
-    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? =
-        cachedHome?.takeIf { cachedHomeListener == currentListener() }?.second
+    private fun snapshotHome(): CachedHome? =
+        cachedHome?.takeIf { it.listener == currentListener() }
 
     /** Every Auto folder listing a tapped row can still be played from. */
     private val autoBrowseContexts = AutoBrowseContexts()
@@ -10375,13 +10378,15 @@ class PlaybackService : MediaLibraryService() {
                         snapshot
                     } else {
                         cachedQuickPicksListing() ?: run {
-                            // snapshotHome is only ever the current listener's.
-                            val listener = currentListener()
-                            snapshotHome()?.shelves?.flatMap { it.items }
-                                ?.mapNotNull { it.toSongOrNull() }
-                                ?.distinctBy { it.videoId }
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { AutoListing(0L, it, listener) }
+                            // The rows carry the listener of the same snapshot
+                            // they were read from.
+                            snapshotHome()?.let { home ->
+                                home.feed.shelves.flatMap { it.items }
+                                    .mapNotNull { it.toSongOrNull() }
+                                    .distinctBy { it.videoId }
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.let { AutoListing(0L, it, home.listener) }
+                            }
                         }
                     }
                     val songs = listing?.songs.orEmpty()
