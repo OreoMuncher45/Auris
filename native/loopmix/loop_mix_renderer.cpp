@@ -247,8 +247,11 @@ void Renderer::renderDeck(Deck& deck, int64_t frame, int frames) {
   // Gain, bass shelf and high-pass, in control blocks; the gain ramps per sample.
   const double fadeAt = deck.fadeOutAt.load(std::memory_order_relaxed);
   const double fadeSamples = kFadeSeconds * sr;
-  for (int at = 0; at < frames; at += kControlFrames) {
-    const int count = std::min(kControlFrames, frames - at);
+  // Nothing from stopAt on, inside this block too: otherwise what this deck
+  // adds past it depends on where the caller's blocks happen to split.
+  const int live = int(std::clamp(std::ceil(deck.stopAt * sr - frameStart), 0.0, double(frames)));
+  for (int at = 0; at < live; at += kControlFrames) {
+    const int count = std::min(kControlFrames, live - at);
     const double t0 = (frame + at) / sr;
     const double t1 = (frame + at + count) / sr;
     if (!deck.lowDb.empty()) {
