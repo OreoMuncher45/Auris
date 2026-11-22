@@ -147,11 +147,13 @@ class LoopMixSession private constructor(
                 return null
             }
             // Near a song's end the decode can stop short of what was asked
-            // for, and a deck reading past its region plays silence.
+            // for, and a deck reading past its region plays silence. The
+            // incoming deck plays on through its 25 ms fade to its own player.
             val outEnd = outRegion.start + outRegion.left.size / sampleRate.toDouble()
             val inEnd = inRegion.start + inRegion.left.size / sampleRate.toDouble()
-            if (outEnd < plan.out.loopEnd || inEnd < clock.elementTrackTime) {
-                Log.w(TAG, "a region ends before what it plays: out $outEnd < ${plan.out.loopEnd}, in $inEnd < ${clock.elementTrackTime}")
+            val inNeeded = clock.elementTrackTime + LoopMix.HANDOVER_SEC
+            if (outEnd < plan.out.loopEnd || inEnd < inNeeded) {
+                Log.w(TAG, "a region ends before what it plays: out $outEnd < ${plan.out.loopEnd}, in $inEnd < $inNeeded")
                 return null
             }
             val renderer = LoopMixRenderer(sampleRate)
