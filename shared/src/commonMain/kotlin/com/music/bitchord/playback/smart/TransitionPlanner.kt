@@ -109,12 +109,19 @@ private val SPOKEN_TEXT = Regex(
  * refused a mix, and a refused pair gets no seek-bar marker either.
  */
 private val LIVE_TEXT = Regex(
-    // A bracketed tag: "(Live)", "(Acoustic Live)", "[Live at Wembley]", "(Live Version)", "(Live 2016)".
-    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
+    // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)", "(Live 2016)".
+    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
         // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016".
-        """|[-–—]\s*live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit)|\d{4})\b.*)?\s*$""" +
-        // A live album: "Live at Wembley", "Live: At The Hall".
-        """|^\s*live\s*(?::|\s(?:at|from|in|on)\b)""",
+        """|[-–—]\s*live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b.*)?\s*$""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * A live album: "Live at Wembley", "Live: At The Hall". Read off the album
+ * only, since a song can be called "Live in Love" or "Live on the Edge".
+ */
+private val LIVE_ALBUM_TEXT = Regex(
+    """^\s*live\s*(?::|\s(?:at|from|in|on)\b)""",
     RegexOption.IGNORE_CASE,
 )
 
@@ -123,7 +130,8 @@ private fun isSpokenOrLive(track: TransitionTrackInfo?): Boolean {
     if (track == null) return false
     if (SPOKEN_TEXT.containsMatchIn(itemText(track))) return true
     // Not the artist: there is a band called Live.
-    return LIVE_TEXT.containsMatchIn(track.title) || LIVE_TEXT.containsMatchIn(track.album)
+    return LIVE_TEXT.containsMatchIn(track.title) || LIVE_TEXT.containsMatchIn(track.album) ||
+        LIVE_ALBUM_TEXT.containsMatchIn(track.album)
 }
 
 /** For tests: whether a pair would be refused as spoken word or live. */

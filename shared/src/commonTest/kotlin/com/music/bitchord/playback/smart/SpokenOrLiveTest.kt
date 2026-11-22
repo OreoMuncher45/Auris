@@ -13,6 +13,8 @@ class SpokenOrLiveTest {
         assertFalse(isSpokenOrLiveForTest("Live Forever", "Oasis", "Definitely Maybe"))
         assertFalse(isSpokenOrLiveForTest("Lightning Crashes", "Live", "Throwing Copper"))
         assertFalse(isSpokenOrLiveForTest("Performance", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live in Love", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live on the Edge", "Some Artist"))
     }
 
     @Test
@@ -21,6 +23,8 @@ class SpokenOrLiveTest {
         assertTrue(isSpokenOrLiveForTest("Creep [Live]", "Radiohead"))
         assertTrue(isSpokenOrLiveForTest("Yellow (Live at Glastonbury 2016)", "Coldplay"))
         assertTrue(isSpokenOrLiveForTest("Song (Acoustic Live)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live Acoustic)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live Acoustic", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Hello - Live", "Adele"))
         assertTrue(isSpokenOrLiveForTest("Song (Live 2016)", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Song [Live 1977 Remaster]", "Artist"))
