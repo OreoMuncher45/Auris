@@ -723,9 +723,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // will not parse yet is not held against the rendition — more bytes may
         // well fix it — but a length that genuinely disagrees is.
         val expected = durationSeconds.takeIf { it.isFinite() && it > 0 }
+        // The analyser's own copy — the head its fetch is filling — is not a
+        // sibling: a header that will not parse yet is no reason to skip it,
+        // and the one head attempt it gets would otherwise be spent here.
+        // A length that is readable and disagrees still turns it away.
+        val ownCopy = uri.getQueryParameter("v")
+            ?.let { rendition.key == AutomixAnalysisSource.analysisCacheKey(it) } == true
         if (expected != null && rendition.key != cache.cacheKeyOf(uri)) {
             val length = openSource()?.use(AudioDecoder::containerDurationSeconds)
-            if (length == null || length <= 0) {
+            if ((length == null || length <= 0) && ownCopy) {
+                Log.d(TAG, "Head rendition ${rendition.key} for $trackId has no readable duration yet; decoding anyway")
+            } else if (length == null || length <= 0) {
                 // Logged rather than returned quietly. This is the likeliest way
                 // for a head pass to do nothing — a partial container the
                 // extractor will not read a duration out of — and while it was
@@ -733,7 +741,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 Log.d(TAG, "Head rendition ${rendition.key} for $trackId has no readable duration yet")
                 return null
             }
-            if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
+            if (length != null && length > 0 && abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
                 Log.d(
                     TAG,
                     "Head rendition ${rendition.key} rejected for $trackId: " +
