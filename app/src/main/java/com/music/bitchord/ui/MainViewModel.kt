@@ -4168,6 +4168,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             songs = UiState.Loading,
             type = resolved,
         )
+        // Who the page was opened for: its continuation walk belongs to that
+        // listener, even when the first response lands after a switch.
+        val openedFor = listenerKey()
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -4384,7 +4387,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Only once the first page is on screen: [fillIn] appends to it,
             // and has nothing to append to before this.
-            more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
+            if (listenerKey() == openedFor) more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork, openedFor) }
         }
     }
 
@@ -4763,7 +4766,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * and asked for as the listener scrolls to the end of the list — see
      * [loadMoreDetail].
      */
-    private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
+    private fun fillIn(browseId: String, token: String, artworkFallback: String?, listener: String?) {
         val endless = browseId.isEndlessMix()
         // Every id the chain has produced so far, first page included, for the
         // loop guard below. Only the request side touches it, one page at a time.
@@ -4778,7 +4781,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The page stays on the stack across a profile or account switch, so a
         // walk (and its retries) still running then must neither ask for the
         // new listener nor publish into its page or Liked Music cache.
-        val listener = listenerKey()
         viewModelScope.launch {
             followContinuations(
                 token = token,
@@ -4828,7 +4830,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     addedSuggested += rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
                 }
                 if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
-                    LikedCache.mergeBottom(listenerKey(), added)
+                    LikedCache.mergeBottom(listener, added)
                 }
                 if (anyNew) {
                     _detailStack.value = stack.toMutableList().also {
