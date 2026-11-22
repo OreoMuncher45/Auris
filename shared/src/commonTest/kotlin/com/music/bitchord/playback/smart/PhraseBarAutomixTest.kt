@@ -142,6 +142,19 @@ class PhraseBarAutomixTest {
         assertEquals(adaptive, plan(current, next, phraseBars = 0))
     }
 
+    @Test
+    fun theAdaptivePlanReportsTheBeatsItActuallySchedules() {
+        // A short incoming song holds the overlap to a fraction of its length,
+        // far under the beats the planner first asks for.
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+        val next = track("b", 120.0, "C major", vocal = 0.1, duration = 12.0)
+        val plan = plan(current, next, phraseBars = 0)
+
+        val scheduled = plan.transitionEnd - plan.transitionStart
+        assertTrue(scheduled > 0 && scheduled < 6.0, "a short mix: $scheduled s (${plan.reason})")
+        assertEquals(kotlin.math.round(scheduled / 0.5).toInt(), plan.transitionBeats, "beats over $scheduled s")
+    }
+
     private companion object {
         /** The adaptive planner's ceiling; the phrase mode deliberately runs past it. */
         const val MAX_OVERLAP_SECONDS_FOR_TEST = 16.0

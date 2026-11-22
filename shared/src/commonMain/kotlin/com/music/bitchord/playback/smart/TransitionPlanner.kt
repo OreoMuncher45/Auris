@@ -1874,7 +1874,10 @@ private fun mixPlan(
         incomingPlaybackRate = incomingRateFor(incomingPlaybackRate, traits != null),
         outgoingPlaybackRate = outgoingRateFor(incomingPlaybackRate, traits != null),
         pickupSeconds = pickupSeconds,
-        transitionBeats = transitionBeats,
+        // The overlap as scheduled, which the clamps above can have made far
+        // shorter than the beats first asked for; counted in the outgoing beat
+        // that request was made in.
+        transitionBeats = if (currentBpm > 0) (alignedOverlap * currentBpm / 60).roundToInt() else transitionBeats,
         bassSwap = sameBeatBlend || hasBassContent,
         transitionStyle = if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER,
         // The two styles are alternatives, not a scale: a matched pair hands the
