@@ -3205,6 +3205,8 @@ fun NowPlayingScreen(
                             lyrics = { lyrics },
                             lyricsUnavailable = { lyricsUnavailable },
                             onSeek = onSeek,
+                            // Faded out with Spotify's controls, it must not take taps.
+                            interactive = { spotifyChromeAlpha > 0f },
                             modifier = pillModifier,
                         )
                     },

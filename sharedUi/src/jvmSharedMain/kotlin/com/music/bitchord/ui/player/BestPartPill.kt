@@ -79,6 +79,8 @@ internal fun BestPartPill(
     /** The player has given up on lyrics for this track. */
     lyricsUnavailable: () -> Boolean,
     onSeek: (Long) -> Unit,
+    /** Whether the pill may take a tap; false while it sits under faded-out chrome. */
+    interactive: () -> Boolean = { true },
     modifier: Modifier = Modifier,
 ) {
     val enabled by PlayerSettings.showBestPart.collectAsStateWithLifecycle()
@@ -87,13 +89,16 @@ internal fun BestPartPill(
     val duration by rememberUpdatedState(durationMs)
     val currentLyrics by rememberUpdatedState(lyrics)
     val currentUnavailable by rememberUpdatedState(lyricsUnavailable)
-    val start by produceState<Long?>(null, song.videoId) {
+    // Kept with the track it was found for: [produceState] keeps its last
+    // value when the key changes, so the next track would otherwise show
+    // (and seek to) this one's best part until its own lookup lands.
+    val found by produceState<Pair<String, Long?>?>(null, song.videoId) {
         // Playback first: the lookup is a page from youtube.com, and a track
         // that is still starting has better uses for the connection. A quick
         // skip past this track cancels the lookup before it is made.
         snapshotFlow { loading }.first { !it }
         delay(LOOKUP_DELAY_MS)
-        value = try {
+        value = song.videoId to try {
             PlayerPlatform.host.bestPartMs(song, duration) {
                 // The words the player is loading anyway, once they have
                 // arrived or the player has given up on them.
@@ -107,9 +112,11 @@ internal fun BestPartPill(
             null
         }
     }
-    // Remembered per track: having been heard is what puts the pill away.
-    var heard by remember(song.videoId) { mutableStateOf(false) }
-    val at = start
+    // Having been heard is what puts the pill away, for the rest of the track.
+    // Kept outside the pill, which leaves composition whenever a panel covers
+    // the artwork, so it is not offered again on the way back.
+    val heard = heardBestPartOf == song.videoId
+    val at = found?.takeIf { it.first == song.videoId }?.second
     // Read through derivedStateOf, so the pill recomposes as the playhead
     // crosses the best part, not on every tick of it.
     val ahead by remember(at, position) {
@@ -121,13 +128,15 @@ internal fun BestPartPill(
         // the pill should come back for a seek to before it.
         derivedStateOf { at != null && position.positionMs in (at - AHEAD_SLACK_MS)..(at + HEARD_WINDOW_MS) }
     }
-    LaunchedEffect(reaching) { if (reaching) heard = true }
+    LaunchedEffect(reaching) { if (reaching) heardBestPartOf = song.videoId }
 
     // Not while Automix is mixing into the next track: what is ahead then is
     // the next song, not this one's best part.
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
 
     val haptics = rememberHaptics()
+    val currentInteractive by rememberUpdatedState(interactive)
+    val tappable by remember { derivedStateOf { currentInteractive() } }
     AnimatedVisibility(
         visible = at != null && ahead && !heard && !mixing,
         enter = fadeIn(tween(BEST_PART_FADE_MS)),
@@ -141,10 +150,10 @@ internal fun BestPartPill(
                 .clip(CircleShape)
                 .background(PILL_FILL)
                 .border(1.dp, PILL_RIM, CircleShape)
-                .clickable(role = Role.Button) {
+                .clickable(enabled = tappable, role = Role.Button) {
                     val target = at ?: return@clickable
                     haptics.play(Haptic.Tap)
-                    heard = true
+                    heardBestPartOf = song.videoId
                     onSeek(target)
                 }
                 .semantics { contentDescription = description }
@@ -168,6 +177,12 @@ internal fun BestPartPill(
         }
     }
 }
+
+/**
+ * The track whose best part has been heard. One track plays at a time, so a
+ * new track clears it by not matching; see [BestPartPill].
+ */
+private var heardBestPartOf by mutableStateOf<String?>(null)
 
 /** Just short of the best part already counts as there, so the pill doesn't flash back on a late reading. */
 private const val AHEAD_SLACK_MS = 400L
