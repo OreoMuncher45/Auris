@@ -99,8 +99,11 @@ class LoopMixPort {
     @Volatile var positionNanos: Long = 0L
         private set
 
+    /** The arm [generation] the reading was taken under. */
+    @Volatile private var positionGeneration = -1
+
     /**
-     * Odd while [publishPosition] is between its two writes. The pair is read
+     * Odd while [publishPosition] is between its writes. The pair is read
      * as one: a new position with the old time would extrapolate it ahead by
      * the gap between readings, a whole correction's worth of error.
      */
@@ -111,25 +114,31 @@ class LoopMixPort {
         positionSeq++
         positionUs = us
         positionNanos = nanos
+        positionGeneration = generation
         positionSeq++
     }
 
-    /** Where the presented audio is now, in track seconds, extrapolated from the last reading. */
+    /**
+     * Where the presented audio is now, in track seconds, extrapolated from the
+     * last reading; null without one taken under the current arm, or when no
+     * consistent reading could be had (the writer descheduled mid-way).
+     */
     fun presentedSeconds(nowNanos: Long, playing: Boolean): Double? {
-        var position = positionUs
-        var at = positionNanos
-        // A handful of tries: the writer is two field stores long. Should it be
-        // descheduled mid-way, the reading in hand is used rather than spun on.
+        // A handful of tries: the writer is a few field stores long.
         for (attempt in 0 until 64) {
             val seq = positionSeq
             if (seq and 1 != 0) continue
-            position = positionUs
-            at = positionNanos
-            if (positionSeq == seq) break
+            val position = positionUs
+            val at = positionNanos
+            val taken = positionGeneration
+            if (positionSeq != seq) continue
+            // A reading from an earlier arm (this player's last mix, before a
+            // pause or a gap) says nothing about this one.
+            if (position == C.TIME_UNSET || taken != generation) return null
+            val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
+            return position / 1e6 + elapsed
         }
-        if (position == C.TIME_UNSET) return null
-        val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
-        return position / 1e6 + elapsed
+        return null
     }
 
     // ---- The incoming side's alignment ------------------------------------------------------
