@@ -1080,7 +1080,8 @@ class PrecisionAudioSink(
      */
     private fun generateLoop(arm: LoopMixPort.OutArm, outEncoding: PcmEncoding): Boolean {
         if (outputByteBuffer.hasRemaining()) {
-            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, 0)
+            // Retried with the count its first write carried (the takeover block's).
+            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
             if (!consumed || outputByteBuffer.hasRemaining()) return false
         }
         repeat(LOOP_MAX_GENERATED_BLOCKS) {
@@ -1092,7 +1093,9 @@ class PrecisionAudioSink(
             outputByteBuffer.clear()
             PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)
             outputByteBuffer.flip()
-            val blockUs = loopNextUs
+            // loopNextUs is track time; the delegate is still on its own clock,
+            // shifted by any silence or drops an earlier mix left on this player.
+            val blockUs = loopNextUs + delegateOffsetUs
             loopNextUs += Util.sampleCountToDurationUs(frames.toLong(), configuredSampleRate)
             processedEndUs = loopNextUs
             pendingPresentationTimeUs = blockUs
@@ -1138,7 +1141,7 @@ class PrecisionAudioSink(
     /** [frames] of silence, timed as the next frames on the delegate's clock. */
     private fun writeSilence(frames: Int, trackBlockUs: Long, outEncoding: PcmEncoding): Boolean {
         if (outputByteBuffer.hasRemaining()) {
-            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, 0)
+            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
             if (!consumed || outputByteBuffer.hasRemaining()) return false
         }
         audioBlock.reset(frames)
