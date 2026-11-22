@@ -1251,10 +1251,14 @@ private class PairTraits(analysis: TrackAnalysis, nextAnalysis: TrackAnalysis) {
     val vocalConflict = analysis.vocalProbability >= VOCAL_CONFLICT_PROBABILITY &&
         nextAnalysis.vocalProbability >= VOCAL_CONFLICT_PROBABILITY
 
-    /** Both grids trusted and the stretch will match the tempi, so the beats can be held in phase. */
+    /**
+     * Both grids trusted and the stretch will match the tempi, so the beats can
+     * be held in phase. The incoming song is mixed in on its opening, so its
+     * trust is the head grid's own where the model measured one.
+     */
     val phaseLockable = currentBpm > 0 && nextBpm > 0 && !tempoFar &&
         analysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE &&
-        nextAnalysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE
+        (nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE
 
     /** Whether the outgoing grid is trusted enough to place a transition's edges on. */
     val outgoingGrid = currentBpm > 0 && analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE

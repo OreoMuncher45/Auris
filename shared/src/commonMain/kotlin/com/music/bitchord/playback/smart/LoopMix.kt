@@ -176,7 +176,10 @@ object LoopMix {
         if (outVideo || inVideo) return null.also { why?.append("a music video") }
         // A loop mix beat-matches, so it needs the same trusted grid the blend does.
         if (out.beatConfidence < MIN_BEATMATCH_CONFIDENCE) return null.also { why?.append("outgoing grid not trusted") }
-        if (inn.beatConfidence < MIN_BEATMATCH_CONFIDENCE) return null.also { why?.append("incoming grid not trusted") }
+        // The incoming loop is cut from the opening, so the head grid's own trust where there is one.
+        if ((inn.headBeats?.confidence ?: inn.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
+            return null.also { why?.append("incoming grid not trusted") }
+        }
         val outGrid = constantGrid(out) ?: return null.also { why?.append("no grid on the outgoing song") }
         val inGrid = constantGrid(inn) ?: return null.also { why?.append("no grid on the incoming song") }
         val outCount = Rejections()
