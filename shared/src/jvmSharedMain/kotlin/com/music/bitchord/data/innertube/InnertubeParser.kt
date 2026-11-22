@@ -623,8 +623,12 @@ object InnertubeParser {
             ?: appended
             ?: root.o("contents").o("twoColumnBrowseResultsRenderer").o("secondaryContents")
             ?: return null
-        val playlistScope = scope.o("musicPlaylistShelfContinuation")
-            ?: appended?.takeIf { scope === it }
+        // An appended page's own rows are its direct items: a "Suggestions"
+        // shelf nested among them is read below as suggestions, not as rows.
+        val playlistScope: JsonElement? = scope.o("musicPlaylistShelfContinuation")
+            ?: appended?.takeIf { scope === it }?.let { action ->
+                JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
+            }
             ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
         val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")
             .filter { it.o("title").runs() == "Suggestions" }

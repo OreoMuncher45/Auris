@@ -55,4 +55,24 @@ class PlaylistShelfContinuationTest {
         val shown = assertNotNull(InnertubeParser.parsePlaylistShelf(repeatedSongPage))
         assertEquals(listOf("SET1"), shown.songs.map { it.setVideoId })
     }
+
+    private val appendedWithSuggestions = Json.parseToJsonElement(
+        """
+        { "onResponseReceivedActions": [ { "appendContinuationItemsAction": { "continuationItems": [
+          ${row("aaaaaaaaaaa", "SET1")},
+          { "musicShelfRenderer": { "title": { "runs": [ { "text": "Suggestions" } ] }, "contents": [
+            ${row("sssssssssss", "SUGG")}
+          ] } },
+          { "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "PAGE3" } } } }
+        ] } } ] }
+        """,
+    )
+
+    @Test
+    fun `a suggestions shelf appended with the rows stays out of the playlist`() {
+        val page = assertNotNull(InnertubeParser.parsePlaylistShelf(appendedWithSuggestions))
+        assertEquals(listOf("aaaaaaaaaaa"), page.songs.map { it.videoId })
+        assertEquals(listOf("sssssssssss"), page.suggested.map { it.videoId })
+        assertEquals("PAGE3", page.continuation)
+    }
 }
