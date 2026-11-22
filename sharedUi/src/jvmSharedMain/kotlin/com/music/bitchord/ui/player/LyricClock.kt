@@ -131,7 +131,10 @@ internal class LyricClock(startMs: Long) {
             heldDiscontinuity = null
         } else {
             val sameDiscontinuity = (heldDiscontinuity ?: lastDiscontinuity) == reading.discontinuity
-            hold(reading.positionMs, nowMs, reading.discontinuity, preserveDisplay = active && sameDiscontinuity)
+            // Well ahead of the words is the song having moved on while frames
+            // stalled, not sample noise: the words go to it.
+            val caughtUp = reading.positionMs - displayedMs > STOPPED_CATCH_UP_MS
+            hold(reading.positionMs, nowMs, reading.discontinuity, preserveDisplay = active && sameDiscontinuity && !caughtUp)
         }
         return displayedMs.toLong()
     }
@@ -381,6 +384,9 @@ private fun smoothstep(fraction: Double): Double {
  * times that, and well inside anything a listener would call out of sync.
  */
 private const val OUTLIER_MS = 250.0
+
+/** How far a stopped reading can be ahead of the words and still be read as noise. */
+private const val STOPPED_CATCH_UP_MS = 1_000.0
 
 /**
  * Extra allowance per millisecond between readings, for a rate not known

@@ -368,6 +368,20 @@ class LyricClockTest {
         assertEquals(30_867L, clock.frame(1_132.0, playhead.reading(isPlaying = true)))
     }
 
+    @Test fun aStoppedReportFarAheadAfterAFrameStallMovesTheWords() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_000)
+        position.report(30_000, sampledAtNanos = 1_000_000_000L, isPlaying = true)
+        clock.frame(1_000.0, playhead.reading(isPlaying = true))
+        // No frames for five seconds while the audio ran on, then a pause.
+        position.report(35_000, sampledAtNanos = 6_000_000_000L, isPlaying = false)
+        assertEquals(35_000L, clock.observe(playhead.reading(isPlaying = false), 6_000.0))
+        // Later stopped reports keep it there.
+        position.report(34_990, sampledAtNanos = 7_000_000_000L, isPlaying = false)
+        assertEquals(35_000L, clock.observe(playhead.reading(isPlaying = false), 7_000.0))
+    }
+
     @Test fun stoppedReportsFreezeRenderedProgressUntilASeekOrResume() {
         val position = PlaybackPosition()
         val playhead = LyricPlayhead(position, mutableStateOf(0))
