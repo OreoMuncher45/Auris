@@ -52,8 +52,10 @@ class BeatTracker(
      *
      * A path rather than a [Context]: this is the only thing the tracker ever
      * wanted the platform for, and each application already knows how to put
-     * its own copy of the weights somewhere readable — downloaded on first use on
-     * Android, from the jar's resources on the desktop.
+     * its own copy of the weights somewhere readable — unpacked from the APK on
+     * Android (the build bundles the model and on-demand download is off, so an
+     * offline first run that finds no model points at the bundled asset), from
+     * the jar's resources on the desktop.
      */
     private val modelPath: () -> String,
     /** How many threads inference may use; the beat and downbeat pass is the expensive one. */
