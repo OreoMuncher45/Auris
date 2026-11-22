@@ -141,6 +141,14 @@ class LoopMixSession private constructor(
                 Log.w(TAG, "a region starts after its loop: out ${outRegion.start}, in ${inRegion.start}")
                 return null
             }
+            // Near a song's end the decode can stop short of what was asked
+            // for, and a deck reading past its region plays silence.
+            val outEnd = outRegion.start + outRegion.left.size / sampleRate.toDouble()
+            val inEnd = inRegion.start + inRegion.left.size / sampleRate.toDouble()
+            if (outEnd < plan.out.loopEnd || inEnd < clock.elementTrackTime) {
+                Log.w(TAG, "a region ends before what it plays: out $outEnd < ${plan.out.loopEnd}, in $inEnd < ${clock.elementTrackTime}")
+                return null
+            }
             val renderer = LoopMixRenderer(sampleRate)
             if (!renderer.isValid) return null
             // Closed here if filling it fails: nothing else holds it yet.
