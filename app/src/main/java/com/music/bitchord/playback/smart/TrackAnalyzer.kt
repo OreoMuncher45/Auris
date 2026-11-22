@@ -150,10 +150,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             context.getSystemService(PowerManager::class.java)?.let { power ->
                 thermalStatus = power.currentThermalStatus
-                power.addThermalStatusListener(Runnable::run) { thermalStatus = it }
+                val listener = PowerManager.OnThermalStatusChangedListener { thermalStatus = it }
+                power.addThermalStatusListener(Runnable::run, listener)
+                thermalUnwatch = { power.removeThermalStatusListener(listener) }
             }
         }
     }
+
+    /**
+     * Undoes [thermalWatch]'s registration. The listener holds this analyser,
+     * so left registered a recreated service keeps the old one, and everything
+     * it measured, alive.
+     */
+    @Volatile private var thermalUnwatch: (() -> Unit)? = null
 
     /**
      * Whether the phone has asked apps to shed load. No new pass is started
@@ -1704,6 +1713,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     fun release() {
+        thermalUnwatch?.let { runCatching(it) }
+        thermalUnwatch = null
         executor.shutdownNow()
         restoreExecutor.shutdownNow()
         sourceResolutionScope.cancel()
