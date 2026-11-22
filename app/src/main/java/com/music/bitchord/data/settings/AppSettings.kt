@@ -1629,7 +1629,10 @@ object AppSettings {
      */
     fun reload() {
         if (!this::prefs.isInitialized) return
+        val premiumAudio = youtubePremiumAudio.value
         readAll()
+        // A restore that flips it leaves URLs picked under the old route.
+        if (youtubePremiumAudio.value != premiumAudio) StreamResolver.forgetResolved()
     }
 
     private fun readAll() {

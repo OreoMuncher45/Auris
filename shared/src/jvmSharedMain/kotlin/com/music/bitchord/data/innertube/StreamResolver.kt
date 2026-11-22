@@ -74,8 +74,16 @@ object StreamResolver {
      * afresh — for a setting that changes which stream a resolve picks.
      */
     fun forgetResolved() {
+        settingsGeneration.incrementAndGet()
         recent.clear()
     }
+
+    /**
+     * Bumped by [forgetResolved]. A walk remembers the generation it started
+     * under: one that finishes after the setting changed is neither stored
+     * nor joined by a caller asking under the new setting.
+     */
+    private val settingsGeneration = java.util.concurrent.atomic.AtomicInteger()
 
     private const val TAG = "BitChord"
 
@@ -285,13 +293,14 @@ object StreamResolver {
         // See [rememberUnplayable] for why this is the fix for "stuck loading".
         unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
 
-        val stream = coalescedResolve(videoId)
+        val generation = settingsGeneration.get()
+        val stream = coalescedResolve(videoId, generation)
 
         // The container carries no bitrate field, so this is the only place the
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
         stream.loudnessDb?.let { loudness[videoId] = it }
-        remember(videoId, stream.url)
+        if (settingsGeneration.get() == generation) remember(videoId, stream.url)
         return stream.url
     }
 
@@ -402,15 +411,17 @@ object StreamResolver {
      * single largest producer of lines in the log, and every one of them was
      * previously filed against whatever happened to be playing while the walk
      * ran, which for read-ahead is the track before this one.
-     */    private suspend fun coalescedResolve(videoId: String): Stream {
-        inFlight[videoId]?.let { return it.await() }
+     */
+    private suspend fun coalescedResolve(videoId: String, generation: Int): Stream {
+        val key = videoId to generation
+        inFlight[key]?.let { return it.await() }
         // Started lazily so that losing the race below costs nothing: the walk
         // that gets discarded has not run a line, so cancelling it fires no
         // requests and leaves no half-finished deferred behind.
         val walk = resolverScope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
             resolveUncached(videoId)
         }
-        val running = inFlight.putIfAbsent(videoId, walk)
+        val running = inFlight.putIfAbsent(key, walk)
         if (running != null) {
             walk.cancel()
             return running.await()
@@ -429,12 +440,12 @@ object StreamResolver {
         // resolves for one track, 4472ms and 4620ms, 2.8s of them concurrent,
         // each paying for the other's round trips. The doc comment above
         // promised one walk per videoId and the finally guaranteed the opposite.
-        walk.invokeOnCompletion { inFlight.remove(videoId, walk) }
+        walk.invokeOnCompletion { inFlight.remove(key, walk) }
         walk.start()
         return walk.await()
     }
 
-    private val inFlight = ConcurrentHashMap<String, Deferred<Stream>>()
+    private val inFlight = ConcurrentHashMap<Pair<String, Int>, Deferred<Stream>>()
 
     private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
