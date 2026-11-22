@@ -125,4 +125,15 @@ class ModelsTest {
         assertEquals(null, youTubeThumbnailFallback("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"))
         assertEquals(null, youTubeThumbnailFallback("https://lh3.googleusercontent.com/x=w544-h544"))
     }
+
+    @Test
+    fun userInformationIsNotTheHost() {
+        val url = "https://img.youtube.com:pw@images.example.test/vi/abc/hqdefault.jpg?token=abc"
+        assertEquals(url, url.artworkAt(720))
+        // A real thumbnail host with a port still upgrades.
+        assertEquals(
+            "https://i.ytimg.com:443/vi/abc/maxresdefault.jpg",
+            "https://i.ytimg.com:443/vi/abc/hqdefault.jpg".artworkAt(1200),
+        )
+    }
 }

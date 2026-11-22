@@ -323,8 +323,11 @@ internal fun isYouTubeThumbnailHost(url: String): Boolean {
     val host = url.substringAfter("://", "")
         .ifEmpty { url.substringAfter("//", "") }
         .substringBefore('/')
-        .substringBefore(':')
         .substringBefore('?')
+        .substringBefore('#')
+        // Any user information is not the host: "img.youtube.com:pw@other.test".
+        .substringAfterLast('@')
+        .substringBefore(':')
         .lowercase()
     return host == "i.ytimg.com" || host.endsWith(".ytimg.com") ||
         host == "img.youtube.com" || host.endsWith(".youtube.com")
