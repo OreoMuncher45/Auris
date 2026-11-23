@@ -3348,7 +3348,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 LikeState.seedLiked(cached.mapTo(HashSet()) { it.videoId })
             }
         }
-        val next = YtMusicRepository.library().fold(
+        // Likes are seeded below, behind the same credential check as the
+        // cache: LikeState is shared, and another account's hearts must not
+        // land in it.
+        val next = YtMusicRepository.library(seedLikes = false).fold(
             onSuccess = { page ->
                 // Liked Music is published with just its first page on the tab;
                 // the rest of the collection is synced into LikeState here, in
@@ -3357,6 +3360,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // The cache takes the first page now; the walk below appends
                 // the rest as it lands, so a force-stop never loses the list.
                 if (Innertube.listenerGeneration == credentials) {
+                    LikeState.seedLiked(page.likedSongs.mapTo(HashSet()) { it.videoId })
                     identity?.let { id -> LikedCache.write(id, page.likedSongs) }
                     page.likedContinuation?.let { token -> syncLikedMusic(identity, credentials, token) }
                 }
