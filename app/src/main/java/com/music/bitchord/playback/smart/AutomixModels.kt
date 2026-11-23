@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +92,9 @@ object AutomixModels {
     private var job: Job? = null
     private var failedAt = 0L
 
+    /** The one fetch attempt waiting for a failure's cooldown to run out. */
+    private var retryJob: Job? = null
+
     /**
      * Called once at launch. Settles whether the models are already here and,
      * whenever Automix is (or becomes) on without them, starts fetching them
@@ -146,20 +150,30 @@ object AutomixModels {
      * (see [fetchGate]).
      */
     fun delete(): Boolean {
-        synchronized(lock) {
+        val left = synchronized(lock) {
             if (job?.isActive == true) return false
-            for (model in ALL) {
-                fileFor(model)?.let { file ->
-                    file.delete()
-                    File(file.parentFile, "${model.fileName}.part").delete()
-                }
-            }
+            val left = deleteAll(
+                ALL.flatMap { model ->
+                    listOfNotNull(fileFor(model), fileFor(model)?.let { File(it.parentFile, "${model.fileName}.part") })
+                },
+            )
             failedAt = 0L
-            _state.value = State.Missing
+            retryJob?.cancel()
+            // What is on disk now, not what was asked for: a model that could
+            // not be removed is still there for the trackers to open.
+            _state.value = if (ALL.all(::isPresent)) State.Ready else State.Missing
+            left
+        }
+        if (left.isNotEmpty()) {
+            Log.w(TAG, "Automix models not fully deleted: ${left.joinToString { it.name }} remain")
+            return false
         }
         Log.i(TAG, "Automix models deleted")
         return true
     }
+
+    /** Deletes [files]; returns those still there afterwards. One already absent counts as removed. */
+    internal fun deleteAll(files: List<File>): List<File> = files.filter { file -> !file.delete() && file.exists() }
 
     private fun fileFor(model: Model): File? = filesDir?.let { File(it, model.fileName) }
 
@@ -199,10 +213,29 @@ object AutomixModels {
                 FetchGate.HOLD -> return
                 FetchGate.FETCH -> Unit
             }
-            if (!force && failedAt != 0L && SystemClock.elapsedRealtime() - failedAt < RETRY_AFTER_MS) return
+            if (!force) {
+                val wait = cooldownLeft(failedAt, SystemClock.elapsedRealtime())
+                if (wait > 0) {
+                    // Nothing else is sure to ask again once it runs out: a
+                    // track with a usable DSP-only result never opens a
+                    // tracker. So one attempt waits for it; [request] then
+                    // rechecks AutoMix, the connection and what is missing.
+                    if (retryJob?.isActive != true) {
+                        retryJob = scope.launch {
+                            delay(wait)
+                            request(force = false, explicit = false)
+                        }
+                    }
+                    return
+                }
+            }
             job = scope.launch { fetchMissing() }
         }
     }
+
+    /** How long a failure at [failedAt] still holds back a fetch nobody tapped for; 0 once it does not. */
+    internal fun cooldownLeft(failedAt: Long, now: Long): Long =
+        if (failedAt == 0L) 0L else (RETRY_AFTER_MS - (now - failedAt)).coerceAtLeast(0L)
 
     internal enum class FetchGate { FETCH, HOLD, OFFLINE }
 
@@ -252,34 +285,40 @@ object AutomixModels {
         val url = RELEASE_URL + model.fileName
         val request = Request.Builder().url(url).build()
         Log.i(TAG, "Fetching $url")
-        Http.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code} for ${model.fileName}")
-            val body = response.body ?: throw IOException("Empty body for ${model.fileName}")
-            val digest = MessageDigest.getInstance("SHA-256")
-            var read = 0L
-            body.byteStream().use { input ->
-                part.outputStream().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var lastReport = 0L
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        output.write(buffer, 0, n)
-                        digest.update(buffer, 0, n)
-                        read += n
-                        if (read > model.bytes) throw IOException("${model.fileName} is larger than expected")
-                        if (read - lastReport >= 256 * 1024) {
-                            lastReport = read
-                            progress(read)
+        try {
+            Http.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code} for ${model.fileName}")
+                val body = response.body ?: throw IOException("Empty body for ${model.fileName}")
+                val digest = MessageDigest.getInstance("SHA-256")
+                var read = 0L
+                body.byteStream().use { input ->
+                    part.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var lastReport = 0L
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            output.write(buffer, 0, n)
+                            digest.update(buffer, 0, n)
+                            read += n
+                            if (read > model.bytes) throw IOException("${model.fileName} is larger than expected")
+                            if (read - lastReport >= 256 * 1024) {
+                                lastReport = read
+                                progress(read)
+                            }
                         }
                     }
                 }
+                val hash = digest.digest().joinToString("") { "%02x".format(it) }
+                if (read != model.bytes || hash != model.sha256) {
+                    throw IOException("${model.fileName} failed verification ($read bytes, sha256 $hash)")
+                }
             }
-            val hash = digest.digest().joinToString("") { "%02x".format(it) }
-            if (read != model.bytes || hash != model.sha256) {
-                part.delete()
-                throw IOException("${model.fileName} failed verification ($read bytes, sha256 $hash)")
-            }
+        } catch (e: Throwable) {
+            // A stream that broke off, or ran past the published size, leaves a
+            // partial file behind; only a verified model is ever kept.
+            part.delete()
+            throw e
         }
         if (!part.renameTo(target)) {
             part.delete()
