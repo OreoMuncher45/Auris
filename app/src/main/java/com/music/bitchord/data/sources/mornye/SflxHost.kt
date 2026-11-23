@@ -242,16 +242,19 @@ class SflxHost(
         if (typed && target == null) {
             return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
         }
-        val candidates: List<Pair<SflxSignedSession, String?>> = if (target != null) {
-            listOf(target to null)
+        // Each candidate: the client, the state to check, and whether it was
+        // chosen only because no challenge was outstanding.
+        val candidates: List<Triple<SflxSignedSession, String?, Boolean>> = if (target != null) {
+            listOf(Triple(target, null, false))
         } else {
             val signed = store.list().filter(::enabled).mapNotNull(::sessionFor)
             val waiting = signed.filter { it.pendingState() != null }
             val byState = waiting.filter { state != null && it.pendingState() == state }
             when {
-                byState.isNotEmpty() -> byState.map { it to state }
-                state == null && waiting.size == 1 -> listOf(waiting.single() to waiting.single().pendingState())
-                waiting.isEmpty() && signed.size == 1 -> listOf(signed.single() to null)
+                byState.isNotEmpty() -> byState.map { Triple(it, state, false) }
+                state == null && waiting.size == 1 ->
+                    listOf(Triple(waiting.single(), waiting.single().pendingState(), false))
+                waiting.isEmpty() && signed.size == 1 -> listOf(Triple(signed.single(), null, true))
                 else -> emptyList()
             }
         }
@@ -260,8 +263,8 @@ class SflxHost(
             return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
         }
         var failure: SflxGrantRefused? = null
-        for ((session, expected) in candidates) {
-            val ok = runCatching { session.completeGrant(grant, expected) }
+        for ((session, expected, onlyWithoutChallenge) in candidates) {
+            val ok = runCatching { session.completeGrant(grant, expected, onlyWithoutChallenge) }
                 .onFailure { failure = SflxGrantRefused.from(it) }
                 .getOrDefault(false)
             if (ok) {

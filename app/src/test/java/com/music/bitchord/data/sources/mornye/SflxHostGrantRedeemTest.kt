@@ -189,6 +189,18 @@ class SflxHostGrantRedeemTest {
     }
 
     @Test
+    fun aFallbackGrantIsRefusedIfAChallengeAppearedBeforeItsExchange() {
+        val demo = install("demo")
+        // The host picked this client because nothing was pending; then a challenge was issued.
+        val session = host.sessionFor(demo)!!
+        host.beginVerification("demo")
+
+        assertFalse(session.completeGrant("linked-grant", null, onlyWithoutChallenge = true))
+        assertEquals("the grant was not spent", emptyList<String>(), exchanged)
+        assertFalse(authenticated(demo))
+    }
+
+    @Test
     fun aRefusedExchangeSaysSo() {
         val demo = install("demo")
         exchangeCode = 400
