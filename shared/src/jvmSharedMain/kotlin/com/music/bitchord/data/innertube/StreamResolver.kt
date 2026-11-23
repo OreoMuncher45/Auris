@@ -85,6 +85,9 @@ object StreamResolver {
      */
     private val settingsGeneration = java.util.concurrent.atomic.AtomicInteger()
 
+    /** The generation a resolve starting now is made under; see [remember]. */
+    internal fun currentGeneration(): Int = settingsGeneration.get()
+
     private const val TAG = "BitChord"
 
     /** Past this, an extractor fetch is worth flagging rather than just noting. */
@@ -284,9 +287,7 @@ object StreamResolver {
     suspend fun resolve(videoId: String): String {
         init
 
-        recent[videoId]
-            ?.takeIf { MonotonicClock.nowMs() - it.at < URL_TTL_MS }
-            ?.let { return it.url }
+        rememberedUrl(videoId)?.let { return it }
 
         // A verdict, not a failure: asking again cannot change the answer, so
         // every caller after the first is told so without a request being sent.
@@ -300,7 +301,7 @@ object StreamResolver {
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
         stream.loudnessDb?.let { loudness[videoId] = it }
-        if (settingsGeneration.get() == generation) remember(videoId, stream.url)
+        remember(videoId, stream.url, generation)
         return stream.url
     }
 
@@ -1285,7 +1286,7 @@ object StreamResolver {
     suspend fun contentLength(videoId: String): Long? =
         resolve(videoId).toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
 
-    private class Resolved(val url: String, val at: Long)
+    private class Resolved(val url: String, val at: Long, val generation: Int)
 
     /**
      * Stream URLs already resolved, by videoId — and, since [resolve] only ever
@@ -1305,12 +1306,32 @@ object StreamResolver {
     /** Enough for the queue in hand; this is a latency cache, not a store. */
     private const val MAX_REMEMBERED = 32
 
-    private fun remember(videoId: String, url: String) {
+    /**
+     * The URL remembered for [videoId], if it is fresh and was resolved under
+     * the settings in force now.
+     */
+    internal fun rememberedUrl(videoId: String): String? {
+        val entry = recent[videoId] ?: return null
+        if (MonotonicClock.nowMs() - entry.at >= URL_TTL_MS) return null
+        // A resolve can pass the generation check in [remember] and land just
+        // after [forgetResolved] cleared the map. Tagged with the generation
+        // it was made under, such an entry is never served.
+        if (entry.generation != settingsGeneration.get()) {
+            recent.remove(videoId, entry)
+            return null
+        }
+        return entry.url
+    }
+
+    /** Remember [url] for [videoId], as resolved under settings [generation]. */
+    internal fun remember(videoId: String, url: String, generation: Int) {
+        // Already stale: not worth a slot.
+        if (generation != settingsGeneration.get()) return
         if (recent.size >= MAX_REMEMBERED) {
             val cutoff = MonotonicClock.nowMs() - URL_TTL_MS
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
-        recent[videoId] = Resolved(url, MonotonicClock.nowMs())
+        recent[videoId] = Resolved(url, MonotonicClock.nowMs(), generation)
     }
 }

@@ -73,6 +73,7 @@ object AutomixMigration {
         prefs: SharedPreferences,
         filesDir: File,
         deleteLater: (File) -> Unit = { dir -> Thread({ dir.deleteRecursively() }, "automix-migration").start() },
+        rename: (File, File) -> Boolean = File::renameTo,
     ): Boolean {
         // Anything renamed aside on an earlier launch whose deletion the
         // process did not live to finish. Looked for on every launch, done or
@@ -84,7 +85,7 @@ object AutomixMigration {
             val directory = File(filesDir, name)
             if (!directory.exists()) continue
             val retired = File(filesDir, "$name$RETIRED_SUFFIX${System.nanoTime()}")
-            deleteLater(if (directory.renameTo(retired)) retired else directory)
+            deleteLater(if (rename(directory, retired)) retired else directory)
         }
         // Not done while an old directory is still in place: the next launch
         // looks again.
