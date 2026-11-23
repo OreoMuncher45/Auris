@@ -564,32 +564,40 @@ private fun phraseBarPlan(
     // measured downbeat there, so the overlap is the bars that were asked for.
     val latestStart = mixEnd - requestedOverlap
     if (latestStart < MIN_CLEARANCE_SECONDS) return null
-    val transitionStart = alignedTransitionStart(
+    val alignedStart = alignedTransitionStart(
         analysis,
         latestStart,
         mixEnd - 0.05,
         preferEarlier = true,
         minimum = MIN_CLEARANCE_SECONDS,
     )
-    val nominalEnd = transitionStart + requestedOverlap
+    val nominalEnd = alignedStart + requestedOverlap
     // Where the grid is measured there, the end is its downbeat: a tempo that
     // drifts even slightly puts start-plus-nominal off the bar line. From a
     // start on a measured downbeat the end is counted [phraseBars] measured
     // bar lines on, so a near miss can't pass for the asked-for bar count.
     // Half a beat out is a different bar count, not drift, and the adaptive
     // plan takes the pair instead.
+    // Both edges end up on measured bar lines, [phraseBars] apart: a start
+    // that isn't on one is snapped to the bar line that many back from the
+    // measured end. No measured bar line near either edge: arithmetic bars,
+    // which the adaptive plan handles better.
     val downbeats = analysis.downbeats
-    val startIndex = downbeats.indexOfFirst { abs(it - transitionStart) <= beatSeconds / 8 }
-    val measuredEnd = if (startIndex >= 0) {
-        downbeats.getOrNull(startIndex + phraseBars) ?: return null
+    val startIndex = downbeats.indexOfFirst { abs(it - alignedStart) <= beatSeconds / 8 }
+    val transitionStart: Double
+    val measuredEnd: Double
+    if (startIndex >= 0) {
+        transitionStart = downbeats[startIndex]
+        measuredEnd = downbeats.getOrNull(startIndex + phraseBars) ?: return null
     } else {
-        downbeats.minByOrNull { abs(it - nominalEnd) }
-            ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
+        val endIndex = downbeats.indices.minByOrNull { abs(downbeats[it] - nominalEnd) } ?: return null
+        if (abs(downbeats[endIndex] - nominalEnd) > BEATS_PER_BAR * beatSeconds) return null
+        val snapped = downbeats.getOrNull(endIndex - phraseBars) ?: return null
+        if (snapped < MIN_CLEARANCE_SECONDS || abs(snapped - alignedStart) > BEATS_PER_BAR * beatSeconds) return null
+        transitionStart = snapped
+        measuredEnd = downbeats[endIndex]
     }
-    // Neither edge measured (no bar lines near either): arithmetic bars, which
-    // the adaptive plan handles better.
-    if (measuredEnd == null) return null
-    if (abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
+    if (abs(measuredEnd - transitionStart - requestedOverlap) > beatSeconds / 2) return null
     val transitionEnd = measuredEnd
     if (transitionEnd > length + 0.05) return null
     val overlapSeconds = transitionEnd - transitionStart
@@ -618,11 +626,12 @@ private fun phraseBarPlan(
     // downbeat from there, so its bar one meets the outgoing one; the filter mix
     // has no shared grid and keeps the audible start.
     // On the grid the policy trusted: the opening's own, where the model
-    // measured one. A trusted opening with no bar line to cue on gets no phrase.
-    val cueGrid = nextAnalysis.headBeats?.downbeats?.takeIf { it.isNotEmpty() } ?: nextAnalysis.downbeats
+    // measured one, else the whole track's.
+    val cueGrid = nextAnalysis.headBeats?.downbeats ?: nextAnalysis.downbeats
     val finalIncomingCueTime = if (beatmatched) {
-        cueGrid.firstOrNull { it.isFinite() && it >= audibleStart - 0.05 }
-            ?: if (nextAnalysis.headBeats != null) return null else audibleStart
+        // A beat-matched phrase needs its incoming bar one measured: with no
+        // bar line on the trusted grid to cue on, the adaptive plan takes it.
+        cueGrid.firstOrNull { it.isFinite() && it >= audibleStart - 0.05 } ?: return null
     } else {
         audibleStart
     }
@@ -1877,10 +1886,11 @@ private fun mixPlan(
 
     if (sameBeatBlend && beatSeconds > 0) {
         val introDropTime = incomingHandoffTime / max(0.8, incomingPlaybackRate)
-        // At least 12 s of intro under the outgoing song, unless the adaptive
-        // sizing asked for less (a key clash, a sung overlap): then its length.
-        val floor = min(min(12.0, maximumOverlap), max(overlap, handoffSeconds))
-        val clamped = clamp(introDropTime, floor, maximumOverlap)
+        // The adaptive sizing's length (shorter for a key clash or a sung
+        // overlap, longer for a calm well-matched pair), no longer than the
+        // intro the incoming drop leaves to run under the outgoing song.
+        val target = min(max(overlap, handoffSeconds), introDropTime)
+        val clamped = clamp(target, min(handoffSeconds, maximumOverlap), maximumOverlap)
         val totalOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - totalOverlap)
         val earliestTransitionStart = max(0.0, mixEnd - maximumOverlap)
