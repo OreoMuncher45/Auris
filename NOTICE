@@ -132,6 +132,9 @@ License: MIT (full texts at native/third_party/signalsmith-stretch/LICENSE.txt
 
 Vendored verbatim under native/third_party/ for the Automix loop mix
 (native/loopmix/), which is their only user.
+Both licence texts ship inside the APK as assets/licenses/signalsmith-stretch.txt
+and assets/licenses/signalsmith-linear.txt (the thirdPartyNotices task in
+app/build.gradle.kts), and the draft-APK workflow fails a build without them.
 
 Signalsmith Stretch: Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.
 Signalsmith Linear:  Copyright (c) 2025 Signalsmith Audio
