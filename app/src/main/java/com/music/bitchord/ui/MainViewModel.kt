@@ -1357,12 +1357,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val recordingRatingVersion = HashMap<String, Int>()
 
     /**
-     * True while [onWebSession] has installed candidate credentials that have
+     * Active while [onWebSession] has installed candidate credentials that have
      * not been validated yet. Row ratings don't write during it: until the
      * candidate is accepted, a write would go to an account that may never
-     * become the listener.
+     * become the listener. Reads filed under a listener (the library, a
+     * page's continuation) wait for it to end before they capture whose
+     * credentials they go out with.
      */
-    private var credentialsInValidation = false
+    private val credentialsInValidation = CandidateValidation()
 
     private fun cancelRowRatings() {
         // A cancelled tap was never sent: put each row back to what the server
@@ -1410,7 +1412,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (listenerKey() != listener) return@withLock
                 // Held off during sign-in validation: not sent, and settled
                 // below like any other unwritten tap.
-                val sendable = videoId != null && !credentialsInValidation
+                val sendable = videoId != null && !credentialsInValidation.active
                 val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
                 // Confirmed the moment YouTube accepts it, so a cancel during
                 // the housekeeping that follows settles to it, not to the
@@ -3214,8 +3216,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchLibrary(identity: String?) {
-        // The credentials the request goes out with: a candidate account under
-        // validation changes them before [listenerKey] moves.
+        // A candidate account under validation signs requests before
+        // [listenerKey] moves, so wait it out: then the credentials read below
+        // are the listener's own.
+        credentialsInValidation.awaitSettled()
+        // Validation that switched the account reloads the library itself.
+        if (identity != listenerKey()) return
         val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
@@ -4314,15 +4320,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             // Who the page was opened for: its continuation walk belongs to that
-            // listener, even when the first response lands after a switch. Read
-            // once the session scope is in: installing it right after an account
-            // switch can move the listener, and the page's own browse waits for
-            // it anyway — capturing earlier would drop its continuation.
-            // Already-resolved scopes return at once; on-device pages skip it.
-            if (localPlaylist == null && remote == null && !browseId.startsWith("local:")) {
-                Innertube.ensureSessionScope()
-            }
+            // listener, even when the first response lands after a switch.
+            // Captured before the scope wait below, so a switch during that
+            // wait leaves the page with the listener it was opened for, and
+            // [fillIn] stops rather than continue it as the new one. A
+            // candidate account under validation is waited out first: until it
+            // ends, the credentials are not the listener's.
+            val remotePage = localPlaylist == null && remote == null && !browseId.startsWith("local:")
+            if (remotePage) credentialsInValidation.awaitSettled()
             val openedFor = listenerKey()
+            // The credentials, though, are read once the session scope is in:
+            // installing it right after an account switch can change them for
+            // the same listener, and the page's own browse waits for it anyway —
+            // reading them earlier would drop its continuation. Already-resolved
+            // scopes return at once; on-device pages skip it.
+            if (remotePage) Innertube.ensureSessionScope()
             val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
@@ -5161,11 +5173,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Queued row ratings must not go out under the candidate: drop
             // them, and hold new ones off until validation is over.
             cancelRowRatings()
-            credentialsInValidation = true
-            try {
+            credentialsInValidation.during {
                 validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
-            } finally {
-                credentialsInValidation = false
             }
         }
     }

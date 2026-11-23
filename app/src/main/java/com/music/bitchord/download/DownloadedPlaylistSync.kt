@@ -272,7 +272,9 @@ object DownloadedPlaylistSync {
                     playlist = collection.playlist,
                 ),
                 (if (firstFill) remote else missing).filter { it.videoId !in refused },
-                keepSwitch = true,
+                // Grow the record only if it is still there; the first fill is
+                // what creates it.
+                keepSwitch = !firstFill,
             )
         }
     }

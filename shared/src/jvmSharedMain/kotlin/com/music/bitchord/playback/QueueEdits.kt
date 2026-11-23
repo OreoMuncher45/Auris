@@ -22,7 +22,51 @@ object QueueEdits {
     data class Removal(val rows: List<Removed>)
 
     /** How a row is found again after the timeline has moved on. */
-    fun identity(song: Song): String = song.queueEntryId?.let { "e:$it" } ?: "v:${song.videoId}"
+    fun identity(song: Song): String = identity(song.videoId, song.queueEntryId)
+
+    /** [identity] from a row's raw ids, for callers that have not built a [Song]. */
+    fun identity(videoId: String, queueEntryId: String?): String =
+        queueEntryId?.let { "e:$it" } ?: "v:$videoId"
+
+    /** A row as the screen saw it: where it was, and which entry it was. */
+    data class Target(val index: Int, val song: Song)
+
+    /** The rows at [indices] of the [snapshot] the screen drew them from. */
+    fun targetsAt(snapshot: List<Song>, indices: Collection<Int>): List<Target> =
+        indices.mapNotNull { i -> snapshot.getOrNull(i)?.let { Target(i, it) } }
+
+    /**
+     * Where [targets] are in the [live] queue now, ascending and distinct.
+     *
+     * Rows are matched by [identity], never by index: the queue may have grown,
+     * shrunk or been rebuilt since the screen drew it. A row that is no longer
+     * there is dropped rather than replaced by whatever took its place. An
+     * identity that occurs more than once (only possible for rows without an
+     * entry id) is trusted only where the screen saw it.
+     *
+     * One pass to index [live], then one lookup per target.
+     */
+    fun resolve(targets: Collection<Target>, live: List<Song>): List<Int> {
+        if (targets.isEmpty()) return emptyList()
+        val byIdentity = HashMap<String, Int>(live.size * 2)
+        live.forEachIndexed { i, song ->
+            val key = identity(song)
+            byIdentity[key] = if (byIdentity.containsKey(key)) AMBIGUOUS else i
+        }
+        val found = java.util.TreeSet<Int>()
+        for (target in targets) {
+            val key = identity(target.song)
+            val at = byIdentity[key] ?: continue
+            if (at != AMBIGUOUS) {
+                found += at
+            } else if (live.getOrNull(target.index)?.let(::identity) == key) {
+                found += target.index
+            }
+        }
+        return found.toList()
+    }
+
+    private const val AMBIGUOUS = -1
 
     /**
      * The rows at [indices] (any order, duplicates ignored), each with the
@@ -63,21 +107,39 @@ object QueueEdits {
      * A row returns in front of the row that followed it when that row is
      * still upcoming; otherwise at its old position. Either way never before
      * what is playing now — Undo restores upcoming songs, it does not rewrite
-     * history.
+     * history — and the rows keep their order among themselves. A row whose
+     * entry is already back in the queue is not added twice.
      */
-    fun restorePlan(removal: Removal, timeline: List<Song>, currentIndex: Int): List<Pair<Int, Song>> {
-        val working = timeline.toMutableList()
-        var current = currentIndex
+    fun restorePlan(removal: Removal, timeline: List<Song>, currentIndex: Int): List<Pair<Int, Song>> =
+        restorePlanByIdentity(removal, timeline.map(::identity), currentIndex)
+
+    /**
+     * [restorePlan] against the live queue's identities alone, so the player
+     * does not have to rebuild every row as a [Song] to Undo.
+     *
+     * Linear: the live queue is indexed once, and each row's slot is worked
+     * out against it rather than against a list grown one insert at a time.
+     */
+    fun restorePlanByIdentity(removal: Removal, live: List<String>, currentIndex: Int): List<Pair<Int, Song>> {
+        val floor = (currentIndex + 1).coerceIn(0, live.size)
+        val firstAt = HashMap<String, Int>(live.size * 2)
+        // Anchors only count when upcoming, so only upcoming rows are indexed;
+        // the first occurrence wins, as a scan from the playhead would find.
+        for (i in live.size - 1 downTo floor) firstAt[live[i]] = i
+        val present = live.toHashSet()
         val plan = ArrayList<Pair<Int, Song>>(removal.rows.size)
+        var lastSlot = floor
         for (row in removal.rows) {
-            val floor = (current + 1).coerceIn(0, working.size)
-            val anchored = row.anchor?.let { anchor ->
-                (floor until working.size).firstOrNull { identity(working[it]) == anchor }
-            }
-            val at = (anchored ?: row.originalIndex).coerceIn(floor, working.size)
-            working.add(at, row.song)
-            if (at <= current) current++
-            plan += at to row.song
+            val key = identity(row.song)
+            if (row.song.queueEntryId != null && key in present) continue
+            val restored = plan.size
+            // A slot is a position in [live]; the rows already restored sit
+            // in front of it, which is what turns it into an insert index.
+            val slot = (row.anchor?.let(firstAt::get) ?: (row.originalIndex - restored))
+                .coerceIn(floor, live.size)
+                .coerceAtLeast(lastSlot)
+            lastSlot = slot
+            plan += (slot + restored) to row.song
         }
         return plan
     }
