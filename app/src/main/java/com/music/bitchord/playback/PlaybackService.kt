@@ -630,7 +630,8 @@ class PlaybackService : MediaLibraryService() {
      *
      * Stops when the folder runs dry, after [AUTO_CONTINUATION_MAX_PAGES],
      * when the account changes, or once the queue no longer holds the folder
-     * — the driver started something else. A later Auto start cancels it.
+     * — the driver started something else — or the listener has played past
+     * it. A later Auto start cancels it.
      *
      * Called on the main thread while the folder's queue is being built, before
      * Media3 has installed it, so the queue is read only after the next
@@ -708,9 +709,9 @@ class PlaybackService : MediaLibraryService() {
             val exoPlayer = player ?: return
             if (castPlayback.active) return
             val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
-            val last = queuedSongs
-                .indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
-                .takeIf { it >= 0 } ?: return
+            // Once the listener has played past the folder, behind it is history.
+            val insertAt = autoContinuationInsertIndex(queuedSongs, sourceId, exoPlayer.currentMediaItemIndex)
+                ?: return
             val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
             val additions = fresh
                 .filter { it.videoId !in queued }
@@ -723,7 +724,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             if (additions.isNotEmpty()) {
                 additions.mapTo(autoContinuationAdded) { it.mediaId }
-                exoPlayer.addMediaItems(last + 1, additions)
+                exoPlayer.addMediaItems(insertAt, additions)
             }
         }
     }
