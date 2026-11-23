@@ -3216,6 +3216,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         credentialsInValidation.awaitSettled()
         // Validation that switched the account reloads the library itself.
         if (identity != listenerKey()) return
+        // The scope too, before the credentials are read: installing it can
+        // change them for the same listener (a restored profile with no stored
+        // account index), which would then drop this page's cache write and
+        // the Liked Music sync. Returns at once when it is already in.
+        Innertube.ensureSessionScope()
+        if (identity != listenerKey()) return
         val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
@@ -5110,8 +5116,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onComplete(false)
             return
         }
-        val oldAccountId = _activeAccountId.value
-        val oldProfileId = _activeProfileId.value
         viewModelScope.launch {
             // Validate the exact cookie/profile pair before writing any of it.
             // The old implementation persisted first and unconditionally set
@@ -5121,6 +5125,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // them, and hold new ones off until validation is over.
             cancelRowRatings()
             credentialsInValidation.during {
+                // Read inside the serialized transaction: a validation still
+                // running ahead of this one may change who the listener is,
+                // and restoring has to put back what was there when this one began.
+                val oldAccountId = _activeAccountId.value
+                val oldProfileId = _activeProfileId.value
                 validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
             }
         }
