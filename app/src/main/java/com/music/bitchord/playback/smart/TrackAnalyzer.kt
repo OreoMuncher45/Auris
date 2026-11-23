@@ -1392,6 +1392,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     firstBeat = headGrid?.firstBeat ?: grid.firstBeat,
                     headBeats = headSide,
                     tailBeats = tailSide,
+                    vocalWindows = regions.mapNotNull { it.vocalWindow },
+                    levelWindows = regions.mapNotNull { it.levelWindow },
                 ),
                 persist = !outOfMemory,
             )
@@ -1656,15 +1658,23 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // process was dying. Same reasoning [derived] already had, one level further out.
         val inputs = regionInputs(stereo, seconds, deriveFeatures)
 
-        val vocalValues = if (features != null) vocalValues(stereo) else null
+        // Window-local evidence (the vocal curve and the level curve) needs
+        // only this window's PCM, so a whole-track pass's windows keep it even
+        // without whole-track features: a track over the whole-track cap, or
+        // one Pass 1 ran out of memory on. Without it the loop mix found no
+        // vocal coverage and turned every candidate down. Only the projection
+        // onto the whole-track curve waits on [features]. The head pass, which
+        // derives its own features, measures the grid alone as before.
+        val windowEvidence = features != null || !deriveFeatures
+        val vocal = if (windowEvidence) vocalValues(stereo, actualStart, startSeconds) else null
         return Region(
             grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
-            vocalMask = if (features != null && vocalValues != null) vocalMask(vocalValues, features, actualStart) else null,
+            vocalMask = if (features != null && vocal != null) vocalMask(vocal.values, features, vocal.origin) else null,
             seconds = seconds,
             features = inputs.derived,
             start = actualStart,
-            vocalWindow = vocalValues?.let { CurveWindow(actualStart, VocalSpectrogram.frameRate, it) },
-            levelWindow = if (features != null) levelCurve(stereo, actualStart) else null,
+            vocalWindow = vocal?.let { CurveWindow(it.origin, VocalSpectrogram.frameRate, it.values) },
+            levelWindow = if (windowEvidence) levelCurve(stereo, actualStart) else null,
         )
     }
 
@@ -1748,17 +1758,26 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * the policy's own VOCAL_ACTIVE_THRESHOLD, so unmeasured material can never trip vocal logic in
      * either direction.
      */
-    private fun vocalValues(stereo: AudioDecoder.StereoPcm): FloatArray? {
+    /** The vocal model's curve for a window, and the time its first frame stands for. */
+    private class VocalSlice(val values: FloatArray, val origin: Double)
+
+    private fun vocalValues(
+        stereo: AudioDecoder.StereoPcm,
+        actualStart: Double,
+        requestedStart: Double,
+    ): VocalSlice? {
         if (!VocalSpectrogram.available) return null
-        // [VocalTracker.track] refuses anything wider than its graph, so a window that came back a
-        // little long is trimmed. Two frames of margin absorb the ±1 sample a rate conversion can
-        // land on.
-        val maxSeconds = (VocalTracker.FIXED_FRAMES - 2) * VocalSpectrogram.hop / VocalSpectrogram.sampleRate
-        val maxSamples = (maxSeconds * stereo.sampleRate).toInt().coerceAtMost(stereo.left.size)
-        if (maxSamples <= 0) return null
-        val left = if (maxSamples < stereo.left.size) stereo.left.copyOf(maxSamples) else stereo.left
-        val right = if (maxSamples < stereo.right.size) stereo.right.copyOf(maxSamples) else stereo.right
-        return vocals.track(left, right, stereo.sampleRate)
+        val (from, count) = vocalSpan(
+            size = stereo.left.size,
+            sampleRate = stereo.sampleRate,
+            actualStart = actualStart,
+            requestedStart = requestedStart,
+            maxSeconds = (VocalTracker.FIXED_FRAMES - 2) * VocalSpectrogram.hop / VocalSpectrogram.sampleRate,
+        ) ?: return null
+        val left = if (from == 0 && count == stereo.left.size) stereo.left else stereo.left.copyOfRange(from, from + count)
+        val right = if (from == 0 && count == stereo.right.size) stereo.right else stereo.right.copyOfRange(from, from + count)
+        val values = vocals.track(left, right, stereo.sampleRate) ?: return null
+        return VocalSlice(values, actualStart + from / stereo.sampleRate)
     }
 
     private fun vocalMask(
@@ -2058,4 +2077,28 @@ internal class AbortLatch(private val condition: () -> Boolean) {
         if (tripped) return true
         return condition().also { if (it) tripped = true }
     }
+}
+
+/**
+ * Which samples of a decoded window the vocal model reads: the first sample
+ * index and how many, or null when nothing is left.
+ *
+ * The extractor seeks to a sync sample at or before [requestedStart], so the
+ * decode can begin up to a frame or so early. That preroll is skipped first,
+ * then the rest is capped at [maxSeconds]: [VocalTracker.track] refuses
+ * anything wider than its graph. Capping first sent the preroll to the model
+ * and cut the end of the window that was asked for. A decode that began on
+ * time is read from its first sample, as before.
+ */
+internal fun vocalSpan(
+    size: Int,
+    sampleRate: Double,
+    actualStart: Double,
+    requestedStart: Double,
+    maxSeconds: Double,
+): Pair<Int, Int>? {
+    val preroll = ((requestedStart - actualStart) * sampleRate).toInt().coerceIn(0, size)
+    val count = (maxSeconds * sampleRate).toInt().coerceAtMost(size - preroll)
+    if (count <= 0) return null
+    return preroll to count
 }
