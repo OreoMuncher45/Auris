@@ -36,3 +36,23 @@ internal fun isAutoQueueInstalled(
     if (expectedEntryId == null) return true
     return startIndex in 0 until itemCount && entryIdAt(startIndex) == expectedEntryId
 }
+
+/**
+ * [resolved] without the rows at [revoked] indices, and where [start] — an
+ * index into [resolved] — lands once they are gone (clamped, so a revoked
+ * start falls to the row that took its place).
+ *
+ * For Auto rows accepted for one account while a later item was still being
+ * resolved: if the account changed meanwhile, those rows go, and the rows
+ * that belong to no account stay.
+ */
+internal fun <T> withoutRevoked(resolved: List<T>, revoked: Collection<Int>, start: Int): Pair<List<T>, Int> {
+    if (revoked.isEmpty()) return resolved to start
+    val kept = ArrayList<T>(resolved.size - revoked.size)
+    var keptStart = 0
+    resolved.forEachIndexed { index, item ->
+        if (index < start && index !in revoked) keptStart++
+        if (index !in revoked) kept += item
+    }
+    return kept to keptStart
+}
