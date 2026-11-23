@@ -34,6 +34,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
@@ -368,10 +370,16 @@ object YtMusicRepository {
     private suspend fun rawSuggestions(input: String): JsonObject {
         val generation = Innertube.listenerGeneration
         val pending = synchronized(suggestionsLock) {
-            lastSuggestions
-                ?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
+            val last = lastSuggestions
+            last?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
                 ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
-                    .also { lastSuggestions = PendingSuggestions(input, generation, it) }
+                    .also {
+                        // A superseded input is never read again, so its request
+                        // stops rather than competing with the newest one over a
+                        // slow connection: at most one is ever in flight.
+                        last?.answer?.cancel()
+                        lastSuggestions = PendingSuggestions(input, generation, it)
+                    }
         }
         return try {
             pending.await().also {
@@ -390,6 +398,11 @@ object YtMusicRepository {
                 synchronized(suggestionsLock) {
                     if (lastSuggestions?.answer === pending) lastSuggestions = null
                 }
+            }
+            // Cancelled because a newer input replaced it, not because this
+            // caller was: an ordinary failure, not a cancellation it never had.
+            if (failure is CancellationException && pending.isCancelled && currentCoroutineContext().isActive) {
+                throw IllegalStateException("suggestions superseded by a newer input")
             }
             throw failure
         }
@@ -1170,6 +1183,8 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
+            // Who the request was made as: the retry may only go out as the same one.
+            val identity = Innertube.listener
             runCatching { block() }.recoverCatching { failure ->
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
@@ -1179,6 +1194,14 @@ object YtMusicRepository {
                 if (!rejected || Innertube.cookie == null) throw failure
                 Log.w(TAG, "$label rejected; refreshing active session context once")
                 Innertube.refreshSessionScope()
+                // The refresh drops an adopted profile and reads the shell's
+                // default, and a switch can land while it waits: a retry under
+                // another identity could send a rating or playlist edit to an
+                // account the listener did not pick, so it is not made.
+                if (Innertube.listener != identity) {
+                    Log.w(TAG, "$label not retried: the account changed during the refresh")
+                    throw failure
+                }
                 block()
             }
                 // runCatching catches Throwable, cancellation included, which

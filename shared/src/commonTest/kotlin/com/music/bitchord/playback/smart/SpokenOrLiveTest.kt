@@ -27,6 +27,8 @@ class SpokenOrLiveTest {
         assertTrue(isSpokenOrLiveForTest("Song - Live Acoustic", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Hello - Live", "Adele"))
         assertTrue(isSpokenOrLiveForTest("Song (Live 2016)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live, 2016)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live, 2016", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Song [Live 1977 Remaster]", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Song - Live 2016", "Artist"))
         assertTrue(isSpokenOrLiveForTest("Hello – Live from the Royal Albert Hall", "Adele"))

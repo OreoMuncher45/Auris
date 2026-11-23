@@ -144,18 +144,23 @@ object Innertube {
      * and changes only the channel, so a cache of one listener's answers
      * compares this rather than the cookie. Rebuilt only when either changes.
      */
-    @Volatile
-    var listener: String? = null
-        private set
+    val listener: String? get() = published.listener
 
     /**
      * Bumped each time [listener] changes. Unlike the listener itself it tells
      * an A→B→A switch apart from no switch at all, so an answer requested
      * before the change is never kept as the current listener's.
      */
+    val listenerGeneration: Long get() = published.generation
+
+    /**
+     * [listener] and [listenerGeneration], published together in one write:
+     * a reader never sees the new account under the old generation.
+     */
+    private class PublishedListener(val listener: String?, val generation: Long)
+
     @Volatile
-    var listenerGeneration: Long = 0L
-        private set
+    private var published = PublishedListener(null, 0L)
 
     private fun refreshListener() = synchronized(identityLock) {
         val session = cookie
@@ -171,10 +176,8 @@ object Innertube {
                 else -> it
             }
         }
-        if (fresh != listener) {
-            listener = fresh
-            listenerGeneration++
-        }
+        val current = published
+        if (fresh != current.listener) published = PublishedListener(fresh, current.generation + 1)
     }
 
     /**
@@ -458,15 +461,18 @@ object Innertube {
                     // flight. Never install the old cookie's answer under the
                     // new one: that is a guaranteed 401 and, worse, can credit
                     // a play to the profile that just left.
+                    // Nor over a scope a signed-in page adopted meanwhile under
+                    // the same cookie: that names the profile the listener
+                    // picked, and [adoptedIdentity] already says so.
                     val installed = synchronized(identityLock) {
-                        if (cookie != session) return@synchronized false
+                        if (cookie != session || scope != null) return@synchronized false
                         scope = fresh
                         // Its account index can be what the listener names.
                         refreshListener()
                         true
                     }
                     if (!installed) {
-                        Log.d(TAG, "discarding a session scope from an account that is no longer active")
+                        Log.d(TAG, "discarding a session scope from an account or profile that is no longer active")
                         return@let
                     }
                     channelOverride?.let { selected ->

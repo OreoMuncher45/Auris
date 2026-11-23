@@ -370,6 +370,14 @@ class PlaybackService : MediaLibraryService() {
 
     private fun currentListener(): String? = com.music.bitchord.data.innertube.Innertube.listener
 
+    /** Who is listening now, and how many account switches it took to get here. */
+    private fun listenerStamp(): ListenerStamp {
+        // Generation first: a switch landing between the two reads then reads
+        // as stale, never as current.
+        val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+        return ListenerStamp(currentListener(), generation)
+    }
+
     /** [listing] when it was read for the listener now, and holds something. */
     private fun AutoListing?.forCurrentListener(): AutoListing? =
         this?.takeIf { it.songs.isNotEmpty() && it.listener == currentListener() }
@@ -385,7 +393,8 @@ class PlaybackService : MediaLibraryService() {
 
     private suspend fun cachedRecentsListing(): AutoListing? = recentsMutex.withLock {
         cachedRecents.forCurrentListener()?.let { if (isFresh(it.at, RECENTS_CACHE_TTL_MS)) return it }
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.recents().getOrNull()
@@ -394,8 +403,9 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedRecents = it }
     }
@@ -412,7 +422,8 @@ class PlaybackService : MediaLibraryService() {
 
     private suspend fun cachedQuickPicksListing(): AutoListing? = quickPicksMutex.withLock {
         cachedQuickPicks.forCurrentListener()?.let { if (isFresh(it.at, QUICK_PICKS_CACHE_TTL_MS)) return it }
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         val recentsIds = cachedRecents.forCurrentListener()?.songs?.mapTo(HashSet()) { it.videoId } ?: emptySet()
         val songs = try {
             withTimeoutOrNull(4000L) {
@@ -422,8 +433,9 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedQuickPicks = it }
     }
@@ -439,7 +451,8 @@ class PlaybackService : MediaLibraryService() {
     private suspend fun cachedLikedSongs(): List<Song> = cachedLikedListing()?.songs.orEmpty()
 
     private suspend fun cachedLikedListing(): AutoListing? = likedMutex.withLock {
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         if (listener == null) {
             cachedLiked = null
             return null
@@ -466,8 +479,9 @@ class PlaybackService : MediaLibraryService() {
         }
         val songs = page?.songs.orEmpty()
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
@@ -485,7 +499,8 @@ class PlaybackService : MediaLibraryService() {
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         cachedHome?.takeIf { it.listener == listener }?.let {
             if (SystemClock.elapsedRealtime() - it.at < HOME_CACHE_TTL_MS) return it.feed
         }
@@ -496,7 +511,7 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             null
         } ?: return null
-        if (listener != currentListener()) return null
+        if (stamp != listenerStamp()) return null
         cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, listener)
         feed
     }
@@ -593,11 +608,22 @@ class PlaybackService : MediaLibraryService() {
     private var autoContinuationJob: Job? = null
 
     /**
-     * Media ids that job has appended. A station request compares the queue
-     * without them, so a folder page landing during its lookup reads as the
-     * same queue rather than a user edit. Main thread only.
+     * The pages that job has added, in order, by queue entry. A station request
+     * replays the ones added during its lookup onto the queue it started from,
+     * so a folder page landing meanwhile reads as the same queue, while a user
+     * edit (to any row, a page's included) still reads as one. Main thread only.
      */
-    private val autoContinuationAdded = HashSet<String>()
+    private val autoContinuationInserts = ArrayList<ContinuationInsert>()
+
+    /** Bumped whenever [autoContinuationInserts] is cleared, so a reader can tell a new folder from a grown one. */
+    private var autoContinuationEpoch = 0
+
+    private fun clearAutoContinuation() {
+        autoContinuationJob?.cancel()
+        autoContinuationJob = null
+        autoContinuationInserts.clear()
+        autoContinuationEpoch++
+    }
 
     /**
      * [songs] as Auto rows whose ids name this very listing, so a tap plays
@@ -640,19 +666,25 @@ class PlaybackService : MediaLibraryService() {
      * that one first.
      */
     private fun followAutoBrowseContinuation(context: AutoBrowseContext, startEntryId: String?, startIndex: Int) {
-        autoContinuationJob?.cancel()
-        autoContinuationAdded.clear()
+        clearAutoContinuation()
         val first = context.continuation ?: return
         val sourceId = context.source.id ?: return
         val installedOn = player ?: return
-        val installed = CompletableDeferred<Unit>()
+        val installed = CompletableDeferred<HashSet<String>?>()
         val installListener = object : Player.Listener {
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
                 if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
                 val installedHere = isAutoQueueInstalled(startEntryId, startIndex, installedOn.mediaItemCount) {
                     installedOn.getMediaItemAt(it).queueEntryId
                 }
-                if (installedHere) installed.complete(Unit)
+                if (!installedHere || installed.isCompleted) return
+                // The entries the folder was installed as: a later queue that
+                // carries the same source id mints its own.
+                val entries = HashSet<String>()
+                for (i in 0 until installedOn.mediaItemCount) {
+                    installedOn.getMediaItemAt(i).queueEntryId?.let(entries::add)
+                }
+                installed.complete(entries.takeIf { it.isNotEmpty() })
             }
         }
         installedOn.addListener(installListener)
@@ -670,7 +702,7 @@ class PlaybackService : MediaLibraryService() {
         context: AutoBrowseContext,
         first: String,
         sourceId: String,
-        installed: CompletableDeferred<Unit>,
+        installed: CompletableDeferred<HashSet<String>?>,
     ) {
         val seen = context.songs.mapTo(HashSet()) { it.videoId }
         // Any account switch from here on, even one that switches back, ends
@@ -706,7 +738,9 @@ class PlaybackService : MediaLibraryService() {
             if (fresh.isEmpty()) continue
             fresh.forEach { songCache[it.videoId] = it }
             // Until Media3 has installed the folder, the queue is the one it replaces.
-            withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
+            // Paired so a folder with no entry ids still reads as installed.
+            val folderEntries = withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() to Unit }
+                ?.first ?: if (installed.isCompleted) null else return
             // The wait can be long enough for the account to change.
             if (!stillOurs()) return
             // Not tied to the player it was installed on: a crossfade hands the same queue to the
@@ -716,8 +750,12 @@ class PlaybackService : MediaLibraryService() {
             if (castPlayback.active) return
             val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
             // Once the listener has played past the folder, behind it is history.
-            val insertAt = autoContinuationInsertIndex(queuedSongs, sourceId, exoPlayer.currentMediaItemIndex)
-                ?: return
+            val insertAt = autoContinuationInsertIndex(
+                queuedSongs,
+                sourceId,
+                exoPlayer.currentMediaItemIndex,
+                folderEntries,
+            ) ?: return
             val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
             val additions = fresh
                 .filter { it.videoId !in queued }
@@ -729,7 +767,9 @@ class PlaybackService : MediaLibraryService() {
                     ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
                 }
             if (additions.isNotEmpty()) {
-                additions.mapTo(autoContinuationAdded) { it.mediaId }
+                val anchor = exoPlayer.getMediaItemAt(insertAt - 1)
+                autoContinuationInserts += ContinuationInsert(anchor.queueKey(), additions.map { it.queueKey() })
+                folderEntries?.let { entries -> additions.mapNotNullTo(entries) { it.queueEntryId } }
                 exoPlayer.addMediaItems(insertAt, additions)
             }
         }
@@ -2135,7 +2175,9 @@ class PlaybackService : MediaLibraryService() {
             },
             syncedLines = ::loopMixLyrics,
             loudnessGain = ::loudnessGainFor,
-            onMixPositionJump = { wrapped -> (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped) },
+            onMixPositionJump = { wrapped, fromMs ->
+                (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped, fromMs)
+            },
         )
 
     /**
@@ -2252,10 +2294,11 @@ class PlaybackService : MediaLibraryService() {
         val originalManualQueue = (0 until originalPlayer.mediaItemCount)
             .map { originalPlayer.getMediaItemAt(it) }
             .filterNot { it.fromAutoplay }
-            .map { it.mediaId }
+            .map { it.queueKey() }
         // Folder pages already queued are part of what the driver sees: only
-        // ones appended after this point may differ without cancelling.
-        val baselineContinuation = autoContinuationAdded.toHashSet()
+        // ones added after this point may differ without cancelling.
+        val baselineContinuation = autoContinuationInserts.size
+        val baselineEpoch = autoContinuationEpoch
 
         stationActionJob?.cancel()
         stationActionJob = scope.launch {
@@ -2278,12 +2321,18 @@ class PlaybackService : MediaLibraryService() {
             val activeManualQueue = (0 until activePlayer.mediaItemCount)
                 .map { activePlayer.getMediaItemAt(it) }
                 .filterNot { it.fromAutoplay }
-                .map { it.mediaId }
-            // A folder page appended meanwhile is not the driver's edit, but
-            // removing a row that was already queued is.
-            val appendedSince = autoContinuationAdded.filterNotTo(HashSet()) { it in baselineContinuation }
-            if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId ||
-                activeManualQueue.filterNot { it in appendedSince } != originalManualQueue
+                .map { it.queueKey() }
+            // A folder page added meanwhile is not the driver's edit, but
+            // removing or moving any row, a page's included, is. A
+            // continuation restarted since (the list cleared) is a new folder.
+            val sameContinuation = autoContinuationEpoch == baselineEpoch
+            val addedSince = if (sameContinuation) {
+                autoContinuationInserts.subList(baselineContinuation, autoContinuationInserts.size)
+            } else {
+                emptyList()
+            }
+            if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId || !sameContinuation ||
+                !queueOnlyGrewByContinuation(originalManualQueue, activeManualQueue, addedSince)
             ) {
                 return@launch
             }
@@ -7437,9 +7486,7 @@ class PlaybackService : MediaLibraryService() {
         autoplayLoadJob = null
         // A station keeps the playing song, which still names the Auto folder
         // it came from: a pending page of that folder would land behind it.
-        autoContinuationJob?.cancel()
-        autoContinuationJob = null
-        autoContinuationAdded.clear()
+        clearAutoContinuation()
         autoplaySeed = null
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
@@ -9816,7 +9863,9 @@ class PlaybackService : MediaLibraryService() {
         private val listeners = CopyOnWriteArraySet<Player.Listener>()
         private var reportedPlayWhenReady = false
         private var reportedPlaybackState = Player.STATE_IDLE
-        private var reportedIsPlaying = false
+        // A wrapper rebuilt while the receiver plays starts from that, so its
+        // first paused report is the transition it is, and stops the sampler.
+        private var reportedIsPlaying = cast.active && cast.isPlaying
 
         init {
             cast.sink = this
@@ -9861,18 +9910,17 @@ class PlaybackService : MediaLibraryService() {
         override fun getContentPosition() =
             if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getContentPosition()
 
-        private var lastMixPositionMs = C.TIME_UNSET
-
         /**
          * Re-anchors every controller on the loop mix's playhead. A wrap is a
          * deliberate jump back, announced as one (the lyrics follow it); a
          * re-anchor through the ramp is reported moving forward, so nothing
          * reads it as a seek.
          */
-        fun announceMixPosition(wrapped: Boolean) {
+        fun announceMixPosition(wrapped: Boolean, fromMs: Long) {
             val now = currentPosition
-            val before = if (wrapped && lastMixPositionMs != C.TIME_UNSET) lastMixPositionMs else (now - 1).coerceAtLeast(0L)
-            lastMixPositionMs = now
+            // A wrap starts where the loop clock was just before it, which is
+            // what makes it read as the jump back it is.
+            val before = if (wrapped && fromMs >= 0) fromMs else (now - 1).coerceAtLeast(0L)
             fun info(position: Long) = Player.PositionInfo(
                 null,
                 currentMediaItemIndex,
@@ -11956,3 +12004,11 @@ internal fun lyricsSettingChanges(
 ): Flow<List<Any>> = combine(synced, sources, order, prioritizeSyllableSync) { s, src, o, p ->
     listOf(s, src, o, p)
 }.distinctUntilChanged()
+
+/**
+ * The account an Android Auto listing was read for and the
+ * [com.music.bitchord.data.innertube.Innertube.listenerGeneration] it started
+ * at. Two stamps are equal only when no switch landed in between, not even one
+ * that switched back to the same account.
+ */
+internal data class ListenerStamp(val listener: String?, val generation: Long)

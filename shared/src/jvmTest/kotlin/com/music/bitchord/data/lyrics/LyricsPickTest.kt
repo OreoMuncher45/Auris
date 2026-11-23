@@ -23,6 +23,24 @@ class LyricsPickTest {
     }
 
     @Test
+    fun `timed lyrics whose first line starts at zero are not taken for plain`() = runBlocking {
+        val zeroStart = LyricsRepository.Result(
+            LyricsSource.YOUTUBE_MUSIC,
+            listOf(LyricLine(timeMs = 0L, text = "Hello", sungUntilMs = 2_000L)),
+        )
+        listOf(true, false).forEach { prefer ->
+            val picked = LyricsRepository.pick(
+                listOf(
+                    LyricsSource.YOUTUBE_MUSIC to suspend { zeroStart },
+                    LyricsSource.LRCLIB to suspend { result(LyricsSource.LRCLIB, 1_000L) },
+                ),
+                prioritizeSyllableSync = prefer,
+            )
+            assertEquals(LyricsSource.YOUTUBE_MUSIC, picked?.source)
+        }
+    }
+
+    @Test
     fun `plain lyrics are still the answer when nothing is timed`() = runBlocking {
         val picked = LyricsRepository.pick(
             listOf(LyricsSource.YOUTUBE_MUSIC to suspend { result(LyricsSource.YOUTUBE_MUSIC, 0L) }),
