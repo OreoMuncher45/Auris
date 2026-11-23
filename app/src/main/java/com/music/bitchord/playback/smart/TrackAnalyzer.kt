@@ -810,17 +810,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
 
         val window = BeatTracker.WINDOW_SECONDS
-        val head = region(::openSource, 0.0, window, features = null, deriveFeatures = true)
-            ?: run {
-                // An abandoned decode comes back the same way a broken one
-                // does, and only one of the two is worth a warning: see
-                // [stopped]. Nothing is recorded either way — the caller
-                // publishes only a non-null result — so the track is simply
-                // left unmeasured, which is what it is.
-                if (stopped) return null
-                Log.d(TAG, "Head pass for $trackId could not decode rendition ${rendition.key}")
-                return null
-            }
+        val abort = AbortLatch { stopped }
+        val head = region(::openSource, 0.0, window, features = null, deriveFeatures = true, abort = abort::poll)
+        // An abandoned decode comes back the same way a broken one does, and
+        // only one of the two is worth a warning: see [stopped]. Latched, since
+        // [stopped] can clear before the caller reads it, and then the head
+        // claim stayed taken for a prefix that was never actually decoded. It is
+        // released here, so the same prefix gets another go once the decoder is
+        // free.
+        if (abort.tripped) {
+            headAttempts.remove(rendition.key, rendition.cachedPrefix)
+            return null
+        }
+        if (head == null) {
+            Log.d(TAG, "Head pass for $trackId could not decode rendition ${rendition.key}")
+            return null
+        }
         // What was decoded, not what was asked for: the source stops where the
         // cache does. A tempo read off a few seconds is not a weaker measurement
         // than one read off thirty, it is a different and much more credulous
@@ -1294,16 +1299,20 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val headEnd = minOf(effectiveDuration, HEAD_MODEL_WINDOWS * span - (HEAD_MODEL_WINDOWS - 1) * WINDOW_OVERLAP_SECONDS)
         val tailStart = max(0.0, effectiveDuration - (TAIL_MODEL_WINDOWS * span - (TAIL_MODEL_WINDOWS - 1) * WINDOW_OVERLAP_SECONDS))
         val regions = ArrayList<Region>()
+        // Latched, like Pass 1's: [stopped] clears again once the player has the
+        // codec back, so read afterwards it can say "not stopped" about a window
+        // whose decode it did abort.
+        val abort = AbortLatch { stopped }
         for ((from, to) in modelWindows(headEnd, tailStart, effectiveDuration, span)) {
             // Checked between windows: an abort leaves a window missing, which
             // is indistinguishable from one the models found nothing in — and
             // that would be published, and persisted, with the DSP estimate
             // standing in. A result assembled out of a half-finished analysis
             // is worse than none.
-            if (stopped) return WholeTrack(null)
-            region(openSource, from, to, features)?.let(regions::add)
+            if (abort.poll()) return WholeTrack(null)
+            region(openSource, from, to, features, abort = abort::poll)?.let(regions::add)
         }
-        if (stopped) return WholeTrack(null)
+        if (abort.poll()) return WholeTrack(null)
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -1552,8 +1561,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         endSeconds: Double,
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
+        abort: () -> Boolean = { stopped },
     ): Region? = try {
-        regionOf(openSource, startSeconds, endSeconds, features, deriveFeatures)
+        regionOf(openSource, startSeconds, endSeconds, features, deriveFeatures, abort)
     } catch (error: OutOfMemoryError) {
         // The same degradation as everywhere else a window yields nothing: no
         // model evidence for it, and the DSP estimate or a plain fade standing
@@ -1568,8 +1578,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         endSeconds: Double,
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean,
+        abort: () -> Boolean,
     ): Region? {
-        val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped } }
+        val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds, abort) }
             ?: run {
                 // The two ways this comes back empty mean opposite things and
                 // were reported identically, which cost a round of guessing:
@@ -1828,6 +1839,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     fun release() {
         thermalUnwatch?.let { runCatching(it) }
         thermalUnwatch = null
+        com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
         executor.shutdownNow()
         restoreExecutor.shutdownNow()
         sourceResolutionScope.cancel()
@@ -1839,7 +1851,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
-        com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
         restoreAttempted.clear()
         shortDecodes.clear()
         badRenditions.clear()
@@ -1864,6 +1875,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Model windows over the opening (~45 s) and the ending (~68 s); see [modelWindowSeconds]. */
         const val HEAD_MODEL_WINDOWS = 2
+
+        /** How many analyses stay in memory; the rest are restored from disk on demand. */
+        const val ANALYSIS_MEMORY_MAX = 24
+
+        /** [ANALYSIS_MEMORY_MAX] while the system is short of memory. */
+        const val PRESSURE_MEMORY_MAX = 4
         const val TAIL_MODEL_WINDOWS = 3
 
         /** Overlap between neighbouring model windows, so a beat on a seam is seen from both sides. */
@@ -1875,12 +1892,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * fact that a track's opening is rarely at its own average bitrate.
          */
         const val HEAD_BYTES_MARGIN = 1.35
-
-        /** How many analyses stay in memory; the rest are restored from disk on demand. */
-        const val ANALYSIS_MEMORY_MAX = 24
-
-        /** [ANALYSIS_MEMORY_MAX] while the system is short of memory. */
-        const val PRESSURE_MEMORY_MAX = 4
 
         /**
          * Floor under the computed threshold, and the whole requirement when the
@@ -1974,4 +1985,23 @@ internal fun mergeVocalMasks(
         }
     }
     return merged.toList()
+}
+
+/**
+ * An abort poll that remembers it fired.
+ *
+ * [TrackAnalyzer]'s stop condition is transient: it clears once the player has
+ * the codec back or a party ends. A decode it aborted comes back looking like
+ * one that found nothing, and reading the condition afterwards can then say
+ * "not stopped" — so the half-finished pass was published as if complete.
+ */
+internal class AbortLatch(private val condition: () -> Boolean) {
+    @Volatile
+    var tripped: Boolean = false
+        private set
+
+    fun poll(): Boolean {
+        if (tripped) return true
+        return condition().also { if (it) tripped = true }
+    }
 }
