@@ -8,10 +8,10 @@ import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -24,11 +24,17 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * One client for the web player's own GraphQL backend.
@@ -244,6 +250,41 @@ internal object SpotifyGraphQL {
         }
     }
 
+    private suspend fun Call.awaitResponse(): Triple<Int, String, Int?> =
+        suspendCancellableCoroutine { cont ->
+            cont.invokeOnCancellation { cancel() }
+            enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) {
+                        cont.resumeWithException(e)
+                    }
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (!cont.isActive) {
+                        response.close()
+                        return
+                    }
+                    try {
+                        val parsed = response.use { res ->
+                            Triple(
+                                res.code,
+                                res.body?.string().orEmpty(),
+                                res.header("Retry-After")?.trim()?.toIntOrNull(),
+                            )
+                        }
+                        if (cont.isActive) {
+                            cont.resume(parsed)
+                        }
+                    } catch (error: Exception) {
+                        if (cont.isActive) {
+                            cont.resumeWithException(error)
+                        }
+                    }
+                }
+            })
+        }
+
     private suspend fun queryWithHashAndToken(
         operation: String,
         variables: JsonObject,
@@ -292,26 +333,13 @@ internal object SpotifyGraphQL {
         } else {
             Http.client
         }
-        val call = client.newCall(request)
-        val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-            if (cause != null) call.cancel()
-        }
         val (code, payload, retryAfter) = try {
-            call.execute().use { response ->
-                Triple(
-                    response.code,
-                    response.body?.string().orEmpty(),
-                    response.header("Retry-After")?.trim()?.toIntOrNull(),
-                )
-            }
+            client.newCall(request).awaitResponse()
         } catch (error: CancellationException) {
-            call.cancel()
             throw error
         } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             throw SpotifyGraphQLException("the request failed: ${error.message}")
-        } finally {
-            cancelHandle?.dispose()
         }
 
         when {
