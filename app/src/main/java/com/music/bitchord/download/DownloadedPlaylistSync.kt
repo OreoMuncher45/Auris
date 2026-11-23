@@ -244,39 +244,65 @@ object DownloadedPlaylistSync {
             // fill. Filed whole, like a tap on the page's download button, so
             // the liked songs already on the device are in it too.
             val liked = samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)
-            val firstFill = liked && collection.id !in Downloads.collections.value
-            // Switched off, or the download deleted, while this pass was reading.
-            val stillWanted = (liked && AppSettings.downloadLikedSongs.value) ||
-                Downloads.collections.value[collection.id]?.autoDownload == true
-            if (!stillWanted) continue
-            if (missing.isEmpty() && !firstFill) continue
-            var refused = emptySet<String>()
-            if (missing.isNotEmpty()) {
-                Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
-                val asked = missing.map { it.videoId }
-                val admitted = Downloads.enqueueAll(context, missing, collection.title, automatic = true)
-                Downloads.markRequested(collection.id, asked.filter { it in admitted })
-                refused = asked.toSet() - admitted
-            }
-            // The record grows with what was asked for, so the next pass knows
-            // these are not new any more — whether or not the download itself
-            // finished. A song the queue turned away (Wi-Fi only came back on,
-            // or the service could not start) is left out, so the next pass
-            // still sees it as missing.
-            Downloads.rememberCollection(
-                DownloadTarget(
-                    id = collection.id,
-                    title = collection.title,
-                    subtitle = collection.subtitle,
-                    thumbnailUrl = collection.thumbnailUrl,
-                    playlist = collection.playlist,
-                ),
-                (if (firstFill) remote else missing).filter { it.videoId !in refused },
-                // Grow the record only if it is still there; the first fill is
-                // what creates it.
-                keepSwitch = !firstFill,
+            val target = DownloadTarget(
+                id = collection.id,
+                title = collection.title,
+                subtitle = collection.subtitle,
+                thumbnailUrl = collection.thumbnailUrl,
+                playlist = collection.playlist,
             )
+            // The last check that the release is still wanted, the enqueue and
+            // the record write are one step under the record's lock. A switch
+            // turned off or a release deleted while this pass was reading then
+            // either lands first and is seen here, or lands after and finds
+            // what this step queued in the record. See [Downloads.deleteCollection]
+            // and [setKeepLiked].
+            Downloads.withCollectionsHeld {
+                admit(context, collection.id, collection.title, liked, target, remote, missing)
+            }
         }
+    }
+
+    /**
+     * Queue [missing] for one release and grow its record, if the release is
+     * still wanted. Called under [Downloads.withCollectionsHeld].
+     */
+    private fun admit(
+        context: Context,
+        id: String,
+        title: String,
+        liked: Boolean,
+        target: DownloadTarget,
+        remote: List<Song>,
+        missing: List<Song>,
+    ) {
+        val firstFill = liked && id !in Downloads.collections.value
+        val keepLiked = { liked && AppSettings.downloadLikedSongs.value }
+        // Switched off, or the download deleted, while this pass was reading.
+        val stillWanted = keepLiked() || Downloads.collections.value[id]?.autoDownload == true
+        if (!stillWanted) return
+        if (missing.isEmpty() && !firstFill) return
+        var refused = emptySet<String>()
+        if (missing.isNotEmpty()) {
+            Log.i(TAG, "$title: ${missing.size} new track(s) to download")
+            val asked = missing.map { it.videoId }
+            val admitted = Downloads.enqueueAll(context, missing, title, automatic = true)
+            Downloads.markRequested(id, asked.filter { it in admitted })
+            refused = asked.toSet() - admitted
+        }
+        // The record grows with what was asked for, so the next pass knows
+        // these are not new any more — whether or not the download itself
+        // finished. A song the queue turned away (Wi-Fi only came back on,
+        // or the service could not start) is left out, so the next pass
+        // still sees it as missing.
+        Downloads.rememberCollection(
+            target,
+            (if (firstFill) remote else missing).filter { it.videoId !in refused },
+            // Grow the record only if it is still there; the first fill is
+            // what creates it, with the switch the setting has right now.
+            keepSwitch = !firstFill,
+            switchOn = keepLiked,
+        )
     }
 
     /** Whether the last pass was long enough ago to do another one. */

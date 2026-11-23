@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueEdits
 
 /** What the queue's selection bar can do to the ticked rows. */
 enum class QueueBulkAction { REMOVE, PLAY_NEXT, PLAYLIST, DOWNLOAD }
@@ -39,8 +40,12 @@ class QueueEditing {
     /** Opens the track menu for a held row. */
     var onSongMenu: (Int, Song) -> Unit = { _, _ -> }
 
-    /** Runs [QueueBulkAction] on the rows at these timeline indices. */
-    var onBulkAction: (List<Int>, QueueBulkAction) -> Unit = { _, _ -> }
+    /**
+     * Runs [QueueBulkAction] on the ticked rows, each with its timeline index
+     * and its own song as the screen drew it — so the host can follow the
+     * rows by entry if the queue has moved since.
+     */
+    var onBulkAction: (List<QueueEdits.Target>, QueueBulkAction) -> Unit = { _, _ -> }
 
     /** The Undo offer under the queue, if one is up. */
     var undo by mutableStateOf<QueueUndoNotice?>(null)

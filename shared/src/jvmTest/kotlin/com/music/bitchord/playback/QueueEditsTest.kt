@@ -153,15 +153,18 @@ class QueueEditsTest {
     }
 
     @Test
-    fun aRepeatedRowWithoutAnEntryIdIsTrustedOnlyWhereItWasSeen() {
+    fun aRowWithoutAnEntryIdIsTakenOnlyWhereItWasSeen() {
         val snapshot = listOf(bare("now"), bare("a"), bare("b"), bare("a"))
         assertEquals(listOf(3), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(3)), snapshot))
         // Shifted by one: which "a" was meant can't be told, so neither is touched.
         val shifted = listOf(bare("now"), bare("x"), bare("a"), bare("b"), bare("a"))
         assertEquals(emptyList(), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(3)), shifted))
-        // A single "a" is unambiguous wherever it moved.
-        val single = listOf(bare("now"), bare("x"), bare("y"), bare("a"))
-        assertEquals(listOf(3), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(1)), single))
+        // The picked (last) "a" was removed: the other copy is not it.
+        val removed = listOf(bare("now"), bare("a"), bare("b"))
+        assertEquals(emptyList(), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(3)), removed))
+        // A row with an entry id at that index is a different row.
+        val replaced = listOf(bare("now"), song("a"), bare("b"))
+        assertEquals(emptyList(), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(1)), replaced))
     }
 
     @Test
