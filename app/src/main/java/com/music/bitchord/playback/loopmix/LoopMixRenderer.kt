@@ -84,9 +84,16 @@ class LoopMixRenderer(val sampleRate: Int) : AutoCloseable {
     /** The earliest mix frame anything renders at; negative, before t0. */
     fun firstFrame(): Long = withHandle(0L) { nativeFirstFrame(it) }
 
-    /** Renders [frames] stereo frames from mix frame [frame] into [interleaved] at frame [offset]. */
-    fun render(frame: Long, interleaved: FloatArray, offset: Int, frames: Int) =
-        withHandle(Unit) { nativeRender(it, frame, interleaved, offset, frames) }
+    /**
+     * Renders [frames] stereo frames from mix frame [frame] into [interleaved] at frame [offset].
+     * False when the renderer is already closed: nothing was written, and [interleaved] still
+     * holds whatever it held before.
+     */
+    fun render(frame: Long, interleaved: FloatArray, offset: Int, frames: Int): Boolean =
+        withHandle(false) {
+            nativeRender(it, frame, interleaved, offset, frames)
+            true
+        }
 
     /** Fade [index] out over 25 ms once it plays track second [trackSeconds] after its release. */
     fun setFadeOut(index: Int, trackSeconds: Double) = withHandle(Unit) { nativeSetFadeOut(it, index, trackSeconds) }

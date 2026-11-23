@@ -80,4 +80,12 @@ object SleepTimer {
         if (remainingMs <= 0L || fadeMs <= 0L) return 0f
         return (remainingMs.toFloat() / fadeMs).coerceIn(0f, 1f)
     }
+
+    /**
+     * Stop whatever is making the sound when the timer runs out: the Cast
+     * receiver while one is connected, the phone's own player otherwise.
+     */
+    inline fun pauseFor(castActive: Boolean, pauseCast: () -> Unit, pauseLocal: () -> Unit) {
+        if (castActive) pauseCast() else pauseLocal()
+    }
 }

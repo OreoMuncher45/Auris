@@ -633,13 +633,16 @@ class PlaybackService : MediaLibraryService() {
      *
      * Stops when the folder runs dry, after [AUTO_CONTINUATION_MAX_PAGES],
      * when the account changes, or once the queue no longer holds the folder
-     * — the driver started something else. A later Auto start cancels it.
+     * — the driver started something else — or the listener has played past
+     * it. A later Auto start cancels it.
      *
-     * Called on the main thread while the folder's queue is being built, before
-     * Media3 has installed it, so the queue is read only after the next
-     * playlist change — the installation — and never as the one it replaces.
+     * Called on the main thread once the folder's queue is built, before
+     * Media3 has installed it, so the queue is read only after the playlist
+     * change that installs it — the one that puts [startEntryId] at
+     * [startIndex] — and never as the one it replaces, whatever else edits
+     * that one first.
      */
-    private fun followAutoBrowseContinuation(context: AutoBrowseContext) {
+    private fun followAutoBrowseContinuation(context: AutoBrowseContext, startEntryId: String?, startIndex: Int) {
         autoContinuationJob?.cancel()
         autoContinuationAdded.clear()
         val first = context.continuation ?: return
@@ -648,7 +651,11 @@ class PlaybackService : MediaLibraryService() {
         val installed = CompletableDeferred<Unit>()
         val installListener = object : Player.Listener {
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) installed.complete(Unit)
+                if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
+                val installedHere = isAutoQueueInstalled(startEntryId, startIndex, installedOn.mediaItemCount) {
+                    installedOn.getMediaItemAt(it).queueEntryId
+                }
+                if (installedHere) installed.complete(Unit)
             }
         }
         installedOn.addListener(installListener)
@@ -711,9 +718,9 @@ class PlaybackService : MediaLibraryService() {
             val exoPlayer = player ?: return
             if (castPlayback.active) return
             val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
-            val last = queuedSongs
-                .indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
-                .takeIf { it >= 0 } ?: return
+            // Once the listener has played past the folder, behind it is history.
+            val insertAt = autoContinuationInsertIndex(queuedSongs, sourceId, exoPlayer.currentMediaItemIndex)
+                ?: return
             val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
             val additions = fresh
                 .filter { it.videoId !in queued }
@@ -726,7 +733,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             if (additions.isNotEmpty()) {
                 additions.mapTo(autoContinuationAdded) { it.mediaId }
-                exoPlayer.addMediaItems(last + 1, additions)
+                exoPlayer.addMediaItems(insertAt, additions)
             }
         }
     }
@@ -7925,7 +7932,13 @@ class PlaybackService : MediaLibraryService() {
                             delay(FADE_STEP_MS)
                         }
                     }
-                    player?.pause()
+                    // While casting, the phone's player is already held paused
+                    // and the receiver is what is playing, so that is what stops.
+                    SleepTimer.pauseFor(
+                        castActive = castPlayback.active,
+                        pauseCast = castPlayback::pause,
+                        pauseLocal = { player?.pause() },
+                    )
                     SleepTimer.cancel()
                 } finally {
                     SleepTimer.fadingOut = false
@@ -11023,7 +11036,10 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val currentIndex = exoPlayer?.currentMediaItemIndex ?: -1
                 QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
-                    .also { followAutoBrowseContinuation(context) }
+                    .also { built ->
+                        val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
+                        followAutoBrowseContinuation(context, startEntryId, built.startIndex)
+                    }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return MediaSession.MediaItemsWithStartPosition(
                 ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),

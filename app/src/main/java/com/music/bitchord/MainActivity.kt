@@ -1718,6 +1718,8 @@ internal fun BitChordApp(
     }
 
     val playFrom: (List<Song>, Int, QueueSource) -> Unit = playFrom@{ allSongs, allIndex, source ->
+        // Taken before anything can turn this play away, applied only once it is accepted.
+        val shuffle = QueueShuffle.takeRequestForNextQueue()
         // A Spotify page lists songs it has not found on YouTube Music yet (or
         // never will); those can't be queued, so play the rest in their order.
         if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return@playFrom
@@ -1728,6 +1730,7 @@ internal fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
+            QueueShuffle.applyForNextQueue(shuffle)
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
@@ -1790,7 +1793,11 @@ internal fun BitChordApp(
     val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit = browse@{ page, songs, index ->
         val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
         val ready = songs.asSpotifyQueueRows()
-        if (ready.isEmpty()) return@browse
+        if (ready.isEmpty()) {
+            // Nothing to play: drop the shuffle a Play button asked for with it.
+            QueueShuffle.takeRequestForNextQueue()
+            return@browse
+        }
         val at = index?.coerceIn(0, (ready.size - 1).coerceAtLeast(0)) ?: 0
         playFrom(ready, at, source)
     }
@@ -5188,6 +5195,8 @@ internal fun BitChordApp(
                 download = startDownload,
                 downloadFromCache = downloadFromCache,
                 withBrowseSongs = withBrowseSongs,
+                beginPlayRequest = { ++playRequestGeneration },
+                currentPlayRequest = { playRequestGeneration },
             ),
             smartDownloadPodcast = ::smartDownloadPodcast,
         )
@@ -6656,13 +6665,14 @@ private data class PageActions(
 )
 
 /**
- * A release's Play or Shuffle button setting shuffle for the queue it is about
- * to start. Skipped when the party host has taken the controls: that play is
- * refused, and the listener's shuffle and its saved order must survive it.
+ * A release's Play or Shuffle button asking for shuffle on the queue it is
+ * about to start. Call it right before that play: `playFrom` takes the request
+ * and applies it only once the play is accepted, so a play refused because
+ * the party host has the controls, or because there is no controller yet,
+ * leaves the listener's shuffle and its saved order as they were.
  */
 private fun setShuffleForNextQueue(on: Boolean) {
-    if (ListenTogether.state.value.controlsLocked) return
-    if (on) QueueShuffle.enableForNextQueue() else QueueShuffle.disableForNextQueue()
+    QueueShuffle.requestForNextQueue(on)
 }
 
 /**
@@ -6684,6 +6694,10 @@ private data class TrackListActions(
     /** The Cached songs folder's download: the cache's own copies, saved from disk. */
     val downloadFromCache: (List<Song>) -> Unit,
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
+    /** Claims a new play request, invalidating earlier ones; see [latestPlayRequestOnly]. */
+    val beginPlayRequest: () -> Int,
+    /** The newest play request's token. */
+    val currentPlayRequest: () -> Int,
 )
 
 /**
@@ -7058,6 +7072,18 @@ private fun RootOverlays(
                 tracks.withBrowseSongs(target, action)
             }
         }
+        // Play and Shuffle claim the play request at the tap: a fetch that
+        // lands after something else started playing is dropped, rather than
+        // flipping shuffle and replacing the newer queue.
+        val actPlay: ((List<Song>) -> Unit) -> () -> Unit = { action ->
+            {
+                sheets.browseMenu.target = null
+                tracks.withBrowseSongs(
+                    target,
+                    latestPlayRequestOnly(tracks.beginPlayRequest, tracks.currentPlayRequest, action),
+                )
+            }
+        }
         // Whose playlist this is, asked here rather than carried in by
         // whatever opened the sheet.
         //
@@ -7117,11 +7143,11 @@ private fun RootOverlays(
             },
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
-            onPlay = act { songs ->
+            onPlay = actPlay { songs ->
                 setShuffleForNextQueue(false)
                 tracks.play(songs, 0)
             }.takeIf { target.fromCard },
-            onShuffle = act { songs ->
+            onShuffle = actPlay { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played
                 // out of order.
