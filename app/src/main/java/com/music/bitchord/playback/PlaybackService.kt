@@ -2911,8 +2911,14 @@ class PlaybackService : MediaLibraryService() {
         // two checks are cheap and neither may be armed under this fade.
         if (upgradeFadeActive || versionSwapJob?.isActive == true) return UpgradeSwap.Abandoned
         if (crossfade?.isTransitioning() == true) return UpgradeSwap.Abandoned
-        // The sleep timer's fade owns the volume; the direct swap keeps it.
-        if (SleepTimer.fadingOut) return UpgradeSwap.Fallback
+        // The sleep timer's fade owns the volume, so no second fade under it.
+        // With smart alignment on, the direct swap would land at the old
+        // timestamp unmeasured, off the passage being heard: the proved copy is
+        // shelved for the next play instead. Without it, the direct swap is what
+        // would happen anyway.
+        if (SleepTimer.fadingOut) {
+            return if (AppSettings.smartVersionAlignment.value) UpgradeSwap.Abandoned else UpgradeSwap.Fallback
+        }
         if (crossfade == null) return UpgradeSwap.Fallback
 
         val active = player ?: return UpgradeSwap.Fallback
