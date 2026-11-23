@@ -1653,6 +1653,9 @@ object Downloads {
         synchronized(lock) { running.remove(videoId) }
     }
 
+    /** Whether [videoId] is queued or downloading. */
+    internal fun isInFlight(videoId: String): Boolean = synchronized(lock) { videoId in pending || videoId in running }
+
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
     internal fun busy(): Boolean = synchronized(lock) { pending.isNotEmpty() || running.isNotEmpty() }
 

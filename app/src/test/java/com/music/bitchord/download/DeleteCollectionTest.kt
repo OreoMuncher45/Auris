@@ -33,12 +33,14 @@ class DeleteCollectionTest {
     fun `deleting a release calls off its tracks still downloading`() = runBlocking {
         val target = DownloadTarget(id = "VLPLdel", title = "Going", playlist = true)
         Downloads.rememberCollection(target, listOf(song("q1")))
-        Downloads.enqueueAll(app, listOf(song("q1")), automatic = true)
-        assertTrue(Downloads.busy())
+        // Exempt from the Wi-Fi and offline rule, whatever another test left.
+        Downloads.preferCachedCopy(listOf("q1"))
+        assertTrue(Downloads.enqueueAll(app, listOf(song("q1")), automatic = true) == setOf("q1"))
+        assertTrue(Downloads.isInFlight("q1"))
 
         Downloads.deleteCollection(app, "VLPLdel")
 
-        assertFalse("nothing of the deleted release is still queued", Downloads.busy())
+        assertFalse("nothing of the deleted release is still queued", Downloads.isInFlight("q1"))
         assertFalse(Downloads.isDownloadedCollection("VLPLdel"))
     }
 

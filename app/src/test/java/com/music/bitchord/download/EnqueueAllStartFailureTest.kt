@@ -8,6 +8,7 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import com.music.bitchord.data.model.Song
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,9 +27,12 @@ class EnqueueAllStartFailureTest {
 
     /** A context whose download service can't be started, as from the background. */
     private class NoForegroundStart(base: Context) : ContextWrapper(base) {
+        var startAttempts = 0
         override fun getApplicationContext(): Context = this
-        override fun startForegroundService(service: Intent?): ComponentName? =
+        override fun startForegroundService(service: Intent?): ComponentName? {
+            startAttempts++
             throw IllegalStateException("not allowed to start a foreground service")
+        }
     }
 
     private val failing = NoForegroundStart(ApplicationProvider.getApplicationContext())
@@ -38,8 +42,10 @@ class EnqueueAllStartFailureTest {
      * arriving while the first caller's start is still unanswered.
      */
     private class FailsAfter(base: Context, private val during: () -> Unit) : ContextWrapper(base) {
+        var startAttempts = 0
         override fun getApplicationContext(): Context = this
         override fun startForegroundService(service: Intent?): ComponentName? {
+            startAttempts++
             during()
             throw IllegalStateException("not allowed to start a foreground service")
         }
@@ -47,13 +53,23 @@ class EnqueueAllStartFailureTest {
 
     private val app: Context = ApplicationProvider.getApplicationContext()
 
-    private fun inFlight(id: String) = Downloads.busy() && Downloads.active.value[id] is DownloadState.Queued
 
     private fun song(id: String) = Song(videoId = id, title = id, artist = "Artist", thumbnailUrl = null)
 
+    private val ids = listOf("dup1", "f1", "f2", "p1")
+
+    /**
+     * Every track here is admitted whatever the network state another test
+     * left behind: a copy from the song cache is exempt from the Wi-Fi and
+     * offline rule, so each test reaches the service start it is about.
+     */
+    @Before
+    fun admitRegardlessOfNetwork() = Downloads.preferCachedCopy(ids)
+
     @After
     fun tearDown() {
-        listOf("dup1", "f1", "f2", "p1").forEach(Downloads::cancel)
+        // Also drops each id's cache-copy exemption.
+        ids.forEach(Downloads::cancel)
         DownloadSession.clear()
     }
 
@@ -67,9 +83,11 @@ class EnqueueAllStartFailureTest {
         }
         val firstResult = Downloads.enqueueAll(first, listOf(song("p1")), automatic = true)
 
+        assertEquals(1, first.startAttempts)
+        assertEquals("the second call starts the service itself", 1, failing.startAttempts)
         assertEquals(emptySet<String>(), second)
         assertEquals(emptySet<String>(), firstResult)
-        assertFalse("the failed start took the track back off the queue", Downloads.busy())
+        assertFalse("the failed start took the track back off the queue", Downloads.isInFlight("p1"))
     }
 
     @Test
@@ -80,9 +98,10 @@ class EnqueueAllStartFailureTest {
         }
         val firstResult = Downloads.enqueueAll(first, listOf(song("p1")), automatic = true)
 
+        assertEquals(1, first.startAttempts)
         assertEquals(setOf("p1"), second)
         assertEquals(setOf("p1"), firstResult)
-        assertTrue(inFlight("p1"))
+        assertTrue(Downloads.isInFlight("p1"))
     }
 
     @Test
@@ -90,11 +109,13 @@ class EnqueueAllStartFailureTest {
         val admitted = Downloads.enqueueAll(failing, listOf(song("dup1"), song("dup1")), automatic = true)
         assertTrue("nothing was queued, so nothing is admitted: $admitted", admitted.isEmpty())
         assertTrue(Downloads.active.value["dup1"] is DownloadState.Failed)
+        assertEquals("the failure is the service start, not a refusal", 1, failing.startAttempts)
     }
 
     @Test
     fun `a failed start admits none of the tracks it took back`() {
         val admitted = Downloads.enqueueAll(failing, listOf(song("f1"), song("f2"), song("f1")), automatic = true)
         assertEquals(emptySet<String>(), admitted)
+        assertEquals(1, failing.startAttempts)
     }
 }
