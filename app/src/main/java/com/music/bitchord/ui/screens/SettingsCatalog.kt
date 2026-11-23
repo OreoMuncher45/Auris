@@ -128,6 +128,7 @@ object SettingsCatalog {
             "now_playing.text_glow",
             "now_playing.show_lyrics",
             "now_playing.next_track_status",
+            "now_playing.show_best_part",
             "now_playing.upgrade_badge",
             "now_playing.lossless_badge",
             "now_playing.hires_badge",
