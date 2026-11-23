@@ -2795,6 +2795,12 @@ object AudioCache {
             }
             round = scope.launch(start = CoroutineStart.LAZY) {
                 var complete = false
+                // Published only while this round still owns the track: a wipe
+                // or removal that has taken its snapshot has reset the size,
+                // and a stale one left behind reads as a finished head later.
+                fun publishWant(size: Long) = synchronized(analysisAdmission) {
+                    if (analysisJobs[videoId] === round) analysisHeadWant[videoId] = size
+                }
                 try {
                     // The copy's own length.
                     //
@@ -2817,7 +2823,7 @@ object AudioCache {
                     // Which key this round's bytes end up under: the Opus
                     // copy's own, or the substitute's beside it.
                     var filled = key
-                    analysisHeadWant[videoId] = want
+                    publishWant(want)
                     val already = cachedBytesOf(key, want)
                     TrackLog.w(
                         TAG,
@@ -2848,7 +2854,16 @@ object AudioCache {
                     var target = want
                     var measured = 0L
                     var measuredFetched = false
-                    if (held * 2 < want && !isCatalogueRow(videoId)) {
+                    // A round sized on the default guess, because YouTube's
+                    // length lookup failed, can hold a whole short track that is
+                    // nonetheless under half the guess. Its own stream is asked
+                    // before anything is thrown away.
+                    if (total <= 0L && held * 2 < want && !isCatalogueRow(videoId)) {
+                        measured = measureUpstream(copy)
+                        measuredFetched = true
+                    }
+                    val canonicalWhole = measured > 0L && held >= measured
+                    if (held * 2 < want && !canonicalWhole && !isCatalogueRow(videoId)) {
                         // The plain Opus copy would not come: on the networks where
                         // its googlevideo resolve fails it never does, while
                         // playback of the very same track is unbothered because it
@@ -2877,15 +2892,26 @@ object AudioCache {
                         // from an earlier round is cleared first for the same
                         // seam reason as the Opus copy; while a reader holds it
                         // the round ends short and the retry clears it.
+                        //
+                        // The substitute's address, length and size stay local
+                        // until its entry is accepted, and then all move at once:
+                        // a substitute that cannot be prepared leaves the round on
+                        // the canonical entry with the canonical numbers, and the
+                        // short-round retry takes it from there.
                         clearPartialHead(key, want)
                         val substitute = analysisSubstituteKeyOfVideo(videoId)
-                        fetched = Uri.parse("bitchord://watch?v=$videoId")
-                        measured = measureUpstream(fetched)
-                        measuredFetched = true
-                        if (measured > 0L) target = analysisHeadSize(measured)
-                        if (cachedBytesOf(substitute, target) >= target || clearPartialHead(substitute, target)) {
+                        val substituteUri = Uri.parse("bitchord://watch?v=$videoId")
+                        val substituteLength = measureUpstream(substituteUri)
+                        val substituteTarget = if (substituteLength > 0L) analysisHeadSize(substituteLength) else want
+                        if (cachedBytesOf(substitute, substituteTarget) >= substituteTarget ||
+                            clearPartialHead(substitute, substituteTarget)
+                        ) {
                             filled = substitute
-                            analysisHeadWant[videoId] = target
+                            fetched = substituteUri
+                            measured = substituteLength
+                            measuredFetched = true
+                            target = substituteTarget
+                            publishWant(target)
                             pull(
                                 substitute,
                                 fetched,
@@ -2915,7 +2941,7 @@ object AudioCache {
                     if (measured > 0L) {
                         val grown = analysisHeadSize(measured)
                         if (grown > target && cachedBytesOf(filled, target) >= target) {
-                            analysisHeadWant[videoId] = grown
+                            publishWant(grown)
                             pull(filled, fetched, target, grown - target, pinKey = true)
                             target = grown
                         }
