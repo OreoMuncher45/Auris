@@ -1064,8 +1064,12 @@ class PrecisionAudioSink(
             loop.interrupted = true
             return false
         }
+        if (!arm.renderer.render(start, loopScratch, 0, frames)) {
+            // Closed under the arm: no mix to cross into, so the song plays on.
+            loop.interrupted = true
+            return false
+        }
         loopRendering = true
-        arm.renderer.render(start, loopScratch, 0, frames)
         val samples = audioBlock.samples
         val port = loop
         val capture = LoopMixPort.SPLICE_CAPTURE
@@ -1104,7 +1108,11 @@ class PrecisionAudioSink(
         repeat(LOOP_MAX_GENERATED_BLOCKS) {
             val frames = minOf(LOOP_GENERATED_FRAMES, audioBlock.capacityFrames)
             audioBlock.reset(frames)
-            arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)
+            if (!arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)) {
+                // Closed under the arm: silence, not a stale block, until the controller retires it.
+                audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
+                loop.interrupted = true
+            }
             loopNextFrame += frames
             dspChain.mixing = true
             dspChain.process(audioBlock)
