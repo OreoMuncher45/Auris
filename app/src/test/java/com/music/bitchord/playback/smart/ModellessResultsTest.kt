@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -37,14 +38,15 @@ class ModellessResultsTest {
     fun `a result replaced since it was recorded is left alone`() {
         val modelless = ModellessResults()
         modelless.record("a", analysis("a"), "a#opus")
-        val withModels = analysis("a", bpm = 124.0)
+        // Equal to the recorded result, but a distinct instance: a replacement.
+        val withModels = analysis("a")
         val results = cacheOf("a" to withModels)
         val tried = mutableSetOf("a#hifi")
         val measured = mutableMapOf("a" to "a#hifi")
 
         modelless.drop(results, tried, measured, mutableSetOf(), mutableMapOf())
 
-        assertEquals(withModels, results["a"])
+        assertSame(withModels, results["a"])
         assertEquals(setOf("a#hifi"), tried)
         assertEquals(mapOf("a" to "a#hifi"), measured)
         assertTrue(modelless.isEmpty())
