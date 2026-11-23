@@ -446,6 +446,10 @@ fun SourcesScreen(
             )
         }
 
+        // Everything above, in one password-locked file: what a reinstall
+        // would otherwise make the listener add again by hand.
+        AddonBackupGroup()
+
         // A personal library rather than a catalogue in the order above: it
         // holds the listener's own files instead of answering for YouTube's,
         // so it takes no part in the ranking and gets its own group. The
