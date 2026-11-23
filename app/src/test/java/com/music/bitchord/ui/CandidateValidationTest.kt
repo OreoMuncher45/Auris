@@ -60,4 +60,33 @@ class CandidateValidationTest {
         runCurrent()
         assertTrue(settled)
     }
+
+    @Test
+    fun `readers stay held until a validation queued behind the first has finished`() = runTest {
+        val validation = CandidateValidation()
+        val firstCheck = CompletableDeferred<Unit>()
+        val secondCheck = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        launch { validation.during { events += "first starts"; firstCheck.await(); events += "first done" } }
+        launch { validation.during { events += "second starts"; secondCheck.await(); events += "second done" } }
+        launch {
+            validation.awaitSettled()
+            events += "read"
+        }
+        runCurrent()
+        // One at a time: the second waits for the first.
+        assertEquals(listOf("first starts"), events)
+
+        firstCheck.complete(Unit)
+        runCurrent()
+        // The first finishing does not release the reader: the second's candidate is in.
+        assertEquals(listOf("first starts", "first done", "second starts"), events)
+        assertTrue(validation.active)
+
+        secondCheck.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("first starts", "first done", "second starts", "second done", "read"), events)
+        assertFalse(validation.active)
+    }
 }
+
