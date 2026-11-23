@@ -2135,7 +2135,9 @@ class PlaybackService : MediaLibraryService() {
             },
             syncedLines = ::loopMixLyrics,
             loudnessGain = ::loudnessGainFor,
-            onMixPositionJump = { wrapped -> (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped) },
+            onMixPositionJump = { wrapped, fromMs ->
+                (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped, fromMs)
+            },
         )
 
     /**
@@ -9769,18 +9771,17 @@ class PlaybackService : MediaLibraryService() {
         override fun getContentPosition() =
             if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getContentPosition()
 
-        private var lastMixPositionMs = C.TIME_UNSET
-
         /**
          * Re-anchors every controller on the loop mix's playhead. A wrap is a
          * deliberate jump back, announced as one (the lyrics follow it); a
          * re-anchor through the ramp is reported moving forward, so nothing
          * reads it as a seek.
          */
-        fun announceMixPosition(wrapped: Boolean) {
+        fun announceMixPosition(wrapped: Boolean, fromMs: Long) {
             val now = currentPosition
-            val before = if (wrapped && lastMixPositionMs != C.TIME_UNSET) lastMixPositionMs else (now - 1).coerceAtLeast(0L)
-            lastMixPositionMs = now
+            // A wrap starts where the loop clock was just before it, which is
+            // what makes it read as the jump back it is.
+            val before = if (wrapped && fromMs >= 0) fromMs else (now - 1).coerceAtLeast(0L)
             fun info(position: Long) = Player.PositionInfo(
                 null,
                 currentMediaItemIndex,

@@ -24,6 +24,7 @@ import com.music.bitchord.playback.loopmix.LoopArmGate
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
 import com.music.bitchord.playback.loopmix.LoopMixSession
+import com.music.bitchord.playback.loopmix.LoopPositionJump
 import com.music.bitchord.playback.loopmix.LoopRegion
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
@@ -232,8 +233,12 @@ class CrossfadeController(
     private val syncedLines: suspend (MediaItem, Long) -> List<LyricLine>? = { _, _ -> null },
     /** The loudness-normalisation gain a track plays at, so the incoming deck is levelled like its player. */
     private val loudnessGain: (String) -> Float = { 1f },
-    /** The session's playhead moved on purpose during a loop mix: a loop wrap (true) or a re-anchor (false). */
-    private val onMixPositionJump: (wrapped: Boolean) -> Unit = {},
+    /**
+     * The session's playhead moved on purpose during a loop mix: a loop wrap
+     * (true) or a re-anchor (false). For a wrap, [fromMs] is the position heard
+     * just before it; otherwise -1.
+     */
+    private val onMixPositionJump: (wrapped: Boolean, fromMs: Long) -> Unit = { _, _ -> },
 ) {
 
     private enum class Phase {
@@ -2712,6 +2717,9 @@ class CrossfadeController(
     private var lastLoopVerdict = ""
     private var loopIncomingStarted = false
     private var lastLoopPositionMs = -1L
+
+    /** Which deck [lastLoopPositionMs] was read off: the incoming one once [handedOff]. */
+    private var lastLoopPositionIncoming = false
     private var lastLoopAnnounceAt = 0L
     private var lastLoopBeat = -1
 
@@ -2746,6 +2754,7 @@ class CrossfadeController(
         } else {
             lyricsAsked[id] = LyricAsk(now, synced, 1)
         }
+        val ask = lyricsAsked[id]
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -2757,7 +2766,8 @@ class CrossfadeController(
                     },
                 )
             }
-            lyricSpans[id] = LyricSpans(spans)
+            // An answer to a request a newer one superseded must not replace the newer one's.
+            if (lyricsAsked[id] === ask) lyricSpans[id] = LyricSpans(spans)
         }
     }
 
@@ -2820,8 +2830,9 @@ class CrossfadeController(
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
         }
+        // The lyric snapshots too: a retry that finds timed lines replaces them, and must plan again.
         val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" +
-            "|$durationMs|$nextDurationMs"
+            "|$durationMs|$nextDurationMs|${System.identityHashCode(outLyrics)}|${System.identityHashCode(inLyrics)}"
         val cached = loopPlanned
         val earliestOutSec = player.currentPosition / 1000.0 + LOOP_SETUP_SECONDS
         // Kept while its loop is still far enough ahead to set up; a seek past
@@ -2961,9 +2972,14 @@ class CrossfadeController(
                     return@launch
                 }
                 TrackLog.d(TAG, "loop decks built in ${SystemClock.elapsedRealtime() - began}ms")
-                built.set(null)
                 outgoingItemIndex = out.currentMediaItemIndex
-                armLoop(session, out, into, liveNext, outPort, inPort)
+                // Still owned here until [armLoop] publishes it: one that throws
+                // before then leaves the session to the finally below.
+                try {
+                    armLoop(session, out, into, liveNext, outPort, inPort)
+                } finally {
+                    if (loopSession === session) built.set(null)
+                }
             } finally {
                 built.getAndSet(null)?.close()
             }
@@ -3004,6 +3020,7 @@ class CrossfadeController(
         loopSession = session
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
+        lastLoopPositionIncoming = false
         lastLoopBeat = -1
         TrackLog.d(
             TAG,
@@ -3062,6 +3079,8 @@ class CrossfadeController(
         playbackSpeed = AppSettings.playbackSpeed.value,
         repeatMode = out.repeatMode,
         nextStillIncoming = nextStillIncoming,
+        // The settings observer re-applies skip silence to both players without ending the loop.
+        skipSilence = out.skipSilenceEnabled || incoming?.skipSilenceEnabled == true,
     )
 
     /** The mix is running: starts the incoming player, aligns it, hands the session over, and ends. */
@@ -3174,11 +3193,17 @@ class CrossfadeController(
     private fun announceLoopPosition() {
         val position = loopPositionMs() ?: return
         val now = SystemClock.elapsedRealtime()
-        val wrapped = lastLoopPositionMs >= 0 && position < lastLoopPositionMs - LOOP_WRAP_MS
+        // The handoff moves the playhead onto the other song: a re-anchor, not
+        // a wrap, and the baseline for the next wrap is that song's.
+        val previous = lastLoopPositionMs
+        val jump = LoopPositionJump.classify(previous, lastLoopPositionIncoming, position, handedOff, LOOP_WRAP_MS)
+        val deckChanged = jump == LoopPositionJump.DECK_CHANGE
+        val wrapped = jump == LoopPositionJump.WRAP
         lastLoopPositionMs = position
-        if (wrapped || now - lastLoopAnnounceAt >= LOOP_ANNOUNCE_MS) {
+        lastLoopPositionIncoming = handedOff
+        if (wrapped || deckChanged || now - lastLoopAnnounceAt >= LOOP_ANNOUNCE_MS) {
             lastLoopAnnounceAt = now
-            onMixPositionJump(wrapped)
+            onMixPositionJump(wrapped, if (wrapped) previous else -1L)
         }
     }
 
