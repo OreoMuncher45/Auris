@@ -58,4 +58,14 @@ class PlannerReviewFixesTest {
             assertTrue(p.handoffDuration <= p.transitionEnd - p.transitionStart + 1e-9)
         }
     }
+
+    @Test
+    fun aDropRankedAtTheVeryStartGivesWayToTheNextOne() {
+        val next = track(120.0).copy(
+            mixInTime = 0.0,
+            mixInCandidates = listOf(MixCandidate(0.0, 1.0, "drop"), MixCandidate(16.5, 0.2, "drop")),
+        )
+        val point = incomingMixInPoint(next)
+        assertTrue(point != null && point > 0.0, "mix-in point $point")
+    }
 }

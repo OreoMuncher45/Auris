@@ -410,8 +410,9 @@ class LoopMixTest {
         )
         assertEquals(40.35, spans[0].end, 1e-9)
         assertEquals(12.35, spans[0].certainUntil, 1e-9)
-        // The last line, with nothing after it, for the open-line length.
-        assertEquals(40.0 + LoopMix.LYRIC_OPEN_LINE_SEC + 0.35, spans[1].end, 1e-9)
+        // The last line, with nothing after it, until the song ends; only its opening is certain.
+        assertEquals(Double.POSITIVE_INFINITY, spans[1].end)
+        assertEquals(42.35, spans[1].certainUntil, 1e-9)
     }
 
     @Test
@@ -444,5 +445,13 @@ class LoopMixTest {
         // tail's grid, outside a 0.4 s beat on the song-wide one.
         val plan = assertNotNull(LoopMix.plan(withVocal((x - 0.95) to (x - 0.45)), 200.0, inn, 180.0, 0.0, null, clear))
         assertTrue(plan.out.loopStart != x, "kept the loop with a voice in its preceding beat")
+    }
+
+    @Test
+    fun theIncomingLoopStartsInsideTheOpeningSearch() {
+        // Sung everywhere but one bar at 48.5-50.5 s: past the 45 s limit for a loop start.
+        val inn = analysis(120.0, 180.0, listOf(vocals(0.0, 70.0, 0.9f, listOf(48.4 to 50.6))))
+        val plan = LoopMix.plan(analysis(120.0, 200.0), 200.0, inn, 180.0, 0.0, clear, null)
+        assertTrue(plan == null || plan.inn.loopStart <= LoopMix.IN_SEARCH_SEC, "incoming loop at ${plan?.inn?.loopStart}")
     }
 }

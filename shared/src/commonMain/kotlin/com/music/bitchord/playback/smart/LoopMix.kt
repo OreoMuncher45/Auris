@@ -76,8 +76,6 @@ object LoopMix {
     const val LYRIC_LEAD_SEC = 0.15
     const val LYRIC_TAIL_SEC = 0.35
 
-    /** The last line, with no stated end and no line after it, is taken as sung this long. */
-    const val LYRIC_OPEN_LINE_SEC = 10.0
 
     /**
      * Of a line with no stated end, how much is surely sung: its opening words.
@@ -201,7 +199,8 @@ object LoopMix {
         // incoming: the earliest instrumental loop in its opening
         val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inGrid.barSec, inDuration - 20)
         val inPick = firstClean(
-            candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars) },
+            // Starting inside the opening search, ending where it must.
+            candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars).filter { it.start <= IN_SEARCH_SEC } },
             analysis = inn,
             sung = sungIn,
             count = inCount,
@@ -477,7 +476,7 @@ object LoopMix {
     /**
      * A song's sung stretches from its synced lyric lines: each from just before
      * its start to just after its end. A line with no stated end is taken as sung
-     * until the next line (the last one for [LYRIC_OPEN_LINE_SEC]), its first
+     * until the next line (the last one until the song ends), its first
      * [OPEN_LINE_CERTAIN_SEC] for sure and the rest left to the vocal mask. That
      * can only make a loop pickier, never let a word through: a cap short of the
      * next line let a line still being sung clear a loop on the lyrics alone.
@@ -493,7 +492,8 @@ object LoopMix {
             val end = if (stated) {
                 line.endMs!! / 1000.0
             } else {
-                next?.let { it / 1000.0 } ?: (start + LYRIC_OPEN_LINE_SEC)
+                // The last line says nothing about when the voice stops.
+                next?.let { it / 1000.0 } ?: Double.POSITIVE_INFINITY
             }
             val certain = if (stated) end else min(end, start + OPEN_LINE_CERTAIN_SEC)
             spans += Span(start - LYRIC_LEAD_SEC, end + LYRIC_TAIL_SEC, certain + LYRIC_TAIL_SEC)
