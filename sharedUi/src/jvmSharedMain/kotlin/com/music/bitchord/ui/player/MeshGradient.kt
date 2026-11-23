@@ -1,7 +1,7 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Animatable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -9,7 +9,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -21,11 +20,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import coil3.PlatformContext
 import coil3.compose.LocalPlatformContext
 import com.music.bitchord.ui.graphics.forPixelAccess
 import com.music.bitchord.ui.graphics.paletteSwatches
@@ -39,6 +41,7 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
@@ -116,18 +119,56 @@ fun MeshGradientBackground(
      * the Replay cards keep their colours.
      */
     darkTheme: Boolean = false,
+    /**
+     * Automix: the reveal under way, while the player's cover is drawing one —
+     * see [AutoMixAmbientMix] — and [mixPalette], the next cover's colours,
+     * blended in at the reveal's own progress in place of the track change's
+     * crossfade. Without [mixPalette] (not read in time) the colours fade as
+     * ever. Only the player passes them.
+     */
+    mix: AutoMixAmbientMix? = null,
+    mixPalette: MeshPalette? = null,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     val tuned = remember(palette, darkTheme) { palette.drawnColors(darkTheme) }
+    val mixTuned = remember(mixPalette, darkTheme) { mixPalette?.drawnColors(darkTheme) }
+    val liveMix = mix.takeIf { mixTuned != null }
+    // The next cover's colours, blended over the slots while a mix draws them
+    // and until they are handed to the slots after.
+    var held by remember { mutableStateOf<HeldColors?>(null) }
+    val heldLayer = remember { AutoMixAmbientLayer() }
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
-    val colorSpec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
-    val animatedColors = tuned.mapIndexed { index, color ->
-        animateColorAsState(color, colorSpec, label = "meshColor$index").value
+    //
+    // Animatables read in the draw lambda, not animated states read here: read
+    // in composition, the 1400ms crossfade recomposed this backdrop on every one
+    // of its frames, to hand the drawing five colours it could read itself.
+    val slots = remember { List(tuned.size) { Animatable(tuned[it]) } }
+    val baseColor = remember { Animatable(tuned.first().dimmed()) }
+    LaunchedEffect(tuned, mixTuned, reduceAnimation, animated) {
+        if (mixTuned != null) {
+            // The slots hold still on the old colours; the mix owns the change.
+            if (held?.slots != mixTuned) {
+                heldLayer.begin()
+                held = HeldColors(mixTuned)
+            }
+            return@LaunchedEffect
+        }
+        held?.let { blend ->
+            // What the reveal left on screen becomes the slots' own colour,
+            // and they carry on from there to wherever the player now is: no
+            // change at all on the track the reveal brought in.
+            val e = heldLayer.lastShown
+            slots.forEachIndexed { index, slot -> slot.snapTo(lerp(slot.value, blend.slots[index], e)) }
+            baseColor.snapTo(lerp(baseColor.value, blend.base, e))
+            held = null
+        }
+        val spec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
+        slots.forEachIndexed { index, slot -> launch { slot.animateTo(tuned[index], spec) } }
+        launch { baseColor.animateTo(tuned.first().dimmed(), spec) }
     }
-    val baseColor by animateColorAsState(tuned.first().dimmed(), colorSpec, label = "meshBase")
 
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
@@ -174,23 +215,26 @@ fun MeshGradientBackground(
                 scaleX = 1.3f
                 scaleY = 1.3f
             }
-            .background(baseColor)
+            .drawBehind {
+                val blend = held
+                drawRect(
+                    if (blend == null) baseColor.value
+                    else lerp(baseColor.value, blend.base, heldLayer.alpha(liveMix)),
+                )
+            }
             .blur(blurRadius),
     ) {
-        val anchors = listOf(
-            Offset(0.20f, 0.25f),
-            Offset(0.80f, 0.20f),
-            Offset(0.75f, 0.80f),
-            Offset(0.25f, 0.75f),
-        )
-        val speeds = listOf(1f, -0.7f, 0.85f, -1.15f)
         val drift = phase.value
+        val blend = held
+        val e = if (blend != null) heldLayer.alpha(liveMix) else 0f
 
-        animatedColors.forEachIndexed { index, color ->
-            val anchor = anchors[index]
+        slots.forEachIndexed { index, slot ->
+            val color = if (blend == null) slot.value else lerp(slot.value, blend.slots[index], e)
+            val anchor = BLOB_ANCHORS[index]
+            val speed = BLOB_SPEEDS[index]
             val center = Offset(
-                x = (anchor.x + 0.16f * cos(drift * speeds[index] + index * 1.7f)) * size.width,
-                y = (anchor.y + 0.16f * sin(drift * speeds[index] * 0.9f + index * 2.3f)) * size.height,
+                x = (anchor.x + 0.16f * cos(drift * speed + index * 1.7f)) * size.width,
+                y = (anchor.y + 0.16f * sin(drift * speed * 0.9f + index * 2.3f)) * size.height,
             )
             val radius = size.maxDimension * 0.62f
             drawCircle(
@@ -231,10 +275,17 @@ fun MeshGradientBackground(
 @Composable
 fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): MeshPalette {
     val context = LocalPlatformContext.current
-    var palette by remember(imageUrl) { mutableStateOf(MeshPalette(FallbackColors)) }
+    // Seeded from the cache, so a cover read before — the one an Automix
+    // reveal just brought in, above all — is on its colours in its first frame.
+    var palette by remember(imageUrl) { mutableStateOf(cachedArtworkPalette(imageUrl) ?: MeshPalette(FallbackColors)) }
 
     LaunchedEffect(imageUrl) {
         if (imageUrl == null) return@LaunchedEffect
+        // Filled since the state above was seeded — by an Automix prefetch, say.
+        cachedArtworkPalette(imageUrl)?.let {
+            palette = it
+            return@LaunchedEffect
+        }
         val request = ImageRequest.Builder(context)
             .data(imageUrl)
             .size(128) // palette quality is fine at thumbnail size, and it's fast
@@ -250,7 +301,7 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
         // screen that loads a cover, and the cover's palette is the first
         // thing it wants.
         val colors = withContext(Dispatchers.Default) { paletteOf(bitmap) }
-        palette = MeshPalette(colors)
+        palette = MeshPalette(colors).also { paletteCache[imageUrl] = it }
     }
 
     LaunchedEffect(canvasFrame) {
@@ -271,6 +322,37 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
  * that would land the blobs back where they started.
  */
 private const val DRIFT_RADIANS = (PI * 0.45f).toFloat()
+
+/** The next cover's colours as drawn, and the base under them. */
+private class HeldColors(val slots: List<Color>) {
+    val base = slots.first().dimmed()
+}
+
+// Where each blob orbits, and how fast: constants, not lists built on every frame.
+private val BLOB_ANCHORS = listOf(
+    Offset(0.20f, 0.25f),
+    Offset(0.80f, 0.20f),
+    Offset(0.75f, 0.80f),
+    Offset(0.25f, 0.75f),
+)
+private val BLOB_SPEEDS = floatArrayOf(1f, -0.7f, 0.85f, -1.15f)
+
+// The still covers' palettes, by URL. Main only.
+private val paletteCache = object : LinkedHashMap<String, MeshPalette>(8, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, MeshPalette>) = size > 8
+}
+
+/** The palette already read for [url]'s still cover, if any. Main only. */
+internal fun cachedArtworkPalette(url: String?): MeshPalette? = url?.let(paletteCache::get)
+
+/** Reads [url]'s palette into the cache ahead of time — see [AutoMixAmbientPrefetch]. Main only. */
+internal suspend fun prepareArtworkPalette(context: PlatformContext, url: String) {
+    if (paletteCache[url] != null) return
+    val request = ImageRequest.Builder(context).data(url).size(128).forPixelAccess().build()
+    val result = SingletonImageLoader.get(context).execute(request)
+    val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return
+    paletteCache[url] = MeshPalette(withContext(Dispatchers.Default) { paletteOf(bitmap) })
+}
 
 /**
  * Four mesh colours drawn from the artwork.

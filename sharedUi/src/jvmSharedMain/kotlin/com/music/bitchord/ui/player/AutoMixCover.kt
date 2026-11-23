@@ -57,9 +57,20 @@ internal object AutoMixPreparedCover {
     private var latest: Pair<Long, DecodedAutoMixCover>? = null
     private var latestMini: Pair<Long, DecodedAutoMixCover>? = null
 
-    fun retain(generation: Long, result: SuccessResult) {
+    /**
+     * The incoming cover's URL, once its decode is in: the backdrops prepare
+     * theirs from it — see [AutoMixAmbientPrefetch], which waits on this — so
+     * they never compete with the cover the reveal needs first.
+     */
+    var ambient by mutableStateOf<Pair<Long, String>?>(null)
+        private set
+
+    fun retain(generation: Long, result: SuccessResult, url: String) {
         latest = result.decodedAutoMixCover()?.let { generation to it }
+        if (latest != null) ambient = generation to url
     }
+
+    fun ambientUrlFor(generation: Long): String? = ambient?.takeIf { it.first == generation }?.second
 
     fun forGeneration(generation: Long): DecodedAutoMixCover? =
         latest?.takeIf { it.first == generation }?.second
@@ -79,6 +90,7 @@ internal object AutoMixPreparedCover {
     fun dropThrough(generation: Long) {
         if (latest?.first?.let { it <= generation } == true) latest = null
         if (latestMini?.first?.let { it <= generation } == true) latestMini = null
+        if (ambient?.first?.let { it <= generation } == true) ambient = null
     }
 }
 
@@ -119,7 +131,7 @@ suspend fun prefetchAutoMixArtwork(
     }
     if (!wantsCover()) return@coroutineScope
     val cover = loader.execute(playerCoverRequest(context, imageUrl.artworkAt(artPx), artPx).build())
-    if (cover is SuccessResult && wantsCover()) AutoMixPreparedCover.retain(generation, cover)
+    if (cover is SuccessResult && wantsCover()) AutoMixPreparedCover.retain(generation, cover, imageUrl)
     miniJob.join()
 }
 
@@ -137,12 +149,17 @@ internal class AutoMixCoverState(
     private val preparedIncoming: (Long) -> DecodedAutoMixCover? = if (miniOutgoing == null) {
         AutoMixPreparedCover::forGeneration
     } else AutoMixPreparedCover::miniForGeneration,
+    /** The incoming cover's URL for the backdrops; the mini player has none. */
+    private val ambientUrl: (Long) -> String? = if (miniOutgoing == null) {
+        AutoMixPreparedCover::ambientUrlFor
+    } else { _ -> null },
 ) {
     private class PairFrames(
         val generation: Long,
         val outgoing: QueueEntryIdentity,
         val incoming: QueueEntryIdentity,
         val frames: AutoMixCoverFrames,
+        val ambient: AutoMixAmbientMix? = null,
     )
 
     private var current: QueueEntryIdentity? = null
@@ -221,10 +238,16 @@ internal class AutoMixCoverState(
                             ?.decodedCoverBefore(visual.generation)
                     val incoming = preparedIncoming(visual.generation)
                     frozen = if (outgoing != null && incoming != null && visual.artworkProgress < 1f) {
+                        val frames = AutoMixCoverFrames(outgoing, incoming, visual.generation) {
+                            AutoMixRevealClock.progress(latest?.takeIf { it.generation == visual.generation }, progress)
+                        }
                         PairFrames(
-                            visual.generation, visual.outgoing.identity, visual.incoming.identity,
-                            AutoMixCoverFrames(outgoing, incoming, visual.generation) {
-                                AutoMixRevealClock.progress(latest?.takeIf { it.generation == visual.generation }, progress)
+                            visual.generation, visual.outgoing.identity, visual.incoming.identity, frames,
+                            // The player's backdrops follow its cover — see [ambientFor].
+                            ambientUrl(visual.generation)?.let { url ->
+                                AutoMixAmbientMix(visual.generation, url) {
+                                    AutoMixArtworkTuning.revealProgress(frames.progress())
+                                }
                             },
                         )
                     } else null
@@ -276,6 +299,17 @@ internal class AutoMixCoverState(
             return if (gate.allows(pair.generation)) pair.frames else pair.selectedFrames(occurrence)
         }
         return promoted?.takeIf { it.first == occurrence }?.second
+    }
+
+    /**
+     * The backdrops' share of the reveal [framesFor] hands the cover, for
+     * exactly as long as the cover is drawing it — see [AutoMixAmbientMix].
+     * Reads composition state that changes only at the mix's boundaries.
+     */
+    fun ambientFor(occurrence: QueueEntryIdentity?, gate: AutoMixArtworkGate = AutoMixArtworkGate()): AutoMixAmbientMix? {
+        val pair = active ?: return null
+        if (occurrence != pair.outgoing && occurrence != pair.incoming) return null
+        return pair.ambient.takeIf { gate.allows(pair.generation) }
     }
 
     /**
