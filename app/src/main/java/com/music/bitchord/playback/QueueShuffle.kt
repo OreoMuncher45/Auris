@@ -65,6 +65,36 @@ object QueueShuffle {
     }
 
     /**
+     * The shuffle a release's Play or Shuffle button asked for, waiting for
+     * the play it goes with. Main thread only.
+     *
+     * Held rather than applied at the tap: that play can still be refused
+     * (the party host holds the controls, no controller yet), and a refused
+     * play must leave the listener's shuffle and its saved order as they were.
+     */
+    private var requestedForNextQueue: Boolean? = null
+
+    /** Asks for shuffle [on] for the queue the very next play builds; see [takeRequestForNextQueue]. */
+    fun requestForNextQueue(on: Boolean) {
+        requestedForNextQueue = on
+    }
+
+    /**
+     * The pending request, cleared — taken by a play as it starts, so a
+     * request never outlives the play it was made for.
+     */
+    fun takeRequestForNextQueue(): Boolean? = requestedForNextQueue.also { requestedForNextQueue = null }
+
+    /** Applies a request [takeRequestForNextQueue] returned, once its play is accepted. */
+    fun applyForNextQueue(on: Boolean?) {
+        when (on) {
+            true -> enableForNextQueue()
+            false -> disableForNextQueue()
+            null -> Unit
+        }
+    }
+
+    /**
      * [enableForNextQueue]'s counterpart, for the Play button beside it: an
      * album or playlist played from the top plays in its own order, whatever
      * shuffle was left on from the last queue.
