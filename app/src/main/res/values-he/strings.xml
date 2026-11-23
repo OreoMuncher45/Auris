@@ -475,6 +475,8 @@
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">אתה מאזין בעיקר סביב %1$s.</string>
     <string name="lyrics_share_title">שיתוף המילים</string>
+    <string name="lyrics_share_show_logo">הצג את הלוגו של Auris</string>
+    <string name="lyrics_share_includes_instrumentals">כולל קטעים אינסטרומנטליים</string>
     <string name="lyrics_share_description">השורות שבחרת, על כרטיס עם העטיפה.</string>
     <string name="lyrics_share_story">המר לסטורי</string>
     <string name="lyrics_share_story_revert">חזרה לכרטיס</string>

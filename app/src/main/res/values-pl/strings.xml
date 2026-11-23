@@ -472,6 +472,8 @@
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">Słuchasz muzyki głównie około %1$s.</string>
     <string name="lyrics_share_title">Udostępnij tekst</string>
+    <string name="lyrics_share_show_logo">Pokaż logo Auris</string>
+    <string name="lyrics_share_includes_instrumentals">Uwzględnij instrumentale</string>
     <string name="lyrics_share_description">Wybrane wersy, ułożone na karcie z okładką.</string>
     <string name="lyrics_share_story">Zmień na relację</string>
     <string name="lyrics_share_story_revert">Wróć do karty</string>

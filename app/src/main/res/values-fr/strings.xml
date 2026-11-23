@@ -512,6 +512,8 @@
     <string name="hours_minutes_short">%1$dh %2$dmin</string>
     <string name="listen_most_around">Vous écoutez surtout vers %1$s.</string>
     <string name="lyrics_share_title">Partager les paroles</string>
+    <string name="lyrics_share_show_logo">Afficher le logo Auris</string>
+    <string name="lyrics_share_includes_instrumentals">Inclure les instrumentaux</string>
     <string name="lyrics_share_description">Les lignes que vous avez choisies, mises en page sur une carte avec la pochette.</string>
     <string name="lyrics_share_story">Convertir en story</string>
     <string name="lyrics_share_story_revert">Revenir à la carte</string>

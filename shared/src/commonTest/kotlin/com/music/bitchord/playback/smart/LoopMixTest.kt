@@ -98,6 +98,40 @@ class LoopMixTest {
         assertTrue(plan.out.loopEnd <= 185)
     }
 
+    /** Level windows from a per-frame RMS, at the analyzer's rate. */
+    private fun shaped(duration: Double, rmsAt: (Int) -> Double): List<CurveWindow> {
+        val frames = (duration * LEVEL_FRAME_RATE).roundToInt()
+        val values = FloatArray(frames) { index -> levelFromRms(rmsAt(index)).toFloat() }
+        return listOf(CurveWindow(0.0, LEVEL_FRAME_RATE, values))
+    }
+
+    @Test
+    fun prefersADrumLedLoopOverALaterWashOfTheSameLevel() {
+        // The tail is a steady wash; 170-190 s steps up and down on every level
+        // frame — a kick on every beat. Same mean loudness, so only the hits
+        // tell them apart, and the drum stretch sits ~20 s before the wash.
+        val out = analysis(120.0, 200.0).copy(
+            levelWindows = shaped(200.0) { index ->
+                if (index in 1700 until 1900) (if (index % 2 == 0) 0.15 else 0.45) else 0.30
+            },
+        )
+        val plan = assertNotNull(plan(out, analysis(120.0, 180.0)))
+        assertTrue(plan.out.loopStart in 170.0..190.0, "drum loop start ${plan.out.loopStart}")
+
+        // The same song without the drums keeps its pick in the tail.
+        val wash = assertNotNull(plan(analysis(120.0, 200.0), analysis(120.0, 180.0)))
+        assertTrue(wash.out.loopStart >= 185.0, "wash loop start ${wash.out.loopStart}")
+    }
+
+    @Test
+    fun aSteadyStretchHasNoDrumHitsAndAQuietOneIsSilence() {
+        val steady = shaped(8.0) { 0.3 }
+        assertEquals(0.0, LoopMix.transientDensity(steady, 0.0, 8.0), 1e-6)
+        val silent = shaped(8.0) { 0.0 }
+        assertTrue(LoopMix.transientDensity(silent, 0.0, 8.0) == 0.0)
+        assertTrue(LoopMix.transientDensity(emptyList(), 0.0, 8.0).isNaN())
+    }
+
     @Test
     fun aMeasuredSilentBarStillRulesOutALoopWhoseOtherBarsAreUnmeasured() {
         // Levels end at 192 s, the last 8 s of them silent: a loop that starts in

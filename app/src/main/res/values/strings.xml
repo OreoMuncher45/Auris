@@ -782,6 +782,8 @@
     <string name="lyrics_share_description">The lines you picked, laid out on a card with the cover.</string>
     <string name="lyrics_share_story">Make it a story</string>
     <string name="lyrics_share_story_revert">Back to the card</string>
+    <string name="lyrics_share_show_logo">Show Auris logo</string>
+    <string name="lyrics_share_includes_instrumentals">Includes instrumentals</string>
     <string name="listening_shape">Your listening pattern</string>
     <string name="member_since">Member since</string>
     <string name="member_since_value">Member since %1$s</string>

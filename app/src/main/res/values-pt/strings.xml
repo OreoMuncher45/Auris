@@ -476,6 +476,8 @@
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">Você ouve mais por volta das %1$s.</string>
     <string name="lyrics_share_title">Partilhar a letra</string>
+    <string name="lyrics_share_show_logo">Mostrar o logotipo Auris</string>
+    <string name="lyrics_share_includes_instrumentals">Incluir instrumentais</string>
     <string name="lyrics_share_description">Os versos que escolheste, compostos num cartão com a capa.</string>
     <string name="lyrics_share_story">Converter em story</string>
     <string name="lyrics_share_story_revert">Voltar ao cartão</string>

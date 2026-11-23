@@ -542,6 +542,8 @@
     <string name="hours_minutes_short">%1$dsa %2$ddk</string>
     <string name="listen_most_around">En çok %1$s civarında dinliyorsun.</string>
     <string name="lyrics_share_title">Şarkı sözlerini paylaş</string>
+    <string name="lyrics_share_show_logo">Auris logosunu göster</string>
+    <string name="lyrics_share_includes_instrumentals">Enstrümantalleri dahil et</string>
     <string name="lyrics_share_description">Seçtiğin satırlar, kapakla birlikte bir kart üzerine yerleştirildi.</string>
     <string name="lyrics_share_story">Hikâyeye çevir</string>
     <string name="lyrics_share_story_revert">Karta dön</string>

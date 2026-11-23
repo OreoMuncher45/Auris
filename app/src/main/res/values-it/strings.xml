@@ -560,6 +560,8 @@
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">Ascolti soprattutto verso le %1$s.</string>
     <string name="lyrics_share_title">Condividi il testo</string>
+    <string name="lyrics_share_show_logo">Mostra il logo Auris</string>
+    <string name="lyrics_share_includes_instrumentals">Includi strumentali</string>
     <string name="lyrics_share_description">I versi che hai scelto, impaginati su una scheda con la copertina.</string>
     <string name="lyrics_share_story">Trasforma in storia</string>
     <string name="lyrics_share_story_revert">Torna alla scheda</string>

@@ -531,6 +531,8 @@
     <string name="hours_minutes_short">%1$dч %2$dм</string>
     <string name="listen_most_around">Чаще всего вы слушаете музыку около %1$s.</string>
     <string name="lyrics_share_title">Поделиться текстом</string>
+    <string name="lyrics_share_show_logo">Показывать логотип Auris</string>
+    <string name="lyrics_share_includes_instrumentals">Включая инструменталы</string>
     <string name="lyrics_share_description">Выбранные строки на карточке вместе с обложкой.</string>
     <string name="lyrics_share_story">Сделать для сторис</string>
     <string name="lyrics_share_story_revert">Вернуть карточку</string>

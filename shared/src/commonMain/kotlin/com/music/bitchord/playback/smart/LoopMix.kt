@@ -90,6 +90,27 @@ object LoopMix {
     /** An RMS this low is silence, whatever the stretch around it does. */
     const val SILENT_RMS = 0.01
 
+    /**
+     * What makes a loop a banger, when more than one qualifies: the level it
+     * drives at, and the drum hits in it (see [transientDensity]).
+     *
+     * The hits are weighed against the level rather than instead of it, so a
+     * loud wash still beats a quiet groove; neither alone carried the pick.
+     */
+    const val BANGER_LOUDNESS_WEIGHT = 1.0
+    const val BANGER_HIT_WEIGHT = 0.5
+
+    /** A frame-to-frame RMS step below this is noise, not a drum hit. */
+    const val MIN_HIT_RMS = 0.05
+
+    /**
+     * How strongly the banger score outweighs the preference for the latest
+     * groove out / earliest in. Scaled so only a clearly better groove moves the
+     * pick away from where it would otherwise land — a wash beside a drop, not a
+     * rounding difference.
+     */
+    const val BANGER_SELECTION_WEIGHT = 100.0
+
     /** How far from the end the outgoing loop is looked for, and from the start the incoming one. */
     const val OUT_SEARCH_SEC = 60.0
     const val IN_SEARCH_SEC = 45.0
@@ -356,45 +377,125 @@ object LoopMix {
             val louds = DoubleArray(loops.size) { quietestBar(analysis.levelWindows, loops[it], bars) }
             val known = louds.filter { !it.isNaN() }.sorted()
             val typical = if (known.isEmpty()) Double.NaN else known[min(known.size - 1, floor(known.size * 0.6).toInt())]
+            // The order [candidates] gives is the preference: the last groove for
+            // the outgoing song, the first for the incoming one. Score every loop
+            // that clears the gates and take the best banger within reach of that
+            // preference, rather than the first one that happens to qualify.
+            val preferred = loops.first().start
+            var best: Clean? = null
+            var bestScore = Double.NEGATIVE_INFINITY
             for ((index, loop) in loops.withIndex()) {
                 val loud = louds[index]
                 if (!loud.isNaN() && (loud < typical * MIN_LOUDNESS || loud <= SILENT_RMS)) {
                     count.quiet++
                     continue
                 }
-                if (sung != null) {
-                    val from = loop.start - LYRIC_GUARD_SEC
-                    val touching = sung.filter { it.start < loop.end && it.end > from }
-                    if (touching.any { it.start < loop.end && it.certainUntil > from }) {
-                        count.lyrics++
-                        continue
+                val clean = when {
+                    sung != null -> {
+                        val from = loop.start - LYRIC_GUARD_SEC
+                        val touching = sung.filter { it.start < loop.end && it.end > from }
+                        if (touching.any { it.start < loop.end && it.certainUntil > from }) {
+                            count.lyrics++
+                            continue
+                        }
+                        if (touching.isEmpty()) {
+                            Clean(loop.start, loop.end, bars, 0.0, Check.LYRICS)
+                        } else {
+                            // Only the guessed tails of open lines reach it: the mask decides those.
+                            val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
+                            if (mask == null) {
+                                count.unmasked++
+                                continue
+                            }
+                            if (mask.share > MAX_SUNG_SHARE || mask.longestRunSec > MAX_SUNG_RUN_SEC) {
+                                count.sung++
+                                continue
+                            }
+                            Clean(loop.start, loop.end, bars, mask.share, Check.LYRICS_AND_MASK)
+                        }
                     }
-                    if (touching.isEmpty()) return Clean(loop.start, loop.end, bars, 0.0, Check.LYRICS)
-                    // Only the guessed tails of open lines reach it: the mask decides those.
-                    val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
-                    if (mask == null) {
-                        count.unmasked++
-                        continue
+
+                    else -> {
+                        val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
+                        if (mask == null) {
+                            count.unmasked++
+                            continue
+                        }
+                        if (mask.share > MAX_SUNG_SHARE || mask.longestRunSec > MAX_SUNG_RUN_SEC) {
+                            count.sung++
+                            continue
+                        }
+                        Clean(loop.start, loop.end, bars, mask.share, Check.MASK)
                     }
-                    if (mask.share > MAX_SUNG_SHARE || mask.longestRunSec > MAX_SUNG_RUN_SEC) {
-                        count.sung++
-                        continue
-                    }
-                    return Clean(loop.start, loop.end, bars, mask.share, Check.LYRICS_AND_MASK)
                 }
-                val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
-                if (mask == null) {
-                    count.unmasked++
-                    continue
+                val score = bangerScore(analysis.levelWindows, loop.start, loop.end, bars) *
+                    BANGER_SELECTION_WEIGHT - abs(loop.start - preferred)
+                if (score > bestScore) {
+                    bestScore = score
+                    best = clean
                 }
-                if (mask.share > MAX_SUNG_SHARE || mask.longestRunSec > MAX_SUNG_RUN_SEC) {
-                    count.sung++
-                    continue
-                }
-                return Clean(loop.start, loop.end, bars, mask.share, Check.MASK)
             }
+            if (best != null) return best
         }
         return null
+    }
+
+    /**
+     * How much of a banger a loop is: how hard it drives off its own level
+     * windows, so a drum-led stretch is chosen over a wash of the same loudness.
+     *
+     * Two things are read from the same RMS frames — the mean level, and how
+     * sharply it steps up between frames (the transients a beat is made of). A
+     * steady pad barely moves; a groove with a kick on every beat steps up on
+     * every hit. Only the shaped part counts: see [transientDensity].
+     *
+     * Pure and total, so the awkward loops — silent, unmeasured, mono — score in
+     * a unit test with nothing playing.
+     */
+    fun bangerScore(windows: List<CurveWindow>, from: Double, to: Double, bars: Int): Double {
+        val loud = quietestBar(windows, Loop(from, to), bars)
+        val hits = transientDensity(windows, from, to)
+        var score = 0.0
+        var weight = 0.0
+        if (!loud.isNaN()) {
+            score += loud * BANGER_LOUDNESS_WEIGHT
+            weight += BANGER_LOUDNESS_WEIGHT
+        }
+        if (!hits.isNaN()) {
+            score += hits * BANGER_HIT_WEIGHT
+            weight += BANGER_HIT_WEIGHT
+        }
+        return if (weight == 0.0) 0.0 else score / weight
+    }
+
+    /**
+     * The drum hits in [from]..[to], from the level windows: the RMS that rises
+     * from one frame to the next, over the seconds measured. A steady stretch
+     * scores zero; a beat that lands every bar steps up on every hit.
+     *
+     * Only jumps clear of [MIN_HIT_RMS] count, and only the part above it, so
+     * the noise floor of a quiet passage cannot read as a groove. NaN where no
+     * frames were measured, so an unmeasured loop is never taken for a banger.
+     */
+    fun transientDensity(windows: List<CurveWindow>, from: Double, to: Double): Double {
+        if (windows.isEmpty() || to <= from) return Double.NaN
+        var rise = 0.0
+        var measured = 0.0
+        for (window in windows) {
+            val frameSec = 1 / window.frameRate
+            val a = max(0, ceil((from - window.startTime) * window.frameRate).toInt())
+            val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
+            if (b - a < 2) continue
+            var previous = rmsFromLevel(window.values[a].toDouble())
+            for (i in a + 1 until b) {
+                val rms = rmsFromLevel(window.values[i].toDouble())
+                val jump = rms - previous
+                if (jump > MIN_HIT_RMS) rise += jump - MIN_HIT_RMS
+                previous = rms
+                measured += frameSec
+            }
+        }
+        return if (measured > 0) rise / measured else Double.NaN
     }
 
     /**

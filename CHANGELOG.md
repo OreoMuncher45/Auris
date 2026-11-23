@@ -5,6 +5,29 @@ This is a test branch that only combines 3.3 unified with 3.4.
 Every Vassista change already merged in the 3.3 / 3.4 lines, plus the still-open
 Vassista PR stack carried on top. Generated from the combined branch; not a release.
 
+## This build — the 3.4 test draft
+
+- **Lyrics sharing, ported from upstream BitChord.** The card is now laid out the
+  way the player animates the panel — the word sweep, the sung-word lift and the
+  held-word swell are all drawn on the card, so a shared verse is the verse that
+  was on screen. A new story shape (the whole 9:16 frame, the passage in a
+  frosted panel) joins the card cut to its lines.
+- **The record's own colour.** The lyrics are no longer white on a template: the
+  card is set in the sleeve's ink — the same palette the now playing screen
+  resolves — and the backdrop is the record's own mesh, so a share reads as this
+  song and no other.
+- **Includes instrumentals.** A skipped run that really held an instrumental
+  break is named ("Instrumental") rather than collapsed to a bare "(...)"; the
+  switch turns it off again. This is the upstream behaviour of dropping the
+  vocal-free stretches, fixed rather than copied.
+- **Show Auris logo.** The mark on the card is now a switch, remembered for the
+  session like the instrumentals one.
+- **AutoMix model.** Loop selection now scores each candidate groove on its own
+  analysis — the level it drives at and the drum hits in it (frame-to-frame RMS
+  transients), gated by the same vocal detection as before — so a drum-led
+  stretch is chosen over a later wash of the same loudness. The latest-out /
+  earliest-in preference still holds unless a clearly better groove is in reach.
+
 ## Added
 
 - Sandboxed extension files so Deezer can decrypt and play ([#74](https://github.com/OreoMuncher45/Auris/pull/74))

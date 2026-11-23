@@ -139,6 +139,7 @@ import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -1617,12 +1618,20 @@ fun NowPlayingScreen(
         haptics = haptics,
     )
     val lyricsShareEnabled = lyricsShareAvailable
+    // The share wears the record's own colour: the same sleeve palette the
+    // player ink itself is resolved from, read here so the words on the card
+    // match what was on screen at the moment they were picked.
+    val shareInkSource = rememberNowPlayingPalette(remoteArt, artPx)
+    val shareInk = remember(shareInkSource) { shareInkSource.fg.toArgb() }
+    val shareMesh = remember(shareInkSource) { shareBackdropColors(shareInkSource) }
     val lyricPicker = rememberLyricsPicker(
         song = song,
         lines = lyrics,
         subLines = lyricsTranslation.subLines,
         artworkUrl = remoteArt,
         haptics = haptics,
+        ink = shareInk,
+        mesh = shareMesh,
         onCard = { overlays.lyricsShare = it },
     )
     // A pick lives in the lyrics panel and goes with it. Back already drops

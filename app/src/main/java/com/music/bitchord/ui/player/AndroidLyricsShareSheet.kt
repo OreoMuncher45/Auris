@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.R
@@ -44,11 +46,12 @@ import com.music.bitchord.ui.replay.ShareAction
 import com.music.bitchord.ui.replay.cacheForSharing
 import com.music.bitchord.ui.replay.saveToGallery
 import com.music.bitchord.ui.replay.sendIntent
+import com.music.bitchord.ui.screens.SettingsSwitch
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
 
 /**
- * The picked lines, drawn, with the two things you can do to the picture.
+ * The picked lines, drawn, with the things you can do to the picture.
  *
  * Built on [PlayerDrawer] rather than on a `ModalBottomSheet` for the same reason
  * as every other sheet in this package: it is inside the player, which is itself
@@ -58,7 +61,10 @@ import kotlinx.coroutines.launch
  *
  * The render happens on a background dispatcher and the preview is a plain
  * `Image` of the result — no second layout pass, no offscreen Compose, and the
- * identical pixels that the Save and Share buttons then write to disk.
+ * identical pixels that the Save and Share buttons then write to disk. The card
+ * wears the record's own colour, carried in on the [request]; re-rendering when
+ * a switch below changes is what makes those switches live rather than a second
+ * share.
  */
 @Composable
 internal fun AndroidLyricsShareSheet(
@@ -76,12 +82,24 @@ internal fun AndroidLyricsShareSheet(
     var saved by remember(request) { mutableStateOf(false) }
     // Same picture, cut to the 9:16 frame a story wants instead of to its lines.
     var story by remember(request) { mutableStateOf(false) }
+    // Remembered for the session: someone who takes the mark off, or keeps the
+    // instrumentals, means it for the next share too.
+    var showLogo by remember { mutableStateOf(true) }
+    var includeInstrumentals by remember { mutableStateOf(true) }
 
-    LaunchedEffect(request, story) {
+    LaunchedEffect(request, story, showLogo, includeInstrumentals) {
         image = null
         failed = false
         saved = false
-        image = runCatching { renderLyricsShareCard(context, request, story) }
+        image = runCatching {
+            renderLyricsShareCard(
+                context = context,
+                card = request,
+                story = story,
+                showLogo = showLogo,
+                includeInstrumentals = includeInstrumentals,
+            )
+        }
             .onFailure { failed = true }
             .getOrNull()
     }
@@ -144,6 +162,24 @@ internal fun AndroidLyricsShareSheet(
                 onClick = {
                     haptics.play(Haptic.Tap)
                     story = !story
+                },
+            )
+
+            ShareToggleRow(
+                label = stringResource(R.string.lyrics_share_show_logo),
+                checked = showLogo,
+                onCheckedChange = {
+                    haptics.play(Haptic.Tap)
+                    showLogo = it
+                },
+            )
+
+            ShareToggleRow(
+                label = stringResource(R.string.lyrics_share_includes_instrumentals),
+                checked = includeInstrumentals,
+                onCheckedChange = {
+                    haptics.play(Haptic.Tap)
+                    includeInstrumentals = it
                 },
             )
 
@@ -215,6 +251,42 @@ internal fun AndroidLyricsShareSheet(
                 )
             }
         }
+    }
+}
+
+/**
+ * One label-and-switch row of the sheet.
+ *
+ * The whole row is the target, not just the switch: a control this size is
+ * looked at, not aimed at, and the switch only shows the state the row holds.
+ */
+@Composable
+private fun ShareToggleRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.10f))
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
+            .padding(start = 18.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color.White,
+            modifier = Modifier.weight(1f),
+        )
+        // The row is the toggle; the switch only shows its state.
+        SettingsSwitch(checked = checked, onCheckedChange = null)
     }
 }
 

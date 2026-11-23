@@ -496,6 +496,8 @@
     <string name="hours_minutes_short">%1$d时%2$d分</string>
     <string name="listen_most_around">你通常在%1$s左右收听最多。</string>
     <string name="lyrics_share_title">分享歌词</string>
+    <string name="lyrics_share_show_logo">显示 Auris 标志</string>
+    <string name="lyrics_share_includes_instrumentals">包含纯音乐段落</string>
     <string name="lyrics_share_description">你选中的几行，连同封面排在一张卡片上。</string>
     <string name="lyrics_share_story">转为快拍尺寸</string>
     <string name="lyrics_share_story_revert">恢复为卡片</string>

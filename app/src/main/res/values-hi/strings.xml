@@ -511,6 +511,8 @@
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">आप सबसे ज़्यादा %1$s के आसपास सुनते हैं।</string>
     <string name="lyrics_share_title">गाने के शब्द साझा करें</string>
+    <string name="lyrics_share_show_logo">Auris लोगो दिखाएँ</string>
+    <string name="lyrics_share_includes_instrumentals">वाद्य संगीत शामिल करें</string>
     <string name="lyrics_share_description">आपकी चुनी हुई पंक्तियाँ, कवर के साथ एक कार्ड पर।</string>
     <string name="lyrics_share_story">स्टोरी बनाएँ</string>
     <string name="lyrics_share_story_revert">कार्ड पर वापस जाएँ</string>

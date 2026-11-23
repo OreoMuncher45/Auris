@@ -496,6 +496,8 @@
     <string name="hours_minutes_short">%1$d時間%2$d分</string>
     <string name="listen_most_around">最もよく聴くのは%1$s頃です。</string>
     <string name="lyrics_share_title">歌詞を共有</string>
+    <string name="lyrics_share_show_logo">Aurisロゴを表示</string>
+    <string name="lyrics_share_includes_instrumentals">インストゥルメンタルを含める</string>
     <string name="lyrics_share_description">選んだ行を、ジャケットと一緒にカードにレイアウトします。</string>
     <string name="lyrics_share_story">ストーリー用にする</string>
     <string name="lyrics_share_story_revert">カードに戻す</string>

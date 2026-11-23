@@ -320,8 +320,7 @@ private fun cbrt(value: Float): Float =
     if (value < 0f) -(-value).pow(1f / 3f) else value.pow(1f / 3f)
 
 /** A colour below this share of the cover is too rare to carry the ink. */
-private const val MIN_SECONDARY_SHARE = 0.04f
-/** A near-grey has no hue worth tinting the ink with. */
+private const val MIN_SECONDARY_SHARE = 0.04f/** A near-grey has no hue worth tinting the ink with. */
 private const val MIN_ACCENT_CHROMA = 0.04f
 private const val MIN_ACCENT_L = 0.10f
 private const val MAX_ACCENT_L = 0.95f
@@ -370,3 +369,17 @@ private const val MAX_INK_CHROMA = 0.22f
 
 /** Binary-search steps for the largest in-gamut chroma; far below a JND. */
 private const val GAMUT_STEPS = 18
+
+/**
+ * The four colours the share card's backdrop mesh is built from: the record's
+ * own accent, walked up its lightness so the card is in the colour the player
+ * was, rather than a second reading of the sleeve that could disagree with it.
+ *
+ * A neutral sleeve yields neutral colours here, which is the point — the card
+ * follows the same palette the player inked itself with, grey sleeve and all.
+ */
+internal fun shareBackdropColors(palette: NowPlayingPalette): List<Int> =
+    SHARE_MESH_LIGHTNESS.map { palette.accent.at(it).toArgb() }
+
+/** Lightness of each mesh colour, dark to light, against the card's own scrim. */
+private val SHARE_MESH_LIGHTNESS = floatArrayOf(0.30f, 0.42f, 0.54f, 0.70f)
