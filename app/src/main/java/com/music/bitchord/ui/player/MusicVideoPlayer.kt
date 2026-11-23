@@ -31,6 +31,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -78,19 +79,35 @@ object MusicVideoEngine {
 
     private const val TAG = "MusicVideo"
 
-    /** Past this the picture jumps to the audio; under it, its rate is nudged. */
-    private const val SEEK_DRIFT_MS = 450L
+    /**
+     * Past this the picture jumps to the audio; under it, its rate is nudged.
+     *
+     * The picture plays its own audio, so it can never really be out of step
+     * with itself — only with the app's own (muted) player, which is what the
+     * scrubber reads. A wide window there is intentional: every jump is a
+     * re-buffer, and a video that kept seeking to close a drift no eye can see
+     * was the buffering this engine was reported for. Over a second of drift is
+     * past what the scrubber reads as exact, and the rate nudge closes the rest
+     * without a seek.
+     */
+    private const val SEEK_DRIFT_MS = 1_200L
     private const val IGNORE_DRIFT_MS = 25L
-    private const val SYNC_EVERY_MS = 250L
+    private const val SYNC_EVERY_MS = 400L
 
     /** No second seek inside this, while the first is still landing. */
-    private const val SEEK_COOLDOWN_MS = 1_500L
+    private const val SEEK_COOLDOWN_MS = 5_000L
 
     /** How long the picture outlives its last surface: a rotation, a sheet reopened. */
     private const val RELEASE_GRACE_MS = 4_000L
 
     /** Bounded ranges, for the same reason as the audio — see [ChunkedDataSource]. */
     private const val CHUNK_BYTES = 1L * 1024 * 1024
+
+    /** Buffer the picture keeps ahead of the playhead, and how much before it starts. */
+    private const val BUFFER_MIN_MS = 30_000
+    private const val BUFFER_MAX_MS = 120_000
+    private const val BUFFER_TO_START_MS = 1_500
+    private const val BUFFER_TO_RESUME_MS = 3_000
 
     /** A googlevideo URL lives about six hours; a resolved stream is reused well inside that. */
     private const val STREAM_TTL_MS = 60 * 60 * 1000L
@@ -299,6 +316,19 @@ object MusicVideoEngine {
     }
 
     private fun ensurePlayer(context: Context): ExoPlayer = player ?: ExoPlayer.Builder(context)
+        // A generous buffer, so a short stall in the network does not surface as
+        // a re-buffer under the picture: the video plays its own audio, so a gap
+        // here is a gap in the song the listener is hearing.
+        .setLoadControl(
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    BUFFER_MIN_MS,
+                    BUFFER_MAX_MS,
+                    BUFFER_TO_START_MS,
+                    BUFFER_TO_RESUME_MS,
+                )
+                .build(),
+        )
         .build()
         .apply {
             // The picture brings its own audio: the video-only rendition is

@@ -1594,7 +1594,12 @@ internal fun BitChordApp(
         if (pauseWhileResolving) c.pause()
         try {
             TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
-            val audio = runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
+            // Off the main thread: the resolve searches the catalogue and can
+            // take seconds, and the reported "freeze" on switching back to
+            // audio was that work running where the frame is drawn.
+            val audio = withContext(Dispatchers.IO) {
+                runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
+            }
             val stillCurrent = c.currentMediaItemIndex == index &&
                 c.currentMediaItem?.mediaId == song.videoId
 
@@ -1683,7 +1688,11 @@ internal fun BitChordApp(
         if (pauseWhileResolving) c.pause()
         try {
             TrackLog.d("Player", "video switch requested for '${song.title}'", song.videoId)
-            val video = runCatching { YtMusicRepository.resolveVideo(song) }.getOrNull()
+            // Off the main thread, as the audio switch is: the catalogue search
+            // it runs is not work for the frame the listener is looking at.
+            val video = withContext(Dispatchers.IO) {
+                runCatching { YtMusicRepository.resolveVideo(song) }.getOrNull()
+            }
             val stillCurrent = c.currentMediaItemIndex == index &&
                 c.currentMediaItem?.mediaId == song.videoId
 
@@ -3864,6 +3873,12 @@ internal fun BitChordApp(
                                     playbackSourceId = song.playbackSourceId,
                                 )
                             }
+                            // The choice sticks: asking for a track's audio is
+                            // asking for audio, so the music videos that follow
+                            // it open as their songs rather than re-upgrading
+                            // one at a time. The setting is the same switch the
+                            // playback settings row drives.
+                            AppSettings.setPreferMusicOnly(true)
                             scope.launch { switchToMusicOnly(song, pauseWhileResolving = false) }
                         }
                         else -> {
@@ -3881,6 +3896,9 @@ internal fun BitChordApp(
                                     playbackSourceId = song.playbackSourceId,
                                 )
                             }
+                            // The inverse: asking for the video is asking to
+                            // watch, and the rows that follow it follow suit.
+                            AppSettings.setPreferMusicOnly(false)
                             scope.launch { switchToVideo(song, pauseWhileResolving = false) }
                         }
                     }

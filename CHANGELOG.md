@@ -7,11 +7,20 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
-- **Lyrics sharing, ported from upstream BitChord.** The card is laid out the way
-  the player animates the panel, and the sheet is upstream's: **Video / Image**,
-  **Gradient / Apple / Spotify** backgrounds (Canvas clips when the track has one),
-  **Convert to card**, and the Auris-logo switch. The card falls back to the
-  record's own colours when the player hands over no backdrop.
+- **Lyrics sharing, back to the 3.4 sheet.** The share is the record-coloured
+  card and video it was before the BitChord port: the card is set in the song's
+  own ink over the record's colour mesh, the sheet is in the player's dark
+  material (its own white-alpha segments and switches), and the card carries the
+  **Auris** mark — not the port's theme-coloured controls and BitChord wordmark.
+  **Video / Image**, **Convert to card**, the logo switch and the instrumentals
+  switch are all as they were.
+- **Readable unsung lines.** A coming line sits at a higher alpha than the
+  player's panel uses, and the line falloff is flatter, so a shared verse is
+  legible a beat before it is sung instead of appearing only as it lights.
+- **Nastaliq for Urdu.** An Urdu line — and an Urdu song's title and artist — is
+  set in the app's bundled nastaliq (`auris_urdu.ttf`), Arabic in its naskh, so
+  the card and the exported video are in the script they are read in rather than
+  in a Latin face. The script is detected per line.
 - **Includes instrumentals.** A skipped run that really held an instrumental break
   is named rather than collapsed to a bare omission; the switch turns it off again.
 - **AutoMix model.** Loop selection now scores each candidate groove on its own
@@ -29,6 +38,13 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 - **The video plays its own audio.** The picture's video-only rendition is merged
   with the track's audio in one ExoPlayer and the app's player goes quiet under
   it, so the sound and the image are one recording and cannot drift apart.
+- **Smooth video playback.** The picture buffers well ahead of the playhead and
+  jumps to the app's clock only on a drift no ear can hear, so a music video no
+  longer re-buffers to close a difference that was never visible.
+- **Switching to audio doesn't freeze the app.** The catalogue resolve behind the
+  switch runs off the main thread, and the choice **sticks**: asking a music
+  video for its audio keeps the tracks after it on their songs, and asking for
+  the video keeps the ones after it on their videos.
 - **No YouTube history.** Search is asked anonymously and play registration is
   off, so nothing the app searches or plays lands in the listener's YouTube app.
 

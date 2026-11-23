@@ -2,23 +2,20 @@ package com.music.bitchord.ui.player
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.BlurMaskFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricLine
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.core.content.res.ResourcesCompat
-import com.music.bitchord.R
 import com.music.bitchord.ui.replay.Fonts
 import com.music.bitchord.ui.replay.drawArtwork
 import com.music.bitchord.ui.replay.drawLogo
@@ -43,6 +40,13 @@ import kotlinx.coroutines.withContext
  * or a chat head expects. Keeping it there is the player's job, by refusing
  * more words at the pick rather than by shrinking them here.
  *
+ * ## The record's own colour
+ *
+ * The words are set in the sleeve's colour — the same ink the player resolved
+ * for the now playing screen, carried in on [LyricsShareRequest.ink] — and the
+ * backdrop is the record's own mesh, also carried in. A share therefore reads
+ * as this song and no other, rather than as a white-on-navy template.
+ *
  * ## Why it isn't Compose
  *
  * `Bitmap` + `android.graphics.Canvas`, exactly as
@@ -52,27 +56,19 @@ import kotlinx.coroutines.withContext
  * software canvas draws identically from API 26 up. The backdrop, the logo, the
  * fonts and the sleeve are shared with the Replay by importing them rather than
  * by copying, so the two cards cannot drift apart.
- *
- * ## Fitting the type
- *
- * A passage can be one line or twenty, so both the size and the height are
- * chosen rather than fixed: the layout is retried down a fixed ladder of sizes
- * until the rows stop overflowing, and the card is then grown to exactly the
- * room those rows take. The bottom rung of that ladder is a floor rather than a
- * last resort — no card ever sets type smaller than it to squeeze a passage
- * in, so a passage too long for the frame lengthens the card instead of being
- * cut, or made small enough to hold a phone at arm's length to read.
  */
 internal suspend fun renderLyricsShareCard(
     context: Context,
     card: LyricsShareRequest,
     /** The 1080×1920 story layout instead: see [layoutStory]. */
     story: Boolean = false,
-    /** The BitChord mark at the top right; without it the passage moves up into its room. */
+    /** The Auris mark at the top right; without it the passage moves up into its room. */
     showLogo: Boolean = true,
     /** No backdrop: the card alone, to lay over a video of one. */
     transparent: Boolean = false,
-): Bitmap = lyricsCardPainter(context, card, story, showLogo, transparent).render(null)
+    /** Draw instrumental breaks between the picks as a labelled marker, not a bare omission. */
+    includeInstrumentals: Boolean = true,
+): Bitmap = lyricsCardPainter(context, card, story, showLogo, transparent, includeInstrumentals).render(null)
 
 /**
  * The card laid out once, ready to be drawn at any moment of the song.
@@ -88,13 +84,18 @@ internal suspend fun lyricsCardPainter(
     story: Boolean = false,
     showLogo: Boolean = true,
     transparent: Boolean = false,
+    includeInstrumentals: Boolean = true,
 ): LyricsCardPainter = withContext(Dispatchers.Default) {
     val type = Fonts(context)
     val cover = card.artworkUrl?.let { loadBitmap(context, it) }
+    // The record's colours: what the player handed over, or the sleeve re-read
+    // here when it handed over none.
+    val mesh = card.mesh.takeIf { it.isNotEmpty() } ?: paletteOf(cover)
+    val ink = card.ink ?: Color.WHITE
     val layout = if (story) {
-        layoutStory(context, type, card, cover, showLogo, transparent)
+        layoutStory(context, type, card, cover, mesh, ink, showLogo, transparent, includeInstrumentals)
     } else {
-        layoutCard(context, type, card, cover, showLogo, transparent)
+        layoutCard(context, type, card, cover, mesh, ink, showLogo, transparent, includeInstrumentals)
     }
     LyricsCardPainter(layout, card.lines)
 }
@@ -120,8 +121,11 @@ private fun layoutCard(
     type: Fonts,
     card: LyricsShareRequest,
     cover: Bitmap?,
+    mesh: List<Int>,
+    ink: Int,
     showLogo: Boolean,
     transparent: Boolean,
+    includeInstrumentals: Boolean,
 ): CardLayout {
     // ── Sizing ──────────────────────────────────────────────────────────────
     // No room is reserved for the words to sit in: they get their own height,
@@ -132,7 +136,7 @@ private fun layoutCard(
     // With no mark the passage starts at the same margin the footer keeps below.
     val headTop = if (showLogo) HEADER_BOTTOM + GAP_ABOVE_BODY else FOOTER_PAD
     val frameRoom = MAX_CARD_H - FOOTER_THUMB - FOOTER_PAD - GAP_BELOW_BODY - headTop
-    val plan = fittestPlan(type, card.lines, frameRoom)
+    val plan = fittestPlan(type, card.lines, frameRoom, ink = ink, includeInstrumentals = includeInstrumentals)
     val bodyTop = headTop
     // The passage ends where its own rows end, and everything under it — the
     // gap, the sleeve credit, the foot — hangs off that. Because the card is
@@ -144,14 +148,14 @@ private fun layoutCard(
 
     val bitmap = Bitmap.createBitmap(CARD_W, cardH.roundToInt(), Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    if (!transparent) drawPlayerBackdrop(canvas, card.backdrop, cover, cardH)
+    if (!transparent) drawRecordBackdrop(canvas, mesh, cardH)
 
     // ── Header ──────────────────────────────────────────────────────────────
     // The mark alone, at the top right — the same one the Replay carries, so
     // two of these cards still read as one family. Nothing else goes above
     // the passage: the picture is the verse, not a caption for it.
     if (showLogo) {
-        val brand = type.heading(46f, 0xE6FFFFFF.toInt()).apply {
+        val brand = type.heading(46f, ink).apply {
             textAlign = Paint.Align.RIGHT
         }
         canvas.drawText(BRAND, CARD_W - CARD_MARGIN, HEADER_BASELINE, brand)
@@ -169,9 +173,9 @@ private fun layoutCard(
     drawArtwork(canvas, cover, card.song.title, CARD_MARGIN, thumbY, FOOTER_THUMB, false)
     val textX = CARD_MARGIN + FOOTER_THUMB + 34f
     val room = CARD_W - CARD_MARGIN - textX
-    val title = type.body(50f, Color.WHITE, bold = true)
+    val title = type.body(50f, Color.WHITE, bold = true).inScript(type, card.song.title)
     canvas.drawText(ellipsised(card.song.title, title, room), textX, thumbY + 74f, title)
-    val artist = type.body(42f, 0x99FFFFFF.toInt())
+    val artist = type.body(42f, ink.withAlpha(0x99)).inScript(type, card.song.artist)
     canvas.drawText(ellipsised(card.song.artist, artist, room), textX, thumbY + 132f, artist)
 
     // ── The passage ─────────────────────────────────────────────────────────
@@ -192,20 +196,31 @@ private fun layoutStory(
     type: Fonts,
     card: LyricsShareRequest,
     cover: Bitmap?,
+    mesh: List<Int>,
+    ink: Int,
     showLogo: Boolean,
     transparent: Boolean,
+    includeInstrumentals: Boolean,
 ): CardLayout {
     val height = MAX_CARD_H
     val bitmap = Bitmap.createBitmap(CARD_W, height.roundToInt(), Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    if (!transparent) drawPlayerBackdrop(canvas, card.backdrop, cover, height)
+    if (!transparent) drawRecordBackdrop(canvas, mesh, height)
 
     val left = (CARD_W - STORY_PANEL_W) / 2f
     val contentW = STORY_PANEL_W - STORY_PAD * 2
     // The song sits on its own lighter band across the foot of the card.
     val bandH = STORY_BAND_PAD * 2 + STORY_THUMB
     val lyricRoom = STORY_PANEL_MAX_H - STORY_PAD * 2 - bandH
-    val plan = fittestPlan(type, card.lines, lyricRoom, contentW, STORY_LADDER)
+    val plan = fittestPlan(
+        type,
+        card.lines,
+        lyricRoom,
+        width = contentW,
+        ladder = STORY_LADDER,
+        ink = ink,
+        includeInstrumentals = includeInstrumentals,
+    )
     val panelH = STORY_PAD + plan.content + STORY_PAD + bandH
     val top = (height - panelH) / 2f
     val panel = RectF(left, top, left + STORY_PANEL_W, top + panelH)
@@ -240,8 +255,8 @@ private fun layoutStory(
     val room = left + STORY_PANEL_W - STORY_PAD - textX
     // Title and artist at one size and nearly one brightness, as in Apple's:
     // the credit is read, not skimmed past.
-    val title = type.body(36f, Color.WHITE, bold = true)
-    val artist = type.body(36f, 0xE6FFFFFF.toInt())
+    val title = type.body(36f, Color.WHITE, bold = true).inScript(type, card.song.title)
+    val artist = type.body(36f, ink.withAlpha(0xE6)).inScript(type, card.song.artist)
     val lines = if (showLogo) 3 else 2
     // The credit's lines, centred as a block on the sleeve beside them.
     val lineH = 44f
@@ -251,21 +266,10 @@ private fun layoutStory(
     canvas.drawText(ellipsised(card.song.artist, artist, room), textX, baseline, artist)
     if (showLogo) {
         baseline += lineH
-        val brand = type.body(30f, 0x99FFFFFF.toInt(), bold = true)
-        val mark = runCatching { ResourcesCompat.getDrawable(context.resources, R.drawable.ic_logo, null) }.getOrNull()
-        var brandX = textX
-        if (mark != null) {
-            val markH = 22f
-            val markW = markH * mark.intrinsicWidth / mark.intrinsicHeight.coerceAtLeast(1)
-            mark.setTint(0x99FFFFFF.toInt())
-            mark.setBounds(
-                brandX.toInt(), (baseline - markH).toInt(),
-                (brandX + markW).toInt(), baseline.toInt(),
-            )
-            mark.draw(canvas)
-            brandX += markW + 8f
-        }
-        canvas.drawText(BRAND, brandX, baseline, brand)
+        val brand = type.body(30f, ink.withAlpha(0x99), bold = true)
+        val brandW = brand.measureText(BRAND)
+        canvas.drawText(BRAND, textX, baseline, brand)
+        drawLogo(canvas, context, textX + brandW + 8f + LOGO_W, baseline)
     }
     return CardLayout(bitmap.width, bitmap.height, bitmap, place(plan, x, top + STORY_PAD))
 }
@@ -483,82 +487,86 @@ internal class LyricsCardPainter internal constructor(
 }
 
 /**
- * The player's backdrop alone, [height] tall at the card's width: what the
+ * The record's backdrop alone, [height] tall at the card's width: what the
  * share video sits on when it has no animated cover to play under the words.
  */
 internal fun renderLyricsShareBackdrop(card: LyricsShareRequest, height: Int): Bitmap {
+    val mesh = card.mesh.takeIf { it.isNotEmpty() } ?: DEFAULT_MESH
     val bitmap = Bitmap.createBitmap(CARD_W, height, Bitmap.Config.ARGB_8888)
-    drawPlayerBackdrop(Canvas(bitmap), card.backdrop, null, height.toFloat())
+    drawRecordBackdrop(Canvas(bitmap), mesh, height.toFloat())
     return bitmap
 }
 
 /**
- * The player's own backdrop — the one the lyrics were picked over — cropped to
- * fill the card from its middle, so the card is in the colours the player was.
- * Black where none was recorded (a full-screen Canvas video draws nothing a
- * layer can keep).
+ * The record's own backdrop, built from [mesh] — the colours the player handed
+ * over, or the sleeve re-read here. Four wide radial glows off a dimmed base,
+ * flattened under a vertical scrim, exactly as the poster's mesh is; the card
+ * is therefore in the colours the player was, and a share reads as this record.
  */
-private fun drawPlayerBackdrop(canvas: Canvas, backdrop: ImageBitmap?, cover: Bitmap?, height: Float) {
-    val source = backdrop?.asAndroidBitmap()
-    if (source == null) {
-        // No captured backdrop (the fork's player has no backdrop layer to hand
-        // over): fall back to the record's own mesh, so the card still wears the
-        // sleeve's colours instead of going black.
-        drawRecordMesh(canvas, paletteOf(cover), height)
-        return
-    }
-    canvas.drawColor(Color.BLACK)
-    // A software canvas can't draw a hardware bitmap, which is what a layer gives.
-    val image = if (source.config == Bitmap.Config.HARDWARE) {
-        source.copy(Bitmap.Config.ARGB_8888, false) ?: return
-    } else {
-        source
-    }
-    val scale = maxOf(CARD_W / image.width.toFloat(), height / image.height)
-    val w = image.width * scale
-    val h = image.height * scale
-    val dst = RectF((CARD_W - w) / 2f, (height - h) / 2f, (CARD_W + w) / 2f, (height + h) / 2f)
-    canvas.drawBitmap(image, null, dst, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-}
+private fun drawRecordBackdrop(canvas: Canvas, mesh: List<Int>, height: Float) {
+    val colors = mesh.ifEmpty { DEFAULT_MESH }
+    canvas.drawColor(dimmed(colors.first()))
 
-
-/**
- * The record's own backdrop when no captured one was handed over: four wide
- * radial glows off the sleeve's palette over a dimmed base, flattened under a
- * vertical scrim — the same recipe the Replay's poster uses.
- */
-private fun drawRecordMesh(canvas: Canvas, colors: List<Int>, height: Float) {
-    fun alpha(c: Int, a: Int) = (c and 0x00FFFFFF) or (a shl 24)
-    val base = colors.firstOrNull() ?: 0xFF101014.toInt()
-    val hsl = FloatArray(3)
-    androidx.core.graphics.ColorUtils.colorToHSL(base, hsl)
-    hsl[2] = 0.10f
-    canvas.drawColor(androidx.core.graphics.ColorUtils.HSLToColor(hsl))
-
-    val anchors = listOf(0.20f to 0.16f, 0.84f to 0.22f, 0.76f to 0.66f, 0.18f to 0.78f)
+    val anchors = listOf(
+        0.20f to 0.16f,
+        0.84f to 0.22f,
+        0.76f to 0.66f,
+        0.18f to 0.78f,
+    )
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     colors.take(4).forEachIndexed { index, color ->
         val (fx, fy) = anchors[index]
         val cx = CARD_W * fx
         val cy = height * fy
         val radius = CARD_W * 0.95f
-        paint.shader = android.graphics.RadialGradient(
-            cx, cy, radius,
-            intArrayOf(alpha(color, 210), alpha(color, 0)),
+        paint.shader = RadialGradient(
+            cx,
+            cy,
+            radius,
+            intArrayOf(color.withAlpha(210), color.withAlpha(0)),
             floatArrayOf(0f, 1f),
-            android.graphics.Shader.TileMode.CLAMP,
+            Shader.TileMode.CLAMP,
         )
         canvas.drawCircle(cx, cy, radius, paint)
     }
     paint.shader = null
-    paint.shader = android.graphics.LinearGradient(
-        0f, 0f, 0f, height,
+
+    // Ink, weighted to the foot where the smaller type is.
+    paint.shader = LinearGradient(
+        0f,
+        0f,
+        0f,
+        height,
         intArrayOf(0x8C000000.toInt(), 0x59000000, 0xCC000000.toInt()),
         floatArrayOf(0f, 0.42f, 1f),
-        android.graphics.Shader.TileMode.CLAMP,
+        Shader.TileMode.CLAMP,
     )
     canvas.drawRect(0f, 0f, CARD_W.toFloat(), height, paint)
     paint.shader = null
+}
+
+/** The colours a card falls back on when the player handed none over. */
+private val DEFAULT_MESH = listOf(0xFF3A1C71.toInt(), 0xFFD76D77.toInt(), 0xFF2B5876.toInt(), 0xFFFFAF7B.toInt())
+
+private fun Int.withAlpha(alpha: Int): Int = (this and 0x00FFFFFF) or (alpha shl 24)
+
+private fun dimmed(color: Int): Int {
+    val hsl = FloatArray(3)
+    androidx.core.graphics.ColorUtils.colorToHSL(color, hsl)
+    hsl[2] = 0.10f
+    return androidx.core.graphics.ColorUtils.HSLToColor(hsl)
+}
+
+/**
+ * [this] paint in [text]'s own script face, when it is not Latin — the title of
+ * an Urdu song and its artist are set in nastaliq too, so the whole card is in
+ * the script it is read in rather than only the verse.
+ */
+private fun Paint.inScript(type: Fonts, text: String): Paint {
+    val face = type.scriptOf(text) ?: return this
+    typeface = face
+    letterSpacing = 0f
+    return this
 }
 
 // ── Fitting ────────────────────────────────────────────────────────────────
@@ -589,8 +597,8 @@ private class Plan(val rows: List<Row>, val ascent: Float) {
 }
 
 /**
- * The largest size on [FIT_LADDER] whose rows still fit in [room], or the
- * bottom rung when none of them do.
+ * The largest size on [ladder] whose rows still fit in [room], or the bottom
+ * rung when none of them do.
  *
  * The bottom rung is a floor rather than a last resort: under it the type stops
  * being worth sharing, so the frame grows to hold the words instead of the
@@ -603,12 +611,14 @@ private fun fittestPlan(
     room: Float,
     width: Float = CARD_CONTENT_W,
     ladder: FloatArray = FIT_LADDER,
+    ink: Int = Color.WHITE,
+    includeInstrumentals: Boolean = true,
 ): Plan {
     for (size in ladder) {
-        val plan = planAt(type, lines, size, width)
+        val plan = planAt(type, lines, size, width, ink, includeInstrumentals)
         if (plan.content <= room) return plan
     }
-    return planAt(type, lines, ladder.last(), width)
+    return planAt(type, lines, ladder.last(), width, ink, includeInstrumentals)
 }
 
 /**
@@ -621,22 +631,37 @@ private fun fittestPlan(
  * the divisions: -0.7 over 34 for the words, -0.7 over 20 for the smaller line
  * the panel hangs underneath them.
  */
-private fun planAt(type: Fonts, lines: List<LyricsShareLine>, size: Float, width: Float): Plan {
-    val primary = type.heading(size, Color.WHITE).apply { letterSpacing = TRACKING }
+private fun planAt(
+    type: Fonts,
+    lines: List<LyricsShareLine>,
+    size: Float,
+    width: Float,
+    ink: Int,
+    includeInstrumentals: Boolean,
+): Plan {
+    val primary = type.heading(size, ink).apply { letterSpacing = TRACKING }
     val subSize = (size * SUB_RATIO).coerceAtLeast(SUB_FLOOR)
-    val secondary = type.heading(subSize, SUB_COLOR).apply { letterSpacing = SUB_TRACKING }
+    val secondary = type.heading(subSize, ink.withAlpha(0xD9)).apply { letterSpacing = SUB_TRACKING }
 
     val rows = mutableListOf<Row>()
     lines.forEachIndexed { index, line ->
         if (line.isGap) {
-            // The skipped lines, as "(...)" — the conventional editorial mark
-            // for an omission. Hung off the left edge with the words, smaller
-            // and a dim grey. Keep its row compact so the marker follows the
-            // preceding lyric closely; the regular gap on the next lyric line
-            // provides the separation below it.
-            val marker = type.body(size * 0.65f, 0x66FFFFFF.toInt())
+            // The skipped lines. An instrumental break, when the reader asked
+            // for them to be kept, is named; a plain omission stays the
+            // conventional editorial "(...)". Both hang off the left edge with
+            // the words, smaller and dim, and keep their row compact so the mark
+            // follows the line above closely.
+            val instrumental = line.isInstrumental && includeInstrumentals
+            val marker = type.body(size * 0.65f, ink.withAlpha(if (instrumental) 0x99 else 0x66))
             val markerHeight = marker.descent() - marker.ascent()
-            rows += Row("(...)", marker, markerHeight, 0f, isGap = true, line = index)
+            rows += Row(
+                text = if (instrumental) INSTRUMENTAL_MARK else OMISSION_MARK,
+                paint = marker,
+                height = markerHeight,
+                gapBefore = 0f,
+                isGap = true,
+                line = index,
+            )
             return@forEachIndexed
         }
         var firstOfLine = true
@@ -653,14 +678,31 @@ private fun planAt(type: Fonts, lines: List<LyricsShareLine>, size: Float, width
             firstOfLine = false
         }
         // Each row remembers where it starts in its line, so the sweep — which
-        // counts characters of the whole line — can be found within it.
+        // counts characters of the whole line — can be found within it. The
+        // face is the script's own: an Urdu line is set in the app's bundled
+        // nastaliq (Arabic in its naskh), wrapped and spaced by that face's
+        // metrics rather than the Latin ones it would otherwise inherit.
         fun rows(source: String, paint: Paint, height: Float, isSub: Boolean) {
             val rtl = isRtl(source)
+            val face = type.scriptOf(source)
+            val row = if (face == null) {
+                paint
+            } else {
+                Paint(paint).apply {
+                    typeface = face
+                    // The panel's tracking is cut for Latin; nastaliq hangs on
+                    // its own diagonal and is only cramped by it.
+                    letterSpacing = 0f
+                }
+            }
+            // Nastaliq carries its descenders well below the line, so the row's
+            // own metrics are the honest advance rather than the Latin leading.
+            val advance = if (face == null) height else row.descent() - row.ascent()
             var cursor = 0
-            wrap(source, paint, width).forEach { piece ->
+            wrap(source, row, width).forEach { piece ->
                 val at = source.indexOf(piece, cursor).takeIf { it >= 0 } ?: cursor
                 cursor = at + piece.length
-                add(piece, paint, height, at, isSub, rtl)
+                add(piece, row, advance, at, isSub, rtl)
             }
         }
         rows(line.text, primary, size * LEAD, isSub = false)
@@ -669,7 +711,7 @@ private fun planAt(type: Fonts, lines: List<LyricsShareLine>, size: Float, width
             rows(sub, secondary, subSize * SUB_LEAD, isSub = true)
         }
     }
-    return Plan(rows, -primary.ascent())
+    return Plan(rows, -(rows.firstOrNull()?.paint?.ascent() ?: primary.ascent()))
 }
 
 // ── Text ───────────────────────────────────────────────────────────────────
@@ -724,7 +766,14 @@ private const val CARD_MARGIN = 72f
 private const val CARD_CONTENT_W = CARD_W - CARD_MARGIN * 2
 
 private const val LOGO_GAP = 20f
-private const val BRAND = "BitChord"
+private const val LOGO_W = 32f
+private const val BRAND = "Auris"
+
+/** What a skipped run with no instrumental in it is marked with. */
+private const val OMISSION_MARK = "(...)"
+
+/** What an instrumental break is named, when the reader keeps them. */
+private const val INSTRUMENTAL_MARK = "Instrumental"
 
 /** Baseline of the mark at the top right, and just under it where the gap starts. */
 private const val HEADER_BASELINE = 132f
@@ -744,10 +793,17 @@ private const val SUB_FLOOR = 24f
 // ── The panel's animation, as ratios of the type size ──────────────────────
 // PlayerLyrics' own numbers, divided by the 34sp its headline is set at.
 
-/** The words not yet sung: the panel's UNSUNG_ALPHA, raised so a shared card's coming lines stay readable. */
+/**
+ * The words not yet sung, raised above the panel's own 0.45.
+ *
+ * On the player's panel the coming lines sit over artwork that is brightening
+ * with them; on a share they sit over a dark card the listener will read a beat
+ * before they are sung, so at the panel's alpha they were all but invisible
+ * until the sweep reached them. Readable is the point of a lyric card.
+ */
 private const val UNSUNG_ALPHA = 0.62f
 
-/** Lines further from the one being sung: the panel's LINE_FALLOFF_ALPHA, flattened to match. */
+/** Lines further from the one being sung, flattened for the same reason. */
 private val LINE_FALLOFF = floatArrayOf(1f, 0.92f, 0.86f, 0.80f, 0.74f)
 
 /** The sweep's soft leading edge: WIPE_FEATHER, 30dp. */
@@ -790,6 +846,7 @@ private const val STORY_PANEL_MAX_H = 1280f
 private const val STORY_PAD = 52f
 private const val STORY_RADIUS = 44f
 private const val STORY_THUMB = 128f
+
 /** Air above and below the sleeve inside the song's band. */
 private const val STORY_BAND_PAD = 40f
 
@@ -812,4 +869,3 @@ private const val SUB_LEAD = 25f / 20f
 
 /** The sub-line against the words above it, and the white it is drawn in. */
 private const val SUB_RATIO = 20f / 34f
-private val SUB_COLOR = 0xD9FFFFFF.toInt()

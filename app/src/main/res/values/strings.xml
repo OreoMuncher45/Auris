@@ -780,13 +780,8 @@
     <string name="listen_most_around">You listen most around %1$s.</string>
     <string name="lyrics_share_title">Share lyrics</string>
     <string name="lyrics_share_description">The lines you picked, laid out on a card with the cover.</string>
-    <string name="lyrics_share_story">Convert to story</string>
-    <string name="lyrics_share_story_revert">Convert to card</string>
-    <string name="lyrics_share_canvas">Canvas</string>
-    <string name="lyrics_share_saving">Saving…</string>
-    <string name="lyrics_share_gradient">Gradient</string>
-    <string name="lyrics_share_apple_canvas" translatable="false">Apple</string>
-    <string name="lyrics_share_spotify_canvas" translatable="false">Spotify</string>
+    <string name="lyrics_share_story">Make it a story</string>
+    <string name="lyrics_share_story_revert">Back to the card</string>
     <string name="lyrics_share_show_logo">Show Auris logo</string>
     <string name="lyrics_share_video">Video</string>
     <string name="lyrics_share_image">Image</string>

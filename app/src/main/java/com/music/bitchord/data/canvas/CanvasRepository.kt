@@ -4,8 +4,6 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -172,41 +170,6 @@ object CanvasRepository {
      * can't make two songs' keys collide. Raw strings rather than [cleaned]
      * ones, so [cached] stays a plain concatenation on the main thread.
      */
-    /**
-     * The clips a share could use, by source: the one already in hand (Tidal or
-     * the community index), Apple's motion artwork, and Spotify's Canvas.
-     *
-     * Every search is held to [CanvasArtwork.matches]; a failure or a mismatch
-     * is simply that source having none. Spotify is left out when the listener
-     * has it off.
-     */
-    suspend fun shareClipsFor(song: Song): Map<CanvasSource, CanvasArtwork> = coroutineScope {
-        val playing = cached(song)
-        val title = song.title.cleaned()
-        val artist = song.artist.cleaned()
-        if (title.isBlank() || artist.isBlank()) {
-            return@coroutineScope playing?.let { mapOf(it.source to it) }.orEmpty()
-        }
-        val album = song.albumName ?: playing?.album
-        fun CanvasArtwork?.ok() = this?.takeIf { it.matches(title, artist, album) }
-        val apple = async(Dispatchers.IO) {
-            if (playing?.source == CanvasSource.APPLE) playing
-            else runCatching { AppleMusicCanvas.search(title, artist, album) }.getOrNull().ok()
-        }
-        val spotify = async(Dispatchers.IO) {
-            when {
-                !AppSettings.spotifyCanvasEnabled.value -> null
-                playing?.source == CanvasSource.SPOTIFY -> playing
-                else -> runCatching { SpotifyCanvas.search(title, artist, album) }.getOrNull().ok()
-            }
-        }
-        buildMap {
-            if (playing?.source == CanvasSource.OTHER) put(CanvasSource.OTHER, playing)
-            apple.await()?.let { put(CanvasSource.APPLE, it) }
-            spotify.await()?.let { put(CanvasSource.SPOTIFY, it) }
-        }
-    }
-
     private fun songKey(song: Song): String =
         "song|${song.videoId.length}:${song.videoId}|${song.title.length}:${song.title}|${song.artist}"
 

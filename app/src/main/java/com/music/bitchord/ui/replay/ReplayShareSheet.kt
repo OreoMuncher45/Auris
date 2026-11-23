@@ -47,7 +47,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -206,9 +205,6 @@ fun ReplayShareSheet(
     }
 }
 
-/** The button's own state: idle, written out, or working on it. */
-private enum class ActionState { IDLE, SAVED, BUSY }
-
 @Composable
 internal fun ShareAction(
     label: String,
@@ -223,40 +219,21 @@ internal fun ShareAction(
     saved: Boolean = false,
     /** What it says once [saved]; falls back to [label] when null. */
     savedLabel: String? = null,
-    /**
-     * A non-accent button's fill in place of the theme's, with white on it —
-     * for a sheet drawn on the player's dark frost rather than on the theme.
-     */
-    plainFill: Color? = null,
-    /**
-     * Working on it — a video being made and written out: a spinner and
-     * [busyLabel] in place of the icon and label, until [saved] or back.
-     */
-    busy: Boolean = false,
-    busyLabel: String? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val background = when {
         accent -> MaterialTheme.colorScheme.primary
-        plainFill != null -> plainFill
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val foreground = when {
         accent -> MaterialTheme.colorScheme.onPrimary
-        plainFill != null -> Color.White
         else -> MaterialTheme.colorScheme.onSurface
     }
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(
-                if (plainFill != null && !accent) {
-                    background.copy(alpha = background.alpha * if (enabled) 1f else 0.4f)
-                } else {
-                    background.copy(alpha = if (enabled) 1f else 0.4f)
-                },
-            )
+            .background(background.copy(alpha = if (enabled) 1f else 0.4f))
             .clickable(enabled = enabled, onClick = onClick)
             // The sides carried nothing but the label's own advance, so the
             // words sat against the pill's edges; the vertical rhythm is the
@@ -268,37 +245,20 @@ internal fun ShareAction(
         // The icon and the word crossfade rather than swap on a frame, so the
         // change reads as the button settling into its new state instead of
         // flickering between two unrelated ones.
-        val state = when {
-            busy -> ActionState.BUSY
-            saved -> ActionState.SAVED
-            else -> ActionState.IDLE
-        }
-        Crossfade(targetState = state, label = "shareAction") { now ->
+        Crossfade(targetState = saved, label = "shareAction") { isSaved ->
             Row(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (now == ActionState.BUSY) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(17.dp),
-                        strokeWidth = 2.dp,
-                        color = foreground,
-                    )
-                } else {
-                    Icon(
-                        imageVector = if (now == ActionState.SAVED) Icons.Rounded.Check else icon,
-                        contentDescription = null,
-                        tint = foreground,
-                        modifier = Modifier.size(19.dp),
-                    )
-                }
+                Icon(
+                    imageVector = if (isSaved) Icons.Rounded.Check else icon,
+                    contentDescription = null,
+                    tint = foreground,
+                    modifier = Modifier.size(19.dp),
+                )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = when (now) {
-                        ActionState.BUSY -> busyLabel ?: label
-                        ActionState.SAVED -> savedLabel ?: label
-                        ActionState.IDLE -> label
-                    },
+                    text = if (isSaved) (savedLabel ?: label) else label,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.W700,
                     color = foreground,

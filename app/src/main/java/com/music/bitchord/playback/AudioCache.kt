@@ -1676,30 +1676,6 @@ object AudioCache {
         upstreamFactory = factory
     }
 
-    /**
-     * A reader over [videoId]'s YouTube Opus, for the lyrics share video to cut
-     * the song's audio from — and the URI to open it with.
-     *
-     * Always the Opus, whatever playback is using: the key is pinned to the
-     * plain `videoId` entry — the one reserved for YouTube's Opus, filled by
-     * Automix's analysis and by any play that wasn't substituted — rather than
-     * derived by the key factory, which would name the `#alt` entry an addon's
-     * file lives in whenever a source is ranked first. The URI carries
-     * [AutomixAnalysisSource]'s marker, so a gap the cache doesn't hold is
-     * resolved straight to YouTube rather than through a source pin. Null until
-     * the cache and the player's upstream exist.
-     */
-    fun opusShareSource(videoId: String): Pair<DataSource.Factory, Uri>? {
-        if (!::cache.isInitialized) return null
-        val upstream = upstreamFactory ?: return null
-        val factory = CacheDataSource.Factory()
-            .setCache(cache)
-            .setUpstreamDataSourceFactory(upstream)
-            .setCacheKeyFactory { videoId }
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-        return factory to Uri.parse(AutomixAnalysisSource.opusUri(videoId))
-    }
-
     private var job: Job? = null
     private var pendingQueue: List<String> = emptyList()
 

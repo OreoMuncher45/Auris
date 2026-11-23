@@ -26,9 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.draw.clip
-import dev.chrisbanes.haze.HazeState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +60,14 @@ data class LyricsShareLine(
     val subText: String?,
     val isGap: Boolean = false,
     /**
+     * A gap that is an instrumental stretch rather than a plain omission: the
+     * lines skipped between two picks really did have a vocal-free break in
+     * them. The card can then say so ("Instrumental") and the share video can
+     * play the break through instead of cutting it, when the reader asks for
+     * instrumentals to be included.
+     */
+    val isInstrumental: Boolean = false,
+    /**
      * Where the line is sung in the track, when the lyrics are synced: the
      * share video plays this stretch of the song and lights the line for it.
      * Null for unsynced lyrics and for gap markers.
@@ -82,14 +88,22 @@ data class LyricsShareLine(
  * The drawing itself is not here: it needs a bitmap and a canvas, which the
  * desktop has no answer for. The player builds one of these and hands it to
  * [PlayerHost.LyricsShareSheet], and the phone is what turns it into a picture.
+ *
+ * @property ink The record's own colour, resolved from the sleeve by the
+ * player's palette — the words on the card are set in it so a share wears the
+ * same colour as the player it was taken from. Null keeps them white.
+ * @property mesh The backdrop's colours, also off the sleeve, top-left first.
+ * Empty falls back to reading the cover again in the card renderer.
  */
 data class LyricsShareRequest(
     val song: Song,
     /** Resolved sleeve — remote URL or local file, whatever the player found. */
     val artworkUrl: String?,
     val lines: List<LyricsShareLine>,
-    /** The player's backdrop as the lines were picked, for the card to sit on. */
-    val backdrop: ImageBitmap? = null,
+    /** The record's lyric ink, ARGB, or null for white. */
+    val ink: Int? = null,
+    /** The record's backdrop colours, ARGB, or empty to re-read the sleeve. */
+    val mesh: List<Int> = emptyList(),
 )
 
 /**
@@ -148,8 +162,6 @@ internal class LyricsPicker(
     val cancel: () -> Unit,
     /** Hands the chosen lines over as a card request. */
     val share: () -> Unit,
-    /** Header share button: enter picking with nothing preselected. */
-    val beginPicking: () -> Unit,
 )
 
 /**
@@ -169,6 +181,10 @@ internal fun rememberLyricsPicker(
     subLines: List<LyricLine>?,
     artworkUrl: String?,
     haptics: Haptics,
+    /** The record's own colour for the words, resolved by the player's palette. */
+    ink: Int? = null,
+    /** The record's backdrop colours, top-left first. */
+    mesh: List<Int> = emptyList(),
     /** Where the finished card goes; never called on a platform that has none. */
     onCard: (LyricsShareRequest) -> Unit,
 ): LyricsPicker {
@@ -246,17 +262,6 @@ internal fun rememberLyricsPicker(
         picks = emptySet()
         overBudget = false
     }
-    // Header share button: the same mode a long-press opens, but with nothing
-    // preselected — the header names no line, so there is nothing to fold in.
-    // Kept separate from [pick] so a tap on it can never seek or toggle.
-    val beginPicking: () -> Unit = {
-        if (!picking) {
-            haptics.play(Haptic.Select)
-            picking = true
-            picks = emptySet()
-            overBudget = false
-        }
-    }
     val share: () -> Unit = {
         val source = lines.orEmpty()
         val chosen = picks.sorted()
@@ -265,9 +270,20 @@ internal fun rememberLyricsPicker(
             chosen.forEachIndexed { position, index ->
                 // A jump over unchosen lines is marked on the card, so the
                 // picture says the verse was cut here rather than letting two
-                // distant halves read as if they ran on from each other.
+                // distant halves read as if they ran on from each other. Where
+                // the skipped run really held an instrumental break, the marker
+                // says that too — the reader can have the break kept (see
+                // [LyricsShareSheet]'s "Includes instrumentals").
                 if (position > 0 && index > chosen[position - 1] + 1) {
-                    add(LyricsShareLine(text = "", subText = null, isGap = true))
+                    val skipped = source.subList(chosen[position - 1] + 1, index)
+                    add(
+                        LyricsShareLine(
+                            text = "",
+                            subText = null,
+                            isGap = true,
+                            isInstrumental = skipped.any { it.isGap },
+                        ),
+                    )
                 }
                 val line = source.getOrNull(index) ?: return@forEachIndexed
                 val sub = subLines?.getOrNull(index)?.text
@@ -286,7 +302,15 @@ internal fun rememberLyricsPicker(
         // An empty pick draws nothing worth sending, so it is simply left alone
         // rather than putting an empty card on screen to be dismissed.
         if (picked.isNotEmpty()) {
-            onCard(LyricsShareRequest(song = song, artworkUrl = artworkUrl, lines = picked))
+            onCard(
+                LyricsShareRequest(
+                    song = song,
+                    artworkUrl = artworkUrl,
+                    lines = picked,
+                    ink = ink,
+                    mesh = mesh,
+                ),
+            )
         }
         cancel()
     }
@@ -299,7 +323,6 @@ internal fun rememberLyricsPicker(
         toggle = toggle,
         cancel = cancel,
         share = share,
-        beginPicking = beginPicking,
     )
 }
 
@@ -324,8 +347,6 @@ internal fun LyricsPickBar(
     shareEnabled: Boolean,
     onCancel: () -> Unit,
     onShare: () -> Unit,
-    /** What the bar frosts over: the queue's source, which holds the backdrop and the lyrics. */
-    hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()

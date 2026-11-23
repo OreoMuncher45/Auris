@@ -1238,8 +1238,6 @@ internal fun SegmentedControl(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    /** Options that can't be picked — left visible but dim, so the shape of the choice stays. */
-    disabled: Set<Int> = emptySet(),
 ) {
     val haptics = LocalHapticFeedback.current
     Row(
@@ -1256,7 +1254,6 @@ internal fun SegmentedControl(
     ) {
         options.forEachIndexed { index, label ->
             val chosen = index == selectedIndex
-            val optionEnabled = enabled && index !in disabled
             val pill by animateColorAsState(
                 targetValue = if (chosen) {
                     MaterialTheme.colorScheme.primary
@@ -1280,13 +1277,12 @@ internal fun SegmentedControl(
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(pill)
-                    .clickable(enabled = optionEnabled) {
+                    .clickable(enabled = enabled) {
                         if (!chosen) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelect(index)
                         }
                     }
-                    .alpha(if (optionEnabled) 1f else 0.4f)
                     .padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
