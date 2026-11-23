@@ -98,6 +98,11 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
             Column(
                 Modifier
                     .fillMaxWidth()
+                    // Measured after the title, rules and actions: a fixed
+                    // height wherever it fits, so the card doesn't resize as
+                    // credits load, and capped to what's left in a short
+                    // window so Retry and Done stay on screen.
+                    .weight(1f, fill = false)
                     .height(INFO_BODY_HEIGHT)
                     .verticalScroll(rememberScrollState()),
             ) {

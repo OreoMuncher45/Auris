@@ -263,10 +263,10 @@
     <string name="queue_selected_count">%1$d ausgewählt</string>
     <string name="queue_close_selection">Auswahl beenden</string>
     <string name="queue_selection_remove">Entfernen</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">Zur Playlist hinzufügen</string>
     <string name="queue_download">Herunterladen</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s entfernt</string>
+    <string name="queue_removed_songs">%1$d Titel entfernt</string>
+    <string name="queue_undo_action">Rückgängig</string>
+    <string name="queue_cleared">„Als Nächstes in der Warteschlange“ geleert</string>
 </resources>

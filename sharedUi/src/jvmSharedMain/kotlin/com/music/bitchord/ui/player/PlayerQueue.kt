@@ -348,7 +348,8 @@ internal fun InlineQueue(
             val live = resolve(original) ?: return@commit false
             when (action) {
                 QueueSwipeAction.REMOVE -> {
-                    onRemove(live.timelineIndex)
+                    val host = editing
+                    if (host != null) host.onSwipeRemove(live.timelineIndex, live.song) else onRemove(live.timelineIndex)
                     true
                 }
                 QueueSwipeAction.QUEUE -> editing?.onSwipeToQueue(live.timelineIndex, live.song) == true
@@ -1047,6 +1048,11 @@ private fun InlineQueueRow(
         }
         // The handle trails the row, where the thumb reaching for it already is.
         if (draggable && selectionChecked == null) {
+            // The detector outlives the composition that installed it, so it
+            // calls whatever the row was last given, not what it started with.
+            val latestDragStart by rememberUpdatedState(onDragStart)
+            val latestDrag by rememberUpdatedState(onDrag)
+            val latestDragEnd by rememberUpdatedState(onDragEnd)
             Spacer(Modifier.width(4.dp))
             Icon(
                 Icons.Rounded.DragHandle,
@@ -1058,16 +1064,34 @@ private fun InlineQueueRow(
                     // back to the row's edge.
                     .offset(x = 4.dp)
                     .alpha(if (controlsVisible) 1f else 0f)
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDragEnd = { onDragEnd() },
-                            onDragCancel = { onDragEnd() },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                onDrag(amount.y)
-                            },
-                        )
+                    // Hidden while the row swipes, and then not draggable either:
+                    // the detector is off until the row settles.
+                    .pointerInput(controlsVisible) {
+                        if (!controlsVisible) return@pointerInput
+                        var dragging = false
+                        try {
+                            detectDragGestures(
+                                onDragStart = {
+                                    dragging = true
+                                    latestDragStart()
+                                },
+                                onDragEnd = {
+                                    dragging = false
+                                    latestDragEnd()
+                                },
+                                onDragCancel = {
+                                    dragging = false
+                                    latestDragEnd()
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    latestDrag(amount.y)
+                                },
+                            )
+                        } finally {
+                            // Torn down mid-drag: end the drag rather than strand it.
+                            if (dragging) latestDragEnd()
+                        }
                     },
             )
         }

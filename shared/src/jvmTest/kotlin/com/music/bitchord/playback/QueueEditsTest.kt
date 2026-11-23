@@ -222,4 +222,14 @@ class QueueEditsTest {
         val after = remove(live, picked)
         assertEquals(ids(live), ids(apply(after, QueueEdits.restorePlan(removal, after, 0))))
     }
+
+    @Test
+    fun undoKeepsConsecutiveRowsInOrderWhenTheirAnchorIsHistory() {
+        val live = listOf("now", "a", "b", "c", "d").map { song(it) }
+        val removal = QueueEdits.capture(live, listOf(1, 2))
+        // Playback moved on to c, the rows' anchor: both fall back to their
+        // old positions, clamped after the playhead, and stay a then b.
+        val after = listOf("now", "c", "d").map { song(it) }
+        assertEquals(listOf("now", "c", "a", "b", "d"), ids(apply(after, QueueEdits.restorePlan(removal, after, 1))))
+    }
 }
