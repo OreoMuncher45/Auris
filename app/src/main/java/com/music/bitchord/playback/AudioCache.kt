@@ -2639,8 +2639,9 @@ object AudioCache {
         }
         // Past the background backoff: that spaces out rounds nobody is
         // waiting on, and this wait has its own deadline and its own bound.
-        requestAnalysisHead(opus, ignoreBackoff = true)
-        var rounds = 1
+        // Counted only if it starts: one turned away by a wipe would otherwise
+        // spend one of the rounds this wait is allowed.
+        var rounds = if (requestAnalysisHead(opus, ignoreBackoff = true)) 1 else 0
         var askedAt = SystemClock.elapsedRealtime()
         val deadline = askedAt + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
