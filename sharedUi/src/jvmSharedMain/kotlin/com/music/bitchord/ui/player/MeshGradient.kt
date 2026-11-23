@@ -280,7 +280,12 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
     var palette by remember(imageUrl) { mutableStateOf(cachedArtworkPalette(imageUrl) ?: MeshPalette(FallbackColors)) }
 
     LaunchedEffect(imageUrl) {
-        if (imageUrl == null || cachedArtworkPalette(imageUrl) != null) return@LaunchedEffect
+        if (imageUrl == null) return@LaunchedEffect
+        // Filled since the state above was seeded — by an Automix prefetch, say.
+        cachedArtworkPalette(imageUrl)?.let {
+            palette = it
+            return@LaunchedEffect
+        }
         val request = ImageRequest.Builder(context)
             .data(imageUrl)
             .size(128) // palette quality is fine at thumbnail size, and it's fast
