@@ -50,6 +50,15 @@ class AutomixAnalysisSourceTest {
     }
 
     @Test
+    fun `an analysis copy's key names the video it was fetched for`() {
+        assertTrue(AutomixAnalysisSource.videoIdOfAnalysisKey(AutomixAnalysisSource.analysisCacheKey("video")) == "video")
+        assertTrue(AutomixAnalysisSource.videoIdOfAnalysisKey(AutomixAnalysisSource.analysisSubstituteKey("video")) == "video")
+        assertTrue(AutomixAnalysisSource.videoIdOfAnalysisKey("video") == null)
+        assertTrue(AutomixAnalysisSource.videoIdOfAnalysisKey("video#alt2") == null)
+        assertTrue(AutomixAnalysisSource.videoIdOfAnalysisKey("#analysis") == null)
+    }
+
+    @Test
     fun `youtube switched off still leaves the analysis reachable`() {
         SourceRegistry.configs.value = listOf(
             SourceConfig(kind = SourceKind.YOUTUBE, enabled = false),

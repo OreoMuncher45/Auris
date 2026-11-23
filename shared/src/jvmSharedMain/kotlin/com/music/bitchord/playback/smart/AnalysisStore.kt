@@ -116,7 +116,7 @@ class AnalysisStore(
             // way, and a wrong beat grid is worse than none — so it is dropped
             // and re-earned rather than migrated.
             require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
-            Entry(stored.toAnalysis(trackId), stored.measuredOn)
+            Entry(stored.toAnalysis(trackId).copy(measuredOn = stored.measuredOn), stored.measuredOn)
         }
             .onFailure {
                 // A half-written or outdated file is worth exactly nothing and
@@ -137,7 +137,7 @@ class AnalysisStore(
     fun save(trackId: String, analysis: TrackAnalysis, measuredOn: String? = null) {
         if (trackId.isBlank() || !analysis.isUsable) return
         val encoded = runCatching {
-            json.encodeToString(Stored.serializer(), Stored.of(analysis).copy(measuredOn = measuredOn))
+            json.encodeToString(Stored.serializer(), Stored.of(analysis).copy(measuredOn = measuredOn ?: analysis.measuredOn))
         }
             .onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
             .getOrNull() ?: return
