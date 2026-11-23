@@ -114,6 +114,14 @@ data class TrackAnalysis(
      * judge one bar's loudness, which the 240-point [energyCurve] is not.
      */
     val levelWindows: List<CurveWindow> = emptyList(),
+    /**
+     * The cache key of the rendition this grid was measured on, or null where
+     * that is not known (a result stored before it was recorded). Part of the
+     * analysis rather than kept beside it, so the grid and its copy are
+     * published as one: a loop deck is cut from exactly this copy, and two
+     * renditions of one length can still have their beats in different places.
+     */
+    val measuredOn: String? = null,
 ) {
     /**
      * Whether this analysis actually describes a track, as opposed to standing
