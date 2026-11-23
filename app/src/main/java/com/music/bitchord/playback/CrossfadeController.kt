@@ -24,6 +24,7 @@ import com.music.bitchord.playback.loopmix.LoopArmGate
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
 import com.music.bitchord.playback.loopmix.LoopMixSession
+import com.music.bitchord.playback.loopmix.LoopPositionJump
 import com.music.bitchord.playback.loopmix.LoopRegion
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
@@ -232,8 +233,12 @@ class CrossfadeController(
     private val syncedLines: suspend (MediaItem, Long) -> List<LyricLine>? = { _, _ -> null },
     /** The loudness-normalisation gain a track plays at, so the incoming deck is levelled like its player. */
     private val loudnessGain: (String) -> Float = { 1f },
-    /** The session's playhead moved on purpose during a loop mix: a loop wrap (true) or a re-anchor (false). */
-    private val onMixPositionJump: (wrapped: Boolean) -> Unit = {},
+    /**
+     * The session's playhead moved on purpose during a loop mix: a loop wrap
+     * (true) or a re-anchor (false). For a wrap, [fromMs] is the position heard
+     * just before it; otherwise -1.
+     */
+    private val onMixPositionJump: (wrapped: Boolean, fromMs: Long) -> Unit = { _, _ -> },
 ) {
 
     private enum class Phase {
@@ -724,6 +729,10 @@ class CrossfadeController(
         visualQueue = emptyList()
         visualCurrentIndex = C.INDEX_UNSET
     }
+
+    /** The same queue entry, playing the same stream or file: a download can replace an entry's stream in place. */
+    private fun samePlayableEntry(expected: MediaItem, actual: MediaItem): Boolean =
+        sameQueueEntry(expected, actual) && expected.localConfiguration == actual.localConfiguration
 
     /** The same queue entry, not just the same song: a song can be queued twice. */
     private fun sameQueueEntry(expected: MediaItem, actual: MediaItem?): Boolean =
@@ -2054,7 +2063,9 @@ class CrossfadeController(
         val held = into.mediaItemCount
         val heldQueue = (0 until held).map(into::getMediaItemAt)
         val liveIncoming = if (late) out.currentMediaItemIndex else out.nextMediaItemIndex
-        when (val plan = QueueReconcile.plan(queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry)) {
+        when (val plan = QueueReconcile.plan(
+            queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry, ::samePlayableEntry,
+        )) {
             QueueReconcile.Bail -> {
                 TrackLog.w(TAG, "the queue changed at or before the incoming track; not handing off")
                 return false
@@ -2722,6 +2733,9 @@ class CrossfadeController(
     private var lastLoopVerdict = ""
     private var loopIncomingStarted = false
     private var lastLoopPositionMs = -1L
+
+    /** Which deck [lastLoopPositionMs] was read off: the incoming one once [handedOff]. */
+    private var lastLoopPositionIncoming = false
     private var lastLoopAnnounceAt = 0L
     private var lastLoopBeat = -1
 
@@ -2756,6 +2770,7 @@ class CrossfadeController(
         } else {
             lyricsAsked[id] = LyricAsk(now, synced, 1)
         }
+        val ask = lyricsAsked[id]
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -2767,7 +2782,8 @@ class CrossfadeController(
                     },
                 )
             }
-            lyricSpans[id] = LyricSpans(spans)
+            // An answer to a request a newer one superseded must not replace the newer one's.
+            if (lyricsAsked[id] === ask) lyricSpans[id] = LyricSpans(spans)
         }
     }
 
@@ -2830,8 +2846,9 @@ class CrossfadeController(
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
         }
+        // The lyric snapshots too: a retry that finds timed lines replaces them, and must plan again.
         val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" +
-            "|$durationMs|$nextDurationMs"
+            "|$durationMs|$nextDurationMs|${System.identityHashCode(outLyrics)}|${System.identityHashCode(inLyrics)}"
         val cached = loopPlanned
         val earliestOutSec = player.currentPosition / 1000.0 + LOOP_SETUP_SECONDS
         // Kept while its loop is still far enough ahead to set up; a seek past
@@ -2924,8 +2941,7 @@ class CrossfadeController(
         armAutoMixVisual(out, into, nextIndex, (0 until out.mediaItemCount).map(out::getMediaItemAt))
         holdAtEnd(out)
         val sampleRate = outPort.sampleRate
-        val inLevel = (loudnessGain(inItem.mediaId) / loudnessGain(outItem.mediaId))
-            .takeIf { it.isFinite() && it > 0f } ?: 1f
+        val inLevel = loopLevel(outItem, inItem)
         TrackLog.d(
             TAG,
             "loop build ${outItem.mediaId}->${inItem.mediaId} at ${sampleRate}Hz, loop at " +
@@ -2975,10 +2991,22 @@ class CrossfadeController(
                     loopFallBack("the queue changed while the decks were building")
                     return@launch
                 }
+                // The deck is levelled like the incoming player as the gains stood
+                // when the build began; one that resolved since would be heard as
+                // a level step at the handover.
+                if (levelMoved(session.inLevel, loopLevel(outItem, inItem))) {
+                    loopFallBack("the loudness gain changed while the decks were building")
+                    return@launch
+                }
                 TrackLog.d(TAG, "loop decks built in ${SystemClock.elapsedRealtime() - began}ms")
-                built.set(null)
                 outgoingItemIndex = out.currentMediaItemIndex
-                armLoop(session, out, into, liveNext, outPort, inPort)
+                // Still owned here until [armLoop] publishes it: one that throws
+                // before then leaves the session to the finally below.
+                try {
+                    armLoop(session, out, into, liveNext, outPort, inPort)
+                } finally {
+                    if (loopSession === session) built.set(null)
+                }
             } finally {
                 built.getAndSet(null)?.close()
             }
@@ -3019,6 +3047,7 @@ class CrossfadeController(
         loopSession = session
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
+        lastLoopPositionIncoming = false
         lastLoopBeat = -1
         TrackLog.d(
             TAG,
@@ -3052,6 +3081,10 @@ class CrossfadeController(
             val nextStillIncoming = liveNext != C.INDEX_UNSET && armed != null &&
                 runCatching { out.getMediaItemAt(liveNext) }.getOrNull()?.let { sameQueueEntry(it, armed) } == true
             loopArmRefusal(out, nextStillIncoming)?.let { return loopBail(it, settle = false) }
+            val outItem = out.currentMediaItem
+            if (outItem != null && levelMoved(session.inLevel, loopLevel(outItem, armed!!))) {
+                return loopFallBack("the loudness gain changed before the loop")
+            }
         }
         if (!session.outPort.tookOver && SleepTimer.fadingOut) {
             return loopBail("the sleep timer is fading out", settle = false)
@@ -3075,12 +3108,22 @@ class CrossfadeController(
         if (m > 1.0) loopBail("the sink never reached the loop")
     }
 
+    /** The incoming deck's level against the outgoing sink's: the ratio of the two players' gains. */
+    private fun loopLevel(outItem: MediaItem, inItem: MediaItem): Float =
+        (loudnessGain(inItem.mediaId) / loudnessGain(outItem.mediaId)).takeIf { it.isFinite() && it > 0f } ?: 1f
+
+    /** More than about half a decibel apart. */
+    private fun levelMoved(built: Float, now: Float): Boolean = abs(now / built - 1f) > LOOP_LEVEL_TOLERANCE
+
     private fun loopArmRefusal(out: ExoPlayer, nextStillIncoming: Boolean): String? = LoopArmGate.refusal(
         bitPerfect = AppSettings.bitPerfect.value,
         automixOn = AppSettings.smartFadeEnabled.value,
         playbackSpeed = AppSettings.playbackSpeed.value,
         repeatMode = out.repeatMode,
         nextStillIncoming = nextStillIncoming,
+        // The settings observer re-applies skip silence to both players without ending the loop.
+        skipSilence = out.skipSilenceEnabled || incoming?.skipSilenceEnabled == true,
+        sleepAfterTrack = SleepTimer.afterTrack.value,
     )
 
     /** The mix is running: starts the incoming player, aligns it, hands the session over, and ends. */
@@ -3097,6 +3140,9 @@ class CrossfadeController(
         // renderer's audio for many bars: settle onto the song ahead in it, at
         // its mix position, rather than play the rest altered.
         if (AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = true)
+        // Automix switched off mid-mix: like a blend, it stops, and the song the
+        // listener is hearing carries on from where the mix has it.
+        if (!AppSettings.smartFadeEnabled.value) return loopBail("Automix was switched off", settle = true)
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {
@@ -3139,11 +3185,26 @@ class CrossfadeController(
         loopAlignJob = scope.launch {
             repeat(LOOP_ALIGN_ROUNDS) { round ->
                 val samples = ArrayList<Double>(LOOP_ALIGN_SAMPLES)
+                var stalled = false
                 repeat(LOOP_ALIGN_SAMPLES) {
-                    session.offsetNow(System.nanoTime())?.let(samples::add)
+                    // A player that buffers keeps extrapolating its last reading
+                    // at 1x: a round with a stall in it measures nothing.
+                    if (outgoing?.isPlaying != true || incoming?.isPlaying != true) stalled = true
+                    if (!stalled) session.offsetNow(System.nanoTime())?.let(samples::add)
                     delay(LOOP_ALIGN_SAMPLE_MS)
                 }
-                if (samples.size < LOOP_ALIGN_SAMPLES / 2) return@launch
+                if (stalled) {
+                    TrackLog.d(TAG, "loop align $round: a player stalled; measuring again")
+                    // Fresh readings from both sinks before the next round.
+                    delay(LOOP_ALIGN_STALL_MS)
+                    return@repeat
+                }
+                if (samples.size < LOOP_ALIGN_SAMPLES / 2) {
+                    // Too few readings to trust: another round, rather than
+                    // leaving the incoming player wherever it started.
+                    delay(LOOP_ALIGN_STALL_MS)
+                    return@repeat
+                }
                 samples.sort()
                 val error = samples[samples.size / 2]
                 val spread = samples.last() - samples.first()
@@ -3193,11 +3254,17 @@ class CrossfadeController(
     private fun announceLoopPosition() {
         val position = loopPositionMs() ?: return
         val now = SystemClock.elapsedRealtime()
-        val wrapped = lastLoopPositionMs >= 0 && position < lastLoopPositionMs - LOOP_WRAP_MS
+        // The handoff moves the playhead onto the other song: a re-anchor, not
+        // a wrap, and the baseline for the next wrap is that song's.
+        val previous = lastLoopPositionMs
+        val jump = LoopPositionJump.classify(previous, lastLoopPositionIncoming, position, handedOff, LOOP_WRAP_MS)
+        val deckChanged = jump == LoopPositionJump.DECK_CHANGE
+        val wrapped = jump == LoopPositionJump.WRAP
         lastLoopPositionMs = position
-        if (wrapped || now - lastLoopAnnounceAt >= LOOP_ANNOUNCE_MS) {
+        lastLoopPositionIncoming = handedOff
+        if (wrapped || deckChanged || now - lastLoopAnnounceAt >= LOOP_ANNOUNCE_MS) {
             lastLoopAnnounceAt = now
-            onMixPositionJump(wrapped)
+            onMixPositionJump(wrapped, if (wrapped) previous else -1L)
         }
     }
 
@@ -3230,8 +3297,22 @@ class CrossfadeController(
         loopSession = null
         session?.outPort?.disarm()
         session?.inPort?.disarm()
+        val survivor = incoming
         finish()
+        settleLoopSpeed(survivor)
         session?.renderer?.let(::closeLater)
+    }
+
+    /**
+     * A loop mix never stretches either player, but the service holds back a
+     * speed change made while one runs (see [isTransitioning]): the player
+     * that carries on takes the listener's speed once the loop is over.
+     */
+    private fun settleLoopSpeed(player: ExoPlayer?) {
+        val speed = AppSettings.playbackSpeed.value
+        if (player != null && abs(player.playbackParameters.speed - speed) >= SPEED_CHANGE_EPSILON) {
+            player.setPlaybackSpeed(speed)
+        }
     }
 
     /**
@@ -3274,6 +3355,7 @@ class CrossfadeController(
         // The session player, after [finish]: idle by then, so the seek's own
         // discontinuity can't come back here as another bail.
         val sessionPlayer = if (wasHandedOff) into else out
+        settleLoopSpeed(sessionPlayer)
         if (sessionPlayer != null && target != null && (settle || (recover && !wasHandedOff && tookOver))) {
             sessionPlayer.seekTo(target)
         }
@@ -4695,6 +4777,12 @@ class CrossfadeController(
         const val LOOP_ALIGN_ROUNDS = 3
         const val LOOP_ALIGN_SAMPLES = 15
         const val LOOP_ALIGN_SAMPLE_MS = 30L
+
+        /** How far the two players' gain ratio may move after the build before the deck's level is wrong: ~0.5 dB. */
+        const val LOOP_LEVEL_TOLERANCE = 0.06f
+
+        /** After a round a stall spoiled: long enough for both sinks to report again. */
+        const val LOOP_ALIGN_STALL_MS = 400L
 
         /** Past the incoming player's takeover, before the outgoing one is retired. */
         const val LOOP_END_MARGIN_SECONDS = 0.3

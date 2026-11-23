@@ -134,7 +134,16 @@ internal class LyricClock(startMs: Long) {
             // Well ahead of the words is the song having moved on while frames
             // stalled, not sample noise: the words go to it.
             val caughtUp = reading.positionMs - displayedMs > STOPPED_CATCH_UP_MS
-            hold(reading.positionMs, nowMs, reading.discontinuity, preserveDisplay = active && sameDiscontinuity && !caughtUp)
+            // A seek still gliding (or announced and not yet taken) has a
+            // display that is neither where the song was nor where it landed:
+            // freezing it would keep the wrong line for the whole pause.
+            val seeking = jumpPending || (!glideStartMs.isNaN() && !correctionGlide)
+            hold(
+                reading.positionMs,
+                nowMs,
+                reading.discontinuity,
+                preserveDisplay = active && sameDiscontinuity && !caughtUp && !seeking,
+            )
         }
         return displayedMs.toLong()
     }

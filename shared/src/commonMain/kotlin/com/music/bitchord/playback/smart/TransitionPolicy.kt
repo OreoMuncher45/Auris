@@ -472,6 +472,25 @@ fun resolveMixOutAnchor(
 }
 
 /**
+ * True when the model measured an opening grid on [analysis] whose tempo, octave
+ * aside, is more than [OPENING_TEMPO_TOLERANCE] off the song-wide tempo. The
+ * planner stretches to the song-wide tempo, so a song mixed in on that opening
+ * can't be held in phase: its trust says nothing about the tempo being matched.
+ */
+fun openingTempoDisagrees(analysis: TrackAnalysis): Boolean {
+    val head = analysis.headBeats ?: return false
+    val bpm = analysis.bpm.orZero()
+    if (!(head.bpm > 0) || !(bpm > 0) || !head.bpm.isFinite() || !bpm.isFinite()) return false
+    var ratio = head.bpm / bpm
+    while (ratio >= 1.5) ratio /= 2
+    while (ratio < 0.75) ratio *= 2
+    return abs(ratio - 1) > OPENING_TEMPO_TOLERANCE
+}
+
+/** How far an opening grid's tempo may sit from the song-wide one and still be the same grid. */
+const val OPENING_TEMPO_TOLERANCE = 0.02
+
+/**
  * Decides how ambitious a transition the stored analysis supports.
  *
  * Reasons are ordered most-disqualifying first so callers can surface
@@ -511,6 +530,8 @@ fun assessTransitionTier(
     if (outgoingConfidence < MIN_BEATMATCH_CONFIDENCE || incomingConfidence < MIN_BEATMATCH_CONFIDENCE) {
         reasons += "beat-confidence"
     }
+    // The opening's confidence only vouches for the tempo the stretch will use when they are one grid.
+    if (openingTempoDisagrees(nextAnalysis)) reasons += "opening-tempo"
 
     return TransitionPolicyVerdict(
         tier = if (reasons.isEmpty()) TransitionTier.BEATMATCHED else TransitionTier.DJ_ASSISTED,

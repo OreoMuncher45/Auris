@@ -76,8 +76,6 @@ object LoopMix {
     const val LYRIC_LEAD_SEC = 0.15
     const val LYRIC_TAIL_SEC = 0.35
 
-    /** The last line, with no stated end and no line after it, is taken as sung this long. */
-    const val LYRIC_OPEN_LINE_SEC = 10.0
 
     /**
      * Of a line with no stated end, how much is surely sung: its opening words.
@@ -195,17 +193,16 @@ object LoopMix {
             candidates = { bars -> loopsBetween(out.tailBeats, outGrid, outFirst, outEnd, bars).asReversed() },
             analysis = out,
             sung = sungOut,
-            beatSec = outGrid.beatSec,
             count = outCount,
         ) ?: return null.also { why?.append("outgoing: ")?.append(outCount) }
 
         // incoming: the earliest instrumental loop in its opening
         val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inGrid.barSec, inDuration - 20)
         val inPick = firstClean(
-            candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars) },
+            // Starting inside the opening search, ending where it must.
+            candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars).filter { it.start <= IN_SEARCH_SEC } },
             analysis = inn,
             sung = sungIn,
-            beatSec = inGrid.beatSec,
             count = inCount,
         ) ?: return null.also { why?.append("incoming: ")?.append(inCount) }
 
@@ -338,11 +335,16 @@ object LoopMix {
         }
     }
 
+    /**
+     * The beat before a loop, on the grid that cut it: a measured side's own
+     * tempo, which can differ from the song-wide one, or the constant grid's.
+     */
+    private fun loopBeat(loop: Loop, bars: Int): Double = (loop.end - loop.start) / (bars * 4)
+
     private fun firstClean(
         candidates: (Int) -> List<Loop>,
         analysis: TrackAnalysis,
         sung: List<Span>?,
-        beatSec: Double,
         count: Rejections,
     ): Clean? {
         for (bars in LOOP_LENGTHS) {
@@ -367,7 +369,7 @@ object LoopMix {
                     }
                     if (touching.isEmpty()) return Clean(loop.start, loop.end, bars, 0.0, Check.LYRICS)
                     // Only the guessed tails of open lines reach it: the mask decides those.
-                    val mask = maskStats(analysis.vocalWindows, loop.start - beatSec, loop.end)
+                    val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
                     if (mask == null) {
                         count.unmasked++
                         continue
@@ -378,7 +380,7 @@ object LoopMix {
                     }
                     return Clean(loop.start, loop.end, bars, mask.share, Check.LYRICS_AND_MASK)
                 }
-                val mask = maskStats(analysis.vocalWindows, loop.start - beatSec, loop.end)
+                val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
                 if (mask == null) {
                     count.unmasked++
                     continue
@@ -446,18 +448,22 @@ object LoopMix {
             val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 val t = window.startTime + i * frameSec
-                if (t < reach - frameSec * 0.5) continue
+                val end = t + frameSec
+                // Only the part of a frame past what is already measured counts:
+                // windows overlap at their seams, and not always on the same grid.
+                if (end <= reach + 1e-9) continue
                 if (t > reach + frameSec * 0.5) runSec = 0.0
-                measuredSec += frameSec
+                val added = end - max(t, reach)
+                measuredSec += added
                 // Inclusive, as the transition policy reads the same threshold.
                 if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {
-                    sungSec += frameSec
-                    runSec += frameSec
+                    sungSec += added
+                    runSec += added
                     longestSec = max(longestSec, runSec)
                 } else {
                     runSec = 0.0
                 }
-                reach = t + frameSec
+                reach = end
             }
         }
         return if (measuredSec > 0 && measuredSec >= (to - from) * MIN_MASK_COVERAGE - 1e-9) {
@@ -470,7 +476,7 @@ object LoopMix {
     /**
      * A song's sung stretches from its synced lyric lines: each from just before
      * its start to just after its end. A line with no stated end is taken as sung
-     * until the next line (the last one for [LYRIC_OPEN_LINE_SEC]), its first
+     * until the next line (the last one until the song ends), its first
      * [OPEN_LINE_CERTAIN_SEC] for sure and the rest left to the vocal mask. That
      * can only make a loop pickier, never let a word through: a cap short of the
      * next line let a line still being sung clear a loop on the lyrics alone.
@@ -486,7 +492,8 @@ object LoopMix {
             val end = if (stated) {
                 line.endMs!! / 1000.0
             } else {
-                next?.let { it / 1000.0 } ?: (start + LYRIC_OPEN_LINE_SEC)
+                // The last line says nothing about when the voice stops.
+                next?.let { it / 1000.0 } ?: Double.POSITIVE_INFINITY
             }
             val certain = if (stated) end else min(end, start + OPEN_LINE_CERTAIN_SEC)
             spans += Span(start - LYRIC_LEAD_SEC, end + LYRIC_TAIL_SEC, certain + LYRIC_TAIL_SEC)

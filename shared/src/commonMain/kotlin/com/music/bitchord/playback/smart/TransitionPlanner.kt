@@ -109,10 +109,11 @@ private val SPOKEN_TEXT = Regex(
  * refused a mix, and a refused pair gets no seek-bar marker either.
  */
 private val LIVE_TEXT = Regex(
-    // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)", "(Live 2016)".
-    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
+    // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
+    // "(Live 2016)", "(Live, 2016)".
+    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
         // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016".
-        """|[-–—]\s*live(?:\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b.*)?\s*$""",
+        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b.*)?\s*$""",
     RegexOption.IGNORE_CASE,
 )
 
@@ -472,18 +473,24 @@ fun latestIncomingCue(length: Double): Double =
  * an arrangement overlap or a stretch can still carry a cue past the line.
  */
 private fun capIncomingSkip(plan: TransitionPlan, nextAnalysis: TrackAnalysis, nextLength: Double): TransitionPlan {
-    val latest = latestIncomingCue(nextLength)
-    if (plan.incomingCueTime <= latest) return plan
-    val beat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
-        ?: if (nextAnalysis.bpm.orZero() > 0) 60 / nextAnalysis.bpm else 0.0
-    val over = plan.incomingCueTime - latest
-    val shift = if (beat > 0) ceil(over / (4 * beat)) * 4 * beat else over
-    val cue = max(0.0, plan.incomingCueTime - shift)
+    val cue = cappedIncomingCue(plan.incomingCueTime, nextAnalysis, nextLength)
+    if (cue == plan.incomingCueTime) return plan
     val moved = plan.incomingCueTime - cue
     return plan.copy(
         incomingCueTime = cue,
         incomingHandoffTime = max(cue, plan.incomingHandoffTime - moved),
     )
+}
+
+/** [cue] pulled back by whole incoming bars to within [latestIncomingCue]; unchanged when it already is. */
+private fun cappedIncomingCue(cue: Double, nextAnalysis: TrackAnalysis, nextLength: Double): Double {
+    val latest = latestIncomingCue(nextLength)
+    if (cue <= latest) return cue
+    val beat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
+        ?: if (nextAnalysis.bpm.orZero() > 0) 60 / nextAnalysis.bpm else 0.0
+    val over = cue - latest
+    val shift = if (beat > 0) ceil(over / (4 * beat)) * 4 * beat else over
+    return max(0.0, cue - shift)
 }
 
 /** Where the incoming track first makes sound, so the fade is not cued into its lead-in silence. */
@@ -579,8 +586,11 @@ private fun phraseBarPlan(
         downbeats.minByOrNull { abs(it - nominalEnd) }
             ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
     }
-    if (measuredEnd != null && abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
-    val transitionEnd = measuredEnd ?: nominalEnd
+    // Neither edge measured (no bar lines near either): arithmetic bars, which
+    // the adaptive plan handles better.
+    if (measuredEnd == null) return null
+    if (abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
+    val transitionEnd = measuredEnd
     if (transitionEnd > length + 0.05) return null
     val overlapSeconds = transitionEnd - transitionStart
     if (overlapSeconds <= 0) return null
@@ -607,8 +617,12 @@ private fun phraseBarPlan(
     // drop would. A beat-matched pair cues on the incoming song's first measured
     // downbeat from there, so its bar one meets the outgoing one; the filter mix
     // has no shared grid and keeps the audible start.
+    // On the grid the policy trusted: the opening's own, where the model
+    // measured one. A trusted opening with no bar line to cue on gets no phrase.
+    val cueGrid = nextAnalysis.headBeats?.downbeats?.takeIf { it.isNotEmpty() } ?: nextAnalysis.downbeats
     val finalIncomingCueTime = if (beatmatched) {
-        nextAnalysis.downbeats.firstOrNull { it.isFinite() && it >= audibleStart - 0.05 } ?: audibleStart
+        cueGrid.firstOrNull { it.isFinite() && it >= audibleStart - 0.05 }
+            ?: if (nextAnalysis.headBeats != null) return null else audibleStart
     } else {
         audibleStart
     }
@@ -922,8 +936,10 @@ fun incomingMixInPoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE
     val beatSeconds = analysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (analysis.bpm.orZero() > 0) 60 / analysis.bpm else 0.0
     val tolerance = max(0.5, beatSeconds * 2)
+    // A drop needs an intro to fade over: a ranked candidate at the very start
+    // is passed over for the next one in reach, not taken as "none".
     val target = listOfNotNull(
-        rankMixInCandidates(analysis).firstOrNull { it.time <= latest }?.time,
+        rankMixInCandidates(analysis).firstOrNull { it.time > 0 && it.time <= latest }?.time,
         analysis.mixInTime,
     )
         .firstOrNull { it.isFinite() && it > 0 && it <= latest }
@@ -1041,7 +1057,8 @@ fun planWsolaTransition(
     }
 
     val overlapBeats = min(fadeBeats, coverableBeats)
-    if (overlapBeats < 1) return WsolaPlanResult.Refused("incoming-no-intro")
+    // Under one bar of intro is no fade at all: the plain fallback takes it.
+    if (overlapBeats < MIN_FADE_BEATS) return WsolaPlanResult.Refused("incoming-no-intro")
 
     val outgoingOverlapSeconds = overlapBeats * outgoingBeatSeconds
     val overlapSeconds = overlapBeats * incomingBeatSeconds
@@ -1256,7 +1273,7 @@ private class PairTraits(analysis: TrackAnalysis, nextAnalysis: TrackAnalysis) {
      * be held in phase. The incoming song is mixed in on its opening, so its
      * trust is the head grid's own where the model measured one.
      */
-    val phaseLockable = currentBpm > 0 && nextBpm > 0 && !tempoFar &&
+    val phaseLockable = currentBpm > 0 && nextBpm > 0 && !tempoFar && !openingTempoDisagrees(nextAnalysis) &&
         analysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE &&
         (nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE
 
@@ -1503,16 +1520,35 @@ private fun clampToMixWindow(plan: TransitionPlan, length: Double, playbackTime:
     var result = plan
     val earliestStart = (length - MIX_WINDOW_SECONDS).coerceAtLeast(0.0)
     if (result.transitionStart < earliestStart) {
-        val end = result.transitionEnd.coerceAtLeast(earliestStart)
+        // Entirely before the window: nothing left to mix.
+        if (result.transitionEnd <= earliestStart) return blocked("mix-window")
+        val end = result.transitionEnd
+        val span = (end - earliestStart).coerceAtLeast(0.0)
         result = result.copy(
             shouldStart = playbackTime >= earliestStart,
             transitionStart = earliestStart,
             transitionEnd = end,
-            fadeSeconds = (end - earliestStart).coerceAtLeast(0.0),
+            fadeSeconds = span,
+            handoffDuration = min(result.handoffDuration, span),
         )
     }
     if (result.incomingCueTime > MIX_WINDOW_SECONDS) {
         result = result.copy(incomingCueTime = MIX_WINDOW_SECONDS)
+    }
+    // The incoming side of the overlap must end inside its first window too:
+    // a late cue shortens the overlap from its start, keeping the exit.
+    val rate = result.incomingPlaybackRate.takeIf { it > 0 } ?: 1.0
+    val room = (MIX_WINDOW_SECONDS - result.incomingCueTime) / rate
+    val span = result.transitionEnd - result.transitionStart
+    if (span > room) {
+        if (room <= 0.0) return blocked("mix-window")
+        val start = result.transitionEnd - room
+        result = result.copy(
+            shouldStart = playbackTime >= start,
+            transitionStart = start,
+            fadeSeconds = room,
+            handoffDuration = min(result.handoffDuration, room),
+        )
     }
     return result
 }
@@ -1663,7 +1699,11 @@ private fun planTransitionInner(
             phraseBars = phraseBars,
             mixAnchor = mixAnchor,
             advanced = advanced,
-        )?.let { plan ->
+        )?.takeIf { plan ->
+            // A measured cue past the skip limit is not this phrase any more once
+            // capped: the adaptive plan takes the pair instead.
+            plan.incomingCueTime <= latestIncomingCue(nextLength) + 1e-9
+        }?.let { plan ->
             if (playbackTime < plan.transitionEnd) {
                 val started = playbackTime >= plan.transitionStart
                 return capIncomingSkip(
@@ -1760,10 +1800,16 @@ private fun mixPlan(
     // Advanced also blends any pair the stretch window matches on two trusted
     // grids, slowed down or sped up — the 5-10% apart that used to be left to
     // a filter ride.
+    // The incoming song is mixed in on its opening: a head grid the model
+    // measured and could not trust says its beat there is no match to blend on,
+    // whatever the outgoing grid says.
+    val incomingOpening = nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()
+    val openingUntrusted = nextAnalysis.headBeats != null &&
+        (incomingOpening < MIN_DJ_CONFIDENCE || openingTempoDisagrees(nextAnalysis))
     val sameBeatBlend =
-        currentBpm > 0 && nextBpm > 0 &&
+        currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
-            (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
+            (analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE || incomingOpening >= MIN_DJ_CONFIDENCE) ||
             traits?.phaseLockable == true
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
@@ -1831,7 +1877,10 @@ private fun mixPlan(
 
     if (sameBeatBlend && beatSeconds > 0) {
         val introDropTime = incomingHandoffTime / max(0.8, incomingPlaybackRate)
-        val clamped = clamp(introDropTime, min(12.0, maximumOverlap), maximumOverlap)
+        // At least 12 s of intro under the outgoing song, unless the adaptive
+        // sizing asked for less (a key clash, a sung overlap): then its length.
+        val floor = min(min(12.0, maximumOverlap), max(overlap, handoffSeconds))
+        val clamped = clamp(introDropTime, floor, maximumOverlap)
         val totalOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - totalOverlap)
         val earliestTransitionStart = max(0.0, mixEnd - maximumOverlap)
@@ -1863,13 +1912,21 @@ private fun mixPlan(
     }
 
     val alignedOverlap = mixEnd - transitionStart
+    // The skip cap first, so the vocal check and the gesture it picks describe
+    // the audio that will really play in the overlap.
+    val cappedCueTime = cappedIncomingCue(finalIncomingCueTime, nextAnalysis, nextLength)
+    val cappedHandoffTime = if (cappedCueTime == finalIncomingCueTime) {
+        incomingHandoffTime
+    } else {
+        max(cappedCueTime, incomingHandoffTime - (finalIncomingCueTime - cappedCueTime))
+    }
     val hasBassContent = analysis.lowEnergyCurve.isNotEmpty() || nextAnalysis.lowEnergyCurve.isNotEmpty()
     val measuredVocalOverlap = plannedVocalOverlap(
         analysis = analysis,
         nextAnalysis = nextAnalysis,
         transitionStart = transitionStart,
         transitionEnd = mixEnd,
-        incomingCueTime = finalIncomingCueTime,
+        incomingCueTime = cappedCueTime,
         incomingPlaybackRate = incomingPlaybackRate,
     )
     // A missing time mask must not mean "instrumental". Whole-track vocal
@@ -1895,8 +1952,8 @@ private fun mixPlan(
         fadeSeconds = alignedOverlap,
         handoffStartSeconds = 0.0,
         handoffDuration = alignedOverlap,
-        incomingCueTime = finalIncomingCueTime,
-        incomingHandoffTime = incomingHandoffTime,
+        incomingCueTime = cappedCueTime,
+        incomingHandoffTime = cappedHandoffTime,
         incomingPlaybackRate = incomingRateFor(incomingPlaybackRate, traits != null),
         outgoingPlaybackRate = outgoingRateFor(incomingPlaybackRate, traits != null),
         pickupSeconds = pickupSeconds,

@@ -1099,6 +1099,13 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
 suspend fun MediaController.playSongs(
     songs: List<Song>,
     startIndex: Int,
+    /**
+     * The shuffle a Play or Shuffle button asked for with this play
+     * ([QueueShuffle.takeRequestForNextQueue]), or null to keep the current
+     * one. Applied only once the play is accepted: a superseded play leaves
+     * the shuffle setting and its saved order as they were.
+     */
+    shuffleRequest: Boolean? = null,
     /** False once a newer play request has started; the queue is then left to it. */
     stillCurrent: () -> Boolean = { true },
 ): Boolean {
@@ -1106,21 +1113,51 @@ suspend fun MediaController.playSongs(
     // A queue started while shuffle is on goes in shuffled rather than being
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
-    val shuffled = QueueShuffle.enabled.value
-    val items = withContext(Dispatchers.Default) {
-        val queue = if (shuffled) {
-            QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
-        } else {
-            songs
+    val (shuffled, items) = buildForShuffleState(
+        // A button's request fixes the mode for this queue; otherwise the
+        // listener's own setting, read again once the build is done.
+        shuffleEnabled = { shuffleRequest ?: QueueShuffle.enabled.value },
+        stillCurrent = stillCurrent,
+    ) { shuffled ->
+        withContext(Dispatchers.Default) {
+            val queue = if (shuffled) {
+                QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
+            } else {
+                songs
+            }
+            queue.map { it.toMediaItem() }
         }
-        queue.map { it.toMediaItem() }
-    }
-    if (!stillCurrent()) return false
+    } ?: return false
+    QueueShuffle.applyForNextQueue(shuffleRequest)
     if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
     play()
     return true
+}
+
+/**
+ * Builds a queue for the shuffle state current when it is committed.
+ *
+ * The build runs off the main thread, and shuffle can be switched meanwhile
+ * (from Android Auto, say); a queue built for the old state would then go in
+ * in the wrong order while the session reports the new one. So the state is
+ * read again once the build is done, and the queue rebuilt if it moved. The
+ * caller commits on the thread that applies shuffle changes, so nothing moves
+ * between the last check and the commit. Null once [stillCurrent] is false: a
+ * newer play request owns the queue.
+ */
+internal suspend fun <T> buildForShuffleState(
+    shuffleEnabled: () -> Boolean,
+    stillCurrent: () -> Boolean,
+    build: suspend (shuffled: Boolean) -> T,
+): Pair<Boolean, T>? {
+    while (true) {
+        val shuffled = shuffleEnabled()
+        val built = build(shuffled)
+        if (!stillCurrent()) return null
+        if (shuffleEnabled() == shuffled) return shuffled to built
+    }
 }
 
 /**
