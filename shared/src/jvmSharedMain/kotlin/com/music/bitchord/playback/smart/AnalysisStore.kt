@@ -173,10 +173,18 @@ class AnalysisStore(
      * analysis.
      */
     private fun prune() {
-        val files = directory.listFiles() ?: return
-        if (files.size <= MAX_ENTRIES) return
-        files.sortedBy { it.lastModified() }
-            .take(files.size - MAX_ENTRIES)
+        synchronized(files) { pruneLocked() }
+    }
+
+    private fun pruneLocked() {
+        // Under the same lock as a save's replacement, listing and age checks
+        // included: otherwise a save could refresh the entry chosen as oldest
+        // between the choice and the delete, and the fresh result was the one
+        // thrown away.
+        val entries = directory.listFiles() ?: return
+        if (entries.size <= MAX_ENTRIES) return
+        entries.sortedBy { it.lastModified() }
+            .take(entries.size - MAX_ENTRIES)
             .forEach { it.delete() }
     }
 
@@ -307,7 +315,9 @@ class AnalysisStore(
                 side.beats.map(::round),
                 side.downbeats.map(::round),
                 side.bpm,
-                round(side.confidence),
+                // Not rounded: it is compared against eligibility thresholds,
+                // and 0.5496 stored as 0.55 passed one it failed in memory.
+                side.confidence,
             )
         }
     }
