@@ -325,7 +325,13 @@ object AudioCache {
         // No round is admitted from the snapshot until the disk is clear, and
         // the rounds in it are no longer anyone's, so none of them touches the
         // bookkeeping on the way out.
+        //
+        // Wipes are chained: each waits for the one before it. A second clear
+        // finds the registry already emptied by the first, so on its own it
+        // waited for nothing and reported done while the first wipe's writers
+        // were still stopping.
         val analysing: List<Job>
+        lateinit var wipe: Job
         synchronized(analysisAdmission) {
             wipesRunning++
             analysing = analysisJobs.values.toList()
@@ -335,21 +341,31 @@ object AudioCache {
             analysisHeadWant.clear()
             analysisHeadFailures.clear()
             analysisHeadRetryAt.clear()
+            val previous = lastWipe
+            wipe = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    previous?.join()
+                    // A round still writing would put its bytes back into the wiped cache.
+                    analysing.forEach { it.join() }
+                    cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
+                } finally {
+                    synchronized(analysisAdmission) {
+                        wipesRunning--
+                        if (lastWipe === wipe) lastWipe = null
+                    }
+                }
+                _contentsChanged.value++
+                withContext(Dispatchers.Main) { onComplete() }
+            }
+            lastWipe = wipe
         }
         analysing.forEach { it.cancel() }
         renditionKeys.clear()
-        scope.launch {
-            try {
-                // A round still writing would put its bytes back into the wiped cache.
-                analysing.forEach { it.join() }
-                cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
-            } finally {
-                synchronized(analysisAdmission) { wipesRunning-- }
-            }
-            _contentsChanged.value++
-            withContext(Dispatchers.Main) { onComplete() }
-        }
+        wipe.start()
     }
+
+    /** The newest [clear] still running, which the next one waits for. Guarded by [analysisAdmission]. */
+    private var lastWipe: Job? = null
 
     /**
      * Throws away everything held for the track [uri] plays, so the next open
