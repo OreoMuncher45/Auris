@@ -144,18 +144,23 @@ object Innertube {
      * and changes only the channel, so a cache of one listener's answers
      * compares this rather than the cookie. Rebuilt only when either changes.
      */
-    @Volatile
-    var listener: String? = null
-        private set
+    val listener: String? get() = published.listener
 
     /**
      * Bumped each time [listener] changes. Unlike the listener itself it tells
      * an A→B→A switch apart from no switch at all, so an answer requested
      * before the change is never kept as the current listener's.
      */
+    val listenerGeneration: Long get() = published.generation
+
+    /**
+     * [listener] and [listenerGeneration], published together in one write:
+     * a reader never sees the new account under the old generation.
+     */
+    private class PublishedListener(val listener: String?, val generation: Long)
+
     @Volatile
-    var listenerGeneration: Long = 0L
-        private set
+    private var published = PublishedListener(null, 0L)
 
     private fun refreshListener() = synchronized(identityLock) {
         val session = cookie
@@ -171,10 +176,8 @@ object Innertube {
                 else -> it
             }
         }
-        if (fresh != listener) {
-            listener = fresh
-            listenerGeneration++
-        }
+        val current = published
+        if (fresh != current.listener) published = PublishedListener(fresh, current.generation + 1)
     }
 
     /**
