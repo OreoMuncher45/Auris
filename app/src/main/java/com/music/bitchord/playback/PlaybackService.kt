@@ -11018,6 +11018,11 @@ class PlaybackService : MediaLibraryService() {
         ): Pair<List<MediaItem>, Int> {
             val resolved = mutableListOf<MediaItem>()
             var resolvedStart = 0
+            // A later item can suspend on the network after an Auto row was
+            // accepted for this account: such rows are noted, with their
+            // listing, and checked again once everything is resolved.
+            val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+            var accountBound: MutableList<Pair<Int, AutoBrowseContext>>? = null
             for ((itemIndex, item) in mediaItems.withIndex()) {
                 if (itemIndex == startIndex) resolvedStart = resolved.size
                 val id = item.mediaId
@@ -11028,6 +11033,10 @@ class PlaybackService : MediaLibraryService() {
                     AutoBrowseContexts.isAutoBrowseId(id) -> {
                         val selection = autoBrowseContexts.select(id, currentListener())
                         if (selection is AutoBrowseContexts.Selection.Found) {
+                            if (selection.context.listener != null) {
+                                (accountBound ?: mutableListOf<Pair<Int, AutoBrowseContext>>().also { accountBound = it })
+                                    .add(resolved.size to selection.context)
+                            }
                             resolved.add(selection.song.toMediaItem())
                         }
                     }
@@ -11147,6 +11156,21 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             if (startIndex >= mediaItems.size) resolvedStart = resolved.size
+            accountBound?.let { rows ->
+                // Checked again now that every item is resolved: an account
+                // switch while a later one was out takes back the rows accepted
+                // for the account that left. Rows of no account stay.
+                val switched = com.music.bitchord.data.innertube.Innertube.listenerGeneration != generation
+                val listenerNow = currentListener()
+                val revoked = rows.filter { (_, context) -> switched || !context.belongsTo(listenerNow) }
+                    .mapTo(HashSet()) { it.first }
+                if (revoked.isNotEmpty()) {
+                    val (kept, keptStart) = withoutRevoked(resolved, revoked, resolvedStart)
+                    resolved.clear()
+                    resolved.addAll(kept)
+                    resolvedStart = keptStart
+                }
+            }
             if (resolved.isNotEmpty()) return resolved to resolvedStart
             // A stale browse row has no track behind it; never hand it back
             // to the player as if it were one.
