@@ -601,7 +601,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
-    private val newestRequestId = AtomicLong(0L)
+    private val searchOwnership = SearchOwnership()
+
+    /**
+     * The last search handed to the pipeline, so a change of listener can ask
+     * an account-private one again as the new listener.
+     */
+    private var lastSearchRequest: SearchRequest? = null
 
     /**
      * Results of recent searches, so a query searched before is answered
@@ -636,7 +642,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private data class SearchSession(
         val key: String,
-        val requestId: Long,
+        val ticket: SearchTicket,
         val filter: SearchFilter,
         val continuation: String?,
         val nextOffset: Int? = null,
@@ -3549,14 +3555,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * A search asked for, as a request the pipeline below decides what to do
      * with.
      *
-     * [requestId] is what makes a late answer harmless: a response is only
+     * [ticket] is what makes a late answer harmless: a response is only
      * written to the screen if its id is still the newest one asked for.
      */
     private data class SearchRequest(
         val query: String,
         val filter: SearchFilter,
         val source: SearchSource,
-        val requestId: Long,
+        val ticket: SearchTicket,
     )
 
     /**
@@ -3567,7 +3573,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * shown for the other.
      */
     private fun cacheKey(query: String, filter: SearchFilter, source: SearchSource) =
-        "${source.name}:${filter.name}:$query"
+        searchCacheKey(query, filter, source)
 
     /**
      * The results of the longest earlier query this one starts with — near
@@ -3587,17 +3593,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (query.isBlank()) {
             // Nothing in flight can still be waiting to overwrite this: the
             // id it would be checked against has already moved past it.
-            newestRequestId.incrementAndGet()
+            searchOwnership.supersede()
+            lastSearchRequest = null
             searchSession = null
             _searchLoadingMore.value = false
             _results.value = null
             return
         }
-        val id = newestRequestId.incrementAndGet()
+        val filter = _filter.value
+        val ticket = searchOwnership.issue(filter)
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, _searchSource.value, id))
+        val request = SearchRequest(query, filter, _searchSource.value, ticket)
+        lastSearchRequest = request
+        searchRequests.tryEmit(request)
+    }
+
+    /**
+     * The listener changed: signed out, or switched account or channel.
+     *
+     * A Library search is the leaving listener's own songs. Its cached answers
+     * are dropped, anything still in flight is superseded, and a Library
+     * search on screen is asked again as whoever is listening now — which,
+     * signed out, is the pipeline saying why there is nothing to search.
+     * A catalogue search is nobody's in particular and is left alone.
+     */
+    private fun onSearchListenerChanged() {
+        searchCache.snapshot().keys
+            .filter(::isAccountPrivateSearchKey)
+            .forEach { searchCache.remove(it) }
+        val last = lastSearchRequest ?: return
+        if (!last.filter.requiresAuth) return
+        if (_results.value == null) {
+            // Cleared since it was asked: nothing to answer again, only
+            // something still in flight to stop.
+            searchOwnership.supersede()
+            lastSearchRequest = null
+            return
+        }
+        searchSession = null
+        _searchLoadingMore.value = false
+        _results.value = UiState.Loading
+        val request = last.copy(ticket = searchOwnership.issue(last.filter))
+        lastSearchRequest = request
+        searchRequests.tryEmit(request)
     }
 
     /**
@@ -3622,6 +3662,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
+                // Superseded before it was even picked up — by a newer search,
+                // or by the listener it was asked as leaving.
+                if (!searchOwnership.owns(request.ticket)) return@collectLatest
                 // Library is the account's own songs: signed out there is
                 // nothing to search, so it says why rather than asking. Ahead
                 // of the cache, so a signed-out page can't show an earlier
@@ -3641,7 +3684,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (exact != null) {
                     searchSession = SearchSession(
                         key = key,
-                        requestId = request.requestId,
+                        ticket = request.ticket,
                         filter = request.filter,
                         continuation = exact.continuation,
                         nextOffset = exact.nextOffset,
@@ -3663,7 +3706,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             request.filter,
                         )
                     }
-                    if (request.requestId != newestRequestId.get()) return@collectLatest
+                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
                     _results.value = page.fold(
                         onSuccess = { spotify ->
                             // The rows are published the usual way, and a
@@ -3679,7 +3722,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 continuation = null,
                                 nextOffset = spotify.nextOffset,
                                 key = key,
-                                requestId = request.requestId,
+                                ticket = request.ticket,
                                 filter = request.filter,
                                 source = request.source,
                             )
@@ -3723,10 +3766,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 // A search that has been superseded shouldn't land on screen,
                 // whether it succeeded or failed.
-                if (request.requestId != newestRequestId.get()) return@collectLatest
+                if (!searchOwnership.owns(request.ticket)) return@collectLatest
                 _results.value = result.fold(
                     onSuccess = { page ->
-                        published(page, key, request.requestId, request.filter, request.source)
+                        published(page, key, request.ticket, request.filter, request.source)
                     },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
@@ -3749,7 +3792,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchLoadingMore.value = true
         viewModelScope.launch {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
-            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
             if (stillCurrent) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
@@ -3764,7 +3807,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                         searchSession = session.copy(continuation = page.continuation)
@@ -3794,7 +3837,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     offset,
                 )
             }
-            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
             if (stillCurrent) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
@@ -3809,7 +3852,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
                         searchSession = session.copy(nextOffset = page.nextOffset)
@@ -3900,7 +3943,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun published(
         page: YtMusicRepository.SearchPage,
         key: String,
-        requestId: Long,
+        ticket: SearchTicket,
         filter: SearchFilter,
         source: SearchSource,
     ): UiState<List<SearchResult>> = publishedRows(
@@ -3908,7 +3951,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         continuation = page.continuation,
         nextOffset = null,
         key = key,
-        requestId = requestId,
+        ticket = ticket,
         filter = filter,
         source = source,
     )
@@ -3925,7 +3968,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         continuation: String?,
         nextOffset: Int?,
         key: String,
-        requestId: Long,
+        ticket: SearchTicket,
         filter: SearchFilter,
         source: SearchSource,
     ): UiState<List<SearchResult>> {
@@ -3934,7 +3977,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchCache.put(key, SearchCacheEntry(clean, continuation, nextOffset))
         searchSession = SearchSession(
             key = key,
-            requestId = requestId,
+            ticket = ticket,
             filter = filter,
             continuation = continuation,
             nextOffset = nextOffset,
@@ -5218,6 +5261,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // identity that was active before validation succeeded.
             StreamResolver.onSessionChanged()
             if (wasSignedIn) clearListenerState()
+            onSearchListenerChanged()
             reloadForAccount()
             loadChannels(force = true)
             onComplete(true)
@@ -5230,6 +5274,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val profile = account?.profiles?.firstOrNull { it.profileId == selectedProfileId }
         Innertube.cookie = account?.cookie
         Innertube.selectChannel(profile?.pageId, profile?.dataSyncId, profile?.authUser)
+        // A Library search asked under the rejected candidate is its answer,
+        // not the restored listener's.
+        onSearchListenerChanged()
     }
 
     /** Selects an identity without ever allowing a response to replace it. */
@@ -5254,6 +5301,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _selectedChannelName.value = profile.name
         StreamResolver.onSessionChanged()
         clearListenerState(restoreCached = true)
+        onSearchListenerChanged()
         reloadForAccount()
     }
 
@@ -5397,6 +5445,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _playlistOwned.value = emptyMap()
         ownershipInFlight.clear()
         _songMenu.value = null
+        onSearchListenerChanged()
         loadHome()
     }
 
