@@ -2381,7 +2381,15 @@ object AudioCache {
      * [awaitAnalysisHead] to tell a finished head from one the round left
      * part-written. See [alignmentHeadComplete].
      */
-    private val analysisHeadWant = ConcurrentHashMap<String, Long>()
+    private val analysisHeadWant = ConcurrentHashMap<String, HeadWant>()
+
+    /**
+     * What a round asked for, and of which entry: the Opus copy's own key or
+     * the substitute's. The size alone was compared against whichever copy
+     * held the most, so a substitute target could be met by an Opus prefix
+     * the round had since deleted.
+     */
+    private class HeadWant(val key: String, val size: Long)
 
     // ── The analysis copy ──────────────────────────────────────────────────
     //
@@ -2690,7 +2698,9 @@ object AudioCache {
         if (held >= MIN_ALIGNMENT_PREFIX_BYTES) return true
         val want = analysisHeadWant[videoId] ?: return false
         if (headRoundsInFlight(videoId) > 0) return false
-        return held >= want
+        // Read off the entry the size belongs to, now, rather than off the
+        // largest prefix of any copy read a moment earlier.
+        return cachedBytesOf(want.key, want.size) >= want.size
     }
 
     /**
@@ -2777,6 +2787,17 @@ object AudioCache {
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
         val key = analysisKeyOfVideo(videoId)
+        // A background round is a whole recording, up to
+        // [MAX_ANALYSIS_TRACK_BYTES], so it follows the same metered-work
+        // policy as the whole-track read-ahead: not on a metered connection
+        // with the screen off and no charger. The tick asks again later. A
+        // caller waiting on the answer ([awaitAnalysisHead]) passes
+        // [ignoreBackoff] and is let through. Unmetered is read first, so the
+        // common case pays no system-service calls.
+        if (!ignoreBackoff && AppSettings.meteredConnection.value != false) {
+            val context = appContext
+            if (context != null && !PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) return false
+        }
         lateinit var round: Job
         // Admission is one step against a finishing round and a wipe — see
         // [analysisAdmission].
@@ -2799,8 +2820,8 @@ object AudioCache {
                 // Published only while this round still owns the track: a wipe
                 // or removal that has taken its snapshot has reset the size,
                 // and a stale one left behind reads as a finished head later.
-                fun publishWant(size: Long) = synchronized(analysisAdmission) {
-                    if (analysisJobs[videoId] === round) analysisHeadWant[videoId] = size
+                fun publishWant(entry: String, size: Long) = synchronized(analysisAdmission) {
+                    if (analysisJobs[videoId] === round) analysisHeadWant[videoId] = HeadWant(entry, size)
                 }
                 try {
                     // The copy's own length.
@@ -2824,7 +2845,7 @@ object AudioCache {
                     // Which key this round's bytes end up under: the Opus
                     // copy's own, or the substitute's beside it.
                     var filled = key
-                    publishWant(want)
+                    publishWant(key, want)
                     val already = cachedBytesOf(key, want)
                     TrackLog.w(
                         TAG,
@@ -2912,7 +2933,7 @@ object AudioCache {
                             measured = substituteLength
                             measuredFetched = true
                             target = substituteTarget
-                            publishWant(target)
+                            publishWant(substitute, target)
                             pull(
                                 substitute,
                                 fetched,
@@ -2942,7 +2963,7 @@ object AudioCache {
                     if (measured > 0L) {
                         val grown = analysisHeadSize(measured)
                         if (grown > target && cachedBytesOf(filled, target) >= target) {
-                            publishWant(grown)
+                            publishWant(filled, grown)
                             pull(filled, fetched, target, grown - target, pinKey = true)
                             target = grown
                         }

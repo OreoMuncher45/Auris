@@ -3142,21 +3142,13 @@ internal fun BitChordApp(
             }
         }
     }
-    queueEditing.onBulkAction = { indices, action ->
-        val songs = indices.mapNotNull { player.queue.getOrNull(it) }
+    queueEditing.onBulkAction = { targets, action ->
+        // The songs the user ticked, as the screen showed them — not whatever
+        // sits at those indices in the queue by now.
+        val songs = targets.map { it.song }
         when (action) {
-            QueueBulkAction.REMOVE -> offerQueueUndo(
-                controller?.removeQueueRows(
-                    QueueEdits.targetsAt(player.queue, indices),
-                    player.queue,
-                ),
-                false,
-            )
-            QueueBulkAction.PLAY_NEXT -> controller?.moveQueueRowsToUser(
-                QueueEdits.targetsAt(player.queue, indices),
-                toHead = true,
-                known = player.queue,
-            )
+            QueueBulkAction.REMOVE -> offerQueueUndo(controller?.removeQueueRows(targets, player.queue), false)
+            QueueBulkAction.PLAY_NEXT -> controller?.moveQueueRowsToUser(targets, toHead = true, known = player.queue)
             QueueBulkAction.PLAYLIST -> if (songs.isNotEmpty()) {
                 viewModel.loadPlaylists()
                 sheets.playlistPick.songs = songs
