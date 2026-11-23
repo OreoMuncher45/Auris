@@ -3209,7 +3209,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { fetchLibrary(identity) }
     }
 
-    private suspend fun fetchLibrary(identity: String?) {
+    private suspend fun fetchLibrary(identity: String?, attempt: Int = 0) {
         // A candidate account under validation signs requests before
         // [listenerKey] moves, so wait it out: then the credentials read below
         // are the listener's own.
@@ -3247,7 +3247,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
-        if (identity == listenerKey()) _library.value = next
+        if (identity != listenerKey()) return
+        // The request reads its cookie and account when it is built, after the
+        // wait above, so credentials installed in between answered for another
+        // account. That is never published as this listener's library: it is
+        // asked for again under the settled credentials.
+        if (Innertube.listenerGeneration != credentials) {
+            if (attempt < LIBRARY_CREDENTIAL_RETRIES) fetchLibrary(identity, attempt + 1)
+            return
+        }
+        _library.value = next
     }
 
     /**
@@ -5842,6 +5851,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /** How many of a mood station's playlists are opened for its pool. */
+/** How often a library read crossed by a credential change is asked for again. */
+private const val LIBRARY_CREDENTIAL_RETRIES = 2
+
 private const val FLOW_MOOD_PLAYLISTS = 4
 
 /** How many songs are taken from each of those playlists. */
