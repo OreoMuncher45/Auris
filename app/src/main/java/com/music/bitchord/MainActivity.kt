@@ -5190,6 +5190,8 @@ internal fun BitChordApp(
                 download = startDownload,
                 downloadFromCache = downloadFromCache,
                 withBrowseSongs = withBrowseSongs,
+                beginPlayRequest = { ++playRequestGeneration },
+                currentPlayRequest = { playRequestGeneration },
             ),
             smartDownloadPodcast = ::smartDownloadPodcast,
         )
@@ -6680,6 +6682,10 @@ private data class TrackListActions(
     /** The Cached songs folder's download: the cache's own copies, saved from disk. */
     val downloadFromCache: (List<Song>) -> Unit,
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
+    /** Claims a new play request, invalidating earlier ones; see [latestPlayRequestOnly]. */
+    val beginPlayRequest: () -> Int,
+    /** The newest play request's token. */
+    val currentPlayRequest: () -> Int,
 )
 
 /**
@@ -7054,6 +7060,18 @@ private fun RootOverlays(
                 tracks.withBrowseSongs(target, action)
             }
         }
+        // Play and Shuffle claim the play request at the tap: a fetch that
+        // lands after something else started playing is dropped, rather than
+        // flipping shuffle and replacing the newer queue.
+        val actPlay: ((List<Song>) -> Unit) -> () -> Unit = { action ->
+            {
+                sheets.browseMenu.target = null
+                tracks.withBrowseSongs(
+                    target,
+                    latestPlayRequestOnly(tracks.beginPlayRequest, tracks.currentPlayRequest, action),
+                )
+            }
+        }
         // Whose playlist this is, asked here rather than carried in by
         // whatever opened the sheet.
         //
@@ -7113,11 +7131,11 @@ private fun RootOverlays(
             },
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
-            onPlay = act { songs ->
+            onPlay = actPlay { songs ->
                 setShuffleForNextQueue(false)
                 tracks.play(songs, 0)
             }.takeIf { target.fromCard },
-            onShuffle = act { songs ->
+            onShuffle = actPlay { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played
                 // out of order.
