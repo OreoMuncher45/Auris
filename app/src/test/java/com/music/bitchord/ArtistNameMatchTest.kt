@@ -142,15 +142,14 @@ class ArtistNameMatchTest {
     }
 
     @Test
-    fun `a name in a script the canvas matcher cannot read is still readable here`() {
-        // The reason this has its own folding rather than reusing the canvas
-        // matcher's. That one reduces everything outside a-z0-9 to a space, so
-        // all four of these fold to the same empty string, and an exact-name
-        // check built on it would accept any of them for any of the others.
-        val empty = ""
+    fun `a name in a script other than Latin is still readable here`() {
+        // Neither this folding nor the canvas matcher's may reduce a non-Latin
+        // name to the empty string: if every such name folded to the same
+        // nothing, an exact-name check would accept any of them for any other.
         for (name in listOf("Мата", "Мета", "中島美嘉", "माता")) {
-            assertEquals("$name folds to nothing there", empty, name.normalizeForMatch())
+            assertNotEquals("$name folds to nothing in the canvas matcher", "", name.normalizeForMatch())
         }
+        assertNotEquals("Мата".normalizeForMatch(), "Мета".normalizeForMatch())
 
         assertNotEquals(normalizedArtistName("Мата"), normalizedArtistName("Мета"))
         assertNotEquals(normalizedArtistName("中島美嘉"), normalizedArtistName("椎名林檎"))
