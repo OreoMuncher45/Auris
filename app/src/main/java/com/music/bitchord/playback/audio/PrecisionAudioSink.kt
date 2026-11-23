@@ -303,6 +303,13 @@ class PrecisionAudioSink(
                 // 1. Configure the Float32 DSP chain
                 dspChain.configure(sampleRate, channelCount)
 
+                // A loop mix armed across a format change is over: its frames and
+                // timestamps are counted at the old rate, and it renders stereo
+                // into a block about to be replaced.
+                if (sampleRate != configuredSampleRate || channelCount != audioBlock.channelCount) {
+                    retireLoopForFormatChange()
+                }
+
                 // 2. Ensure internal buffers are sized for max frames and channel count
                 ensureBuffers(channelCount)
                 configuredSampleRate = sampleRate
@@ -1528,14 +1535,16 @@ class PrecisionAudioSink(
         return true
     }
 
+    private fun retireLoopForFormatChange() {
+        val port = loop
+        if (port.outArm != null || port.inArm != null) port.interrupted = true
+        loopGenerating = false
+        loopRendering = false
+        loopCrossing = false
+    }
+
     private fun ensureBuffers(channelCount: Int) {
         if (audioBlock.channelCount != channelCount) {
-            // A loop mix renders stereo into this block: one armed across a
-            // channel change is over, before the block it writes into is replaced.
-            val port = loop
-            if (port.outArm != null || port.inArm != null) port.interrupted = true
-            loopGenerating = false
-            loopRendering = false
             audioBlock = AudioBlock(channelCount = channelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
         } else {
             audioBlock.reset(0)
