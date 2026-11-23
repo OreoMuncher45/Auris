@@ -1,5 +1,7 @@
 package com.music.bitchord.playback.audio
 
+import kotlin.math.abs
+
 /**
  * The loop mix's shifts on [PrecisionAudioSink]'s delegate clock, applied to
  * position reports when they are *heard* rather than when they are written.
@@ -42,11 +44,13 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
             val last = (head + count - 1) % capacity
             val lastDelta = deltas[last]
             // A drop spread over several input buffers lands at one boundary; a
-            // run of silence blocks is contiguous. Either way, one shift.
+            // run of silence blocks is contiguous. Either way, one shift. Each
+            // buffer's boundary is rounded to whole µs on its own, so "the same
+            // point" is anything closer than a frame: nothing was written between.
             val merges = if (deltaUs < 0) {
-                lastDelta < 0 && starts[last] == boundaryUs
+                lastDelta < 0 && abs(starts[last] - boundaryUs) <= MERGE_TOLERANCE_US
             } else {
-                lastDelta > 0 && starts[last] + lastDelta == boundaryUs
+                lastDelta > 0 && abs(starts[last] + lastDelta - boundaryUs) <= MERGE_TOLERANCE_US
             }
             if (merges) {
                 deltas[last] = lastDelta + deltaUs
@@ -78,6 +82,11 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
         // Inside inserted silence: no track time is passing.
         if (count > 0 && delegatePositionUs >= starts[head]) return starts[head] - before[head]
         return delegatePositionUs - heardUs
+    }
+
+    private companion object {
+        /** Under one frame at 48 kHz (20.8 µs), well over the µs rounding of a boundary. */
+        const val MERGE_TOLERANCE_US = 10L
     }
 
     fun reset() {

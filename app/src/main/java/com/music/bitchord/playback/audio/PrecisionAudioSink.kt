@@ -243,8 +243,19 @@ class PrecisionAudioSink(
     private var loopNextFrame = 0L
     private var loopNextUs = 0L
 
+    /**
+     * Where generation began: [loopNextUs] is derived from the frames generated
+     * since, never summed block by block — each block's duration is truncated
+     * to whole µs, and at 44.1 kHz that adds up to milliseconds over a mix.
+     */
+    private var loopEpochUs = 0L
+    private var loopEpochFrame = 0L
+
     /** Outgoing: the renderer has been fed at least once (its decks keep state from then on). */
     private var loopRendering = false
+
+    /** True once a block has mixed some of the 25 ms crossing: from then on it is finished, bit-perfect or not. */
+    private var loopCrossing = false
 
     /** Incoming: a block has been processed since it was armed. */
     private var loopInStarted = false
@@ -770,17 +781,19 @@ class PrecisionAudioSink(
         // The Automix loop mix, when one is armed on this sink. Bit-perfect never
         // arms one (the crossfade controller refuses every blend under it).
         val port = loop
-        if (port.generation != loopGeneration) adoptLoopGeneration(port)
+        // One read: the arm and its generation can't come from two different arms.
+        val armed = port.armed
+        if (armed.generation != loopGeneration) adoptLoopGeneration(port, armed.generation)
         // An arm a flush interrupted is over here and now, not on the
         // controller's next tick: pre-roll buffers that come back in the
         // meantime would feed the renderer a region it has already played.
         // One that never processed anything is not marked interrupted, so the
         // start-up flush still leaves it armed.
-        val outArm = port.outArm?.takeIf { !port.interrupted }
+        val outArm = armed.out?.takeIf { !port.interrupted }
         if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding)
         // Likewise the incoming side: no more muting or shifting once a flush
         // has ended the mix it was lining up for.
-        val inArm = port.inArm?.takeIf { !port.interrupted }
+        val inArm = armed.inn?.takeIf { !port.interrupted }
 
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
@@ -849,23 +862,32 @@ class PrecisionAudioSink(
             if (inArm != null) {
                 // Lining up with the deck, while this player is still silent:
                 // frames dropped, or silence written in their place.
-                val shift = port.pendingShift.get()
+                val shift = inArm.pendingShift.get()
                 if (shift != 0L && canShift(inArm, presentationTimeUs)) {
                     if (shift > 0) {
-                        val drop = minOf(shift, (inputBuffer.remaining() / bytesPerFrame).toLong())
+                        // No further than the shift cutoff: frames past it are heard.
+                        // What is left of the correction stays pending.
+                        val drop = minOf(
+                            shift,
+                            (inputBuffer.remaining() / bytesPerFrame).toLong(),
+                            framesBeforeShiftCutoff(inArm, presentationTimeUs),
+                        )
                         inputBuffer.position(inputBuffer.position() + (drop * bytesPerFrame).toInt())
                         // Where the next written frame lands on the delegate's timeline.
                         val boundaryUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) + delegateOffsetUs
                         framesEmittedForInput += drop
                         shifts.drop(boundaryUs, Util.sampleCountToDurationUs(drop, configuredSampleRate))
-                        port.pendingShift.addAndGet(-drop)
+                        // Shifted: a flush from here on ends the arm (see [loopInterrupted]).
+                        loopInStarted = true
+                        inArm.pendingShift.addAndGet(-drop)
                         continue
                     } else {
                         val insert = minOf(-shift, audioBlock.capacityFrames.toLong()).toInt()
+                        loopInStarted = true
                         if (!writeSilence(insert, advanceTimestamp(presentationTimeUs, framesEmittedForInput), outEncoding)) {
                             return false
                         }
-                        port.pendingShift.addAndGet(insert.toLong())
+                        inArm.pendingShift.addAndGet(insert.toLong())
                         if (outputByteBuffer.hasRemaining()) return false
                         continue
                     }
@@ -947,6 +969,8 @@ class PrecisionAudioSink(
                 // stays where it is, and the renderer's blocks follow on.
                 loopGenerating = true
                 loopNextUs = blockTimeUs + Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
+                loopEpochUs = loopNextUs
+                loopEpochFrame = loopNextFrame
                 port.tookOver = true
             }
 
@@ -1033,10 +1057,11 @@ class PrecisionAudioSink(
     }
 
     /** A new arm (or a disarm): whatever the sink was doing for the last one is dropped. */
-    private fun adoptLoopGeneration(port: LoopMixPort) {
-        loopGeneration = port.generation
+    private fun adoptLoopGeneration(port: LoopMixPort, generation: Int) {
+        loopGeneration = generation
         loopGenerating = false
         loopRendering = false
+        loopCrossing = false
         loopInStarted = false
         port.tookOver = false
         port.interrupted = false
@@ -1060,9 +1085,10 @@ class PrecisionAudioSink(
             return false
         }
         val handover = (LOOP_HANDOVER_SECONDS * arm.sampleRate).toLong()
-        if (refuse && start < -handover) {
-            // Bit-perfect came on before the crossing began: the song plays on
-            // untouched. Once the crossing has started, it is finished instead.
+        if (refuse && !loopCrossing) {
+            // Bit-perfect came on before any of the crossing was mixed: the song
+            // plays on untouched — this block too, even one that would start it.
+            // Once the crossing has started, it is finished instead.
             loop.interrupted = true
             return false
         }
@@ -1072,6 +1098,7 @@ class PrecisionAudioSink(
             return false
         }
         loopRendering = true
+        if (end > -handover) loopCrossing = true
         val samples = audioBlock.samples
         val port = loop
         val capture = LoopMixPort.SPLICE_CAPTURE
@@ -1107,6 +1134,12 @@ class PrecisionAudioSink(
             val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
             if (!consumed || outputByteBuffer.hasRemaining()) return false
         }
+        // The renderer writes two floats a frame: never into a block of any other width.
+        if (audioBlock.channelCount != 2) {
+            loop.interrupted = true
+            loopGenerating = false
+            return false
+        }
         repeat(LOOP_MAX_GENERATED_BLOCKS) {
             val frames = minOf(LOOP_GENERATED_FRAMES, audioBlock.capacityFrames)
             audioBlock.reset(frames)
@@ -1124,7 +1157,7 @@ class PrecisionAudioSink(
             // loopNextUs is track time; the delegate is still on its own clock,
             // shifted by any silence or drops an earlier mix left on this player.
             val blockUs = loopNextUs + delegateOffsetUs
-            loopNextUs += Util.sampleCountToDurationUs(frames.toLong(), configuredSampleRate)
+            loopNextUs = loopEpochUs + Util.sampleCountToDurationUs(loopNextFrame - loopEpochFrame, configuredSampleRate)
             processedEndUs = loopNextUs
             pendingPresentationTimeUs = blockUs
             pendingAccessUnitCount = 0
@@ -1160,6 +1193,13 @@ class PrecisionAudioSink(
     }
 
     /** Shifts are applied only while this player is silent with time to spare. */
+    /** How many frames from the next input frame on still lie before [canShift]'s cutoff; at least 1 when it allows a shift. */
+    private fun framesBeforeShiftCutoff(arm: LoopMixPort.InArm, presentationTimeUs: Long): Long {
+        val trackUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) - loop.streamOffsetUs
+        val us = arm.handoverUs - LOOP_SHIFT_MARGIN_US - trackUs
+        return maxOf(1L, us * configuredSampleRate / 1_000_000L)
+    }
+
     private fun canShift(arm: LoopMixPort.InArm, presentationTimeUs: Long): Boolean {
         if (presentationTimeUs == C.TIME_UNSET) return false
         val trackUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) - loop.streamOffsetUs
@@ -1199,6 +1239,7 @@ class PrecisionAudioSink(
         }
         loopGenerating = false
         loopRendering = false
+        loopCrossing = false
         loopInStarted = false
         shifts.reset()
     }
@@ -1489,6 +1530,12 @@ class PrecisionAudioSink(
 
     private fun ensureBuffers(channelCount: Int) {
         if (audioBlock.channelCount != channelCount) {
+            // A loop mix renders stereo into this block: one armed across a
+            // channel change is over, before the block it writes into is replaced.
+            val port = loop
+            if (port.outArm != null || port.inArm != null) port.interrupted = true
+            loopGenerating = false
+            loopRendering = false
             audioBlock = AudioBlock(channelCount = channelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
         } else {
             audioBlock.reset(0)
