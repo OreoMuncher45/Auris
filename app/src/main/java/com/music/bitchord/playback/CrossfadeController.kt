@@ -876,7 +876,16 @@ class CrossfadeController(
     fun start() {
         listenTo(active())
         ensureTicker()
+        // A paused session's ticker stops after a while; the mix popup opening
+        // then needs it back to plan what the popup shows.
+        if (mixViewWatch == null) {
+            mixViewWatch = scope.launch {
+                AppSettings.mixViewOpen.collect { open -> if (open) ensureTicker() }
+            }
+        }
     }
+
+    private var mixViewWatch: Job? = null
 
     /**
      * Re-points the controller at the session player after the service swapped
@@ -906,7 +915,9 @@ class CrossfadeController(
                 tick()
                 val pausedIdle = phase == Phase.IDLE && !active().isPlaying
                 if (pausedIdle) {
-                    if (!AppSettings.smartFadeEnabled.value || ++pausedTicks > PAUSED_MARKER_TICKS) break
+                    // Kept going while the mix popup is open: it reads each new plan.
+                    if (!AppSettings.smartFadeEnabled.value) break
+                    if (++pausedTicks > PAUSED_MARKER_TICKS && !AppSettings.mixViewOpen.value) break
                 } else {
                     pausedTicks = 0
                 }
@@ -937,6 +948,8 @@ class CrossfadeController(
         clearAutoMixVisual()
         tickerJob?.cancel()
         tickerJob = null
+        mixViewWatch?.cancel()
+        mixViewWatch = null
         loopBuildJob?.cancel()
         loopAlignJob?.cancel()
         loopSession?.let {
@@ -1379,8 +1392,10 @@ class CrossfadeController(
             lastMarkerVerdict = markerVerdict
             TrackLog.d(
                 TAG,
+                // Not the next item's title: copying this track's log must not
+                // carry what is queued after it (a private local file, say).
                 "marker ${currentItem.mediaId} \"${currentItem.mediaMetadata.title}\" -> " +
-                    "${nextItem.mediaId} \"${nextItem.mediaMetadata.title}\": $markerVerdict",
+                    "${nextItem.mediaId}: $markerVerdict",
             )
         }
         AppSettings.smartTransitionWindow.value = if (markable) {
@@ -3320,9 +3335,13 @@ class CrossfadeController(
         val into = incoming
         val wasHandedOff = handedOff
         val m = session?.mixSeconds(System.nanoTime(), playing = false)
-        val tookOver = session?.outPort?.tookOver == true
+        val tookOverBefore = session?.outPort?.tookOver == true
         session?.outPort?.disarm()
         session?.inPort?.disarm()
+        // Read again after the disarm: a sink mid-buffer can commit the takeover
+        // between the two, and then its song needs the recovery seek too. (Its
+        // next buffer adopts the disarm and clears the flag.)
+        val tookOver = tookOverBefore || session?.outPort?.tookOver == true
         // The settle point, worked out before [finish] forgets the plan.
         val target: Long? = when {
             session == null -> null
