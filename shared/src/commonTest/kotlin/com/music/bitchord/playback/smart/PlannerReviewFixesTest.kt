@@ -68,4 +68,23 @@ class PlannerReviewFixesTest {
         val point = incomingMixInPoint(next)
         assertTrue(point != null && point > 0.0, "mix-in point $point")
     }
+
+    @Test
+    fun aMatchedBlendWithClashingKeysTakesTheAdaptiveLengthNotTheWholeIntro() {
+        // Same tempo, clashing keys: the adaptive sizing asks for a short blend,
+        // and an 8 s run-up into the incoming drop must not stretch it to 12 s.
+        val a = track(120.0).copy(key = "C major", keyConfidence = 0.9)
+        val b = track(120.0).copy(key = "F♯ major", keyConfidence = 0.9, mixInTime = 8.5,
+            mixInCandidates = listOf(MixCandidate(8.5, 1.0, "drop")))
+        val p = plan(a, b)
+        assertTrue(p.transitionEnd - p.transitionStart < 8.0, "overlap ${p.transitionEnd - p.transitionStart}")
+    }
+
+    @Test
+    fun aBeatmatchedPhraseWithNoMeasuredCueFallsBackToTheAdaptivePlan() {
+        // A trusted opening grid the model measured with no bar lines at all.
+        val next = track(120.0).let { it.copy(headBeats = BeatSide(emptyList(), emptyList(), 120.0, 0.9)) }
+        val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
+        assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
+    }
 }
