@@ -1140,23 +1140,34 @@ object AudioCache {
         // first, while its claim still keeps any other round out; once it is
         // cancelled its own bookkeeping leaves the claim in place for this to
         // release.
-        val round = synchronized(analysisAdmission) { analysisJobs[mediaId] }
-        round?.cancelAndJoin()
-        // The same per-track bookkeeping [clear] drops for every track, and
-        // for the same reason: it describes bytes that are about to be gone.
-        synchronized(analysisAdmission) {
-            analysisHeads.remove(mediaId)
-            analysisHeadRounds.remove(mediaId)
-            analysisHeadWant.remove(mediaId)
-            analysisHeadFailures.remove(mediaId)
-            analysisHeadRetryAt.remove(mediaId)
+        //
+        // The track is reserved in the same step as the round is read, so a
+        // track with no round yet cannot be given one while this runs: no
+        // request is admitted for it until the bytes are gone.
+        val round = synchronized(analysisAdmission) {
+            removing.add(mediaId)
+            analysisJobs[mediaId]
         }
-        renditionKeys.remove(mediaId)
         var removed = 0
-        keysOf(mediaId).forEach { key ->
-            runCatching { cache.removeResource(key) }
-                .onSuccess { removed++ }
-                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+        try {
+            round?.cancelAndJoin()
+            // The same per-track bookkeeping [clear] drops for every track, and
+            // for the same reason: it describes bytes that are about to be gone.
+            synchronized(analysisAdmission) {
+                analysisHeads.remove(mediaId)
+                analysisHeadRounds.remove(mediaId)
+                analysisHeadWant.remove(mediaId)
+                analysisHeadFailures.remove(mediaId)
+                analysisHeadRetryAt.remove(mediaId)
+            }
+            renditionKeys.remove(mediaId)
+            keysOf(mediaId).forEach { key ->
+                runCatching { cache.removeResource(key) }
+                    .onSuccess { removed++ }
+                    .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+            }
+        } finally {
+            synchronized(analysisAdmission) { removing.remove(mediaId) }
         }
         TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
         if (removed > 0) _contentsChanged.value++
@@ -2345,6 +2356,9 @@ object AudioCache {
     /** Wipes between their snapshot and the end of their disk removal; no round starts while one runs. */
     private var wipesRunning = 0
 
+    /** Tracks [remove] is taking off disk; no round starts for one of them meanwhile. Guarded by [analysisAdmission]. */
+    private val removing = HashSet<String>()
+
     /**
      * Rounds that ended short, per video id, and when the next may start
      * ([SystemClock.elapsedRealtime]). A short round gives its claim on
@@ -2625,8 +2639,9 @@ object AudioCache {
         }
         // Past the background backoff: that spaces out rounds nobody is
         // waiting on, and this wait has its own deadline and its own bound.
-        requestAnalysisHead(opus, ignoreBackoff = true)
-        var rounds = 1
+        // Counted only if it starts: one turned away by a wipe would otherwise
+        // spend one of the rounds this wait is allowed.
+        var rounds = if (requestAnalysisHead(opus, ignoreBackoff = true)) 1 else 0
         var askedAt = SystemClock.elapsedRealtime()
         val deadline = askedAt + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -2766,7 +2781,7 @@ object AudioCache {
         // Admission is one step against a finishing round and a wipe — see
         // [analysisAdmission].
         synchronized(analysisAdmission) {
-            if (wipesRunning > 0) return false
+            if (wipesRunning > 0 || videoId in removing) return false
             if (!ignoreBackoff) {
                 analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return false }
             }
@@ -2781,6 +2796,12 @@ object AudioCache {
             }
             round = scope.launch(start = CoroutineStart.LAZY) {
                 var complete = false
+                // Published only while this round still owns the track: a wipe
+                // or removal that has taken its snapshot has reset the size,
+                // and a stale one left behind reads as a finished head later.
+                fun publishWant(size: Long) = synchronized(analysisAdmission) {
+                    if (analysisJobs[videoId] === round) analysisHeadWant[videoId] = size
+                }
                 try {
                     // The copy's own length.
                     //
@@ -2803,7 +2824,7 @@ object AudioCache {
                     // Which key this round's bytes end up under: the Opus
                     // copy's own, or the substitute's beside it.
                     var filled = key
-                    analysisHeadWant[videoId] = want
+                    publishWant(want)
                     val already = cachedBytesOf(key, want)
                     TrackLog.w(
                         TAG,
@@ -2834,7 +2855,16 @@ object AudioCache {
                     var target = want
                     var measured = 0L
                     var measuredFetched = false
-                    if (held * 2 < want && !isCatalogueRow(videoId)) {
+                    // A round sized on the default guess, because YouTube's
+                    // length lookup failed, can hold a whole short track that is
+                    // nonetheless under half the guess. Its own stream is asked
+                    // before anything is thrown away.
+                    if (total <= 0L && held * 2 < want && !isCatalogueRow(videoId)) {
+                        measured = measureUpstream(copy)
+                        measuredFetched = true
+                    }
+                    val canonicalWhole = measured > 0L && held >= measured
+                    if (held * 2 < want && !canonicalWhole && !isCatalogueRow(videoId)) {
                         // The plain Opus copy would not come: on the networks where
                         // its googlevideo resolve fails it never does, while
                         // playback of the very same track is unbothered because it
@@ -2863,15 +2893,26 @@ object AudioCache {
                         // from an earlier round is cleared first for the same
                         // seam reason as the Opus copy; while a reader holds it
                         // the round ends short and the retry clears it.
+                        //
+                        // The substitute's address, length and size stay local
+                        // until its entry is accepted, and then all move at once:
+                        // a substitute that cannot be prepared leaves the round on
+                        // the canonical entry with the canonical numbers, and the
+                        // short-round retry takes it from there.
                         clearPartialHead(key, want)
                         val substitute = analysisSubstituteKeyOfVideo(videoId)
-                        fetched = Uri.parse("bitchord://watch?v=$videoId")
-                        measured = measureUpstream(fetched)
-                        measuredFetched = true
-                        if (measured > 0L) target = analysisHeadSize(measured)
-                        if (cachedBytesOf(substitute, target) >= target || clearPartialHead(substitute, target)) {
+                        val substituteUri = Uri.parse("bitchord://watch?v=$videoId")
+                        val substituteLength = measureUpstream(substituteUri)
+                        val substituteTarget = if (substituteLength > 0L) analysisHeadSize(substituteLength) else want
+                        if (cachedBytesOf(substitute, substituteTarget) >= substituteTarget ||
+                            clearPartialHead(substitute, substituteTarget)
+                        ) {
                             filled = substitute
-                            analysisHeadWant[videoId] = target
+                            fetched = substituteUri
+                            measured = substituteLength
+                            measuredFetched = true
+                            target = substituteTarget
+                            publishWant(target)
                             pull(
                                 substitute,
                                 fetched,
@@ -2901,7 +2942,7 @@ object AudioCache {
                     if (measured > 0L) {
                         val grown = analysisHeadSize(measured)
                         if (grown > target && cachedBytesOf(filled, target) >= target) {
-                            analysisHeadWant[videoId] = grown
+                            publishWant(grown)
                             pull(filled, fetched, target, grown - target, pinKey = true)
                             target = grown
                         }
@@ -3637,7 +3678,12 @@ object AudioCache {
                 // only runs once the job has finished, which the blocking
                 // cache() below keeps it from doing, so a cancelled fetch used to
                 // run to its end (and [clear], which joins it, waited on that).
-                val watcher = launch {
+                //
+                // Undispatched, so it is already parked in awaitCancellation()
+                // when cache() blocks: a default-start child cancelled before
+                // its body ran never reached the finally, and the writer was
+                // never told to stop.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
                     try {
                         awaitCancellation()
                     } finally {
