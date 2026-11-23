@@ -54,6 +54,35 @@ class AutoContinuationTest {
     }
 
     @Test
+    fun `a new queue with the same source id is not the folder`() {
+        val replaced = listOf(
+            song("a", "folder").copy(queueEntryId = "new-1"),
+            song("b", "folder").copy(queueEntryId = "new-2"),
+        )
+        assertNull(autoContinuationInsertIndex(replaced, "folder", 0, folderEntries = setOf("old-1", "old-2")))
+        assertEquals(2, autoContinuationInsertIndex(replaced, "folder", 0, folderEntries = setOf("new-1", "new-2")))
+    }
+
+    @Test
+    fun `a station accepts a queue that only grew by folder pages`() {
+        val original = listOf("a", "b")
+        val page = ContinuationInsert(anchor = "b", entries = listOf("c", "d"))
+        assertTrue(queueOnlyGrewByContinuation(original, listOf("a", "b", "c", "d"), listOf(page)))
+        assertTrue(queueOnlyGrewByContinuation(original, original, emptyList()))
+    }
+
+    @Test
+    fun `a station sees a moved or removed folder page row as an edit`() {
+        val original = listOf("a", "b", "q")
+        val page = ContinuationInsert(anchor = "b", entries = listOf("c", "d"))
+        assertTrue(queueOnlyGrewByContinuation(original, listOf("a", "b", "c", "d", "q"), listOf(page)))
+        // "d" moved ahead of "c": taking the page's rows out would hide it.
+        assertFalse(queueOnlyGrewByContinuation(original, listOf("a", "b", "d", "c", "q"), listOf(page)))
+        assertFalse(queueOnlyGrewByContinuation(original, listOf("a", "b", "c", "q", "d"), listOf(page)))
+        assertFalse(queueOnlyGrewByContinuation(original, listOf("a", "b", "c", "q"), listOf(page)))
+    }
+
+    @Test
     fun `page is dropped when the queue no longer holds the folder`() {
         assertNull(autoContinuationInsertIndex(queue, "other", currentIndex = 0))
     }
