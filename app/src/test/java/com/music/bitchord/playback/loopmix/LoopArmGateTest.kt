@@ -12,7 +12,9 @@ class LoopArmGateTest {
         speed: Float = 1f,
         repeatMode: Int = Player.REPEAT_MODE_OFF,
         next: Boolean = true,
-    ) = LoopArmGate.refusal(bitPerfect, automixOn, speed, repeatMode, next)
+        skipSilence: Boolean = false,
+        sleep: Boolean = false,
+    ) = LoopArmGate.refusal(bitPerfect, automixOn, speed, repeatMode, next, skipSilence, sleep)
 
     @Test
     fun armedLoopProceedsWhenNothingChanged() {
@@ -33,6 +35,16 @@ class LoopArmGateTest {
     @Test
     fun nextEntryChangedBails() {
         assertEquals("the next entry changed", refusal(next = false))
+    }
+
+    @Test
+    fun skipSilenceSwitchedOnBails() {
+        assertEquals("skip silence is on", refusal(skipSilence = true))
+    }
+
+    @Test
+    fun sleepAfterThisSongBails() {
+        assertEquals("sleep timer", refusal(sleep = true))
     }
 
     @Test

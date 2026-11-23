@@ -158,8 +158,11 @@ fun ThinSlider(
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // Captured once, and never zero: a width that collapses mid-drag
+                    // would otherwise turn a move at x = 0 into NaN.
+                    val width = size.width.coerceAtLeast(1).toFloat()
                     dragging = true
-                    onValueChange((down.position.x / size.width).coerceIn(0f, 1f))
+                    onValueChange((down.position.x / width).coerceIn(0f, 1f))
 
                     while (true) {
                         val event = awaitPointerEvent()
@@ -169,7 +172,7 @@ fun ThinSlider(
                             break
                         }
                         if (pointer.positionChanged()) {
-                            onValueChange((pointer.position.x / size.width).coerceIn(0f, 1f))
+                            onValueChange((pointer.position.x / width).coerceIn(0f, 1f))
                             pointer.consume()
                         }
                     }

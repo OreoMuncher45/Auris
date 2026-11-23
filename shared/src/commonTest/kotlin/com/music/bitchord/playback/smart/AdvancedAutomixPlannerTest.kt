@@ -207,11 +207,15 @@ class AdvancedAutomixPlannerTest {
         // 16 beats at 60 BPM are 16 s of incoming media, but the outgoing deck
         // plays them at its own 54 BPM: 17.8 s. The cap is on what is heard.
         val current = track("a", 54.0, "C major", vocal = 0.1)
-        val next = track("b", 60.0, "C major", vocal = 0.1)
+        // A drop 20 beats in, so the intro alone would allow the full 16-beat fade.
+        val base = track("b", 60.0, "C major", vocal = 0.1)
+        val next = base.copy(mixInTime = base.downbeats[5])
+        assertTrue(incomingMixInPoint(next)!! - next.audibleStartTime!! >= 16.0, "the intro must fit 16 beats")
         val planned = planWsolaTransition(current, next, 200.0, 200.0, advanced = true)
-        if (planned is WsolaPlanResult.Planned) {
-            assertTrue(planned.fadeBeats * 60.0 / 54.0 <= 16.0 + 1e-9, "fade of ${planned.fadeBeats} beats")
-        }
+        assertTrue(planned is WsolaPlanResult.Planned, "planned $planned")
+        // The outgoing-clock cap takes it from 16 beats down to 12.
+        assertEquals(12, planned.fadeBeats)
+        assertTrue(planned.fadeBeats * 60.0 / 54.0 <= 16.0 + 1e-9, "fade of ${planned.fadeBeats} beats")
     }
 
     @Test
