@@ -728,11 +728,12 @@ internal fun BoxScope.PortraitSleeve(
             // Only while the sleeve is the full card: a TextureView cannot be
             // recorded into the layer the mini player draws the sleeve through,
             // and a black square there would be worse than the still cover.
+            // `p` is collapse progress — 0 is the open player, 1 the mini.
             if (song.isVideo) {
                 var videoVisible by remember(song.videoId) { mutableStateOf(false) }
                 LaunchedEffect(song.videoId) {
                     while (true) {
-                        videoVisible = !docking() && p() > 0.95f
+                        videoVisible = !docking() && p() < 0.05f
                         delay(150)
                     }
                 }
