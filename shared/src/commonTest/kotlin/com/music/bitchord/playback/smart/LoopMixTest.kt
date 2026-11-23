@@ -389,4 +389,14 @@ class LoopMixTest {
         val unsure = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.0))
         assertNull(plan(unsure, analysis(120.0, 180.0)))
     }
+
+    @Test
+    fun aMeasuredTailWithNoBarLineInTheSearchStillGetsNoLoopFromTheOpeningGrid() {
+        // The model's bar lines all lie before the playhead: the opening grid is not trusted past them.
+        val downbeats = (0 until 8).map { 140.5 + it * 2.0 }
+        val out = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        val inn = analysis(120.0, 180.0)
+        assertNotNull(LoopMix.plan(out, out.duration, inn, inn.duration, 0.0, clear, clear))
+        assertNull(LoopMix.plan(out, out.duration, inn, inn.duration, 160.0, clear, clear))
+    }
 }
