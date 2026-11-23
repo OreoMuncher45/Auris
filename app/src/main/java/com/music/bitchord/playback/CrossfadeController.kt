@@ -3139,6 +3139,10 @@ class CrossfadeController(
         // Automix switched off mid-mix: like a blend, it stops, and the song the
         // listener is hearing carries on from where the mix has it.
         if (!AppSettings.smartFadeEnabled.value) return loopBail("Automix was switched off", settle = true)
+        // "Sleep after this song" set after the takeover, before the incoming
+        // song is the session: this song ends the session, so the mix settles
+        // back onto it rather than bring the next one in.
+        if (!handedOff && SleepTimer.afterTrack.value) return loopBail("sleep timer", settle = true)
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {
