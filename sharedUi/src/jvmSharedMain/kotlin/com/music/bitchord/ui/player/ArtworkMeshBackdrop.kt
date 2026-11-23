@@ -359,6 +359,24 @@ fun FullArtworkBlurBackdrop(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        // The next cover's blur, at the reveal's own progress: a layer whose
+        // alpha alone moves, so each frame of the reveal is a property change
+        // on it and nothing is re-recorded. Over the old cover's blur during
+        // the reveal and as it settles; under a third cover crossfading in
+        // over the blend a skip left behind, with the old one under both.
+        val heldLayerContent: @Composable () -> Unit = {
+            held?.let { bitmap ->
+                val painter = remember(bitmap) { BitmapPainter(bitmap) }
+                Image(
+                    painter = painter,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = heldLayer.alpha(liveMix) },
+                )
+            }
+        }
+        val heldUnderShown = under != null
+        if (heldUnderShown) heldLayerContent()
         shown?.let { bitmap ->
             val painter = remember(bitmap) { BitmapPainter(bitmap) }
             Image(
@@ -368,18 +386,7 @@ fun FullArtworkBlurBackdrop(
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha.value },
             )
         }
-        // The next cover's blur, at the reveal's own progress: a layer whose
-        // alpha alone moves, so each frame of the reveal is a property change
-        // on it and nothing is re-recorded.
-        held?.let { bitmap ->
-            val painter = remember(bitmap) { BitmapPainter(bitmap) }
-            Image(
-                painter = painter,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = heldLayer.alpha(liveMix) },
-            )
-        }
+        if (!heldUnderShown) heldLayerContent()
 
         // Lyrics and queue are dense foregrounds. Preserve the cover's
         // colour and layout, but keep bright sleeves from lowering contrast.
