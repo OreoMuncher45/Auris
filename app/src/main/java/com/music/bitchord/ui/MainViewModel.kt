@@ -602,7 +602,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
-    private val newestRequestId = AtomicLong(0L)
+    private val searchOwnership = SearchOwnership()
+
+    /**
+     * The last search handed to the pipeline, so a change of listener can ask
+     * an account-private one again as the new listener.
+     */
+    private var lastSearchRequest: SearchRequest? = null
 
     /**
      * Results of recent searches, so a query searched before is answered
@@ -637,7 +643,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private data class SearchSession(
         val key: String,
-        val requestId: Long,
+        val ticket: SearchTicket,
         val filter: SearchFilter,
         val continuation: String?,
         val nextOffset: Int? = null,
@@ -1352,12 +1358,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val recordingRatingVersion = HashMap<String, Int>()
 
     /**
-     * True while [onWebSession] has installed candidate credentials that have
+     * Active while [onWebSession] has installed candidate credentials that have
      * not been validated yet. Row ratings don't write during it: until the
      * candidate is accepted, a write would go to an account that may never
-     * become the listener.
+     * become the listener. Reads filed under a listener (the library, a
+     * page's continuation) wait for it to end before they capture whose
+     * credentials they go out with.
      */
-    private var credentialsInValidation = false
+    private val credentialsInValidation = CandidateValidation()
 
     private fun cancelRowRatings() {
         // A cancelled tap was never sent: put each row back to what the server
@@ -1405,7 +1413,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (listenerKey() != listener) return@withLock
                 // Held off during sign-in validation: not sent, and settled
                 // below like any other unwritten tap.
-                val sendable = videoId != null && !credentialsInValidation
+                val sendable = videoId != null && !credentialsInValidation.active
                 val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
                 // Confirmed the moment YouTube accepts it, so a cancel during
                 // the housekeeping that follows settles to it, not to the
@@ -3310,8 +3318,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchLibrary(identity: String?) {
-        // The credentials the request goes out with: a candidate account under
-        // validation changes them before [listenerKey] moves.
+        // A candidate account under validation signs requests before
+        // [listenerKey] moves, so wait it out: then the credentials read below
+        // are the listener's own.
+        credentialsInValidation.awaitSettled()
+        // Validation that switched the account reloads the library itself.
+        if (identity != listenerKey()) return
         val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
@@ -3651,14 +3663,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * A search asked for, as a request the pipeline below decides what to do
      * with.
      *
-     * [requestId] is what makes a late answer harmless: a response is only
+     * [ticket] is what makes a late answer harmless: a response is only
      * written to the screen if its id is still the newest one asked for.
      */
     private data class SearchRequest(
         val query: String,
         val filter: SearchFilter,
         val source: SearchSource,
-        val requestId: Long,
+        val ticket: SearchTicket,
     )
 
     /**
@@ -3669,7 +3681,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * shown for the other.
      */
     private fun cacheKey(query: String, filter: SearchFilter, source: SearchSource) =
-        "${source.name}:${filter.name}:$query"
+        searchCacheKey(query, filter, source)
 
     /**
      * The results of the longest earlier query this one starts with — near
@@ -3689,17 +3701,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (query.isBlank()) {
             // Nothing in flight can still be waiting to overwrite this: the
             // id it would be checked against has already moved past it.
-            newestRequestId.incrementAndGet()
+            searchOwnership.supersede()
+            lastSearchRequest = null
             searchSession = null
             _searchLoadingMore.value = false
             _results.value = null
             return
         }
-        val id = newestRequestId.incrementAndGet()
+        val filter = _filter.value
+        val ticket = searchOwnership.issue(filter)
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, _searchSource.value, id))
+        val request = SearchRequest(query, filter, _searchSource.value, ticket)
+        lastSearchRequest = request
+        searchRequests.tryEmit(request)
+    }
+
+    /**
+     * The listener changed: signed out, or switched account or channel.
+     *
+     * A Library search is the leaving listener's own songs. Its cached answers
+     * are dropped, anything still in flight is superseded, and a Library
+     * search on screen is asked again as whoever is listening now — which,
+     * signed out, is the pipeline saying why there is nothing to search.
+     * A catalogue search is nobody's in particular and is left alone.
+     */
+    private fun onSearchListenerChanged() {
+        searchCache.snapshot().keys
+            .filter(::isAccountPrivateSearchKey)
+            .forEach { searchCache.remove(it) }
+        val last = lastSearchRequest ?: return
+        if (!last.filter.requiresAuth) return
+        if (_results.value == null) {
+            // Cleared since it was asked: nothing to answer again, only
+            // something still in flight to stop.
+            searchOwnership.supersede()
+            lastSearchRequest = null
+            return
+        }
+        searchSession = null
+        _searchLoadingMore.value = false
+        _results.value = UiState.Loading
+        val request = last.copy(ticket = searchOwnership.issue(last.filter))
+        lastSearchRequest = request
+        searchRequests.tryEmit(request)
     }
 
     /**
@@ -3724,6 +3770,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
+                // Superseded before it was even picked up — by a newer search,
+                // or by the listener it was asked as leaving.
+                if (!searchOwnership.owns(request.ticket)) return@collectLatest
                 // Library is the account's own songs: signed out there is
                 // nothing to search, so it says why rather than asking. Ahead
                 // of the cache, so a signed-out page can't show an earlier
@@ -3743,7 +3792,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (exact != null) {
                     searchSession = SearchSession(
                         key = key,
-                        requestId = request.requestId,
+                        ticket = request.ticket,
                         filter = request.filter,
                         continuation = exact.continuation,
                         nextOffset = exact.nextOffset,
@@ -3765,7 +3814,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             request.filter,
                         )
                     }
-                    if (request.requestId != newestRequestId.get()) return@collectLatest
+                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
                     _results.value = page.fold(
                         onSuccess = { spotify ->
                             // The rows are published the usual way, and a
@@ -3781,7 +3830,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 continuation = null,
                                 nextOffset = spotify.nextOffset,
                                 key = key,
-                                requestId = request.requestId,
+                                ticket = request.ticket,
                                 filter = request.filter,
                                 source = request.source,
                             )
@@ -3825,10 +3874,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 // A search that has been superseded shouldn't land on screen,
                 // whether it succeeded or failed.
-                if (request.requestId != newestRequestId.get()) return@collectLatest
+                if (!searchOwnership.owns(request.ticket)) return@collectLatest
                 _results.value = result.fold(
                     onSuccess = { page ->
-                        published(page, key, request.requestId, request.filter, request.source)
+                        published(page, key, request.ticket, request.filter, request.source)
                     },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
@@ -3851,7 +3900,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchLoadingMore.value = true
         viewModelScope.launch {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
-            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
             if (stillCurrent) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
@@ -3866,7 +3915,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                         searchSession = session.copy(continuation = page.continuation)
@@ -3896,7 +3945,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     offset,
                 )
             }
-            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
             if (stillCurrent) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
@@ -3911,7 +3960,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .withoutBlockedArtists()
                     }
                     // The merge suspended; a search started meanwhile owns the list now.
-                    owns = searchSession == session && session.requestId == newestRequestId.get()
+                    owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
                         searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
                         searchSession = session.copy(nextOffset = page.nextOffset)
@@ -4002,7 +4051,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun published(
         page: YtMusicRepository.SearchPage,
         key: String,
-        requestId: Long,
+        ticket: SearchTicket,
         filter: SearchFilter,
         source: SearchSource,
     ): UiState<List<SearchResult>> = publishedRows(
@@ -4010,7 +4059,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         continuation = page.continuation,
         nextOffset = null,
         key = key,
-        requestId = requestId,
+        ticket = ticket,
         filter = filter,
         source = source,
     )
@@ -4027,7 +4076,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         continuation: String?,
         nextOffset: Int?,
         key: String,
-        requestId: Long,
+        ticket: SearchTicket,
         filter: SearchFilter,
         source: SearchSource,
     ): UiState<List<SearchResult>> {
@@ -4036,7 +4085,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchCache.put(key, SearchCacheEntry(clean, continuation, nextOffset))
         searchSession = SearchSession(
             key = key,
-            requestId = requestId,
+            ticket = ticket,
             filter = filter,
             continuation = continuation,
             nextOffset = nextOffset,
@@ -4376,15 +4425,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             // Who the page was opened for: its continuation walk belongs to that
-            // listener, even when the first response lands after a switch. Read
-            // once the session scope is in: installing it right after an account
-            // switch can move the listener, and the page's own browse waits for
-            // it anyway — capturing earlier would drop its continuation.
-            // Already-resolved scopes return at once; on-device pages skip it.
-            if (localPlaylist == null && remote == null && !browseId.startsWith("local:")) {
-                Innertube.ensureSessionScope()
-            }
+            // listener, even when the first response lands after a switch.
+            // Captured before the scope wait below, so a switch during that
+            // wait leaves the page with the listener it was opened for, and
+            // [fillIn] stops rather than continue it as the new one. A
+            // candidate account under validation is waited out first: until it
+            // ends, the credentials are not the listener's.
+            val remotePage = localPlaylist == null && remote == null && !browseId.startsWith("local:")
+            if (remotePage) credentialsInValidation.awaitSettled()
             val openedFor = listenerKey()
+            // The credentials, though, are read once the session scope is in:
+            // installing it right after an account switch can change them for
+            // the same listener, and the page's own browse waits for it anyway —
+            // reading them earlier would drop its continuation. Already-resolved
+            // scopes return at once; on-device pages skip it.
+            if (remotePage) Innertube.ensureSessionScope()
             val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
@@ -5223,11 +5278,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Queued row ratings must not go out under the candidate: drop
             // them, and hold new ones off until validation is over.
             cancelRowRatings()
-            credentialsInValidation = true
-            try {
+            credentialsInValidation.during {
                 validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
-            } finally {
-                credentialsInValidation = false
             }
         }
     }
@@ -5323,6 +5375,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // identity that was active before validation succeeded.
             StreamResolver.onSessionChanged()
             if (wasSignedIn) clearListenerState()
+            onSearchListenerChanged()
             reloadForAccount()
             loadChannels(force = true)
             onComplete(true)
@@ -5335,6 +5388,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val profile = account?.profiles?.firstOrNull { it.profileId == selectedProfileId }
         Innertube.cookie = account?.cookie
         Innertube.selectChannel(profile?.pageId, profile?.dataSyncId, profile?.authUser)
+        // A Library search asked under the rejected candidate is its answer,
+        // not the restored listener's.
+        onSearchListenerChanged()
     }
 
     /** Selects an identity without ever allowing a response to replace it. */
@@ -5359,6 +5415,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _selectedChannelName.value = profile.name
         StreamResolver.onSessionChanged()
         clearListenerState(restoreCached = true)
+        onSearchListenerChanged()
         reloadForAccount()
     }
 
@@ -5502,6 +5559,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _playlistOwned.value = emptyMap()
         ownershipInFlight.clear()
         _songMenu.value = null
+        onSearchListenerChanged()
         loadHome()
     }
 

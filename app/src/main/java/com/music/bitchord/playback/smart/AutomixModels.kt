@@ -140,7 +140,8 @@ object AutomixModels {
     /**
      * Settings' Delete: removes both models (and any half-finished download)
      * to free the space. Refused while a download is running. The caller turns
-     * Automix off first, or the next analysis pass would fetch them straight back.
+     * Automix off first; with it off, only Download / Retry fetches them again
+     * (see [fetchGate]).
      */
     fun delete(): Boolean {
         synchronized(lock) {
@@ -171,8 +172,8 @@ object AutomixModels {
 
     /**
      * Starts a fetch of whatever is missing. [explicit] is a tap in settings,
-     * which only offline mode refuses; anything else also waits for a
-     * connection the Wi-Fi-only download setting allows.
+     * which only offline mode refuses; anything else needs Automix on and
+     * waits for a connection the Wi-Fi-only download setting allows.
      */
     private fun request(force: Boolean, explicit: Boolean) {
         synchronized(lock) {
@@ -181,17 +182,44 @@ object AutomixModels {
                 _state.value = State.Ready
                 return
             }
-            if (explicit) {
-                if (AppSettings.effectiveOffline.value) {
+            when (
+                fetchGate(
+                    explicit = explicit,
+                    automixOn = AppSettings.smartFadeEnabled.value,
+                    offline = AppSettings.effectiveOffline.value,
+                    downloadsAllowedNow = { AppSettings.downloadsAllowedNow },
+                )
+            ) {
+                FetchGate.OFFLINE -> {
                     _state.value = State.Failed
                     return
                 }
-            } else if (!AppSettings.downloadsAllowedNow) {
-                return
+                FetchGate.HOLD -> return
+                FetchGate.FETCH -> Unit
             }
             if (!force && failedAt != 0L && SystemClock.elapsedRealtime() - failedAt < RETRY_AFTER_MS) return
             job = scope.launch { fetchMissing() }
         }
+    }
+
+    internal enum class FetchGate { FETCH, HOLD, OFFLINE }
+
+    /**
+     * Whether a [request] may start a fetch. Only a tap on Download / Retry or
+     * Automix being on asks for the models: a tracker that finds none while
+     * Automix is off (an analysis already queued when it was switched off, or
+     * one after Delete) must not fetch the 32 MB the listener just removed.
+     */
+    internal fun fetchGate(
+        explicit: Boolean,
+        automixOn: Boolean,
+        offline: Boolean,
+        downloadsAllowedNow: () -> Boolean,
+    ): FetchGate = when {
+        explicit -> if (offline) FetchGate.OFFLINE else FetchGate.FETCH
+        !automixOn -> FetchGate.HOLD
+        !downloadsAllowedNow() -> FetchGate.HOLD
+        else -> FetchGate.FETCH
     }
 
     private fun fetchMissing() {

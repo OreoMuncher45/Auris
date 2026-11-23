@@ -111,4 +111,112 @@ class QueueEditsTest {
         assertEquals(1, move.insertAt)
         assertEquals(QueueTier.USER_QUEUE, move.songs.single().queueTier)
     }
+
+    // ---- Edits planned from a stale snapshot are resolved against the live queue by entry ----
+
+    private fun bare(id: String) =
+        Song(videoId = id, title = id, artist = "", thumbnailUrl = null, queueEntryId = null)
+
+    @Test
+    fun aRowIsFoundAfterTheQueueGrewInFrontOfIt() {
+        val snapshot = listOf("now", "a", "b", "c").map { song(it) }
+        // A song went in at the head of the queue, and AutoPlay appended one.
+        val live = listOf("now", "x", "a", "b", "c", "auto").map { song(it) }
+        val targets = QueueEdits.targetsAt(snapshot, listOf(2))
+        assertEquals(listOf(3), QueueEdits.resolve(targets, live))
+    }
+
+    @Test
+    fun aRowIsFoundAfterTheQueueShrankAndARemovedRowIsDropped() {
+        val snapshot = listOf("now", "a", "b", "c", "d").map { song(it) }
+        // a and c have gone (a crossfade handoff moved past a; c was taken out).
+        val live = listOf("now", "b", "d").map { song(it) }
+        val targets = QueueEdits.targetsAt(snapshot, listOf(1, 2, 3, 4))
+        assertEquals(listOf(1, 2), QueueEdits.resolve(targets, live))
+    }
+
+    @Test
+    fun theSameLengthWithDifferentRowsEditsNothingByMistake() {
+        val snapshot = listOf("now", "a", "b", "c").map { song(it) }
+        // An Auto continuation replaced the upcoming rows; the length is the same.
+        val live = listOf("now", "p", "q", "r").map { song(it) }
+        assertEquals(emptyList(), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(1, 3)), live))
+        // Reordered but the same rows: each is found where it is now.
+        val reordered = listOf("now", "c", "a", "b").map { song(it) }
+        assertEquals(listOf(1, 3), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(2, 3)), reordered))
+    }
+
+    @Test
+    fun indicesOutsideTheSnapshotAreIgnored() {
+        val snapshot = listOf(song("now"), song("a"))
+        assertEquals(emptyList(), QueueEdits.targetsAt(snapshot, listOf(-1, 2, 9)))
+    }
+
+    @Test
+    fun aRepeatedRowWithoutAnEntryIdIsTrustedOnlyWhereItWasSeen() {
+        val snapshot = listOf(bare("now"), bare("a"), bare("b"), bare("a"))
+        assertEquals(listOf(3), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(3)), snapshot))
+        // Shifted by one: which "a" was meant can't be told, so neither is touched.
+        val shifted = listOf(bare("now"), bare("x"), bare("a"), bare("b"), bare("a"))
+        assertEquals(emptyList(), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(3)), shifted))
+        // A single "a" is unambiguous wherever it moved.
+        val single = listOf(bare("now"), bare("x"), bare("y"), bare("a"))
+        assertEquals(listOf(3), QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(1)), single))
+    }
+
+    @Test
+    fun multiSelectRemovalOnAStaleSnapshotRemovesOnlyTheTickedRows() {
+        val snapshot = listOf("now", "a", "b", "c", "d", "e").map { song(it) }
+        // Two songs were queued at the head and AutoPlay appended one since the ticks.
+        val live = listOf("now", "x", "y", "a", "b", "c", "d", "e", "auto").map { song(it) }
+        val picked = QueueEdits.resolve(QueueEdits.targetsAt(snapshot, listOf(1, 2, 4)), live)
+        assertEquals(listOf(3, 4, 6), picked)
+        val removal = QueueEdits.capture(live, picked)
+        val after = remove(live, picked)
+        assertEquals(listOf("now", "x", "y", "c", "e", "auto"), ids(after))
+        assertEquals(ids(live), ids(apply(after, QueueEdits.restorePlan(removal, after, 0))))
+    }
+
+    @Test
+    fun undoRestoresByIdentityAfterTheQueueChangedAgain() {
+        val live = listOf("now", "a", "b", "c", "d", "e").map { song(it) }
+        val removal = QueueEdits.capture(live, listOf(1, 2, 4))
+        // After the removal: [now, c, e]; then two songs went in at the head
+        // and AutoPlay appended one — the same queue length as before by chance.
+        val after = listOf("now", "x", "y", "c", "e", "auto").map { song(it) }
+        val restored = apply(after, QueueEdits.restorePlan(removal, after, 0))
+        assertEquals(listOf("now", "x", "y", "a", "b", "c", "d", "e", "auto"), ids(restored))
+    }
+
+    @Test
+    fun undoDoesNotAddAnEntryThatIsAlreadyBack() {
+        val live = listOf("now", "a", "b", "c").map { song(it) }
+        val removal = QueueEdits.capture(live, listOf(1, 2))
+        // a came back by some other path before Undo.
+        val after = listOf("now", "a", "c").map { song(it) }
+        val plan = QueueEdits.restorePlan(removal, after, 0)
+        assertEquals(listOf("b"), plan.map { it.second.videoId })
+        assertEquals(listOf("now", "a", "b", "c"), ids(apply(after, plan)))
+    }
+
+    @Test
+    fun undoKeepsTheRowsInOrderWhenTheirAnchorsMoved() {
+        val live = listOf("now", "a", "b", "c", "d").map { song(it) }
+        // a and c are removed; a's anchor is b, c's is d.
+        val removal = QueueEdits.capture(live, listOf(1, 3))
+        // d was moved ahead of b since: a still goes in front of b, and c,
+        // whose anchor is now earlier, follows a rather than jumping ahead of it.
+        val after = listOf("now", "d", "b").map { song(it) }
+        val restored = ids(apply(after, QueueEdits.restorePlan(removal, after, 0)))
+        assertEquals(listOf("now", "d", "a", "c", "b"), restored)
+    }
+
+    @Test
+    fun undoOfAThousandRowsIsPlannedInOnePass() {
+        val live = (0 until 5000).map { song("s$it") }
+        val picked = (1 until 5000 step 2).toList()
+        val removal = QueueEdits.capture(live, picked)
+        val after = remove(live, picked)
+        assertEquals(ids(live), ids(apply(after, QueueEdits.restorePlan(removal, after, 0))))
+    }
 }
