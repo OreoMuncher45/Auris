@@ -896,7 +896,12 @@ object Downloads {
      * tracks is actually on disk is answered where it is read — see
      * [collectionsAmong].
      */
-    fun rememberCollection(target: DownloadTarget, songs: List<Song>, keepSwitch: Boolean = false) {
+    fun rememberCollection(
+        target: DownloadTarget,
+        songs: List<Song>,
+        keepSwitch: Boolean = false,
+        switchOn: () -> Boolean = { true },
+    ) {
         if (songs.isEmpty()) return
         val ids = songs.map { it.videoId }.distinct()
         recordCollections { current ->
@@ -921,8 +926,10 @@ object Downloads {
                 // leads, since it is the one just seen on screen.
                 videoIds = (ids + (existing?.videoIds ?: emptyList())).distinct(),
                 // The sync passes [keepSwitch]: a switch turned off while its
-                // pass was reading must not come back on with the record.
-                autoDownload = if (keepSwitch) existing?.autoDownload ?: true else true,
+                // pass was reading must not come back on with the record. A
+                // record it creates reads [switchOn] here, under the record's
+                // lock, so a setting turned off mid-pass is the one it gets.
+                autoDownload = if (keepSwitch) existing?.autoDownload ?: true else switchOn(),
             )
             current + (target.id to record)
         }
@@ -964,11 +971,24 @@ object Downloads {
      * where a single track only ever offers [delete].
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
-        val record = _collections.value[id] ?: return false
+        if (id !in _collections.value) return false
         // Deleting the liked songs while they are kept downloaded would have
         // the next pass fetch every one of them again. Taking them off the
         // device says the listener no longer wants that, so it ends here.
         if (samePlaylist(id, YtMusicRepository.LIKED_MUSIC)) AppSettings.setDownloadLikedSongs(false)
+        // The switch goes off before any file does, under the lock a sync
+        // pass admits and records under (see [withCollectionsHeld]): a pass
+        // either finished first, and what it queued is in this snapshot, or it
+        // runs after and finds the switch off.
+        val record = synchronized(collectionLock) {
+            val current = _collections.value[id] ?: return false
+            setAutoDownloadNewSongs(id, false)
+            current
+        }
+        // A track still downloading has no file to delete yet, and would
+        // arrive after the release is gone.
+        val inFlight = synchronized(lock) { record.videoIds.filter { it in pending || it in running } }
+        inFlight.forEach(::cancel)
         var any = false
         record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
         forgetCollection(id)
@@ -1166,6 +1186,16 @@ object Downloads {
     }
 
     private val collectionLock = Any()
+
+    /**
+     * Runs [block] with the collection records held still: no switch change,
+     * deletion or other record write lands while it runs.
+     *
+     * For the sync pass, whose last check that a release is still wanted, its
+     * enqueue and its record write must be one step — see [deleteCollection]
+     * and [DownloadedPlaylistSync.setKeepLiked]. [block] must not suspend.
+     */
+    internal fun <T> withCollectionsHeld(block: () -> T): T = synchronized(collectionLock, block)
 
     /**
      * Record one file under every id it could be asked about.
