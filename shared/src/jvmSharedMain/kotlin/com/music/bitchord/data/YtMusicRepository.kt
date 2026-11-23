@@ -1170,6 +1170,8 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
+            // Who the request was made as: the retry may only go out as the same one.
+            val identity = Innertube.listener
             runCatching { block() }.recoverCatching { failure ->
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
@@ -1179,6 +1181,14 @@ object YtMusicRepository {
                 if (!rejected || Innertube.cookie == null) throw failure
                 Log.w(TAG, "$label rejected; refreshing active session context once")
                 Innertube.refreshSessionScope()
+                // The refresh drops an adopted profile and reads the shell's
+                // default, and a switch can land while it waits: a retry under
+                // another identity could send a rating or playlist edit to an
+                // account the listener did not pick, so it is not made.
+                if (Innertube.listener != identity) {
+                    Log.w(TAG, "$label not retried: the account changed during the refresh")
+                    throw failure
+                }
                 block()
             }
                 // runCatching catches Throwable, cancellation included, which
