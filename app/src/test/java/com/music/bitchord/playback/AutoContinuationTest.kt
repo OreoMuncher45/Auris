@@ -40,6 +40,20 @@ class AutoContinuationTest {
     }
 
     @Test
+    fun `play next entries behind the folder stay ahead of its next page`() {
+        val withNext = listOf(
+            song("a", "folder"),
+            song("p", null, QueueTier.USER_QUEUE),
+            song("q", null, QueueTier.USER_QUEUE),
+            song("x", null, QueueTier.AUTOPLAY),
+        )
+        assertEquals(3, autoContinuationInsertIndex(withNext, "folder", currentIndex = 0))
+        // Still owed while the listener plays the queued entries.
+        assertEquals(3, autoContinuationInsertIndex(withNext, "folder", currentIndex = 2))
+        assertNull(autoContinuationInsertIndex(withNext, "folder", currentIndex = 3))
+    }
+
+    @Test
     fun `page is dropped when the queue no longer holds the folder`() {
         assertNull(autoContinuationInsertIndex(queue, "other", currentIndex = 0))
     }

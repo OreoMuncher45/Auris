@@ -14,8 +14,13 @@ import com.music.bitchord.data.model.Song
  */
 internal fun autoContinuationInsertIndex(queue: List<Song>, sourceId: String, currentIndex: Int): Int? {
     val last = queue.indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
-    if (last < 0 || last < currentIndex) return null
-    return last + 1
+    if (last < 0) return null
+    // Play Next entries queued right behind the folder stay ahead of its next
+    // page: the listener asked for them next.
+    var end = last + 1
+    while (end < queue.size && queue[end].queueTier == QueueTier.USER_QUEUE) end++
+    if (currentIndex >= end) return null
+    return end
 }
 
 /**
