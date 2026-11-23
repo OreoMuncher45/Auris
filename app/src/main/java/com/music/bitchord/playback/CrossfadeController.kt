@@ -20,6 +20,7 @@ import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
+import com.music.bitchord.playback.loopmix.LoopArmGate
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
 import com.music.bitchord.playback.loopmix.LoopMixSession
@@ -2943,13 +2944,10 @@ class CrossfadeController(
                     loopFallBack("the decks would not build")
                     return@launch
                 }
-                // Turned on while the decks were building: no blend of any kind.
-                if (AppSettings.bitPerfect.value) {
-                    loopBail("bit-perfect is on", settle = false)
-                    return@launch
-                }
-                if (!AppSettings.smartFadeEnabled.value) {
-                    loopBail("Automix was switched off", settle = false)
+                // Changed while the decks were building: bit-perfect allows no
+                // blend of any kind, and the decks were built for 1x and a next track.
+                loopArmRefusal(out, nextStillIncoming = true)?.let { why ->
+                    loopBail(why, settle = false)
                     return@launch
                 }
                 // The queue may have changed under the build: the decks are for
@@ -3028,10 +3026,16 @@ class CrossfadeController(
             return
         }
         if (session.outPort.interrupted) return loopBail("the outgoing sink was flushed", settle = false)
-        // Bit-perfect turned on, or Automix off, before the takeover: the song plays on untouched.
-        if (!session.outPort.tookOver && AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = false)
-        if (!session.outPort.tookOver && !AppSettings.smartFadeEnabled.value) {
-            return loopBail("Automix was switched off", settle = false)
+        // Before the takeover the song can play on untouched: bit-perfect or
+        // Automix switched, the speed or Repeat One changed, or the queue no
+        // longer has the armed song next.
+        if (!session.outPort.tookOver) {
+            val into = incoming ?: return loopBail("no incoming player", settle = false)
+            val liveNext = out.nextMediaItemIndex
+            val armed = into.currentMediaItem
+            val nextStillIncoming = liveNext != C.INDEX_UNSET && armed != null &&
+                runCatching { out.getMediaItemAt(liveNext) }.getOrNull()?.let { sameQueueEntry(it, armed) } == true
+            loopArmRefusal(out, nextStillIncoming)?.let { return loopBail(it, settle = false) }
         }
         if (session.outPort.tookOver) {
             phase = Phase.LOOP_RUNNING
@@ -3051,6 +3055,14 @@ class CrossfadeController(
         val m = session.mixSeconds(System.nanoTime(), out.isPlaying) ?: return
         if (m > 1.0) loopBail("the sink never reached the loop")
     }
+
+    private fun loopArmRefusal(out: ExoPlayer, nextStillIncoming: Boolean): String? = LoopArmGate.refusal(
+        bitPerfect = AppSettings.bitPerfect.value,
+        automixOn = AppSettings.smartFadeEnabled.value,
+        playbackSpeed = AppSettings.playbackSpeed.value,
+        repeatMode = out.repeatMode,
+        nextStillIncoming = nextStillIncoming,
+    )
 
     /** The mix is running: starts the incoming player, aligns it, hands the session over, and ends. */
     private fun driveLoopMix() {
