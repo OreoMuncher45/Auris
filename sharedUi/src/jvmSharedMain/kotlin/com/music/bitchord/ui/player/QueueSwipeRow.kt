@@ -94,6 +94,7 @@ private class SwipeHolder {
     var width = 0f
     var track: QueueTrack? = null
     var enabled = false
+    var env: QueueSwipeEnv? = null
     var canCommit: (QueueTrack, QueueSwipeAction) -> Boolean = { _, _ -> false }
     var onCommit: (QueueTrack, QueueSwipeAction) -> Boolean = { _, _ -> false }
     var job: Job? = null
@@ -124,6 +125,9 @@ internal fun QueueSwipeRow(
     val holder = remember { SwipeHolder() }
     holder.track = track
     holder.enabled = enabled
+    // Read through the holder: the gesture outlives the composition that
+    // started it, and a changed reduced-motion setting must reach its release.
+    holder.env = env
     holder.canCommit = canCommit
     holder.onCommit = onCommit
     val ltr = LocalLayoutDirection.current == LayoutDirection.Ltr
@@ -140,7 +144,7 @@ internal fun QueueSwipeRow(
         val commit = !cancelled && holder.enabled && width > 0f &&
             abs(motion.offset) >= width * COMMIT_FRACTION && holder.canCommit(motion.track, action)
         val generation = ++holder.generation
-        val quick = env.reduceAnimation
+        val quick = (holder.env ?: env).reduceAnimation
         holder.job?.cancel()
         holder.job = scope.launch {
             try {
@@ -259,7 +263,7 @@ internal fun QueueSwipeRow(
                             val travelled = abs(m.offset)
                             if (eligible && width > 0f && travelled >= width * COMMIT_FRACTION) {
                                 if (!m.armed) {
-                                    env.haptics.play(Haptic.Tick)
+                                    (holder.env ?: env).haptics.play(Haptic.Tick)
                                     m.armed = true
                                 }
                             } else if (!eligible || travelled < width * DISARM_FRACTION) {
