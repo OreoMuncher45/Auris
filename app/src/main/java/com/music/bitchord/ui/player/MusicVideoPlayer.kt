@@ -133,16 +133,11 @@ object MusicVideoEngine {
     private var loadedProfile: String? = null
 
     init {
-        // Signing in is what opens an age gate, so every "no picture" verdict
-        // and every URL minted for the old session is owed a fresh ask.
-        scope.launch {
-            InnerTubeXResolver.sessionGeneration.drop(1).collect {
-                noPicture.clear()
-                streams.clear()
-                refused.clear()
-                refresh()
-            }
-        }
+        // Deliberately nothing here touches [InnerTubeXResolver]: it would run
+        // its static initialiser the first time the engine loads — which is
+        // during composition — and InnerTubeX's classes ship as Java 21, which
+        // Robolectric's Java 17 sandbox cannot load. The engine therefore reads
+        // the resolver only from a method body, at playback time.
         scope.launch {
             AppSettings.preferMusicOnly.drop(1).collect { refresh() }
         }
