@@ -6,8 +6,14 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CANVAS_UA
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.settings.AppSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -20,6 +26,9 @@ import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /**
  * One client for the web player's own GraphQL backend.
@@ -82,30 +91,75 @@ internal object SpotifyGraphQL {
         ((rateLimitedUntil - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(0)
 
     /**
+     * Propagates an overall deadline to token acquisition, header lookup, and
+     * OkHttp calls made inside [SpotifyGraphQL], including indirect calls from
+     * [SpotifyLibrary], [SpotifyHomeSource], [SpotifyPages], and [SpotifySearch].
+     */
+    private class CallDeadline(val deadlineNanos: Long) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<CallDeadline>
+
+        fun remainingMs(): Long =
+            TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()).coerceAtLeast(0L)
+    }
+
+    /**
+     * Runs [block] under an overall [timeoutMs] deadline enforced on both
+     * token/header acquisition and every OkHttp call in [SpotifyGraphQL].
+     */
+    suspend fun <T> withCallTimeout(timeoutMs: Long, block: suspend () -> T): T {
+        val proposed = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.coerceAtLeast(1L))
+        val existing = currentCoroutineContext()[CallDeadline]?.deadlineNanos
+        val effective = if (existing != null) minOf(existing, proposed) else proposed
+        val remaining = TimeUnit.NANOSECONDS.toMillis(effective - System.nanoTime())
+        if (remaining <= 0L) {
+            throw SpotifyGraphQLException("Spotify request timed out")
+        }
+        return try {
+            withContext(CallDeadline(effective)) {
+                withTimeout(remaining) { block() }
+            }
+        } catch (_: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw SpotifyGraphQLException("Spotify request timed out")
+        }
+    }
+
+    /**
      * Runs [operation] and returns its `data`.
      *
+     * @param callTimeoutMs optional overall deadline covering token lookup and
+     *   the HTTP call; null keeps the default client timeouts.
      * @throws SpotifyGraphQLException when the backend refuses the request or
      *   answers with errors of its own.
      */
-    suspend fun query(operation: String, variables: JsonObject): JsonObject = withContext(Dispatchers.IO) {
-        // The operation is checked before the token. A name this build has
-        // never heard of must not reach the network at all, and going after a
-        // token first would spend a session — and, on a phone with no web view
-        // yet, a wait — on a request that was never going to be made.
-        if (SpotifyOps.hash(operation) == null) {
-            throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
+    suspend fun query(
+        operation: String,
+        variables: JsonObject,
+        callTimeoutMs: Long? = null,
+    ): JsonObject {
+        if (callTimeoutMs != null) {
+            return withCallTimeout(callTimeoutMs) { query(operation, variables, callTimeoutMs = null) }
         }
-        val token = token()
-            ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
-        try {
-            queryWithToken(operation, variables, token)
-        } catch (error: SpotifyGraphQLException) {
-            // A stale token is worth one more try with a fresh one; a second
-            // refusal is a refusal.
-            if (!error.unauthorised) throw error
-            SpotifyToken.invalidate()
-            val fresh = token() ?: throw error
-            queryWithToken(operation, variables, fresh)
+        return withContext(Dispatchers.IO) {
+            // The operation is checked before the token. A name this build has
+            // never heard of must not reach the network at all, and going after a
+            // token first would spend a session — and, on a phone with no web view
+            // yet, a wait — on a request that was never going to be made.
+            if (SpotifyOps.hash(operation) == null) {
+                throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
+            }
+            val token = tokenWithinDeadline()
+                ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
+            try {
+                queryWithToken(operation, variables, token)
+            } catch (error: SpotifyGraphQLException) {
+                // A stale token is worth one more try with a fresh one; a second
+                // refusal is a refusal.
+                if (!error.unauthorised) throw error
+                SpotifyToken.invalidate()
+                val fresh = tokenWithinDeadline() ?: throw error
+                queryWithToken(operation, variables, fresh)
+            }
         }
     }
 
@@ -122,10 +176,18 @@ internal object SpotifyGraphQL {
         operation: String,
         variables: JsonObject,
         token: String,
-    ): JsonObject = withContext(Dispatchers.IO) {
-        val hash = SpotifyOps.hash(operation)
-            ?: throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
-        queryWithHashAndToken(operation, variables, token, hash)
+        callTimeoutMs: Long? = null,
+    ): JsonObject {
+        if (callTimeoutMs != null) {
+            return withCallTimeout(callTimeoutMs) {
+                queryWithToken(operation, variables, token, callTimeoutMs = null)
+            }
+        }
+        return withContext(Dispatchers.IO) {
+            val hash = SpotifyOps.hash(operation)
+                ?: throw SpotifyGraphQLException("this build of Spotify no longer offers the '$operation' operation")
+            queryWithHashAndToken(operation, variables, token, hash)
+        }
     }
 
     /**
@@ -140,10 +202,46 @@ internal object SpotifyGraphQL {
         operation: String,
         variables: JsonObject,
         hash: String,
-    ): JsonObject = withContext(Dispatchers.IO) {
-        val token = token()
-            ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
-        queryWithHashAndToken(operation, variables, token, hash)
+        callTimeoutMs: Long? = null,
+    ): JsonObject {
+        if (callTimeoutMs != null) {
+            return withCallTimeout(callTimeoutMs) {
+                queryWithHash(operation, variables, hash, callTimeoutMs = null)
+            }
+        }
+        return withContext(Dispatchers.IO) {
+            val token = tokenWithinDeadline()
+                ?: throw SpotifyGraphQLException("could not get a Spotify token for this session")
+            queryWithHashAndToken(operation, variables, token, hash)
+        }
+    }
+
+    private suspend fun tokenWithinDeadline(): String? {
+        val remainingMs = currentCoroutineContext()[CallDeadline]?.remainingMs()
+            ?: return token()
+        if (remainingMs <= 0L) {
+            throw SpotifyGraphQLException("Spotify request timed out getting a token")
+        }
+        return try {
+            withTimeout(remainingMs) { token() }
+        } catch (_: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw SpotifyGraphQLException("Spotify request timed out getting a token")
+        }
+    }
+
+    private suspend fun headersWithinDeadline(token: String): Map<String, String> {
+        val remainingMs = currentCoroutineContext()[CallDeadline]?.remainingMs()
+            ?: return headers(token)
+        if (remainingMs <= 0L) {
+            throw SpotifyGraphQLException("Spotify request timed out preparing headers")
+        }
+        return try {
+            withTimeout(remainingMs) { headers(token) }
+        } catch (_: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw SpotifyGraphQLException("Spotify request timed out preparing headers")
+        }
     }
 
     private suspend fun queryWithHashAndToken(
@@ -164,6 +262,12 @@ internal object SpotifyGraphQL {
             )
         }
 
+        val requestHeaders = headersWithinDeadline(token)
+        val remainingMs = currentCoroutineContext()[CallDeadline]?.remainingMs()
+        if (remainingMs != null && remainingMs <= 0L) {
+            throw SpotifyGraphQLException("Spotify request timed out before $operation")
+        }
+
         val body = buildJsonObject {
             put("variables", variables)
             put("operationName", operation)
@@ -178,19 +282,36 @@ internal object SpotifyGraphQL {
         val request = Request.Builder()
             .url(ENDPOINT)
             .post(body.toString().toRequestBody(mediaType))
-            .apply { headers(token).forEach { (name, value) -> header(name, value) } }
+            .apply { requestHeaders.forEach { (name, value) -> header(name, value) } }
             .build()
 
+        val client = if (remainingMs != null) {
+            Http.client.newBuilder()
+                .callTimeout(remainingMs, TimeUnit.MILLISECONDS)
+                .build()
+        } else {
+            Http.client
+        }
+        val call = client.newCall(request)
+        val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) call.cancel()
+        }
         val (code, payload, retryAfter) = try {
-            Http.client.newCall(request).execute().use { response ->
+            call.execute().use { response ->
                 Triple(
                     response.code,
                     response.body?.string().orEmpty(),
                     response.header("Retry-After")?.trim()?.toIntOrNull(),
                 )
             }
+        } catch (error: CancellationException) {
+            call.cancel()
+            throw error
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             throw SpotifyGraphQLException("the request failed: ${error.message}")
+        } finally {
+            cancelHandle?.dispose()
         }
 
         when {
