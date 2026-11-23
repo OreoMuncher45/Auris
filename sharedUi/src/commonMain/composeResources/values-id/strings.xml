@@ -263,10 +263,10 @@
     <string name="queue_selected_count">%1$d dipilih</string>
     <string name="queue_close_selection">Tutup mode pilih</string>
     <string name="queue_selection_remove">Hapus</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">Tambahkan ke playlist</string>
     <string name="queue_download">Unduh</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s dihapus</string>
+    <string name="queue_removed_songs">%1$d lagu dihapus</string>
+    <string name="queue_undo_action">Urungkan</string>
+    <string name="queue_cleared">\"Berikutnya di antrean\" dikosongkan</string>
 </resources>

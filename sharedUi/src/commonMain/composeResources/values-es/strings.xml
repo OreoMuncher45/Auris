@@ -263,10 +263,10 @@
     <string name="queue_selected_count">Seleccionadas: %1$d</string>
     <string name="queue_close_selection">Salir de la selección</string>
     <string name="queue_selection_remove">Quitar</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">Añadir a una lista</string>
     <string name="queue_download">Descargar</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">Se quitó %1$s</string>
+    <string name="queue_removed_songs">Se quitaron %1$d canciones</string>
+    <string name="queue_undo_action">Deshacer</string>
+    <string name="queue_cleared">Se vació «Siguiente en la cola»</string>
 </resources>
