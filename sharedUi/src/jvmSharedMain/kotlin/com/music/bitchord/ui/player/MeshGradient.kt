@@ -1,7 +1,7 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Animatable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -9,7 +9,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -21,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -39,6 +39,7 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
@@ -123,11 +124,17 @@ fun MeshGradientBackground(
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
-    val colorSpec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
-    val animatedColors = tuned.mapIndexed { index, color ->
-        animateColorAsState(color, colorSpec, label = "meshColor$index").value
+    //
+    // Animatables read in the draw lambda, not animated states read here: read
+    // in composition, the 1400ms crossfade recomposed this backdrop on every one
+    // of its frames, to hand the drawing five colours it could read itself.
+    val slots = remember { List(tuned.size) { Animatable(tuned[it]) } }
+    val baseColor = remember { Animatable(tuned.first().dimmed()) }
+    LaunchedEffect(tuned, reduceAnimation, animated) {
+        val spec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
+        slots.forEachIndexed { index, slot -> launch { slot.animateTo(tuned[index], spec) } }
+        launch { baseColor.animateTo(tuned.first().dimmed(), spec) }
     }
-    val baseColor by animateColorAsState(tuned.first().dimmed(), colorSpec, label = "meshBase")
 
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
@@ -174,23 +181,18 @@ fun MeshGradientBackground(
                 scaleX = 1.3f
                 scaleY = 1.3f
             }
-            .background(baseColor)
+            .drawBehind { drawRect(baseColor.value) }
             .blur(blurRadius),
     ) {
-        val anchors = listOf(
-            Offset(0.20f, 0.25f),
-            Offset(0.80f, 0.20f),
-            Offset(0.75f, 0.80f),
-            Offset(0.25f, 0.75f),
-        )
-        val speeds = listOf(1f, -0.7f, 0.85f, -1.15f)
         val drift = phase.value
 
-        animatedColors.forEachIndexed { index, color ->
-            val anchor = anchors[index]
+        slots.forEachIndexed { index, slot ->
+            val color = slot.value
+            val anchor = BLOB_ANCHORS[index]
+            val speed = BLOB_SPEEDS[index]
             val center = Offset(
-                x = (anchor.x + 0.16f * cos(drift * speeds[index] + index * 1.7f)) * size.width,
-                y = (anchor.y + 0.16f * sin(drift * speeds[index] * 0.9f + index * 2.3f)) * size.height,
+                x = (anchor.x + 0.16f * cos(drift * speed + index * 1.7f)) * size.width,
+                y = (anchor.y + 0.16f * sin(drift * speed * 0.9f + index * 2.3f)) * size.height,
             )
             val radius = size.maxDimension * 0.62f
             drawCircle(
@@ -271,6 +273,15 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
  * that would land the blobs back where they started.
  */
 private const val DRIFT_RADIANS = (PI * 0.45f).toFloat()
+
+// Where each blob orbits, and how fast: constants, not lists built on every frame.
+private val BLOB_ANCHORS = listOf(
+    Offset(0.20f, 0.25f),
+    Offset(0.80f, 0.20f),
+    Offset(0.75f, 0.80f),
+    Offset(0.25f, 0.75f),
+)
+private val BLOB_SPEEDS = floatArrayOf(1f, -0.7f, 0.85f, -1.15f)
 
 /**
  * Four mesh colours drawn from the artwork.
