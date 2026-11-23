@@ -1140,23 +1140,34 @@ object AudioCache {
         // first, while its claim still keeps any other round out; once it is
         // cancelled its own bookkeeping leaves the claim in place for this to
         // release.
-        val round = synchronized(analysisAdmission) { analysisJobs[mediaId] }
-        round?.cancelAndJoin()
-        // The same per-track bookkeeping [clear] drops for every track, and
-        // for the same reason: it describes bytes that are about to be gone.
-        synchronized(analysisAdmission) {
-            analysisHeads.remove(mediaId)
-            analysisHeadRounds.remove(mediaId)
-            analysisHeadWant.remove(mediaId)
-            analysisHeadFailures.remove(mediaId)
-            analysisHeadRetryAt.remove(mediaId)
+        //
+        // The track is reserved in the same step as the round is read, so a
+        // track with no round yet cannot be given one while this runs: no
+        // request is admitted for it until the bytes are gone.
+        val round = synchronized(analysisAdmission) {
+            removing.add(mediaId)
+            analysisJobs[mediaId]
         }
-        renditionKeys.remove(mediaId)
         var removed = 0
-        keysOf(mediaId).forEach { key ->
-            runCatching { cache.removeResource(key) }
-                .onSuccess { removed++ }
-                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+        try {
+            round?.cancelAndJoin()
+            // The same per-track bookkeeping [clear] drops for every track, and
+            // for the same reason: it describes bytes that are about to be gone.
+            synchronized(analysisAdmission) {
+                analysisHeads.remove(mediaId)
+                analysisHeadRounds.remove(mediaId)
+                analysisHeadWant.remove(mediaId)
+                analysisHeadFailures.remove(mediaId)
+                analysisHeadRetryAt.remove(mediaId)
+            }
+            renditionKeys.remove(mediaId)
+            keysOf(mediaId).forEach { key ->
+                runCatching { cache.removeResource(key) }
+                    .onSuccess { removed++ }
+                    .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
+            }
+        } finally {
+            synchronized(analysisAdmission) { removing.remove(mediaId) }
         }
         TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
         if (removed > 0) _contentsChanged.value++
@@ -2345,6 +2356,9 @@ object AudioCache {
     /** Wipes between their snapshot and the end of their disk removal; no round starts while one runs. */
     private var wipesRunning = 0
 
+    /** Tracks [remove] is taking off disk; no round starts for one of them meanwhile. Guarded by [analysisAdmission]. */
+    private val removing = HashSet<String>()
+
     /**
      * Rounds that ended short, per video id, and when the next may start
      * ([SystemClock.elapsedRealtime]). A short round gives its claim on
@@ -2766,7 +2780,7 @@ object AudioCache {
         // Admission is one step against a finishing round and a wipe — see
         // [analysisAdmission].
         synchronized(analysisAdmission) {
-            if (wipesRunning > 0) return false
+            if (wipesRunning > 0 || videoId in removing) return false
             if (!ignoreBackoff) {
                 analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return false }
             }
