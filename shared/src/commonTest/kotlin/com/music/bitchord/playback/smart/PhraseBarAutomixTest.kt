@@ -110,6 +110,7 @@ class PhraseBarAutomixTest {
         if (plan.reason.endsWith("phrase-8-bar")) {
             val start = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
             val end = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 }
+            kotlin.test.assertTrue(start >= 0 && end >= 0, "both phrase edges must be measured downbeats")
             assertEquals(PHRASE_BARS_SHORT, end - start, "a phrase plan must span 8 measured bars")
         }
     }
@@ -191,5 +192,21 @@ class PhraseBarAutomixTest {
     private companion object {
         /** The adaptive planner's ceiling; the phrase mode deliberately runs past it. */
         const val MAX_OVERLAP_SECONDS_FOR_TEST = 16.0
+    }
+
+    @Test
+    fun aPhraseWhoseStartMissesTheMeasuredBarLinesIsSnappedOntoThem() {
+        // Phrase boundaries a quarter beat off the measured bar lines: the start
+        // the planner aligns to is unmeasured, the end it would reach is measured.
+        val base = track("a", 120.0, "C major", vocal = 0.1)
+        val current = base.copy(phraseBoundaries = base.phraseBoundaries.map { it + 0.125 })
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+        val plan = plan(current, next, PHRASE_BARS_SHORT)
+        if (plan.reason.endsWith("phrase-8-bar")) {
+            val start = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
+            val end = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 }
+            kotlin.test.assertTrue(start >= 0 && end >= 0, "both phrase edges must be measured downbeats")
+            assertEquals(PHRASE_BARS_SHORT, end - start)
+        }
     }
 }

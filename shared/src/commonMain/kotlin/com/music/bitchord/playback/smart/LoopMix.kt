@@ -278,10 +278,12 @@ object LoopMix {
         if (side != null && side.bpm > 0 && side.downbeats.isNotEmpty()) {
             val beat = 60 / side.bpm
             val downs = side.downbeats
-            for (start in downs) {
+            for ((index, start) in downs.withIndex()) {
                 if (start < from) continue
+                // [bars] measured bar lines on, not whichever lies nearest in
+                // time: bar lines a beat or two apart would otherwise pass.
+                val end = downs.getOrNull(index + bars) ?: break
                 val target = start + bars * 4 * beat
-                val end = nearest(downs, target)
                 if (abs(end - target) > beat / 4 || end > to) continue
                 loops += Loop(start, end)
             }
@@ -444,16 +446,18 @@ object LoopMix {
         var reach = Double.NEGATIVE_INFINITY
         for (window in windows.sortedBy { it.startTime }) {
             val frameSec = 1 / window.frameRate
-            val a = max(0, ceil((from - window.startTime) * window.frameRate).toInt())
-            val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
+            // Frames straddling either edge count for the part inside it.
+            val a = max(0, floor((from - window.startTime) * window.frameRate).toInt())
+            val b = min(window.values.size, ceil((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 val t = window.startTime + i * frameSec
-                val end = t + frameSec
+                val end = min(t + frameSec, to)
                 // Only the part of a frame past what is already measured counts:
                 // windows overlap at their seams, and not always on the same grid.
-                if (end <= reach + 1e-9) continue
+                if (end <= reach + 1e-9 || end <= from) continue
                 if (t > reach + frameSec * 0.5) runSec = 0.0
-                val added = end - max(t, reach)
+                val added = end - max(max(t, from), reach)
+                if (added <= 0.0) continue
                 measuredSec += added
                 // Inclusive, as the transition policy reads the same threshold.
                 if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {

@@ -149,7 +149,8 @@ int64_t Renderer::firstFrame() const {
 }
 
 void Renderer::render(int64_t frame, float* interleaved, int frames) {
-  if (int(mixLeft_.size()) < frames) {
+  // Both checked: a failed second resize must not leave the pair looking grown.
+  if (int(mixLeft_.size()) < frames || int(mixRight_.size()) < frames) {
     mixLeft_.resize(frames);
     mixRight_.resize(frames);
   }
@@ -185,7 +186,7 @@ void Renderer::renderDeck(Deck& deck, int64_t frame, int frames) {
     deck.heardPos = deck.knotHeard(frameStart);
     deck.readPos = deck.heardPos + inLatency + rate * outLatency;
     const int seekLength = deck.stretch.seekLength();
-    if (int(inLeft_.size()) < seekLength) {
+    if (int(inLeft_.size()) < seekLength || int(inRight_.size()) < seekLength) {
       inLeft_.resize(seekLength);
       inRight_.resize(seekLength);
     }
@@ -222,7 +223,7 @@ void Renderer::renderDeck(Deck& deck, int64_t frame, int frames) {
   const double readEnd = heardEnd + inLatency + rateEnd * outLatency;
   int inputSamples = int(std::floor(readEnd - deck.readPos));
   inputSamples = std::clamp(inputSamples, 0, frames * 8);
-  if (int(inLeft_.size()) < inputSamples) {
+  if (int(inLeft_.size()) < inputSamples || int(inRight_.size()) < inputSamples) {
     inLeft_.resize(inputSamples);
     inRight_.resize(inputSamples);
   }
@@ -234,7 +235,7 @@ void Renderer::renderDeck(Deck& deck, int64_t frame, int frames) {
   }
   deck.readPos += inputSamples;
 
-  if (int(outLeft_.size()) < frames) {
+  if (int(outLeft_.size()) < frames || int(outRight_.size()) < frames) {
     outLeft_.resize(frames);
     outRight_.resize(frames);
   }
