@@ -9771,7 +9771,9 @@ class PlaybackService : MediaLibraryService() {
         private val listeners = CopyOnWriteArraySet<Player.Listener>()
         private var reportedPlayWhenReady = false
         private var reportedPlaybackState = Player.STATE_IDLE
-        private var reportedIsPlaying = false
+        // A wrapper rebuilt while the receiver plays starts from that, so its
+        // first paused report is the transition it is, and stops the sampler.
+        private var reportedIsPlaying = cast.active && cast.isPlaying
 
         init {
             cast.sink = this
