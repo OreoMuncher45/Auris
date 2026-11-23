@@ -58,7 +58,13 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, spotifyCanvasEnabled) {
+    // Restarts on title and artist too, with the state above: a track that
+    // keeps the last one's videoId and album but not its title would otherwise
+    // reset the clip to null and never look one up for itself.
+    LaunchedEffect(
+        song.videoId, song.title, song.artist, song.albumName,
+        canvasAllowedNow, prioritizeSpotifyCanvas, spotifyCanvasEnabled,
+    ) {
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect

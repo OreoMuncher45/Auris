@@ -2064,9 +2064,11 @@ internal fun BitChordApp(
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
-                    // Superseded: the newer request owns the queue and its
-                    // snapshot, so neither commit nor claim a station started.
+                    // Superseded: the newer request owns the queue, so claim no
+                    // station. beginRadioQueue already erased the snapshot, though,
+                    // so re-commit what still plays or a cold start restores nothing.
                     if (!activeController.playSongs(listOf(seed) + related, 0) { request == playRequestGeneration }) {
+                        activeController.commitRadioQueue()
                         return@launch
                     }
                 }
@@ -2122,7 +2124,11 @@ internal fun BitChordApp(
                     return@launch
                 }
                 activeController.beginRadioQueue()
-                if (!activeController.playSongs(tracks, 0) { request == playRequestGeneration }) return@launch
+                if (!activeController.playSongs(tracks, 0) { request == playRequestGeneration }) {
+                    // The snapshot is already erased; keep what still plays restorable.
+                    activeController.commitRadioQueue()
+                    return@launch
+                }
                 activeController.commitRadioQueue()
                 Toast.makeText(
                     context,

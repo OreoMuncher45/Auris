@@ -67,10 +67,27 @@ class SflxHost(
     private val filesDirectory: File? = null,
     /** The client their downloads go through; a test brings one that trusts its own server. */
     private val filesClient: okhttp3.OkHttpClient? = null,
+    /** The client signed-session calls go through; null is the app's own. A test brings one for its mock gateway. */
+    private val sessionClient: okhttp3.OkHttpClient? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SflxSignedSession>()
+
+    /**
+     * Guards creating a client against [replacing] flipping. Held only for a
+     * map lookup and a constructor, never across I/O or a client's own lock
+     * wait, so engine calls never queue behind a record write.
+     */
+    private val clientsLock = Any()
+
+    /**
+     * True while [replaceSessionRecords] writes records. A client created now,
+     * by any caller, including a leftover engine of an extension that was just
+     * removed, starts retired, so it can read but never save over the records
+     * being written.
+     */
+    private var replacing = false
 
     /**
      * Whether this extension's source row is switched on.
@@ -93,18 +110,25 @@ class SflxHost(
     fun sessionFor(installed: InstalledSflx): SflxSignedSession? {
         val directory = signedSessionsDirectory ?: return null
         val config = SignedSessionConfig.from(installed.manifest) ?: return null
-        return sessions.computeIfAbsent(installed.id) {
-            SflxSignedSession(
-                extensionId = installed.id,
-                config = config,
-                directory = directory,
-                onVerificationRequired = { url ->
-                    // A switched-off extension must not put a page on screen.
-                    if (enabled(installed)) {
-                        SflxVerify.open(installed.id, installed.manifest.displayName, url)
-                    }
-                },
-            )
+        sessions[installed.id]?.let { return it }
+        return synchronized(clientsLock) {
+            sessions.computeIfAbsent(installed.id) {
+                SflxSignedSession(
+                    extensionId = installed.id,
+                    config = config,
+                    directory = directory,
+                    onVerificationRequired = { url ->
+                        // A switched-off extension must not put a page on screen.
+                        if (enabled(installed)) {
+                            SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                        }
+                    },
+                    httpClient = sessionClient ?: com.music.bitchord.data.Http.client,
+                ).also { client ->
+                    // Brand new, so its lock is free: this never waits.
+                    if (replacing) client.retire()
+                }
+            }
         }
     }
 
@@ -804,7 +828,6 @@ class SflxHost(
                 )
             }
             Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
-            val session = sessionFor(installed)
             QuickJsExecutor.loadModule(
                 moduleId = moduleId,
                 jsCode = script,
@@ -828,10 +851,26 @@ class SflxHost(
                 // like a catalogue refusing, and is why some of them searched but
                 // never streamed.
                 allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
-                sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+                sessionCall = sessionCallFor(installed),
                 fileCall = filesFor(installed)?.let { folder -> { method, args -> folder.call(method, args) } },
             ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
+    }
+
+    /**
+     * The `sessionCall` an engine is loaded with, or null when [installed]
+     * declares no signed session.
+     *
+     * Bound to the extension, not to one client. Each call looks up the
+     * current client in the map, so an engine that outlives a client (an
+     * import retires and replaces every client) moves to the new one on its
+     * next call, and keeps persisting refreshes and grants. Only a call
+     * already running on the old client stays on it, and that client is
+     * retired, so it can't write a stale record.
+     */
+    internal fun sessionCallFor(installed: InstalledSflx): ((String, String) -> String)? {
+        val first = sessionFor(installed) ?: return null
+        return { method, args -> (sessionFor(installed) ?: first).sessionCall(method, args) }
     }
 
     /** One lock per extension, so two callers cannot load the same package twice. */
@@ -914,10 +953,93 @@ class SflxHost(
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
                 // And its signed-session client is built from the new manifest.
-                sessions.remove(installed.id)
+                dropSession(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
+
+    /**
+     * Writes a package restored from an add-ons backup, then drops everything
+     * the running copy held, for the same reasons as [install].
+     */
+    fun restore(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
+        runCatching {
+            synchronized(lifecycle) {
+                val installed = store.restore(id, files)
+                unload(installed.id)
+                this.files.remove(installed.id)
+                dropSession(installed.id)
+                installed
+            }
+        }.onFailure { Log.w(TAG, "sflx restore failed: ${it.message}") }
+
+    /** [id]'s package files for a backup, read under the lock install and removal take. */
+    fun exportFiles(id: String): Map<String, ByteArray>? = synchronized(lifecycle) { store.exportFiles(id) }
+
+    /**
+     * Drops every signed-session client, so the next signed call reads its
+     * record from disk again. Used after an import writes session records
+     * under extensions that are already running.
+     */
+    fun reloadSessions() = synchronized(lifecycle) { dropAllSessions() }
+
+    /**
+     * Takes [id]'s client out of the map and retires it.
+     *
+     * The invariant this keeps: a client that is no longer in the map is
+     * retired. A call running on a client keeps it until the call ends, so a
+     * client dropped without retiring could still save, and the next
+     * [replaceSessionRecords], which only reaches the map, could never stop
+     * it. Every removal goes through here or [dropAllSessions]. Engines don't
+     * hold clients past a call; see [sessionCallFor].
+     */
+    private fun dropSession(id: String) {
+        synchronized(clientsLock) { sessions.remove(id) }?.retire()
+    }
+
+    /**
+     * Retires and drops every client. Loaded engines need no reload: their
+     * next session call builds a fresh client that can save (see [sessionCallFor]).
+     *
+     * Removes key by key and retires exactly what each removal took, never a
+     * blanket `clear()`. [sessionFor] doesn't take the lifecycle lock, so a
+     * client it creates concurrently is either removed here, and so retired,
+     * or created after its key's removal and left in the map. No client
+     * leaves the map unretired.
+     */
+    private fun dropAllSessions() {
+        sessions.keys.toList().forEach(::dropSession)
+    }
+
+    /**
+     * Runs [write], which replaces signed-session records on disk, so that no
+     * client can write a stale record over it.
+     *
+     * Every installed extension first gets a client in the map, and every
+     * client is retired, which waits out any save in progress. While [write]
+     * runs, callers get those retired clients: they read the disk as usual but
+     * never save. A fresh client can't be created mid-write and read the old
+     * record. Afterwards the map is cleared, so the next call builds clients
+     * that read the restored records.
+     */
+    fun <T> replaceSessionRecords(write: () -> T): T = synchronized(lifecycle) {
+        runCatching { store.list() }.getOrDefault(emptyList()).forEach { sessionFor(it) }
+        // From here every new client is born retired, for any extension,
+        // installed or not. The snapshot covers every client made before the flip.
+        val existing = synchronized(clientsLock) {
+            replacing = true
+            sessions.values.toList()
+        }
+        try {
+            // Outside clientsLock: a retire may wait out a save in progress, and
+            // callers asking for a client must not wait with it.
+            existing.forEach { it.retire() }
+            write()
+        } finally {
+            synchronized(clientsLock) { replacing = false }
+            dropAllSessions()
+        }
+    }
 
     fun remove(id: String): Boolean = synchronized(lifecycle) {
         // All of it under the lock: a reinstall between deleting the package
@@ -926,7 +1048,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
-            sessions.remove(id)
+            dropSession(id)
         }
         removed
     }
