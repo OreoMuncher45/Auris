@@ -413,4 +413,36 @@ class LoopMixTest {
         // The last line, with nothing after it, for the open-line length.
         assertEquals(40.0 + LoopMix.LYRIC_OPEN_LINE_SEC + 0.35, spans[1].end, 1e-9)
     }
+
+    @Test
+    fun maskCoverageCountsOnlyTheNewPartOfAnOffsetFrame() {
+        // Two 10 ms frames at 0 ms and 6 ms cover 16 ms of a 24 ms stretch: 67 %, under the 80 % needed.
+        val a = CurveWindow(0.0, 100.0, floatArrayOf(0f))
+        val b = CurveWindow(0.006, 100.0, floatArrayOf(0f))
+        assertNull(LoopMix.maskStats(listOf(a, b), 0.0, 0.024))
+        // Disjoint frames still count in full.
+        val c = CurveWindow(0.01, 100.0, floatArrayOf(0f))
+        assertNotNull(LoopMix.maskStats(listOf(a, c), 0.0, 0.02))
+    }
+
+    @Test
+    fun aMeasuredLoopChecksTheBeatBeforeItOnItsOwnGrid() {
+        // The song-wide grid says 150 BPM (0.4 s beats); the measured tail runs at 60 BPM (1 s).
+        val downbeats = (0 until 25).map { 100.0 + it * 4.0 }
+        fun withVocal(sung: Pair<Double, Double>?) = analysis(150.0, 200.0, listOf(
+            vocals(90.0, 200.0, 0.05f).let { w ->
+                CurveWindow(w.startTime, w.frameRate, FloatArray(w.values.size) { i ->
+                    val t = w.startTime + i / w.frameRate
+                    if (sung != null && t >= sung.first && t < sung.second) 0.9f else 0.05f
+                })
+            },
+        )).copy(tailBeats = BeatSide(downbeats, downbeats, 60.0, 0.9))
+        val inn = analysis(60.0, 180.0)
+        val first = assertNotNull(LoopMix.plan(withVocal(null), 200.0, inn, 180.0, 0.0, null, clear))
+        val x = first.out.loopStart
+        // Half a second of voice ending 0.45 s before that loop: inside its preceding beat on the
+        // tail's grid, outside a 0.4 s beat on the song-wide one.
+        val plan = assertNotNull(LoopMix.plan(withVocal((x - 0.95) to (x - 0.45)), 200.0, inn, 180.0, 0.0, null, clear))
+        assertTrue(plan.out.loopStart != x, "kept the loop with a voice in its preceding beat")
+    }
 }

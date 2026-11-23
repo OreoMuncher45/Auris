@@ -195,7 +195,6 @@ object LoopMix {
             candidates = { bars -> loopsBetween(out.tailBeats, outGrid, outFirst, outEnd, bars).asReversed() },
             analysis = out,
             sung = sungOut,
-            beatSec = outGrid.beatSec,
             count = outCount,
         ) ?: return null.also { why?.append("outgoing: ")?.append(outCount) }
 
@@ -205,7 +204,6 @@ object LoopMix {
             candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars) },
             analysis = inn,
             sung = sungIn,
-            beatSec = inGrid.beatSec,
             count = inCount,
         ) ?: return null.also { why?.append("incoming: ")?.append(inCount) }
 
@@ -338,11 +336,16 @@ object LoopMix {
         }
     }
 
+    /**
+     * The beat before a loop, on the grid that cut it: a measured side's own
+     * tempo, which can differ from the song-wide one, or the constant grid's.
+     */
+    private fun loopBeat(loop: Loop, bars: Int): Double = (loop.end - loop.start) / (bars * 4)
+
     private fun firstClean(
         candidates: (Int) -> List<Loop>,
         analysis: TrackAnalysis,
         sung: List<Span>?,
-        beatSec: Double,
         count: Rejections,
     ): Clean? {
         for (bars in LOOP_LENGTHS) {
@@ -367,7 +370,7 @@ object LoopMix {
                     }
                     if (touching.isEmpty()) return Clean(loop.start, loop.end, bars, 0.0, Check.LYRICS)
                     // Only the guessed tails of open lines reach it: the mask decides those.
-                    val mask = maskStats(analysis.vocalWindows, loop.start - beatSec, loop.end)
+                    val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
                     if (mask == null) {
                         count.unmasked++
                         continue
@@ -378,7 +381,7 @@ object LoopMix {
                     }
                     return Clean(loop.start, loop.end, bars, mask.share, Check.LYRICS_AND_MASK)
                 }
-                val mask = maskStats(analysis.vocalWindows, loop.start - beatSec, loop.end)
+                val mask = maskStats(analysis.vocalWindows, loop.start - loopBeat(loop, bars), loop.end)
                 if (mask == null) {
                     count.unmasked++
                     continue
@@ -446,18 +449,22 @@ object LoopMix {
             val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 val t = window.startTime + i * frameSec
-                if (t < reach - frameSec * 0.5) continue
+                val end = t + frameSec
+                // Only the part of a frame past what is already measured counts:
+                // windows overlap at their seams, and not always on the same grid.
+                if (end <= reach + 1e-9) continue
                 if (t > reach + frameSec * 0.5) runSec = 0.0
-                measuredSec += frameSec
+                val added = end - max(t, reach)
+                measuredSec += added
                 // Inclusive, as the transition policy reads the same threshold.
                 if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {
-                    sungSec += frameSec
-                    runSec += frameSec
+                    sungSec += added
+                    runSec += added
                     longestSec = max(longestSec, runSec)
                 } else {
                     runSec = 0.0
                 }
-                reach = t + frameSec
+                reach = end
             }
         }
         return if (measuredSec > 0 && measuredSec >= (to - from) * MIN_MASK_COVERAGE - 1e-9) {
