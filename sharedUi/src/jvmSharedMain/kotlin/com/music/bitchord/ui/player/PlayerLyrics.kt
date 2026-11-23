@@ -86,11 +86,13 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -192,6 +194,31 @@ private val GLOW_RADIUS = 6.dp
  * padding and row spacing.
  */
 private val GLOW_ROOM = 10.dp
+
+/**
+ * Group alpha in a layer that reaches [outset] past the node on every side.
+ *
+ * `graphicsLayer { alpha }` puts the node in a layer exactly its own size, so a
+ * blur spreading out of it is cut off square at the edges. The one-line strip
+ * has no [GLOW_ROOM] inside its line to spread into (that padding would push
+ * it off its row), so its glow takes the room here instead: one layer, the
+ * line plus the margin, and only while the glow is showing.
+ */
+private fun Modifier.alphaLayerWithOutset(alpha: () -> Float, outset: Dp): Modifier = drawWithCache {
+    val outsetPx = outset.toPx()
+    val bounds = Rect(-outsetPx, -outsetPx, size.width + outsetPx, size.height + outsetPx)
+    val paint = Paint()
+    onDrawWithContent {
+        paint.alpha = alpha()
+        val canvas = drawContext.canvas
+        canvas.saveLayer(bounds, paint)
+        try {
+            drawContent()
+        } finally {
+            canvas.restore()
+        }
+    }
+}
 
 /**
  * How the answering vocal is drawn: smaller than the lead and a shade behind
@@ -713,6 +740,11 @@ private fun SweptLyricLine(
     glowAlpha: Float = 0f,
     glowRadius: Dp = GLOW_RADIUS,
     glowRoom: Dp = 0.dp,
+    /**
+     * Room the glow's alpha layer reaches past the line, for a caller with no
+     * [glowRoom] inside the line to give it; see [alphaLayerWithOutset].
+     */
+    glowLayerOutset: Dp = 0.dp,
     feather: Boolean = false,
     rise: Boolean = true,
     alignEnd: Boolean = false,
@@ -837,14 +869,18 @@ private fun SweptLyricLine(
             modifier = riseAgainst(room),
         )
         if (glowAlpha > 0.01f) {
+            val glowAlphaLayer = if (glowLayerOutset > 0.dp) {
+                Modifier.alphaLayerWithOutset(alpha = { glowAlpha }, outset = glowLayerOutset)
+            } else {
+                Modifier.graphicsLayer { alpha = glowAlpha }
+            }
             Text(
                 text = line.text,
                 style = style.forText(line.text),
                 color = ink,
                 maxLines = maxLines,
                 overflow = overflow,
-                modifier = Modifier
-                    .graphicsLayer { alpha = glowAlpha }
+                modifier = glowAlphaLayer
                     .blur(glowRadius, BlurredEdgeTreatment.Unbounded)
                     .then(room)
                     // Each letter is masked to its own brightness with DstIn,
@@ -2459,9 +2495,10 @@ private fun PanelVoice(
         )
     } else if (line.isWordSynced) {
         // Browsing: keep the sweep so sung lines stay fully lit and unsung
-        // ones stay dim, but skip the bloom — it is a playback flourish, not
-        // a browsing aid.  Non-active lines get the same dim tail as when we
-        // are not browsing; the active line stays at full brightness.
+        // ones stay dim. The active line keeps its glow and feather while
+        // browsing or picking lines to share; only the unfocused-row blur is
+        // removed there. Non-active lines get the same dim tail as when not
+        // browsing.
         val tail by animateFloatAsState(
             targetValue = if (sung) 1f else UNSUNG_ALPHA,
             label = "lyricTail",
@@ -2473,8 +2510,9 @@ private fun PanelVoice(
             dimAlpha = tail,
             ink = ink,
             modifier = modifier,
-            glowAlpha = 0f,
+            glowAlpha = glowAlpha,
             glowRoom = room,
+            feather = isActive,
             rise = rise,
             alignEnd = alignEnd,
             translationProgress = translationProgress,
@@ -2711,11 +2749,25 @@ private fun CurrentLyricLine(
     }
 
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The same bloom and feathered sweep the full panel gives the line being
+    // sung, under the same switches, on the strip's one line.
+    val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val lyricsBlur by PlayerSettings.lyricsBlur.collectAsStateWithLifecycle()
+    val textGlow by PlayerSettings.textGlow.collectAsStateWithLifecycle()
+    val glowing = textGlow && !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
+        renderEffectBlurSupported
+    val glow by animateFloatAsState(
+        targetValue = if (glowing) GLOW_ALPHA else 0f,
+        animationSpec = tween(durationMillis = 420),
+        label = "stripLyricGlow",
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            // The rounded clip is for the press ripple; while the glow shows
+            // it would cut the halo off at the row's edge.
+            .then(if (glow > 0.01f) Modifier else Modifier.clip(RoundedCornerShape(8.dp)))
             .clickable(onClick = onClick)
             .padding(vertical = 4.dp),
     ) {
@@ -2749,10 +2801,18 @@ private fun CurrentLyricLine(
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false),
-        ) { (_, lineItem, lineText) ->
+        ) { (itemIndex, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
             val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
             if (swept != null) {
+                // Only the line being sung carries the glow and the feather's
+                // offscreen layer; the one sliding out keeps the plain fade.
+                // The whole target, not the index alone: a source that swaps
+                // in a new version of the same line keeps its index, and the
+                // outgoing copy would glow alongside the incoming one. By
+                // reference — the target holds [current] itself — so the
+                // check costs nothing per frame.
+                val sung = itemIndex == index && lineItem === current && lineText == text
                 SweptLyricLine(
                     line = swept,
                     clock = clock,
@@ -2761,6 +2821,9 @@ private fun CurrentLyricLine(
                     ink = ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    glowAlpha = if (sung) glow else 0f,
+                    glowLayerOutset = GLOW_ROOM,
+                    feather = sung,
                     rise = false,
                 )
             } else {

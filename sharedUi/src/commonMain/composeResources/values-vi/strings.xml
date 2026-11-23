@@ -256,4 +256,18 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
+    <string name="queue_select">Chọn</string>
+    <string name="queue_select_all">Chọn tất cả</string>
+    <string name="queue_selected_count">Đã chọn %1$d</string>
+    <string name="queue_close_selection">Đóng chế độ chọn</string>
+    <string name="queue_selection_remove">Xóa</string>
+    <string name="queue_selection_add_to_playlist">Thêm vào danh sách phát</string>
+    <string name="queue_download">Tải xuống</string>
+    <string name="queue_removed_song">Đã xóa %1$s</string>
+    <string name="queue_removed_songs">Đã xóa %1$d bài hát</string>
+    <string name="queue_undo_action">Hoàn tác</string>
+    <string name="queue_cleared">Đã xóa sạch \"Tiếp theo trong hàng đợi\"</string>
+    <string name="mixes_yours">Mix của bạn</string>
 </resources>

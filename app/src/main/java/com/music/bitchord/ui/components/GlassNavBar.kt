@@ -44,23 +44,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.music.bitchord.data.settings.AppSettings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import com.music.bitchord.R
-import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBar
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarDefaults
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.player.PlayerPlayPauseGlyph
+import com.music.bitchord.ui.player.rememberPlayerPlayPauseMotion
+import com.music.bitchord.ui.player.rememberPlayerSkipMotion
 
 /**
  * The liquid glass navigation bar: the iOS 26 shape where the now playing
@@ -101,6 +104,8 @@ fun GlassNavBar(
     dock: PlayerDock? = null,
     /** Dragging the bar's player up into the full player. */
     pull: MiniPlayerPull? = null,
+    /** False while the full player covers the bar: its glyphs then swap without motion. */
+    animationsActive: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     // Held for the same reason [tabs] is. The glass factory below closes over
@@ -144,6 +149,7 @@ fun GlassNavBar(
                     isInline = true,
                     isPlaying = isPlaying,
                     isLoading = isLoading,
+                    animationsActive = animationsActive,
                     contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onNext = onNext,
@@ -164,6 +170,7 @@ fun GlassNavBar(
                     isInline = false,
                     isPlaying = isPlaying,
                     isLoading = isLoading,
+                    animationsActive = animationsActive,
                     contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onNext = onNext,
@@ -290,9 +297,17 @@ internal fun GlassNowPlaying(
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
     modifier: Modifier = Modifier,
+    animationsActive: Boolean = true,
 ) {
     val haptics = rememberHaptics()
     val pressSource = remember { MutableInteractionSource() }
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val nextMotion = rememberPlayerSkipMotion(active = animationsActive, reduceMotion = reduceAnimation)
+    val playPauseMotion = rememberPlayerPlayPauseMotion(
+        isPlaying = isPlaying,
+        active = animationsActive && !isLoading,
+        reduceMotion = reduceAnimation,
+    )
     val isPressed by pressSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (isPressed) 1.04f else 1f,
@@ -357,9 +372,8 @@ internal fun GlassNowPlaying(
                 .fillMaxWidth()
                 .miniArtPadding(art),
         ) {
-            AsyncImage(
-                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
-                contentDescription = null,
+            MiniPlayerArtwork(
+                song = song,
                 modifier = Modifier
                     .size(art.size)
                     // Whichever of the two densities is on screen is the one
@@ -419,12 +433,17 @@ internal fun GlassNowPlaying(
                 IconButton(
                     onClick = {
                         haptics.play(if (isPlaying) Haptic.Pause else Haptic.Resume)
+                        playPauseMotion.onTap()
                         onPlayPause()
                     },
                     modifier = Modifier.size(glyphSlot),
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    PlayerPlayPauseGlyph(
+                        motion = playPauseMotion,
+                        play = Icons.Rounded.PlayArrow,
+                        pause = Icons.Rounded.Pause,
+                        playPainter = rememberVectorPainter(Icons.Rounded.PlayArrow),
+                        pausePainter = rememberVectorPainter(Icons.Rounded.Pause),
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = contentColor,
                         modifier = Modifier.size(glyphSize),
@@ -439,12 +458,14 @@ internal fun GlassNowPlaying(
                 IconButton(
                     onClick = {
                         haptics.play(Haptic.SkipNext)
+                        nextMotion.onTap()
                         onNext()
                     },
                     enabled = !controlsLocked,
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     MiniPlayerNextGlyph(
+                        motion = nextMotion,
                         tint = contentColor.copy(alpha = if (controlsLocked) 0.3f else 1f),
                     )
                 }

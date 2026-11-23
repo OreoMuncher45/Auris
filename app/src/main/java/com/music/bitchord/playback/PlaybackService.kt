@@ -177,6 +177,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import com.music.bitchord.data.model.playerArtPx
+import com.music.bitchord.data.remote.RemoteArtworkStore
+import com.music.bitchord.ui.player.prefetchAutoMixArtwork
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -2100,6 +2103,61 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private var autoMixArtworkJob: Job? = null
+    private var autoMixArtworkGeneration: Long? = null
+
+    private fun allowsAutoMixArtwork(generation: Long, mini: Boolean = false): Boolean =
+        AppSettings.autoMixArtwork.value.allows(AppSettings.smartFadeEnabled.value, generation, mini)
+
+    private fun allowsAnyAutoMixArtwork(generation: Long): Boolean =
+        allowsAutoMixArtwork(generation) || allowsAutoMixArtwork(generation, mini = true)
+
+    /**
+     * Decodes the incoming track's cover as soon as a mix is armed, so the
+     * artwork transition starts from pixels already in memory. Nothing runs
+     * unless one of the two artwork switches is on. Ported from BitChord
+     * (without its Canvas lookup).
+     */
+    private fun prefetchAutoMixIncoming(item: MediaItem) {
+        autoMixArtworkJob?.cancel()
+        val coverGeneration = AutoMixVisualFeed.state.value?.takeIf {
+            it.phase == AutoMixVisualPhase.ARMED && allowsAnyAutoMixArtwork(it.generation)
+        }?.generation
+        autoMixArtworkGeneration = coverGeneration
+        if (coverGeneration == null) return
+        autoMixArtworkJob = scope.launch {
+            try {
+                val song = item.toSong()
+                val artUrl = song.thumbnailUrl ?: if (
+                    song.videoId.startsWith("webdav:") || song.videoId.startsWith("smb:")
+                ) {
+                    withContext(Dispatchers.IO) { RemoteArtworkStore.resolveArt(this@PlaybackService, song) }
+                } else {
+                    null
+                }
+                if (artUrl != null) {
+                    val metrics = resources.displayMetrics
+                    prefetchAutoMixArtwork(
+                        this@PlaybackService,
+                        artUrl,
+                        // The copy the player asks for on this screen, so the
+                        // prepared decode is the one it then reads.
+                        playerArtPx(metrics.widthPixels / metrics.density, metrics.density),
+                        coverGeneration,
+                        prepareCover = { allowsAutoMixArtwork(it) },
+                        prepareMiniCover = { allowsAutoMixArtwork(it, mini = true) },
+                    ) { generation ->
+                        AutoMixVisualFeed.pending(generation)?.phase == AutoMixVisualPhase.ARMED
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("BitChord", "Automix artwork prefetch failed", e)
+            }
+        }
+    }
+
     private fun createCrossfadeController() = CrossfadeController(
             scope,
             active = { requireNotNull(player) },
@@ -2153,6 +2211,7 @@ class PlaybackService : MediaLibraryService() {
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
+            onArmAutoMixIncoming = ::prefetchAutoMixIncoming,
             // Both sinks, not a role: the trim is about what the pair sums to.
             onBlendHeadroom = { trim ->
                 loudnessA.setBlendTrim(trim)
@@ -2436,7 +2495,9 @@ class PlaybackService : MediaLibraryService() {
                 // Crossfade is unconditional: the setting that used to gate it
                 // is gone, so the only thing that can decline the fade is having
                 // no standby player to fade with.
-                val canCrossfade = standbyPlayer != null &&
+                // Nor under the sleep timer's fade, which owns the volume: the
+                // swap goes in directly and keeps the faded level.
+                val canCrossfade = standbyPlayer != null && !SleepTimer.fadingOut &&
                     (activePlayer.isPlaying || activePlayer.playbackState == Player.STATE_READY)
 
                 if (!canCrossfade || standbyPlayer == null) {
@@ -2958,6 +3019,14 @@ class PlaybackService : MediaLibraryService() {
         // two checks are cheap and neither may be armed under this fade.
         if (upgradeFadeActive || versionSwapJob?.isActive == true) return UpgradeSwap.Abandoned
         if (crossfade?.isTransitioning() == true) return UpgradeSwap.Abandoned
+        // The sleep timer's fade owns the volume, so no second fade under it.
+        // With smart alignment on, the direct swap would land at the old
+        // timestamp unmeasured, off the passage being heard: the proved copy is
+        // shelved for the next play instead. Without it, the direct swap is what
+        // would happen anyway.
+        if (SleepTimer.fadingOut) {
+            return if (AppSettings.smartVersionAlignment.value) UpgradeSwap.Abandoned else UpgradeSwap.Fallback
+        }
         if (crossfade == null) return UpgradeSwap.Fallback
 
         val active = player ?: return UpgradeSwap.Fallback
@@ -4071,6 +4140,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 LikeState.set(resolved, target)
                 YtMusicRepository.rate(resolved, target)
+                    .onSuccess { followLikeIntoDownloads(target) }
                     .onFailure {
                         LikeState.set(videoId, previous)
                         LikeState.set(resolved, previous)
@@ -4083,12 +4153,28 @@ class PlaybackService : MediaLibraryService() {
 
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
+                .onSuccess { followLikeIntoDownloads(target) }
                 .onFailure {
                     LikeState.set(videoId, previous)
                     refreshCustomLayouts()
                     TrackLog.w("BitChord", "notification favorite failed: ${it.message}", about = videoId)
                 }
         }
+    }
+
+    /**
+     * A like from the notification belongs on the device when Liked Music is
+     * kept downloaded, the same as one from the player — see
+     * [com.music.bitchord.ui.MainViewModel]'s `writeLike`. The refresh itself
+     * does nothing when it is not.
+     */
+    private fun followLikeIntoDownloads(target: LikeStatus) {
+        if (target != LikeStatus.LIKE) return
+        com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+            this,
+            YtMusicRepository.LIKED_MUSIC,
+            force = true,
+        )
     }
 
     /**
@@ -7852,19 +7938,81 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Pause when the sleep timer runs out.
+     * Pause when the sleep timer runs out, fading the music out over its last
+     * [SleepTimer.FADE_OUT_DURATION_MS] first when [AppSettings.sleepTimerFadeOut]
+     * is on.
      *
      * `collectLatest` is what makes re-setting the timer work: the pending wait
      * is cancelled and restarted on the new deadline instead of both firing.
+     * A cancel or a reset mid-fade lands in the `finally`, which turns the
+     * player back up.
      */
+    /** The gain the sleep fade has the session player at, while it runs; null otherwise. */
+    @Volatile
+    private var sleepFadeGain: Float? = null
+
     private fun watchSleepTimer() {
         scope.launch {
             SleepTimer.deadline.collectLatest { deadline ->
                 if (deadline == null) return@collectLatest
-                val remaining = deadline - SystemClock.elapsedRealtime()
-                if (remaining > 0) delay(remaining)
-                player?.pause()
-                SleepTimer.cancel()
+                // The player this timer turned down, if it did. Only that one
+                // is turned back up: the crossfade owns both players' volume
+                // the rest of the time, and resetting it whenever a timer is
+                // cancelled would cut into a blend it is running.
+                var faded: ExoPlayer? = null
+                try {
+                    val fadeMs = if (AppSettings.sleepTimerFadeOut.value) SleepTimer.FADE_OUT_DURATION_MS else 0L
+                    val wait = deadline - SystemClock.elapsedRealtime() - fadeMs
+                    if (wait > 0) delay(wait)
+                    if (fadeMs > 0) {
+                        // No new blend from here on — see [SleepTimer.fadingOut].
+                        // One already running owns the volumes until it lands,
+                        // so the fade starts after it, over what time is left,
+                        // rather than jumping the new track down mid-rise. A
+                        // version swap or quality upgrade fade is waited out the
+                        // same way: both write the two players' volumes too.
+                        SleepTimer.fadingOut = true
+                        while ((crossfade?.isTransitioning() == true ||
+                                versionSwapJob?.isActive == true || upgradeFadeActive) &&
+                            SystemClock.elapsedRealtime() < deadline
+                        ) {
+                            delay(FADE_STEP_MS)
+                        }
+                        val span = deadline - SystemClock.elapsedRealtime()
+                        while (span > 0) {
+                            val left = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                            val gain = SleepTimer.fadeVolume(left, span)
+                            sleepFadeGain = gain
+                            player?.let {
+                                it.volume = gain
+                                faded = it
+                            }
+                            if (left <= 0L) break
+                            delay(FADE_STEP_MS)
+                        }
+                    }
+                    // While casting, the phone's player is already held paused
+                    // and the receiver is what is playing, so that is what stops.
+                    // Locally, the standby too: a quality-upgrade overlap still
+                    // running at the deadline would otherwise play on at its
+                    // blend volume until the upgrade loop copies the pause over.
+                    SleepTimer.pauseFor(
+                        castActive = castPlayback.active,
+                        pauseCast = castPlayback::pause,
+                        pauseLocal = {
+                            val active = player
+                            active?.pause()
+                            spare?.takeIf { it !== active }?.pause()
+                        },
+                    )
+                    SleepTimer.cancel()
+                } finally {
+                    SleepTimer.fadingOut = false
+                    sleepFadeGain = null
+                    // The player the fade last turned down: after a rebuild, the
+                    // replacement (see [rebuildPlayers]), never a released one.
+                    (player?.takeIf { faded != null } ?: faded)?.volume = 1f
+                }
             }
         }
     }
@@ -8568,6 +8716,9 @@ class PlaybackService : MediaLibraryService() {
         mediaSession?.player = newSessionPlayer(newActive, newCrossfade)
         applyOutputRoute()
         if (items.isNotEmpty()) newActive.prepare()
+        // Mid sleep fade: the replacement starts where the fade had the old one,
+        // not at full gain until the fade's next step reaches it.
+        sleepFadeGain?.let { newActive.volume = it }
         newActive.playWhenReady = playWhenReady
 
         oldActive.release()
@@ -8677,6 +8828,14 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
                 if (!enabled) crossfade?.cancelAutoMixVisual()
+            }
+        }
+        scope.launch {
+            AppSettings.autoMixArtwork.collect {
+                if (autoMixArtworkGeneration?.let { !allowsAnyAutoMixArtwork(it) } == true) {
+                    autoMixArtworkJob?.cancel()
+                    autoMixArtworkGeneration = null
+                }
             }
         }
         scope.launch {
@@ -11415,6 +11574,8 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
     private companion object {
+        /** How often the sleep timer's fade-out steps the volume: ten a second is smooth to the ear. */
+        const val FADE_STEP_MS = 100L
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"

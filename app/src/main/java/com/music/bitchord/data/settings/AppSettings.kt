@@ -12,9 +12,11 @@ import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.audio.JamesDspConfig
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import com.music.bitchord.playback.SingMethod
+import com.music.bitchord.playback.AutoMixVisualFeed
+import com.music.bitchord.ui.player.AutoMixArtworkPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -201,6 +205,12 @@ enum class LocalMusicSort {
     TITLE_DESC,
     DATE_ADDED,
     DATE_MODIFIED,
+
+    /**
+     * Album by album, each in its release order by the files' own disc and
+     * track tags. Only offered when some file carries a track tag.
+     */
+    TRACK_NUMBER,
 }
 
 /**
@@ -290,6 +300,14 @@ object AppSettings {
      */
     val exportDownloads = MutableStateFlow(false)
 
+    /**
+     * Keep every liked song downloaded: the account's Liked Music is fetched
+     * whole on the next pass allowed to download, then each new like follows
+     * it. Off by default, like downloading any other playlist whole — see
+     * [com.music.bitchord.download.DownloadedPlaylistSync], which does the work.
+     */
+    val downloadLikedSongs = MutableStateFlow(false)
+
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
@@ -315,12 +333,41 @@ object AppSettings {
     val smartFadeEnabled = MutableStateFlow(false)
 
     /**
+     * Whether Automix's artwork transitions run in the full player and the
+     * mini player, plus the in-memory fences that keep a mix already under way
+     * from picking one up half way through when either is switched. Both off
+     * by default: Automix's audio does not depend on them. Ported from BitChord.
+     */
+    private val _autoMixArtwork = MutableStateFlow(AutoMixArtworkPreferences())
+    val autoMixArtwork = _autoMixArtwork.asStateFlow()
+
+    /**
+     * Turns the music down over the sleep timer's last 30 seconds instead of
+     * stopping it mid-phrase — see [com.music.bitchord.playback.SleepTimer.fadeVolume].
+     * Off by default, so a timer behaves as it always has until asked.
+     */
+    val sleepTimerFadeOut = MutableStateFlow(false)
+
+    /**
      * Blends a proved lossless copy in over the lossy stream it replaces,
      * instead of cutting the audio while the player rebuilds its source.
      * Off by default: the two masters can differ enough to double or phase
      * during the overlap, so it is only turned on after a confirmation.
      */
     val seamlessQualityUpgrade = MutableStateFlow(false)
+
+    /**
+     * The listener's word that their YouTube account has Premium, and that
+     * YouTube playback should take the signed-in route that reaches Premium's
+     * ~256kbps Opus (itag 774) instead of the anonymous 251 — the route
+     * age-restricted tracks already take. See
+     * [InnerTubeXResolver.extract][com.music.bitchord.data.innertube.InnerTubeXResolver.extract].
+     *
+     * Off by default and asked rather than detected: nothing InnerTubeX
+     * exposes confirms the entitlement, and claiming it for an account
+     * without Premium only costs that account the faster anonymous route.
+     */
+    val youtubePremiumAudio = MutableStateFlow(false)
 
     /**
      * Whether the songs kept on the device are upgraded to a better copy
@@ -717,6 +764,12 @@ object AppSettings {
     /** Put the playing track's codec, bitrate and sample rate on the player. */
     val showNerdStats = MutableStateFlow(false)
 
+    /**
+     * The "Best Part" button on the player's artwork, which skips to the part of
+     * the song listeners replay most. On unless turned off.
+     */
+    val showBestPart = MutableStateFlow(true)
+
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
 
@@ -942,6 +995,20 @@ object AppSettings {
      * drawn smaller inside them.
      */
     val zoomOutAlbumArt = MutableStateFlow(false)
+
+    /**
+     * Shows the track's total length at the end of the player's scrubber,
+     * in place of the time left. Off by default: the countdown is the
+     * player's own look.
+     */
+    val showTotalDuration = MutableStateFlow(false)
+
+    /**
+     * The period last picked on the Replay page, which it opens on next time.
+     * This year until one is picked. Device-local, like the listening it
+     * charts — see [DEVICE_LOCAL].
+     */
+    val replayPeriod = MutableStateFlow(ReplayPeriod.DEFAULT)
 
     /**
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
@@ -1585,7 +1652,10 @@ object AppSettings {
      */
     fun reload() {
         if (!this::prefs.isInitialized) return
+        val premiumAudio = youtubePremiumAudio.value
         readAll()
+        // A restore that flips it leaves URLs picked under the old route.
+        if (youtubePremiumAudio.value != premiumAudio) StreamResolver.forgetResolved()
     }
 
     private fun readAll() {
@@ -1600,9 +1670,16 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
+        downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        _autoMixArtwork.value = AutoMixArtworkPreferences(
+            artTransition = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false),
+            miniPlayerTransition = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false),
+        )
+        sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
+        youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
         autoUpgradeLocalStorage.value = prefs.getBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
@@ -1707,6 +1784,7 @@ object AppSettings {
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
+        showBestPart.value = prefs.getBoolean(KEY_BEST_PART, true)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
@@ -1749,6 +1827,8 @@ object AppSettings {
         spotifyCanvasEnabled.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_ENABLED, true)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         zoomOutAlbumArt.value = prefs.getBoolean(KEY_ZOOM_OUT_ALBUM_ART, false)
+        showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
+        replayPeriod.value = ReplayPeriod.named(prefs.getString(KEY_REPLAY_PERIOD, null))
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
@@ -2131,13 +2211,57 @@ object AppSettings {
     }
 
     fun setSmartFadeEnabled(value: Boolean) {
+        if (smartFadeEnabled.value != value) {
+            val previous = _autoMixArtwork.value
+            _autoMixArtwork.value = previous.copy(
+                skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+                skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+            )
+        }
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
+    }
+
+    fun setAutoMixArtTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.artTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            artTransition = value,
+            skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_ART_TRANSITION, value).apply()
+    }
+
+    fun setAutoMixMiniPlayerTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.miniPlayerTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            miniPlayerTransition = value,
+            skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, value).apply()
+    }
+
+    // At either edge, skip the generation already in flight. Even a rapid
+    // off/on round trip cannot revive the artwork on a renderer just mounting.
+    private fun artworkCutoff(previous: Long): Long =
+        maxOf(previous, AutoMixVisualFeed.state.value?.generation ?: 0L)
+
+    fun setSleepTimerFadeOut(value: Boolean) {
+        sleepTimerFadeOut.value = value
+        prefs.edit().putBoolean(KEY_SLEEP_TIMER_FADE_OUT, value).apply()
     }
 
     fun setSeamlessQualityUpgrade(value: Boolean) {
         seamlessQualityUpgrade.value = value
         prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
+    fun setYoutubePremiumAudio(value: Boolean) {
+        youtubePremiumAudio.value = value
+        prefs.edit().putBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, value).apply()
+        // Remembered URLs were picked under the old route; the next play asks again.
+        StreamResolver.forgetResolved()
     }
 
     /**
@@ -2316,6 +2440,11 @@ object AppSettings {
     fun setPlaybackSpeed(value: Float) {
         playbackSpeed.value = value
         prefs.edit().putFloat(KEY_SPEED, value).apply()
+    }
+
+    fun setShowBestPart(value: Boolean) {
+        showBestPart.value = value
+        prefs.edit().putBoolean(KEY_BEST_PART, value).apply()
     }
 
     fun setShowNerdStats(value: Boolean) {
@@ -2659,6 +2788,17 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_ZOOM_OUT_ALBUM_ART, value).apply()
     }
 
+    fun setShowTotalDuration(value: Boolean) {
+        showTotalDuration.value = value
+        prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
+    }
+
+    fun setReplayPeriod(value: ReplayPeriod) {
+        if (replayPeriod.value == value) return
+        replayPeriod.value = value
+        prefs.edit().putString(KEY_REPLAY_PERIOD, value.name).apply()
+    }
+
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
@@ -2803,6 +2943,11 @@ object AppSettings {
     fun setExportDownloads(value: Boolean) {
         exportDownloads.value = value
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
+    }
+
+    fun setDownloadLikedSongs(value: Boolean) {
+        downloadLikedSongs.value = value
+        prefs.edit().putBoolean(KEY_DOWNLOAD_LIKED_SONGS, value).apply()
     }
 
     fun setLastfmPrimaryArtistOnly(value: Boolean) {
@@ -3229,6 +3374,8 @@ object AppSettings {
         // Whether this install's old Automix store has been cleared: a backup
         // from before the move would otherwise run it again over the new one.
         com.music.bitchord.playback.smart.AutomixMigration.KEY_DONE,
+        // Which stretch of this phone's listening the Replay was left on.
+        KEY_REPLAY_PERIOD,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
@@ -3265,10 +3412,15 @@ object AppSettings {
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
+    private const val KEY_DOWNLOAD_LIKED_SONGS = "download_liked_songs"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_ART_TRANSITION = "automix_art_transition"
+    private const val KEY_AUTOMIX_MINI_ART_TRANSITION = "automix_mini_art_transition"
+    private const val KEY_SLEEP_TIMER_FADE_OUT = "sleep_timer_fade_out"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
+    private const val KEY_YOUTUBE_PREMIUM_AUDIO = "youtube_premium_audio"
     private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"
@@ -3331,6 +3483,7 @@ object AppSettings {
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
+    private const val KEY_BEST_PART = "show_best_part"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
 
     private const val KEY_CONCURRENT_DOWNLOADS = "concurrent_downloads"
@@ -3382,6 +3535,8 @@ object AppSettings {
     private const val KEY_SPOTIFY_CANVAS_ENABLED = "spotify_canvas_enabled"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_ZOOM_OUT_ALBUM_ART = "zoom_out_album_art"
+    private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
+    private const val KEY_REPLAY_PERIOD = "replay_period"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"

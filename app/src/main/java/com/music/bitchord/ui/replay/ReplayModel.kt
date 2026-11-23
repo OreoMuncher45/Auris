@@ -6,13 +6,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.data.stats.ReplaySummary
 import com.music.bitchord.R
+import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -64,16 +64,18 @@ data class ReplayState(
  *   since is on it.
  * @param pageOpen whether the Replay page is open (or showing its stories or
  *   share sheet). Only there can another period be picked: everywhere else,
- *   the Library cards above all, the period is [DEFAULT_PERIOD], and the page
- *   opens on it again each time.
+ *   the Library cards above all, the period is [ReplayPeriod.DEFAULT]. The page
+ *   opens on the period last picked there, which is remembered across
+ *   launches — see [AppSettings.replayPeriod].
  */
 @Composable
 fun rememberReplayState(active: Boolean, pageOpen: Boolean): Pair<ReplayState, (ReplayPeriod) -> Unit> {
-    var picked by rememberSaveable { mutableStateOf(DEFAULT_PERIOD) }
-    LaunchedEffect(pageOpen) { if (!pageOpen) picked = DEFAULT_PERIOD }
-    // Read straight off [pageOpen] rather than waiting for the reset above, so
-    // the frame the page closes on already asks for the default period.
-    val period = if (pageOpen) picked else DEFAULT_PERIOD
+    // Read once rather than collected: this runs at the app's root, and the
+    // only writer is the setter returned below, which updates this too.
+    var picked by remember { mutableStateOf(AppSettings.replayPeriod.value) }
+    // Read straight off [pageOpen], so the frame the page closes on already
+    // asks for the default period.
+    val period = ReplayPeriod.shown(pageOpen, picked)
     var summary by remember { mutableStateOf<ReplaySummary?>(null) }
     var loading by remember { mutableStateOf(true) }
     var memberSince by remember { mutableStateOf<String?>(null) }
@@ -115,11 +117,11 @@ fun rememberReplayState(active: Boolean, pageOpen: Boolean): Pair<ReplayState, (
     // page was left on, shown on the Library cards until the default arrives.
     val shown = summary?.takeIf { pageOpen || it.period == period }
     return ReplayState(period, shown, loading || (summary != null && shown == null), memberSince) to
-        { next: ReplayPeriod -> picked = next }
+        { next: ReplayPeriod ->
+            picked = next
+            AppSettings.setReplayPeriod(next)
+        }
 }
-
-/** The period the Library cards show, and the one the Replay page opens on. */
-private val DEFAULT_PERIOD = ReplayPeriod.THIS_YEAR
 
 /** How long a burst of artist lookups is allowed to settle before a rebuild. */
 private const val SETTLE_MILLIS = 1_200L
