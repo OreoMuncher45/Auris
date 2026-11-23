@@ -476,6 +476,9 @@
     <string name="listen_most_around">אתה מאזין בעיקר סביב %1$s.</string>
     <string name="lyrics_share_title">שיתוף המילים</string>
     <string name="lyrics_share_show_logo">הצג את הלוגו של Auris</string>
+    <string name="lyrics_share_video">וידאו</string>
+    <string name="lyrics_share_image">תמונה</string>
+    <string name="lyrics_share_video_hint">מסונכרן לשיר — עד 60 שניות.</string>
     <string name="lyrics_share_includes_instrumentals">כולל קטעים אינסטרומנטליים</string>
     <string name="lyrics_share_description">השורות שבחרת, על כרטיס עם העטיפה.</string>
     <string name="lyrics_share_story">המר לסטורי</string>

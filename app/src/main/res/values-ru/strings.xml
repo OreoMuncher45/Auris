@@ -532,6 +532,9 @@
     <string name="listen_most_around">Чаще всего вы слушаете музыку около %1$s.</string>
     <string name="lyrics_share_title">Поделиться текстом</string>
     <string name="lyrics_share_show_logo">Показывать логотип Auris</string>
+    <string name="lyrics_share_video">Видео</string>
+    <string name="lyrics_share_image">Изображение</string>
+    <string name="lyrics_share_video_hint">Синхронизировано с треком — до 60 секунд.</string>
     <string name="lyrics_share_includes_instrumentals">Включая инструменталы</string>
     <string name="lyrics_share_description">Выбранные строки на карточке вместе с обложкой.</string>
     <string name="lyrics_share_story">Сделать для сторис</string>

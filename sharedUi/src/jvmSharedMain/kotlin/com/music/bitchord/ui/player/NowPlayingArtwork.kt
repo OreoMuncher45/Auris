@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -23,6 +24,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +74,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
 /**
@@ -276,6 +279,8 @@ internal fun BoxScope.PortraitSleeve(
     heroMode: Boolean,
     canvas: CanvasArtwork?,
     isPlaying: Boolean,
+    /** The audio player's clock, which a music video keeps itself lined up to. */
+    positionMs: () -> Long,
     panels: PlayerPanelState,
     collapseStarted: () -> Boolean,
     collapsePastHalf: () -> Boolean,
@@ -714,6 +719,31 @@ internal fun BoxScope.PortraitSleeve(
             )
             if (mixFrames != null) {
                 AutoMixCover(mixFrames, Modifier.fillMaxSize(), blur = true) {}
+            }
+            // ...and the YouTube music video, when this row is one. Muted and
+            // following the audio clock, in the same frame and clip as the
+            // cover, so a "Convert to video" plays the picture the listener
+            // asked for without touching the audio chain underneath.
+            //
+            // Only while the sleeve is the full card: a TextureView cannot be
+            // recorded into the layer the mini player draws the sleeve through,
+            // and a black square there would be worse than the still cover.
+            if (song.isVideo) {
+                var videoVisible by remember(song.videoId) { mutableStateOf(false) }
+                LaunchedEffect(song.videoId) {
+                    while (true) {
+                        videoVisible = !docking() && p() > 0.95f
+                        delay(150)
+                    }
+                }
+                if (videoVisible) {
+                    PlayerPlatform.host.MusicVideo(
+                        song = song,
+                        isPlaying = isPlaying,
+                        positionMs = positionMs,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
 

@@ -512,6 +512,9 @@
     <string name="listen_most_around">Du hörst am meisten gegen %1$s.</string>
     <string name="lyrics_share_title">Songtext teilen</string>
     <string name="lyrics_share_show_logo">Auris-Logo anzeigen</string>
+    <string name="lyrics_share_video">Video</string>
+    <string name="lyrics_share_image">Bild</string>
+    <string name="lyrics_share_video_hint">Zum Song synchronisiert – bis zu 60 Sekunden.</string>
     <string name="lyrics_share_includes_instrumentals">Instrumentals einschließen</string>
     <string name="lyrics_share_description">Die Zeilen, die du ausgewählt hast, auf einer Karte mit dem Cover.</string>
     <string name="lyrics_share_story">Als Story formatieren</string>

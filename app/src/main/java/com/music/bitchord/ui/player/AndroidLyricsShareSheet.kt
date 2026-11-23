@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,12 +32,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.R
@@ -48,10 +51,12 @@ import com.music.bitchord.ui.replay.saveToGallery
 import com.music.bitchord.ui.replay.sendIntent
 import com.music.bitchord.ui.screens.SettingsSwitch
 import dev.chrisbanes.haze.HazeState
+import java.io.File
 import kotlinx.coroutines.launch
 
 /**
- * The picked lines, drawn, with the things you can do to the picture.
+ * The picked lines, drawn, with the things you can do to the picture or the
+ * video it becomes.
  *
  * Built on [PlayerDrawer] rather than on a `ModalBottomSheet` for the same reason
  * as every other sheet in this package: it is inside the player, which is itself
@@ -59,12 +64,9 @@ import kotlinx.coroutines.launch
  * to be modal over. It also means this drawer gets the player's own frosted
  * material, the drag-to-dismiss gesture and the scrim fade for free.
  *
- * The render happens on a background dispatcher and the preview is a plain
- * `Image` of the result — no second layout pass, no offscreen Compose, and the
- * identical pixels that the Save and Share buttons then write to disk. The card
- * wears the record's own colour, carried in on the [request]; re-rendering when
- * a switch below changes is what makes those switches live rather than a second
- * share.
+ * The card is rendered once by [lyricsCardPainter], and the same painter draws
+ * every frame of the video, so the still and the moving picture cannot disagree.
+ * The card wears the record's own colour, carried in on the [request].
  */
 @Composable
 internal fun AndroidLyricsShareSheet(
@@ -78,6 +80,7 @@ internal fun AndroidLyricsShareSheet(
     val haptics = rememberHaptics()
 
     var image by remember(request) { mutableStateOf<Bitmap?>(null) }
+    var painter by remember(request) { mutableStateOf<LyricsCardPainter?>(null) }
     var failed by remember(request) { mutableStateOf(false) }
     var saved by remember(request) { mutableStateOf(false) }
     // Same picture, cut to the 9:16 frame a story wants instead of to its lines.
@@ -86,22 +89,58 @@ internal fun AndroidLyricsShareSheet(
     // instrumentals, means it for the next share too.
     var showLogo by remember { mutableStateOf(true) }
     var includeInstrumentals by remember { mutableStateOf(true) }
+    // The moving picture is the point of a synced verse; unsynced lines have
+    // nothing to move, so the sheet opens on the card there.
+    val timelinePossible = remember(request) {
+        request.lines.any { !it.isGap && it.startMs != null }
+    }
+    var asVideo by remember(request) { mutableStateOf(timelinePossible) }
+    val isVideo = asVideo && timelinePossible
+
+    // Saving/exporting runs from the tap until the file is in the gallery.
+    var exporting by remember(request) { mutableStateOf(false) }
+    var saving by remember(request) { mutableStateOf(false) }
+    var exported by remember(request) { mutableStateOf<Pair<String, File>?>(null) }
 
     LaunchedEffect(request, story, showLogo, includeInstrumentals) {
         image = null
+        painter = null
         failed = false
         saved = false
-        image = runCatching {
-            renderLyricsShareCard(
+        runCatching {
+            val paint = lyricsCardPainter(
                 context = context,
                 card = request,
                 story = story,
                 showLogo = showLogo,
                 includeInstrumentals = includeInstrumentals,
             )
+            image = paint.render(null)
+            painter = paint
+        }.onFailure { failed = true }
+    }
+
+    // One export per look, reused by Save and Share alike.
+    suspend fun videoFile(): File? {
+        val paint = painter ?: return null
+        val look = "$story|$showLogo|$includeInstrumentals"
+        exported?.takeIf { it.first == look && it.second.exists() }?.let { return it.second }
+        exporting = true
+        return try {
+            // The export lays its own backdrop, so the card it is handed is bare.
+            val overlay = lyricsCardPainter(
+                context = context,
+                card = request,
+                story = story,
+                showLogo = showLogo,
+                transparent = true,
+                includeInstrumentals = includeInstrumentals,
+            )
+            exportLyricsVideo(context, request, overlay, includeInstrumentals)
+                ?.also { exported = look to it }
+        } finally {
+            exporting = false
         }
-            .onFailure { failed = true }
-            .getOrNull()
     }
 
     PlayerDrawer(
@@ -124,6 +163,19 @@ internal fun AndroidLyricsShareSheet(
                 modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
             )
 
+            ShareSegments(
+                options = listOf(
+                    stringResource(R.string.lyrics_share_video),
+                    stringResource(R.string.lyrics_share_image),
+                ),
+                selected = if (isVideo) 0 else 1,
+                disabled = if (timelinePossible) emptySet() else setOf(0),
+                onSelect = {
+                    haptics.play(Haptic.Tap)
+                    asVideo = it == 0
+                },
+            )
+
             val bitmap = image
             // The card is only as tall as its lines, so the frame follows it:
             // a strip comes out wide, a full verse narrow, both about the same
@@ -133,23 +185,47 @@ internal fun AndroidLyricsShareSheet(
                 .fillMaxWidth((0.72f * ratio).coerceIn(0.36f, 0.92f))
                 .aspectRatio(ratio)
                 .clip(RoundedCornerShape(18.dp))
-            if (bitmap == null) {
-                Box(
-                    modifier = preview
-                        .background(Color.White.copy(alpha = 0.06f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(26.dp),
-                        strokeWidth = 2.5.dp,
-                        color = Color.White.copy(alpha = 0.75f),
+            Box(contentAlignment = Alignment.Center) {
+                if (bitmap == null) {
+                    Box(
+                        modifier = preview.background(Color.White.copy(alpha = 0.06f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(26.dp),
+                            strokeWidth = 2.5.dp,
+                            color = Color.White.copy(alpha = 0.75f),
+                        )
+                    }
+                } else {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = stringResource(R.string.your_lyrics_card),
+                        modifier = preview,
                     )
                 }
-            } else {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = stringResource(R.string.your_lyrics_card),
-                    modifier = preview,
+                if (exporting) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Color.Black.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(26.dp),
+                            strokeWidth = 2.5.dp,
+                            color = Color.White.copy(alpha = 0.85f),
+                        )
+                    }
+                }
+            }
+            if (isVideo) {
+                Text(
+                    text = stringResource(R.string.lyrics_share_video_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
                 )
             }
 
@@ -200,9 +276,9 @@ internal fun AndroidLyricsShareSheet(
                     label = stringResource(R.string.save),
                     icon = Icons.Rounded.Download,
                     accent = false,
-                    enabled = image != null,
+                    enabled = image != null && !exporting && !saving,
                     modifier = Modifier.weight(1f),
-                    // Once the picture is in the gallery the button says so
+                    // Once the file is in the gallery the button says so
                     // itself — a check and "Saved!" — so the line under the
                     // card does not have to.
                     saved = saved,
@@ -211,13 +287,21 @@ internal fun AndroidLyricsShareSheet(
                         val drawn = image
                         if (drawn != null) {
                             haptics.play(Haptic.Tap)
+                            saved = false
+                            saving = true
                             scope.launch {
-                                saved = saveToGallery(
-                                    context,
-                                    drawn,
-                                    request.song.title,
-                                    LYRICS_FILE_PREFIX,
-                                )
+                                val done = try {
+                                    if (isVideo) {
+                                        val video = videoFile()
+                                        video != null && saveVideoToGallery(context, video, request.song.title)
+                                    } else {
+                                        saveToGallery(context, drawn, request.song.title, LYRICS_FILE_PREFIX)
+                                    }
+                                } finally {
+                                    saving = false
+                                }
+                                if (!done) failed = true
+                                saved = done
                             }
                         }
                     },
@@ -226,28 +310,74 @@ internal fun AndroidLyricsShareSheet(
                     label = stringResource(R.string.share),
                     icon = Icons.Rounded.IosShare,
                     accent = true,
-                    enabled = image != null,
+                    enabled = image != null && !exporting && !saving,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         val drawn = image
                         if (drawn != null) {
                             haptics.play(Haptic.Tap)
                             scope.launch {
-                                val uri = cacheForSharing(context, drawn, LYRICS_FILE_NAME)
-                                if (uri == null) {
+                                val send = if (isVideo) {
+                                    videoFile()?.let { shareVideoIntent(context, it) }
+                                } else {
+                                    cacheForSharing(context, drawn, LYRICS_FILE_NAME)?.let(::sendIntent)
+                                }
+                                if (send == null) {
                                     failed = true
                                     saved = false
                                 } else {
                                     context.startActivity(
-                                        Intent.createChooser(
-                                            sendIntent(uri),
-                                            context.getString(R.string.share_your_lyrics),
-                                        ),
+                                        Intent.createChooser(send, context.getString(R.string.share_your_lyrics)),
                                     )
                                 }
                             }
                         }
                     },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The two shapes a share can take, as a segmented control in the player's own
+ * white alphas. A video needs synced lines; when it can't be made the option
+ * stays visible but dim, which says why without a line of explanation.
+ */
+@Composable
+private fun ShareSegments(
+    options: List<String>,
+    selected: Int,
+    disabled: Set<Int>,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val chosen = index == selected
+            val enabled = index !in disabled
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (chosen) Color.White.copy(alpha = 0.20f) else Color.Transparent)
+                    .clickable(enabled = enabled) { if (!chosen) onSelect(index) }
+                    .alpha(if (enabled) 1f else 0.35f)
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (chosen) FontWeight.W700 else FontWeight.W500,
+                    color = Color.White,
+                    maxLines = 1,
                 )
             }
         }

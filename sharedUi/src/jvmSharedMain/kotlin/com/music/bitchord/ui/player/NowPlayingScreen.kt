@@ -3231,6 +3231,7 @@ fun NowPlayingScreen(
                     heroMode = heroMode,
                     canvas = canvas,
                     isPlaying = isPlaying,
+                    positionMs = { position.positionMs },
                     panels = panels,
                     collapseStarted = { collapse.started },
                     collapsePastHalf = { collapse.pastHalf },

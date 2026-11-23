@@ -497,6 +497,9 @@
     <string name="listen_most_around">Anda paling banyak mendengarkan sekitar %1$s.</string>
     <string name="lyrics_share_title">Bagikan lirik</string>
     <string name="lyrics_share_show_logo">Tampilkan logo Auris</string>
+    <string name="lyrics_share_video">Video</string>
+    <string name="lyrics_share_image">Gambar</string>
+    <string name="lyrics_share_video_hint">Disinkronkan ke lagu — hingga 60 detik.</string>
     <string name="lyrics_share_includes_instrumentals">Sertakan instrumental</string>
     <string name="lyrics_share_description">Baris yang kamu pilih, ditata pada kartu bersama sampul.</string>
     <string name="lyrics_share_story">Jadikan story</string>

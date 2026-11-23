@@ -534,6 +534,9 @@
     <string name="listen_most_around">Bạn nghe nhiều nhất vào khoảng %1$s.</string>
     <string name="lyrics_share_title">Chia sẻ lời bài hát</string>
     <string name="lyrics_share_show_logo">Hiện logo Auris</string>
+    <string name="lyrics_share_video">Video</string>
+    <string name="lyrics_share_image">Hình ảnh</string>
+    <string name="lyrics_share_video_hint">Đồng bộ với bài hát — tối đa 60 giây.</string>
     <string name="lyrics_share_includes_instrumentals">Bao gồm phần nhạc không lời</string>
     <string name="lyrics_share_description">Những dòng bạn chọn, được bố trí trên một thẻ cùng ảnh bìa.</string>
     <string name="lyrics_share_story">Chuyển thành story</string>

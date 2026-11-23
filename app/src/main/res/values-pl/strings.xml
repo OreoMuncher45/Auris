@@ -473,6 +473,9 @@
     <string name="listen_most_around">Słuchasz muzyki głównie około %1$s.</string>
     <string name="lyrics_share_title">Udostępnij tekst</string>
     <string name="lyrics_share_show_logo">Pokaż logo Auris</string>
+    <string name="lyrics_share_video">Wideo</string>
+    <string name="lyrics_share_image">Obraz</string>
+    <string name="lyrics_share_video_hint">Zsynchronizowane z utworem — do 60 sekund.</string>
     <string name="lyrics_share_includes_instrumentals">Uwzględnij instrumentale</string>
     <string name="lyrics_share_description">Wybrane wersy, ułożone na karcie z okładką.</string>
     <string name="lyrics_share_story">Zmień na relację</string>

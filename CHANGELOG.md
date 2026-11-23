@@ -12,6 +12,11 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
   held-word swell are all drawn on the card, so a shared verse is the verse that
   was on screen. A new story shape (the whole 9:16 frame, the passage in a
   frosted panel) joins the card cut to its lines.
+- **Share a lyrics video.** A synced verse can now leave as an MP4, not just a
+  picture: the card animates over the record's backdrop, cut to the stretch the
+  lines are sung over, with the song's own audio from YouTube and a silent
+  fallback when none can be resolved. A Video / Image switch picks the shape;
+  Save and Share write the video to the gallery or the chooser.
 - **The record's own colour.** The lyrics are no longer white on a template: the
   card is set in the sleeve's ink — the same palette the now playing screen
   resolves — and the backdrop is the record's own mesh, so a share reads as this
@@ -27,6 +32,11 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
   transients), gated by the same vocal detection as before — so a drum-led
   stretch is chosen over a later wash of the same loudness. The latest-out /
   earliest-in preference still holds unless a clearly better groove is in reach.
+- **The main player plays the music video.** Converting a track to its video
+  now paints the YouTube music video in the sleeve: a muted, second surface
+  resolved from the same recording and kept lined up to the audio clock, so the
+  app's own playback chain — caching, crossfade, AutoMix — is untouched. Convert
+  back to audio and the still cover returns.
 
 ## Added
 

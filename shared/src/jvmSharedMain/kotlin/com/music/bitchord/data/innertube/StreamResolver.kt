@@ -1074,6 +1074,51 @@ object StreamResolver {
         throw failure ?: IllegalStateException("Track unavailable: no audio streams")
     }
 
+    /** A muxed progressive video rendition, for the player's music-video mode. */
+    class VideoStream(val url: String, val mimeType: String, val height: Int)
+
+    /**
+     * A playable YouTube music video for [videoId]: the best muxed progressive
+     * rendition up to [MAX_VIDEO_HEIGHT], so the picture comes from the same
+     * recording the audio is already playing.
+     *
+     * Muxed is the only shape a single ExoPlayer can render without a second
+     * stream, and it tops out at 720p — which is the point: the sleeve is a
+     * phone-sized frame, and a bigger rendition would only cost bandwidth.
+     * Null when the page yields none, and the sleeve keeps its still cover.
+     */
+    suspend fun resolveVideo(videoId: String): VideoStream? = try {
+        extractionGate.withLock {
+            withContext(Dispatchers.IO) {
+                val extractor = ServiceList.YouTube.getStreamExtractor(
+                    "https://www.youtube.com/watch?v=$videoId",
+                )
+                extractor.fetchPage()
+                val candidates = extractor.videoStreams
+                    .filter {
+                        !it.content.isNullOrBlank() &&
+                            it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+                    }
+                val chosen = candidates
+                    .filter { it.height in 1..MAX_VIDEO_HEIGHT }
+                    .maxByOrNull { it.height }
+                    ?: candidates.minByOrNull { it.height }
+                chosen?.let {
+                    TrackLog.d(TAG, "video rendition for $videoId: ${it.height}p ${it.format?.name}")
+                    VideoStream(it.content, it.format?.mimeType.orEmpty(), it.height)
+                }
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        TrackLog.w(TAG, "no video rendition for $videoId: ${e.message}")
+        null
+    }
+
+    /** The tallest muxed rendition taken: 720p is plenty for a sleeve. */
+    private const val MAX_VIDEO_HEIGHT = 720
+
     /**
      * Whether [url] is a window onto a live broadcast. googlevideo marks those
      * with `live=1` and `source=yt_live_broadcast`; a finished video has neither.

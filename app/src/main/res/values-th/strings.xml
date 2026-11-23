@@ -527,6 +527,9 @@
     <string name="listen_most_around">คุณฟังเพลงมากที่สุดช่วง %1$s</string>
     <string name="lyrics_share_title">แชร์เนื้อเพลง</string>
     <string name="lyrics_share_show_logo">แสดงโลโก้ Auris</string>
+    <string name="lyrics_share_video">วิดีโอ</string>
+    <string name="lyrics_share_image">รูปภาพ</string>
+    <string name="lyrics_share_video_hint">ซิงค์กับเพลง — สูงสุด 60 วินาที</string>
     <string name="lyrics_share_includes_instrumentals">รวมช่วงดนตรีบรรเลง</string>
     <string name="lyrics_share_description">บรรทัดที่คุณเลือก เรียงเป็นการ์ดพร้อมปก</string>
     <string name="lyrics_share_story">แปลงเป็นสตอรี่</string>

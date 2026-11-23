@@ -345,6 +345,24 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         request: LyricsShareRequest,
         onDismiss: () -> Unit,
     ) = AndroidLyricsShareSheet(hazeState = hazeState, request = request, onDismiss = onDismiss)
+
+    /**
+     * The YouTube music video, muted, in the sleeve's frame — see
+     * [AndroidMusicVideo]. The phone is the platform that can decode and draw
+     * one; the desktop hook stays a no-op.
+     */
+    @Composable
+    override fun MusicVideo(
+        song: Song,
+        isPlaying: Boolean,
+        positionMs: () -> Long,
+        modifier: Modifier,
+    ) = AndroidMusicVideo(
+        song = song,
+        isPlaying = isPlaying,
+        positionMs = positionMs,
+        modifier = modifier,
+    )
 }
 
 private fun AudioOutputStatus.Snapshot.toOutputFormat(): OutputFormatUi {

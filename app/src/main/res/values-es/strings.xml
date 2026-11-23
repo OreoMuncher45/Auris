@@ -527,6 +527,9 @@
     <string name="listen_most_around">Sueles escuchar más cerca de las %1$s.</string>
     <string name="lyrics_share_title">Compartir la letra</string>
     <string name="lyrics_share_show_logo">Mostrar el logotipo de Auris</string>
+    <string name="lyrics_share_video">Vídeo</string>
+    <string name="lyrics_share_image">Imagen</string>
+    <string name="lyrics_share_video_hint">Sincronizado con la canción: hasta 60 segundos.</string>
     <string name="lyrics_share_includes_instrumentals">Incluir instrumentales</string>
     <string name="lyrics_share_description">Las líneas que elegiste, maquetadas en una tarjeta con la portada.</string>
     <string name="lyrics_share_story">Convertir en historia</string>

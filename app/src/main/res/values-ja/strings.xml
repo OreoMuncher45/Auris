@@ -497,6 +497,9 @@
     <string name="listen_most_around">最もよく聴くのは%1$s頃です。</string>
     <string name="lyrics_share_title">歌詞を共有</string>
     <string name="lyrics_share_show_logo">Aurisロゴを表示</string>
+    <string name="lyrics_share_video">動画</string>
+    <string name="lyrics_share_image">画像</string>
+    <string name="lyrics_share_video_hint">曲に同期 — 最大60秒。</string>
     <string name="lyrics_share_includes_instrumentals">インストゥルメンタルを含める</string>
     <string name="lyrics_share_description">選んだ行を、ジャケットと一緒にカードにレイアウトします。</string>
     <string name="lyrics_share_story">ストーリー用にする</string>

@@ -152,6 +152,23 @@ interface PlayerHost {
     fun LyricsShareSheet(hazeState: HazeState, request: LyricsShareRequest, onDismiss: () -> Unit) = Unit
 
     /**
+     * The YouTube music video, in the sleeve's own frame, muted and following
+     * the audio the player is already running.
+     *
+     * Drawn only where the current row is a video ([Song.isVideo]) and the
+     * platform can render one; the hook is a no-op elsewhere, so the sleeve
+     * keeps showing the still cover. [positionMs] is the audio player's clock,
+     * which the surface keeps itself lined up to.
+     */
+    @Composable
+    fun MusicVideo(
+        song: Song,
+        isPlaying: Boolean,
+        positionMs: () -> Long,
+        modifier: Modifier = Modifier,
+    ) = Unit
+
+    /**
      * Whether this platform can search for songs to put on the queue.
      *
      * False hides the search row altogether rather than offering one that

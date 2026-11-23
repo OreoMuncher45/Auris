@@ -494,6 +494,10 @@ dependencies {
     // progressive, and the extractors try to sniff XML as audio
     // (ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED). See withResolvedStreamType.
     implementation("androidx.media3:media3-exoplayer-dash:1.11.0")
+    // The lyrics share turns the card into an MP4: the animated card is a
+    // bitmap overlay, composited over a still backdrop by the Transformer.
+    implementation("androidx.media3:media3-transformer:1.11.0")
+    implementation("androidx.media3:media3-effect:1.11.0")
     // FFmpeg audio decoding for what the phone has no decoder of its own for:
     // ALAC on every phone, and AC-4, E-AC-3 / AC-3 (Dolby Atmos music),
     // TrueHD and DTS on phones without Dolby or DTS licensed in. Added as the
