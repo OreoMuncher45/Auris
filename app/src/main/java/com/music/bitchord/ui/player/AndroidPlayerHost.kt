@@ -351,18 +351,21 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
      * [AndroidMusicVideo]. The phone is the platform that can decode and draw
      * one; the desktop hook stays a no-op.
      */
+    override val musicVideoSupported: Boolean get() = true
+
     @Composable
-    override fun MusicVideo(
-        song: Song,
-        isPlaying: Boolean,
-        positionMs: () -> Long,
-        modifier: Modifier,
-    ) = AndroidMusicVideo(
-        song = song,
-        isPlaying = isPlaying,
-        positionMs = positionMs,
-        modifier = modifier,
-    )
+    override fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) =
+        AndroidMusicVideo(videoId, fit, onRenderedChanged, modifier)
+
+    // The row is only marked a video when its picture is wanted, so nothing here
+    // has to ask "prefer music only" a second time.
+    override fun showsMusicVideoPicture(videoId: String): Boolean = true
+
+    override val musicVideoAspect: StateFlow<Float> get() = MusicVideoEngine.aspect
+
+    override val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = MusicVideoEngine.quality
+
+    override fun setMusicVideoQuality(height: Int?) = MusicVideoEngine.setQuality(height)
 }
 
 private fun AudioOutputStatus.Snapshot.toOutputFormat(): OutputFormatUi {

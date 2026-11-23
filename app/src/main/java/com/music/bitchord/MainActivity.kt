@@ -107,6 +107,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
@@ -244,6 +245,7 @@ import com.music.bitchord.playback.moveQueueRowsToUser
 import com.music.bitchord.playback.removeQueueRows
 import com.music.bitchord.playback.restoreQueueRows
 import com.music.bitchord.ui.player.LocalQueueEditing
+import com.music.bitchord.ui.player.MusicVideoEngine
 import com.music.bitchord.ui.player.QueueBulkAction
 import com.music.bitchord.ui.player.QueueEditing
 import com.music.bitchord.ui.player.QueueUndoKind
@@ -1295,6 +1297,11 @@ internal fun BitChordApp(
         }
     }
     val controller = rememberMediaController()
+    // A music video's picture follows this controller's clock — see [MusicVideoEngine].
+    DisposableEffect(controller) {
+        MusicVideoEngine.attach(controller)
+        onDispose { MusicVideoEngine.attach(null) }
+    }
     val player = rememberPlayerReads(controller)
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so

@@ -279,8 +279,6 @@ internal fun BoxScope.PortraitSleeve(
     heroMode: Boolean,
     canvas: CanvasArtwork?,
     isPlaying: Boolean,
-    /** The audio player's clock, which a music video keeps itself lined up to. */
-    positionMs: () -> Long,
     panels: PlayerPanelState,
     collapseStarted: () -> Boolean,
     collapsePastHalf: () -> Boolean,
@@ -294,6 +292,12 @@ internal fun BoxScope.PortraitSleeve(
     haptics: Haptics,
     fullBleedArtNow: State<Boolean>,
     song: Song,
+    /** The playing row is a music video and this platform plays one; the picture takes the sleeve. */
+    videoMode: Boolean,
+    /** Goes full screen: the picture over the whole player, controls over it. */
+    onEnterVideoFullscreen: () -> Unit,
+    /** Opens the quality drawer — the heights this video offers, and the one held. */
+    onOpenVideoQuality: () -> Unit,
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
     /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
@@ -720,30 +724,36 @@ internal fun BoxScope.PortraitSleeve(
             if (mixFrames != null) {
                 AutoMixCover(mixFrames, Modifier.fillMaxSize(), blur = true) {}
             }
-            // ...and the YouTube music video, when this row is one. Muted and
-            // following the audio clock, in the same frame and clip as the
-            // cover, so a "Convert to video" plays the picture the listener
-            // asked for without touching the audio chain underneath.
-            //
-            // Only while the sleeve is the full card: a TextureView cannot be
-            // recorded into the layer the mini player draws the sleeve through,
-            // and a black square there would be worse than the still cover.
-            // `p` is collapse progress — 0 is the open player, 1 the mini.
-            if (song.isVideo) {
-                var videoVisible by remember(song.videoId) { mutableStateOf(false) }
-                LaunchedEffect(song.videoId) {
-                    while (true) {
-                        videoVisible = !docking() && p() < 0.05f
-                        delay(150)
-                    }
-                }
-                if (videoVisible) {
-                    PlayerPlatform.host.MusicVideo(
-                        song = song,
-                        isPlaying = isPlaying,
-                        positionMs = positionMs,
+            // The YouTube music video, when this row is one: the album art, the
+            // animated cover and the Canvas all stand down, the blurred backdrop
+            // stays, and the picture sits in the sleeve's own square with its
+            // quality and full-screen controls over it.
+            if (videoMode) {
+                var videoRendered by remember(song.videoId) { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!videoRendered) VideoLoadingBackdrop(Modifier.fillMaxSize())
+                    MusicVideoSurface(
+                        videoId = song.videoId,
+                        fit = true,
+                        onRenderedChanged = { videoRendered = it },
                         modifier = Modifier.fillMaxSize(),
                     )
+                    // Put away with the rest of the chrome while a panel is over it.
+                    if (!panels.lyricsOpen && !panels.queueOpen) {
+                        VideoCornerControls(
+                            fullscreen = false,
+                            onToggleFullscreen = onEnterVideoFullscreen,
+                            onOpenQuality = onOpenVideoQuality,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp),
+                        )
+                    }
                 }
             }
         }

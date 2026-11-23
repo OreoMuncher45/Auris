@@ -270,4 +270,6 @@
     <string name="queue_undo_action">Annuler</string>
     <string name="queue_cleared">« Suivant dans la file d\'attente » vidé</string>
     <string name="mixes_yours">Vos mix</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

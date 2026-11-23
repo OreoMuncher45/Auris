@@ -270,4 +270,6 @@
     <string name="queue_undo_action">Deshacer</string>
     <string name="queue_cleared">Se vació «Siguiente en la cola»</string>
     <string name="mixes_yours">Tus mixes</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

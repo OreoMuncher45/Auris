@@ -270,4 +270,6 @@
     <string name="queue_undo_action">Undo</string>
     <string name="queue_cleared">Next in queue cleared</string>
     <string name="mixes_yours">Mikslerin</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

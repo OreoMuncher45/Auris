@@ -152,21 +152,31 @@ interface PlayerHost {
     fun LyricsShareSheet(hazeState: HazeState, request: LyricsShareRequest, onDismiss: () -> Unit) = Unit
 
     /**
-     * The YouTube music video, in the sleeve's own frame, muted and following
-     * the audio the player is already running.
-     *
-     * Drawn only where the current row is a video ([Song.isVideo]) and the
-     * platform can render one; the hook is a no-op elsewhere, so the sleeve
-     * keeps showing the still cover. [positionMs] is the audio player's clock,
-     * which the surface keeps itself lined up to.
+     * Whether this platform shows a music video's picture over the playing
+     * audio. False keeps every video surface out of the player altogether.
+     */
+    val musicVideoSupported: Boolean get() = false
+
+    /**
+     * The playing music video's picture, fitted into these bounds ([fit]) or
+     * cropped to fill them. Draws nothing until a frame of [videoId] has
+     * landed, reported through [onRenderedChanged], so the caller keeps its
+     * still artwork under it until then.
      */
     @Composable
-    fun MusicVideo(
-        song: Song,
-        isPlaying: Boolean,
-        positionMs: () -> Long,
-        modifier: Modifier = Modifier,
-    ) = Unit
+    fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) = Unit
+
+    /** Whether [videoId] shows its picture, rather than playing as audio by the listener's choice. */
+    fun showsMusicVideoPicture(videoId: String): Boolean = true
+
+    /** The playing music video's width over its height. */
+    val musicVideoAspect: StateFlow<Float> get() = DefaultVideoAspect
+
+    /** The heights the playing music video offers, and which one is held. */
+    val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = NoVideoQuality
+
+    /** Holds the picture at [height] from now on, or lets it choose with null. Remembered. */
+    fun setMusicVideoQuality(height: Int?) = Unit
 
     /**
      * Whether this platform can search for songs to put on the queue.
@@ -220,6 +230,44 @@ data class QueueSearchResult(
 )
 
 private val NoCast = MutableStateFlow(CastUi())
+
+private val DefaultVideoAspect = MutableStateFlow(16f / 9f)
+
+private val NoVideoQuality = MutableStateFlow(MusicVideoQualityUi())
+
+/** What the video quality box draws — the web player's VideoQuality, by the same rules. */
+data class MusicVideoQualityUi(
+    /** Every height the loaded video offers, largest first. */
+    val heights: List<Int> = emptyList(),
+    /** The listener's pick, or null for Auto. */
+    val held: Int? = null,
+    /** The height actually on screen. */
+    val activeHeight: Int? = null,
+)
+
+/** How a height is named on screen: the marketing name where there is one, the height otherwise. */
+internal fun videoQualityLabel(height: Int): String = when {
+    height >= 4320 -> "8K"
+    height >= 2160 -> "4K"
+    height >= 1440 -> "2K"
+    height >= 1080 -> "FullHD"
+    height >= 720 -> "HD"
+    else -> "${height}p"
+}
+
+/** Whether [song]'s picture can be shown here — a music video, on a platform that plays one. */
+internal fun showsMusicVideo(song: Song): Boolean =
+    song.isVideo && PlayerPlatform.host.musicVideoSupported &&
+        PlayerPlatform.host.showsMusicVideoPicture(song.videoId)
+
+/** @see PlayerHost.MusicVideo */
+@Composable
+internal fun MusicVideoSurface(
+    videoId: String,
+    modifier: Modifier = Modifier,
+    fit: Boolean = true,
+    onRenderedChanged: (Boolean) -> Unit = {},
+) = PlayerPlatform.host.MusicVideo(videoId, fit, onRenderedChanged, modifier)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(

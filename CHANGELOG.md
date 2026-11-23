@@ -32,11 +32,13 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
   transients), gated by the same vocal detection as before — so a drum-led
   stretch is chosen over a later wash of the same loudness. The latest-out /
   earliest-in preference still holds unless a clearly better groove is in reach.
-- **The main player plays the music video.** Converting a track to its video
-  now paints the YouTube music video in the sleeve: a muted, second surface
-  resolved from the same recording and kept lined up to the audio clock, so the
-  app's own playback chain — caching, crossfade, AutoMix — is untouched. Convert
-  back to audio and the still cover returns.
+- **The main player plays the music video (BitChord's player, ported).** Converting
+  a track to its video takes the picture over the sleeve: the album art, the
+  animated cover and the Canvas all stand down, the blurred backdrop stays, and
+  the video sits in the middle with a quality box and a full-screen button over
+  it. The picture is a second, silent ExoPlayer on the audio's clock — the app's
+  own playback chain is untouched — resolved through InnerTubeX's video
+  extraction at up to 1080p, with an age-gated retry and an H.264 step-down.
 
 ## Added
 
