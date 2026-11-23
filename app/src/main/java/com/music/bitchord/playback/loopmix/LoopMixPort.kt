@@ -39,36 +39,41 @@ class LoopMixPort {
     class InArm(
         /** Track microseconds at which this player becomes audible. */
         val handoverUs: Long,
-    )
+    ) {
+        /**
+         * Frames to drop (positive) or of silence to insert (negative), applied
+         * before the handover. This arm's own: a debit the sink makes for it can
+         * never land on the counter of an arm that replaced it.
+         */
+        val pendingShift = AtomicLong()
+    }
 
-    @Volatile var outArm: OutArm? = null
+    /**
+     * The arm and the generation it was published under, as one value: the
+     * sink reads them in a single read, so it can never pair a new arm with
+     * the loop state of the one before it.
+     */
+    class Armed(val generation: Int, val out: OutArm?, val inn: InArm?)
+
+    @Volatile var armed: Armed = Armed(0, null, null)
         private set
 
-    @Volatile var inArm: InArm? = null
-        private set
+    val outArm: OutArm? get() = armed.out
+    val inArm: InArm? get() = armed.inn
 
     /** Bumped for every arm and disarm, so the sink drops state that belonged to an older one. */
-    @Volatile var generation: Int = 0
-        private set
+    val generation: Int get() = armed.generation
 
     fun armOutgoing(arm: OutArm) {
-        inArm = null
-        outArm = arm
-        generation++
+        armed = Armed(armed.generation + 1, arm, null)
     }
 
     fun armIncoming(arm: InArm) {
-        outArm = null
-        inArm = arm
-        pendingShift.set(0)
-        generation++
+        armed = Armed(armed.generation + 1, null, arm)
     }
 
     fun disarm() {
-        outArm = null
-        inArm = null
-        pendingShift.set(0)
-        generation++
+        armed = Armed(armed.generation + 1, null, null)
     }
 
     // ---- What the sink publishes ---------------------------------------------------------
@@ -148,14 +153,12 @@ class LoopMixPort {
 
     // ---- The incoming side's alignment ------------------------------------------------------
 
-    /** Frames to drop (positive) or of silence to insert (negative), applied before the handover. */
-    val pendingShift = AtomicLong()
 
     /** The track position the sink has processed up to, µs: a shift lands there, not where it's heard. */
     @Volatile var processedUs: Long = C.TIME_UNSET
 
     fun requestShift(frames: Long) {
-        pendingShift.addAndGet(frames)
+        armed.inn?.pendingShift?.addAndGet(frames)
     }
 
     // ---- The splice, checked ---------------------------------------------------------------

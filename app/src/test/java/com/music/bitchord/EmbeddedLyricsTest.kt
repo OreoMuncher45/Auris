@@ -135,6 +135,13 @@ class EmbeddedLyricsTest {
     }
 
     @Test
+    fun `word timings on a line at zero count as synced`() {
+        val words = listOf(com.music.bitchord.data.lyrics.LyricWord(0L, 400L, "Hel"))
+        assertTrue(EmbeddedLyrics.isSynced(listOf(com.music.bitchord.data.lyrics.LyricLine(0L, "Hello", words))))
+        assertFalse(EmbeddedLyrics.isSynced(listOf(com.music.bitchord.data.lyrics.LyricLine(0L, "Hello"))))
+    }
+
+    @Test
     fun `an m4a written by the tagger reads back`() {
         val tagged = Mp4Tagger.tag(
             bytes = minimalMp4(),

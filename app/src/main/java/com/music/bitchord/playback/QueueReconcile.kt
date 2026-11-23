@@ -31,6 +31,10 @@ internal sealed interface QueueReconcile {
          *   the session's next entry, or its current one when the session
          *   already ran on into it before the handoff.
          * @param heldCurrent index of the standby's playing entry in [held].
+         * @param same whether two entries are the same queue occurrence.
+         * @param samePlayable whether two entries also play the same thing (the
+         *   same stream or file): from the incoming entry on, an entry whose
+         *   identity survived but whose playback changed is a change too.
          */
         fun <T> plan(
             live: List<T>,
@@ -38,14 +42,19 @@ internal sealed interface QueueReconcile {
             held: List<T>,
             heldCurrent: Int,
             same: (T, T) -> Boolean,
+            samePlayable: (T, T) -> Boolean = same,
         ): QueueReconcile {
+            // The same occurrence at the same place: two copies of a song without
+            // entry ids both pass [same], and the standby would resume at the wrong one.
+            if (liveIncoming != heldCurrent) return Bail
             val incoming = live.getOrNull(liveIncoming) ?: return Bail
             val heldIncoming = held.getOrNull(heldCurrent) ?: return Bail
-            if (!same(incoming, heldIncoming)) return Bail
+            if (!samePlayable(incoming, heldIncoming)) return Bail
             val shared = minOf(live.size, held.size)
             var firstDifference = -1
             for (i in 0 until shared) {
-                if (!same(live[i], held[i])) {
+                val matches = if (i < heldCurrent) same(live[i], held[i]) else samePlayable(live[i], held[i])
+                if (!matches) {
                     firstDifference = i
                     break
                 }
