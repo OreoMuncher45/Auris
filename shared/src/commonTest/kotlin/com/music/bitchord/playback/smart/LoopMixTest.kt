@@ -380,4 +380,13 @@ class LoopMixTest {
     fun noMaskAndNoLyricsMeansNoLoop() {
         assertNull(plan(analysis(120.0, 200.0), analysis(120.0, 180.0), null, null))
     }
+
+    @Test
+    fun theOutgoingLoopGoesByTheTailGridsOwnTrust() {
+        val downbeats = (0 until 30).map { 140.5 + it * 2.0 }
+        val trusted = analysis(120.0, 200.0).copy(beatConfidence = 0.0, tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        assertNotNull(plan(trusted, analysis(120.0, 180.0)))
+        val unsure = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.0))
+        assertNull(plan(unsure, analysis(120.0, 180.0)))
+    }
 }

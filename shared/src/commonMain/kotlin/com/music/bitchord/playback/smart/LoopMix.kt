@@ -175,7 +175,10 @@ object LoopMix {
     ): Plan? {
         if (outVideo || inVideo) return null.also { why?.append("a music video") }
         // A loop mix beat-matches, so it needs the same trusted grid the blend does.
-        if (out.beatConfidence < MIN_BEATMATCH_CONFIDENCE) return null.also { why?.append("outgoing grid not trusted") }
+        // The outgoing loop is cut from the tail, so the tail grid's own trust where there is one.
+        if ((out.tailBeats?.confidence ?: out.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
+            return null.also { why?.append("outgoing grid not trusted") }
+        }
         // The incoming loop is cut from the opening, so the head grid's own trust where there is one.
         if ((inn.headBeats?.confidence ?: inn.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
             return null.also { why?.append("incoming grid not trusted") }
