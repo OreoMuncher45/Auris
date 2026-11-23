@@ -2745,8 +2745,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }?.shelves?.firstOrNull()?.items ?: return@launch
                 if (identity == listenerKey() && _radioMixes.value.isEmpty()) _radioMixes.value = kept
             } else null
+            // The mixes are the listener's own. A candidate account under
+            // validation signs requests before [listenerKey] moves, so wait it
+            // out, and drop an answer the credentials changed under.
+            credentialsInValidation.awaitSettled()
+            val credentials = Innertube.listenerGeneration
             val fresh = YtMusicRepository.mixedForYouKeyed().getOrNull()?.let(::yourMixes)
-            if (identity != listenerKey()) return@launch
+            if (identity != listenerKey() || credentials != Innertube.listenerGeneration) {
+                // Not this listener's answer: leave the slot free so the next
+                // visit asks again rather than taking the stale one as done.
+                if (radioMixesFor == identity) radioMixesFor = null
+                return@launch
+            }
             if (fresh == null) {
                 // A failure keeps what is on screen, last launch's cards
                 // included, and the next visit asks again.
