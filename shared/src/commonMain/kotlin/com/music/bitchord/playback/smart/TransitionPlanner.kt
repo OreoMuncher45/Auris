@@ -579,8 +579,11 @@ private fun phraseBarPlan(
         downbeats.minByOrNull { abs(it - nominalEnd) }
             ?.takeIf { abs(it - nominalEnd) <= BEATS_PER_BAR * beatSeconds }
     }
-    if (measuredEnd != null && abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
-    val transitionEnd = measuredEnd ?: nominalEnd
+    // Neither edge measured (no bar lines near either): arithmetic bars, which
+    // the adaptive plan handles better.
+    if (measuredEnd == null) return null
+    if (abs(measuredEnd - nominalEnd) > beatSeconds / 2) return null
+    val transitionEnd = measuredEnd
     if (transitionEnd > length + 0.05) return null
     val overlapSeconds = transitionEnd - transitionStart
     if (overlapSeconds <= 0) return null
@@ -1504,15 +1507,32 @@ private fun clampToMixWindow(plan: TransitionPlan, length: Double, playbackTime:
     val earliestStart = (length - MIX_WINDOW_SECONDS).coerceAtLeast(0.0)
     if (result.transitionStart < earliestStart) {
         val end = result.transitionEnd.coerceAtLeast(earliestStart)
+        val span = (end - earliestStart).coerceAtLeast(0.0)
         result = result.copy(
             shouldStart = playbackTime >= earliestStart,
             transitionStart = earliestStart,
             transitionEnd = end,
-            fadeSeconds = (end - earliestStart).coerceAtLeast(0.0),
+            fadeSeconds = span,
+            handoffDuration = min(result.handoffDuration, span),
         )
     }
     if (result.incomingCueTime > MIX_WINDOW_SECONDS) {
         result = result.copy(incomingCueTime = MIX_WINDOW_SECONDS)
+    }
+    // The incoming side of the overlap must end inside its first window too:
+    // a late cue shortens the overlap from its start, keeping the exit.
+    val rate = result.incomingPlaybackRate.takeIf { it > 0 } ?: 1.0
+    val room = (MIX_WINDOW_SECONDS - result.incomingCueTime) / rate
+    val span = result.transitionEnd - result.transitionStart
+    if (span > room) {
+        if (room <= 0.0) return blocked("mix-window")
+        val start = result.transitionEnd - room
+        result = result.copy(
+            shouldStart = playbackTime >= start,
+            transitionStart = start,
+            fadeSeconds = room,
+            handoffDuration = min(result.handoffDuration, room),
+        )
     }
     return result
 }
@@ -1663,7 +1683,11 @@ private fun planTransitionInner(
             phraseBars = phraseBars,
             mixAnchor = mixAnchor,
             advanced = advanced,
-        )?.let { plan ->
+        )?.takeIf { plan ->
+            // A measured cue past the skip limit is not this phrase any more once
+            // capped: the adaptive plan takes the pair instead.
+            plan.incomingCueTime <= latestIncomingCue(nextLength) + 1e-9
+        }?.let { plan ->
             if (playbackTime < plan.transitionEnd) {
                 val started = playbackTime >= plan.transitionStart
                 return capIncomingSkip(
@@ -1760,10 +1784,15 @@ private fun mixPlan(
     // Advanced also blends any pair the stretch window matches on two trusted
     // grids, slowed down or sped up — the 5-10% apart that used to be left to
     // a filter ride.
+    // The incoming song is mixed in on its opening: a head grid the model
+    // measured and could not trust says its beat there is no match to blend on,
+    // whatever the outgoing grid says.
+    val incomingOpening = nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()
+    val openingUntrusted = nextAnalysis.headBeats != null && incomingOpening < MIN_DJ_CONFIDENCE
     val sameBeatBlend =
-        currentBpm > 0 && nextBpm > 0 &&
+        currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
-            (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
+            (analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE || incomingOpening >= MIN_DJ_CONFIDENCE) ||
             traits?.phaseLockable == true
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
