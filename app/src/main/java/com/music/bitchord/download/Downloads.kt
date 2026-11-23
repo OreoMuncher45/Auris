@@ -546,7 +546,10 @@ object Downloads {
         val already = mutableSetOf<String>()
         if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
-            for (song in songs) {
+            // One ask per track: a list that names a track twice would
+            // otherwise admit the first copy and count the second as already
+            // queued — by this very call.
+            for (song in songs.distinctBy { it.videoId }) {
                 val id = song.videoId
                 if (id in pending || id in running) {
                     already += id
@@ -580,7 +583,10 @@ object Downloads {
             synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
             accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
         }.isSuccess
-        return if (started) already + accepted.map { it.videoId } else already
+        val acceptedIds = accepted.mapTo(HashSet(accepted.size)) { it.videoId }
+        // On a failed start this call's own tracks were taken back off the
+        // queue, so none of them may be reported as admitted.
+        return if (started) already + acceptedIds else already - acceptedIds
     }
 
     /**
