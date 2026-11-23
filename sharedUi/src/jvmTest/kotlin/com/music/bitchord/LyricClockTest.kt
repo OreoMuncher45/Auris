@@ -203,9 +203,11 @@ class LyricClockTest {
         // Two agreeing forward samples establish a new anchor, then a frame starts catch-up.
         clock.frame(1_016.0, 10_800, 1_016.0, 0)
         clock.frame(1_032.0, 10_816, 1_032.0, 0)
-        clock.frame(1_048.0, 10_816, 1_032.0, 0)
+        val beforeLower = clock.frame(1_048.0, 10_816, 1_032.0, 0)
         // Ordinary noise lowers the target while that automatic glide is still active.
         var previous = clock.frame(1_064.0, 10_700, 1_064.0, 0)
+        // The frame that takes the lower sample is checked too, not only used as the baseline.
+        assertTrue("lower sample reversed the glide: $beforeLower -> $previous", previous >= beforeLower)
         val after = clock.frame(1_080.0, 10_700, 1_064.0, 0)
         assertTrue("later resumed frame reused an obsolete glide offset", after >= previous)
         previous = after
@@ -225,6 +227,12 @@ class LyricClockTest {
             clock.frame(16.0, landing, 16.0, 1)
             clock.frame(32.0, landing, 16.0, 1)
             clock.frame(48.0, landing - 20, 48.0, 1)
+            // Still gliding after the lower sample, in both directions: not
+            // snapped to the new target, and short of it on the side it came from.
+            val target = landing - 20 + 16
+            val mid = clock.frame(64.0, landing - 20, 48.0, 1)
+            val shortOfTarget = if (landing < 10_000) mid > target else mid < target
+            assertTrue("seek to $landing snapped instead of gliding: $mid vs $target", shortOfTarget && abs(mid - target) > 50)
             // Both directions must still land within the existing 260 ms seek glide.
             assertEquals(landing - 20 + 252, clock.frame(300.0, landing - 20, 48.0, 1))
         }
