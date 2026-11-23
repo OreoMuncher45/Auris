@@ -34,6 +34,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
@@ -368,10 +370,16 @@ object YtMusicRepository {
     private suspend fun rawSuggestions(input: String): JsonObject {
         val generation = Innertube.listenerGeneration
         val pending = synchronized(suggestionsLock) {
-            lastSuggestions
-                ?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
+            val last = lastSuggestions
+            last?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
                 ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
-                    .also { lastSuggestions = PendingSuggestions(input, generation, it) }
+                    .also {
+                        // A superseded input is never read again, so its request
+                        // stops rather than competing with the newest one over a
+                        // slow connection: at most one is ever in flight.
+                        last?.answer?.cancel()
+                        lastSuggestions = PendingSuggestions(input, generation, it)
+                    }
         }
         return try {
             pending.await().also {
@@ -390,6 +398,11 @@ object YtMusicRepository {
                 synchronized(suggestionsLock) {
                     if (lastSuggestions?.answer === pending) lastSuggestions = null
                 }
+            }
+            // Cancelled because a newer input replaced it, not because this
+            // caller was: an ordinary failure, not a cancellation it never had.
+            if (failure is CancellationException && pending.isCancelled && currentCoroutineContext().isActive) {
+                throw IllegalStateException("suggestions superseded by a newer input")
             }
             throw failure
         }
