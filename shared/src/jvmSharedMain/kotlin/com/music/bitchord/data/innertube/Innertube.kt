@@ -117,6 +117,9 @@ object Innertube {
 
     private const val TAG = "BitChord"
 
+    /** Whether plays are registered with YouTube — off; see [playbackTracking]. */
+    private const val DISABLE_PLAY_HISTORY = true
+
     /**
      * Guards every write to the state [listener] is built from (cookie, scope,
      * adopted identity, channel override) together with the rebuild, so a
@@ -818,8 +821,17 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
+    /**
+     * Search, asked anonymously.
+     *
+     * The regular authenticated `search` endpoint records every query against
+     * the signed-in account, which then shows up in the listener's YouTube app
+     * under search history. Dropping the cookie here keeps the results (tracks,
+     * artists, albums) but makes the lookup a guest one that touches no
+     * history — the same trade [searchTypeahead] already makes.
+     */
     suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusic("search") {
+        postMusicAnonymous("search") {
             put("query", query)
             params?.let { put("params", it) }
         }
@@ -897,6 +909,10 @@ object Innertube {
      * timestamp one revision old, it does not.
      */
     suspend fun playbackTracking(videoId: String, signatureTimestamp: Int?): PlaybackTracking? {
+        // History registration is disabled outright: the app must not write the
+        // listener's plays into their YouTube account (search history and watch
+        // history both surface in the YouTube app). Nothing else reads this.
+        if (DISABLE_PLAY_HISTORY) return null
         if (cookie == null) return null
         ensureSessionScope()
         val response = postMusic("player") {

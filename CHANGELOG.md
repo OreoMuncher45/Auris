@@ -7,38 +7,30 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
-- **Lyrics sharing, ported from upstream BitChord.** The card is now laid out the
-  way the player animates the panel — the word sweep, the sung-word lift and the
-  held-word swell are all drawn on the card, so a shared verse is the verse that
-  was on screen. A new story shape (the whole 9:16 frame, the passage in a
-  frosted panel) joins the card cut to its lines.
-- **Share a lyrics video.** A synced verse can now leave as an MP4, not just a
-  picture: the card animates over the record's backdrop, cut to the stretch the
-  lines are sung over, with the song's own audio from YouTube and a silent
-  fallback when none can be resolved. A Video / Image switch picks the shape;
-  Save and Share write the video to the gallery or the chooser.
-- **The record's own colour.** The lyrics are no longer white on a template: the
-  card is set in the sleeve's ink — the same palette the now playing screen
-  resolves — and the backdrop is the record's own mesh, so a share reads as this
-  song and no other.
-- **Includes instrumentals.** A skipped run that really held an instrumental
-  break is named ("Instrumental") rather than collapsed to a bare "(...)"; the
-  switch turns it off again. This is the upstream behaviour of dropping the
-  vocal-free stretches, fixed rather than copied.
-- **Show Auris logo.** The mark on the card is now a switch, remembered for the
-  session like the instrumentals one.
+- **Lyrics sharing, ported from upstream BitChord.** The card is laid out the way
+  the player animates the panel, and the sheet is upstream's: **Video / Image**,
+  **Gradient / Apple / Spotify** backgrounds (Canvas clips when the track has one),
+  **Convert to card**, and the Auris-logo switch. The card falls back to the
+  record's own colours when the player hands over no backdrop.
+- **Includes instrumentals.** A skipped run that really held an instrumental break
+  is named rather than collapsed to a bare omission; the switch turns it off again.
 - **AutoMix model.** Loop selection now scores each candidate groove on its own
   analysis — the level it drives at and the drum hits in it (frame-to-frame RMS
   transients), gated by the same vocal detection as before — so a drum-led
   stretch is chosen over a later wash of the same loudness. The latest-out /
   earliest-in preference still holds unless a clearly better groove is in reach.
-- **The main player plays the music video (BitChord's player, ported).** Converting
-  a track to its video takes the picture over the sleeve: the album art, the
-  animated cover and the Canvas all stand down, the blurred backdrop stays, and
-  the video sits in the middle with a quality box and a full-screen button over
-  it. The picture is a second, silent ExoPlayer on the audio's clock — the app's
-  own playback chain is untouched — resolved through InnerTubeX's video
-  extraction at up to 1080p, with an age-gated retry and an H.264 step-down.
+- **The main player plays the music video (BitChord's player, ported).** Taking a
+  track to its video puts the picture over the sleeve at the stream's own aspect
+  ratio — letterboxed, never stretched to the square — with the album art, the
+  animated cover and the Canvas all standing down, the blurred backdrop staying,
+  and a quality box and full-screen button over it. It is upstream's
+  `MusicVideoEngine` whole: InnerTubeX's video extraction at up to 1080p, an
+  age-gated retry, an H.264 step-down, and the quality drawer.
+- **The video plays its own audio.** The picture's video-only rendition is merged
+  with the track's audio in one ExoPlayer and the app's player goes quiet under
+  it, so the sound and the image are one recording and cannot drift apart.
+- **No YouTube history.** Search is asked anonymously and play registration is
+  off, so nothing the app searches or plays lands in the listener's YouTube app.
 
 ## Added
 

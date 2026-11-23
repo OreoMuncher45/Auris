@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -28,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
@@ -730,19 +733,29 @@ internal fun BoxScope.PortraitSleeve(
             // quality and full-screen controls over it.
             if (videoMode) {
                 var videoRendered by remember(song.videoId) { mutableStateOf(false) }
+                val videoAspect by PlayerPlatform.host.musicVideoAspect.collectAsStateWithLifecycle()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (!videoRendered) VideoLoadingBackdrop(Modifier.fillMaxSize())
-                    MusicVideoSurface(
-                        videoId = song.videoId,
-                        fit = true,
-                        onRenderedChanged = { videoRendered = it },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    // The picture at the video's own shape, letterboxed in the
+                    // sleeve's frame — never stretched to the square.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(videoAspect.takeIf { it > 0.1f } ?: (16f / 9f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!videoRendered) VideoLoadingBackdrop(Modifier.fillMaxSize())
+                        MusicVideoSurface(
+                            videoId = song.videoId,
+                            fit = true,
+                            onRenderedChanged = { videoRendered = it },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     // Put away with the rest of the chrome while a panel is over it.
                     if (!panels.lyricsOpen && !panels.queueOpen) {
                         VideoCornerControls(

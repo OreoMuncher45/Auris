@@ -11,7 +11,7 @@ import java.util.Locale
  * call site for why Spotify's Canvas gets the periodic re-tint and the other
  * three don't.
  */
-enum class CanvasSource { SPOTIFY, OTHER }
+enum class CanvasSource { SPOTIFY, APPLE, OTHER }
 
 /**
  * A looping video that stands in for a track's cover art — what Spotify calls
@@ -30,6 +30,11 @@ data class CanvasArtwork(
     val artist: String? = null,
     val album: String? = null,
     val source: CanvasSource = CanvasSource.OTHER,
+    /**
+     * The same clip framed 3:4, when the provider has one. Only the phone's
+     * full-screen player takes it; everywhere else keeps the square [url].
+     */
+    val portraitUrl: String? = null,
 ) {
     /**
      * Whether this clip really belongs to the track we asked about.

@@ -1676,4 +1676,7 @@
     <string name="addon_backup_read_failed_message">Check the file is still there and try again.</string>
     <string name="addon_backup_restore_signins">Restore sign-ins</string>
     <string name="addon_backup_export_too_large">These add-ons are too large for one backup file.</string>
+    <string name="lyrics_share_canvas">Canvas</string>
+    <string name="lyrics_share_saving">Salvataggio…</string>
+    <string name="lyrics_share_gradient">Sfumatura</string>
 </resources>

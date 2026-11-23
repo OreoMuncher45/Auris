@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -31,6 +32,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
@@ -298,10 +301,15 @@ object MusicVideoEngine {
     private fun ensurePlayer(context: Context): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .build()
         .apply {
-            volume = 0f
-            trackSelectionParameters = trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-                .build()
+            // The picture brings its own audio: the video-only rendition is
+            // merged with the track's audio below, and the app's own player is
+            // muted underneath while it shows. That is what makes the sound and
+            // the picture one recording instead of two that drift.
+            volume = 1f
+            setAudioAttributes(
+                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).build(),
+                /* handleAudioFocus = */ false,
+            )
             addListener(playerListener)
         }
         .also { player = it }
@@ -426,10 +434,26 @@ object MusicVideoEngine {
                 return@launch
             }
             val exo = player ?: return@launch
-            val upstream = OkHttpDataSource.Factory(Http.client)
-                .setDefaultRequestProperties(stream.headers)
-            val source = ProgressiveMediaSource.Factory(ChunkedDataSource.Factory(upstream, CHUNK_BYTES))
-                .createMediaSource(MediaItem.fromUri(stream.url))
+            fun sourceFor(url: String, headers: Map<String, String>) =
+                ProgressiveMediaSource.Factory(
+                    ChunkedDataSource.Factory(
+                        OkHttpDataSource.Factory(Http.client).setDefaultRequestProperties(headers),
+                        CHUNK_BYTES,
+                    ),
+                ).createMediaSource(MediaItem.fromUri(url))
+            val videoSource = sourceFor(stream.url, stream.headers)
+            // The track's own audio, merged under the picture, so the video
+            // player is the one thing playing: sound and image cannot drift.
+            val audio = runCatching {
+                withContext(Dispatchers.IO) {
+                    InnerTubeXResolver.extract(videoId, cap, refused[videoId].orEmpty().toSet())
+                }
+            }.getOrNull()
+            val source: MediaSource = if (audio != null && audio.url != stream.url) {
+                MergingMediaSource(videoSource, sourceFor(audio.url, audio.headers))
+            } else {
+                videoSource
+            }
             if (stream.aspect > 0f) _aspect.value = stream.aspect
             _quality.value = _quality.value.copy(heights = stream.heights, activeHeight = stream.height)
             loadedProfile = stream.profileId
@@ -437,6 +461,8 @@ object MusicVideoEngine {
             exo.setMediaSource(source, start + seekLeadMs)
             exo.playWhenReady = controller?.isPlaying == true
             exo.prepare()
+            // The app's own player goes quiet under the picture.
+            controller?.let { if (it.volume != 0f) it.volume = 0f }
             lastSeekAt = System.currentTimeMillis()
             seekStartedAt = lastSeekAt
             startSync()
@@ -453,6 +479,8 @@ object MusicVideoEngine {
     }
 
     private fun unload() {
+        // The picture is going: hand the sound back to the app's player.
+        controller?.let { if (it.volume == 0f) it.volume = 1f }
         loadJob?.cancel()
         loadJob = null
         syncJob?.cancel()
