@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1132,13 +1133,24 @@ object AudioCache {
     suspend fun remove(mediaId: String): Int = withContext(Dispatchers.IO) {
         if (!::cache.isInitialized || mediaId.isBlank()) return@withContext 0
         playedIds.remove(mediaId)
+        // A round still writing this track would put its bytes back after the
+        // removal, and with its claim released a second round could be
+        // admitted beside it and take its place in the registry, where a later
+        // [clear] would stop the newcomer and miss it. So the round is stopped
+        // first, while its claim still keeps any other round out; once it is
+        // cancelled its own bookkeeping leaves the claim in place for this to
+        // release.
+        val round = synchronized(analysisAdmission) { analysisJobs[mediaId] }
+        round?.cancelAndJoin()
         // The same per-track bookkeeping [clear] drops for every track, and
         // for the same reason: it describes bytes that are about to be gone.
-        analysisHeads.remove(mediaId)
-        analysisHeadRounds.remove(mediaId)
-        analysisHeadWant.remove(mediaId)
-        analysisHeadFailures.remove(mediaId)
-        analysisHeadRetryAt.remove(mediaId)
+        synchronized(analysisAdmission) {
+            analysisHeads.remove(mediaId)
+            analysisHeadRounds.remove(mediaId)
+            analysisHeadWant.remove(mediaId)
+            analysisHeadFailures.remove(mediaId)
+            analysisHeadRetryAt.remove(mediaId)
+        }
         renditionKeys.remove(mediaId)
         var removed = 0
         keysOf(mediaId).forEach { key ->

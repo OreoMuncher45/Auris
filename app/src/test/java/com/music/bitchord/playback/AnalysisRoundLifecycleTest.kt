@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,5 +100,22 @@ class AnalysisRoundLifecycleTest {
 
         writerDone.complete(Unit)
         assertTrue(idleMainUntil { first && second })
+    }
+
+    @Test
+    fun `removing a track stops its round before releasing the claim`() {
+        val round = liveRound()
+        val removal = scope.async { AudioCache.remove(id) }
+
+        Thread.sleep(300)
+        // Still stopping: the claim keeps a replacement round out meanwhile.
+        assertFalse(removal.isCompleted)
+        assertTrue(heads.containsKey(id))
+        assertTrue(round.isCancelled)
+
+        writerDone.complete(Unit)
+        assertTrue(idleMainUntil { removal.isCompleted })
+        assertFalse(heads.containsKey(id))
+        assertTrue(round.isCompleted)
     }
 }
