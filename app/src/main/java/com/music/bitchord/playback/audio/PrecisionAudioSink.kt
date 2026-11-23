@@ -1005,6 +1005,8 @@ class PrecisionAudioSink(
             // The USB clock, not AudioTrack's: no track exists on this path.
             return exclusiveUsb?.getCurrentPositionUs() ?: AudioSink.CURRENT_POSITION_NOT_SET
         }
+        // Before the clock is read: see [LoopMixPort.publishPosition].
+        val loopGenerationBefore = loop.generation
         val delegatePosition = super.getCurrentPositionUs(sourceEnded)
         if (delegatePosition == AudioSink.CURRENT_POSITION_NOT_SET) return delegatePosition
         // The delegate counts any silence the loop mix inserted, and none of the
@@ -1017,7 +1019,7 @@ class PrecisionAudioSink(
         }
         val port = loop
         if (port.outArm != null || port.inArm != null) {
-            port.publishPosition(position - port.streamOffsetUs, System.nanoTime())
+            port.publishPosition(position - port.streamOffsetUs, System.nanoTime(), loopGenerationBefore)
         }
         return position
     }
