@@ -461,15 +461,18 @@ object Innertube {
                     // flight. Never install the old cookie's answer under the
                     // new one: that is a guaranteed 401 and, worse, can credit
                     // a play to the profile that just left.
+                    // Nor over a scope a signed-in page adopted meanwhile under
+                    // the same cookie: that names the profile the listener
+                    // picked, and [adoptedIdentity] already says so.
                     val installed = synchronized(identityLock) {
-                        if (cookie != session) return@synchronized false
+                        if (cookie != session || scope != null) return@synchronized false
                         scope = fresh
                         // Its account index can be what the listener names.
                         refreshListener()
                         true
                     }
                     if (!installed) {
-                        Log.d(TAG, "discarding a session scope from an account that is no longer active")
+                        Log.d(TAG, "discarding a session scope from an account or profile that is no longer active")
                         return@let
                     }
                     channelOverride?.let { selected ->
