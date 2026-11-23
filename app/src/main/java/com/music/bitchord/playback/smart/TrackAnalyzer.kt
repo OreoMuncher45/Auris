@@ -449,7 +449,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             emptyList()
         } else {
             cache.renditionsOf(analysisUri)
-                .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(analysisUri.getQueryParameter("v"), it.key) }
+                .filter { readable(analysisUri, it.key, durationSeconds) }
                 .filter { it.isComplete && it.key !in badRenditions }
         }
         val usableComplete = local || complete.isNotEmpty()
@@ -664,7 +664,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // minutes earlier reported zero here, because the question was being
         // asked of the wrong copy of it.
         val candidate = cache.renditionsOf(uri)
-            .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(uri.getQueryParameter("v"), it.key) }
+            .filter { readable(uri, it.key, durationSeconds) }
             .filter { it.cachedPrefix > 0L && it.key !in badRenditions }
             // The growth guard, applied as a filter rather than to the winner.
             // Applied afterwards it did not skip a copy, it ended the search: the
@@ -890,14 +890,31 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * seconds out. Comparing container durations catches exactly that, and
      * costs a header parse per candidate.
      */
+    /**
+     * Whether the analyser may read [key] for [uri]. A canonical YouTube copy
+     * always; the analysis round's substitute fallback only when the track's
+     * length is known, so the duration check that catches a different cut of
+     * the song can run on it. See [AutomixAnalysisSource.isAnalysisRendition].
+     */
+    private fun readable(uri: Uri, key: String, durationSeconds: Double): Boolean {
+        val videoId = uri.getQueryParameter("v")
+        if (AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, key)) return true
+        return durationSeconds.isFinite() && durationSeconds > 0 &&
+            AutomixAnalysisSource.isAnalysisSubstitute(videoId, key)
+    }
+
     private fun chooseRendition(
         trackId: String,
         uri: Uri,
         durationSeconds: Double,
     ): AudioCache.Rendition? {
         val complete = cache.renditionsOf(uri)
-            .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(uri.getQueryParameter("v"), it.key) }
+            .filter { readable(uri, it.key, durationSeconds) }
             .filter { it.isComplete && it.key !in badRenditions }
+            // A canonical copy before the analysis round's substitute, however
+            // light the substitute is; the sort is stable, so size order holds
+            // within each.
+            .sortedBy { AutomixAnalysisSource.isAnalysisSubstitute(uri.getQueryParameter("v"), it.key) }
         if (complete.isEmpty()) return null
 
         val expected = durationSeconds.takeIf { it.isFinite() && it > 0 }

@@ -2414,6 +2414,10 @@ object AudioCache {
      */
     private fun analysisKeyOfVideo(videoId: String): String = AutomixAnalysisSource.analysisCacheKey(videoId)
 
+    /** Where the round files its substitute fallback; see [AutomixAnalysisSource.analysisSubstituteKey]. */
+    private fun analysisSubstituteKeyOfVideo(videoId: String): String =
+        AutomixAnalysisSource.analysisSubstituteKey(videoId)
+
     /**
      * The copy the analyser reads, for a row.
      *
@@ -2796,6 +2800,9 @@ object AudioCache {
                     }
                     val want = analysisHeadSize(total)
                     var fetched = copy
+                    // Which key this round's bytes end up under: the Opus
+                    // copy's own, or the substitute's beside it.
+                    var filled = key
                     analysisHeadWant[videoId] = want
                     val already = cachedBytesOf(key, want)
                     TrackLog.w(
@@ -2836,12 +2843,14 @@ object AudioCache {
                         // against. So when the pinned copy comes up short, pull
                         // that copy instead.
                         //
-                        // Into the analyser's own key, and only after the partial
-                        // Opus is thrown away: the two are different encodings of
-                        // the same recording, and a file holding both does not
-                        // parse. A partial Opus is worth nothing anyway — the
-                        // window is sized for exactly the seconds the pass needs,
-                        // so half of it is half a container.
+                        // Under a key of its own, never the Opus copy's: that key
+                        // names the YouTube recording and is trusted by name (see
+                        // [AutomixAnalysisSource.analysisSubstituteKey]), and one
+                        // key filled from two upstreams across rounds had a retry
+                        // count the substitute's partial bytes against the Opus
+                        // copy's size and call itself complete. The partial Opus
+                        // is still thrown away — half a container is worth
+                        // nothing, and the head pass would only try it.
                         //
                         // A catalogue row has no second copy to fall back on: the
                         // row's own address *is* the copy, so pulling it again
@@ -2850,24 +2859,29 @@ object AudioCache {
                         // Sized from the substitute's own length, not the Opus
                         // one's: the two differ, and a pull sized for the
                         // smaller left the larger cut short while the round
-                        // still called itself complete. And skipped outright
-                        // while the partial Opus cannot be cleared, because
-                        // filling the gap after it is the two-encodings file
-                        // this avoids; the round ends short and the retry
-                        // clears it first.
-                        if (clearPartialHead(key, want)) {
-                            fetched = Uri.parse("bitchord://watch?v=$videoId")
-                            measured = measureUpstream(fetched)
-                            measuredFetched = true
-                            if (measured > 0L) target = analysisHeadSize(measured)
+                        // still called itself complete. A partial substitute
+                        // from an earlier round is cleared first for the same
+                        // seam reason as the Opus copy; while a reader holds it
+                        // the round ends short and the retry clears it.
+                        clearPartialHead(key, want)
+                        val substitute = analysisSubstituteKeyOfVideo(videoId)
+                        fetched = Uri.parse("bitchord://watch?v=$videoId")
+                        measured = measureUpstream(fetched)
+                        measuredFetched = true
+                        if (measured > 0L) target = analysisHeadSize(measured)
+                        if (cachedBytesOf(substitute, target) >= target || clearPartialHead(substitute, target)) {
+                            filled = substitute
                             analysisHeadWant[videoId] = target
                             pull(
-                                key,
+                                substitute,
                                 fetched,
                                 0,
                                 target,
                                 pinKey = true,
                             )
+                            // The memo of which keys exist would hide the new
+                            // one from the analyser for its lifetime.
+                            renditionKeys.remove(videoId)
                         }
                     }
                     // The copy's *own* length, measured from the stream the copy
@@ -2877,7 +2891,7 @@ object AudioCache {
                     // once the cache knows how long it is. After the fallback
                     // above that is the substitute's stream, not the Opus one.
                     if (!measuredFetched) measured = measureUpstream(fetched)
-                    if (measured > 0L) recordContentLength(key, measured)
+                    if (measured > 0L) recordContentLength(filled, measured)
                     // A round sized on a guess, because the length was not
                     // known up front, is grown to the measured size now that
                     // it is: stopping at the guess left a copy the analyser
@@ -2886,9 +2900,9 @@ object AudioCache {
                     // bytes already there.
                     if (measured > 0L) {
                         val grown = analysisHeadSize(measured)
-                        if (grown > target && cachedBytesOf(key, target) >= target) {
+                        if (grown > target && cachedBytesOf(filled, target) >= target) {
                             analysisHeadWant[videoId] = grown
-                            pull(key, fetched, target, grown - target, pinKey = true)
+                            pull(filled, fetched, target, grown - target, pinKey = true)
                             target = grown
                         }
                     }
@@ -2899,8 +2913,8 @@ object AudioCache {
                     // tagged it, because it is fetched outside the player's own
                     // data source, and a whole song per analysed track is how a
                     // phone fills up.
-                    tagAnalysisCopy(key, videoId, uri)
-                    val after = cachedBytesOf(key, target)
+                    tagAnalysisCopy(filled, videoId, uri)
+                    val after = cachedBytesOf(filled, target)
                     // A copy shorter than a size-unknown round's guess is whole too.
                     complete = after >= target || (measured > 0L && after >= measured)
                     if (after < target) {
