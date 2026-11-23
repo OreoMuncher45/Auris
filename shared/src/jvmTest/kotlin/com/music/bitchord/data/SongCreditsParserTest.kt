@@ -115,4 +115,48 @@ class SongCreditsParserTest {
         assertEquals(listOf("Jeff Bass", "Luis Resto", "Marshall Mathers"), credits[1].names)
         assertEquals(listOf("Eminem Catalog PS"), credits[3].names)
     }
+
+    private fun panel(videoId: String, creditsId: String) = """
+        {"playlistPanelVideoRenderer": {"videoId": "$videoId", "menu": {"menuRenderer": {"items": [
+          {"menuNavigationItemRenderer":{"text":{"runs":[{"text":"View song credits"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"$creditsId"}}}}
+        ]}}}}
+    """
+
+    private fun browseId(endpoint: kotlinx.serialization.json.JsonObject?) =
+        (endpoint?.get("browseId") as? kotlinx.serialization.json.JsonPrimitive)?.content
+
+    @Test
+    fun anotherQueuedTracksCreditsAreNeverTaken() {
+        // The track has no row of its own; the queued track after it has credits.
+        val next = Json.parseToJsonElement(
+            """{"contents": {"playlistPanelRenderer": {"contents": [${panel("bbbbbbbbbbb", "MPTC_b")}]}}}""",
+        )
+        assertEquals(null, browseId(SongCreditsRepository.findCreditsEndpoint(next, "aaaaaaaaaaa")))
+    }
+
+    @Test
+    fun theTracksOwnRowWinsOverOtherRowsAndTheRest() {
+        val next = Json.parseToJsonElement(
+            """
+            {"contents": {"playlistPanelRenderer": {"contents": [
+              ${panel("bbbbbbbbbbb", "MPTC_b")}, ${panel("aaaaaaaaaaa", "MPTC_a")}
+            ]}},
+             "overlay": {"browseEndpoint": {"browseId": "MPTC_other"}}}
+            """,
+        )
+        assertEquals("MPTC_a", browseId(SongCreditsRepository.findCreditsEndpoint(next, "aaaaaaaaaaa")))
+    }
+
+    @Test
+    fun withoutItsOwnRowOnlyTheResponseOutsideTheQueueIsSearched() {
+        val next = Json.parseToJsonElement(
+            """
+            {"contents": {"playlistPanelRenderer": {"contents": [${panel("bbbbbbbbbbb", "MPTC_b")}]}},
+             "playerOverlays": {"menu": {"items": [
+               {"menuNavigationItemRenderer":{"text":{"runs":[{"text":"View song credits"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"MPTC_a"}}}}
+             ]}}}
+            """,
+        )
+        assertEquals("MPTC_a", browseId(SongCreditsRepository.findCreditsEndpoint(next, "aaaaaaaaaaa")))
+    }
 }

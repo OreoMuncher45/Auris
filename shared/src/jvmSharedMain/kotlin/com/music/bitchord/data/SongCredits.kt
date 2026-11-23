@@ -90,20 +90,29 @@ object SongCreditsRepository {
         fun JsonObject.browseEndpoint(): JsonObject? =
             (this["navigationEndpoint"] as? JsonObject)?.get("browseEndpoint") as? JsonObject
 
-        val panels = objectsNamed(root, "playlistPanelVideoRenderer").toList()
-        val rows = panels
+        // Only [videoId]'s own row may answer: another queued track's menu
+        // links to *its* credits, which would then be cached under this id.
+        // With no row for the track, the response outside the queue rows is
+        // the only place left that can be about it.
+        val ownRows = objectsNamed(root, "playlistPanelVideoRenderer")
             .filter { (it["videoId"] as? JsonPrimitive)?.contentOrNull == videoId }
-            .ifEmpty { panels }
-        for (scope in rows + listOfNotNull(root as? JsonObject)) {
-            val items = objectsNamed(scope, "menuNavigationItemRenderer").toList()
+            .toList()
+        val scopes: List<JsonElement> = ownRows.ifEmpty { listOf(root) }
+        val skip = if (ownRows.isEmpty()) QUEUE_ROW else null
+        for (scope in scopes) {
+            val items = objectsNamed(scope, "menuNavigationItemRenderer", skip).toList()
             val endpoint = items.firstNotNullOfOrNull { nav -> nav.browseEndpoint()?.takeIf(::isCreditsBrowse) }
                 ?: items.firstNotNullOfOrNull { nav ->
                     nav.browseEndpoint()?.takeIf { nav.runsText().contains("credit", ignoreCase = true) }
                 }
             if (endpoint != null) return endpoint
         }
-        return objectsNamed(root, "browseEndpoint").firstOrNull(::isCreditsBrowse)
+        return scopes.firstNotNullOfOrNull { scope ->
+            objectsNamed(scope, "browseEndpoint", skip).firstOrNull(::isCreditsBrowse)
+        }
     }
+
+    private const val QUEUE_ROW = "playlistPanelVideoRenderer"
 
     internal fun parseCreditsPage(root: JsonElement): List<SongCredit> {
         val credits = mutableListOf<SongCredit>()
@@ -166,13 +175,15 @@ object SongCreditsRepository {
             .ifEmpty { listOf(joined.trim()) }
     }
 
-    private fun objectsNamed(root: JsonElement, name: String): Sequence<JsonObject> = sequence {
+    /** Every object under the key [name], depth first, not descending into keys named [skip]. */
+    private fun objectsNamed(root: JsonElement, name: String, skip: String? = null): Sequence<JsonObject> = sequence {
         when (root) {
             is JsonObject -> for ((key, value) in root) {
+                if (key == skip) continue
                 if (key == name && value is JsonObject) yield(value)
-                yieldAll(objectsNamed(value, name))
+                yieldAll(objectsNamed(value, name, skip))
             }
-            is JsonArray -> for (value in root) yieldAll(objectsNamed(value, name))
+            is JsonArray -> for (value in root) yieldAll(objectsNamed(value, name, skip))
             else -> Unit
         }
     }
