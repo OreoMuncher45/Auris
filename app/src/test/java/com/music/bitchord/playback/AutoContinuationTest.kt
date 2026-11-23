@@ -66,4 +66,27 @@ class AutoContinuationTest {
     fun `without an entry id any playlist change counts`() {
         assertTrue(isAutoQueueInstalled(null, 0, 0) { null })
     }
+
+    @Test
+    fun `rows revoked after an account switch go and the start follows its row`() {
+        // An Auto row accepted for the old account at 1, then device tracks.
+        val (kept, start) = withoutRevoked(listOf("dl-0", "account-row", "dl-2", "dl-3"), setOf(1), start = 3)
+        assertEquals(listOf("dl-0", "dl-2", "dl-3"), kept)
+        assertEquals(2, start)
+    }
+
+    @Test
+    fun `a revoked start falls to the row that took its place`() {
+        val (kept, start) = withoutRevoked(listOf("a", "revoked", "b"), setOf(1), start = 1)
+        assertEquals(listOf("a", "b"), kept)
+        assertEquals(1, start)
+    }
+
+    @Test
+    fun `nothing revoked leaves the resolution as it was`() {
+        val resolved = listOf("a", "b")
+        val (kept, start) = withoutRevoked(resolved, emptySet(), start = 1)
+        assertTrue(kept === resolved)
+        assertEquals(1, start)
+    }
 }
