@@ -7866,7 +7866,13 @@ class PlaybackService : MediaLibraryService() {
                             delay(FADE_STEP_MS)
                         }
                     }
-                    player?.pause()
+                    // While casting, the phone's player is already held paused
+                    // and the receiver is what is playing, so that is what stops.
+                    SleepTimer.pauseFor(
+                        castActive = castPlayback.active,
+                        pauseCast = castPlayback::pause,
+                        pauseLocal = { player?.pause() },
+                    )
                     SleepTimer.cancel()
                 } finally {
                     SleepTimer.fadingOut = false
