@@ -238,6 +238,7 @@ import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueCoordinator
+import com.music.bitchord.playback.QueueEdits
 import com.music.bitchord.playback.clearUserQueueRows
 import com.music.bitchord.playback.moveQueueRowsToUser
 import com.music.bitchord.playback.removeQueueRows
@@ -3100,8 +3101,14 @@ internal fun BitChordApp(
     // The queue screen's swipes, held-row menu, multi-select and Undo. One
     // object for the life of the app; its callbacks are refreshed here.
     val queueEditing = remember { QueueEditing() }
-    queueEditing.onSwipeToQueue = { index, _ ->
-        controller?.moveQueueRowsToUser(listOf(index), AppSettings.swipeToPlayNext.value, player.queue) == true
+    // Every edit names its rows by entry, not by index alone, so a queue that
+    // changed under the screen can't have the wrong rows edited.
+    queueEditing.onSwipeToQueue = { index, song ->
+        controller?.moveQueueRowsToUser(
+            listOf(QueueEdits.Target(index, song)),
+            AppSettings.swipeToPlayNext.value,
+            player.queue,
+        ) == true
     }
     queueEditing.onSongMenu = { _, queueSong ->
         // Hung off the held row, in the player's own window, without the
@@ -3116,7 +3123,7 @@ internal fun BitChordApp(
         }
         sheets.songMenu.song = queueSong
     }
-    val offerQueueUndo: (com.music.bitchord.playback.QueueEdits.Removal?, Boolean) -> Unit = { removal, cleared ->
+    val offerQueueUndo: (QueueEdits.Removal?, Boolean) -> Unit = { removal, cleared ->
         if (removal != null && removal.rows.isNotEmpty()) {
             val kind = when {
                 cleared -> QueueUndoKind.Cleared
@@ -3131,8 +3138,18 @@ internal fun BitChordApp(
     queueEditing.onBulkAction = { indices, action ->
         val songs = indices.mapNotNull { player.queue.getOrNull(it) }
         when (action) {
-            QueueBulkAction.REMOVE -> offerQueueUndo(controller?.removeQueueRows(indices, player.queue), false)
-            QueueBulkAction.PLAY_NEXT -> controller?.moveQueueRowsToUser(indices, toHead = true, timeline = player.queue)
+            QueueBulkAction.REMOVE -> offerQueueUndo(
+                controller?.removeQueueRows(
+                    QueueEdits.targetsAt(player.queue, indices),
+                    player.queue,
+                ),
+                false,
+            )
+            QueueBulkAction.PLAY_NEXT -> controller?.moveQueueRowsToUser(
+                QueueEdits.targetsAt(player.queue, indices),
+                toHead = true,
+                known = player.queue,
+            )
             QueueBulkAction.PLAYLIST -> if (songs.isNotEmpty()) {
                 viewModel.loadPlaylists()
                 sheets.playlistPick.songs = songs
@@ -3308,7 +3325,15 @@ internal fun BitChordApp(
                 }
             },
             // Removed with an Undo under the queue.
-            onRemoveFromQueue = { offerQueueUndo(controller?.removeQueueRows(listOf(it), player.queue), false) },
+            onRemoveFromQueue = {
+                offerQueueUndo(
+                    controller?.removeQueueRows(
+                        QueueEdits.targetsAt(player.queue, listOf(it)),
+                        player.queue,
+                    ),
+                    false,
+                )
+            },
             onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
             // The queue's search asks for both of these by name, and both are
