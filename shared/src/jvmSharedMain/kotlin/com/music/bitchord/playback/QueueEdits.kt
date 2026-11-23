@@ -38,35 +38,34 @@ object QueueEdits {
     /**
      * Where [targets] are in the [live] queue now, ascending and distinct.
      *
-     * Rows are matched by [identity], never by index: the queue may have grown,
-     * shrunk or been rebuilt since the screen drew it. A row that is no longer
-     * there is dropped rather than replaced by whatever took its place. An
-     * identity that occurs more than once (only possible for rows without an
-     * entry id) is trusted only where the screen saw it.
+     * Rows are followed by their entry id, never by index: the queue may have
+     * grown, shrunk or been rebuilt since the screen drew it. A row that is no
+     * longer there is dropped rather than replaced by whatever took its place.
+     *
+     * A row without an entry id can't be told apart from another copy of the
+     * same track (the copy picked may be the one since removed, and an equal
+     * one elsewhere is not it), so it is taken only where the screen saw it.
      *
      * One pass to index [live], then one lookup per target.
      */
     fun resolve(targets: Collection<Target>, live: List<Song>): List<Int> {
         if (targets.isEmpty()) return emptyList()
-        val byIdentity = HashMap<String, Int>(live.size * 2)
-        live.forEachIndexed { i, song ->
-            val key = identity(song)
-            byIdentity[key] = if (byIdentity.containsKey(key)) AMBIGUOUS else i
-        }
+        val byEntry = HashMap<String, Int>(live.size * 2)
+        live.forEachIndexed { i, song -> song.queueEntryId?.let { byEntry.putIfAbsent(it, i) } }
         val found = java.util.TreeSet<Int>()
         for (target in targets) {
-            val key = identity(target.song)
-            val at = byIdentity[key] ?: continue
-            if (at != AMBIGUOUS) {
-                found += at
-            } else if (live.getOrNull(target.index)?.let(::identity) == key) {
-                found += target.index
+            val entry = target.song.queueEntryId
+            if (entry != null) {
+                byEntry[entry]?.let(found::add)
+            } else {
+                val there = live.getOrNull(target.index)
+                if (there != null && there.queueEntryId == null && there.videoId == target.song.videoId) {
+                    found += target.index
+                }
             }
         }
         return found.toList()
     }
-
-    private const val AMBIGUOUS = -1
 
     /**
      * The rows at [indices] (any order, duplicates ignored), each with the

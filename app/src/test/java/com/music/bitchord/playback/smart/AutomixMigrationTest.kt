@@ -39,7 +39,15 @@ class AutomixMigrationTest {
         filesDir.deleteRecursively()
     }
 
-    private fun run(): Boolean = AutomixMigration.run(prefs, filesDir) { deferred += it }
+    private fun run(): Boolean = AutomixMigration.run(prefs, filesDir, deleteLater = { deferred += it })
+
+    /**
+     * A run whose renames all fail. Injected rather than staged with a
+     * read-only directory, which a privileged test process can still rename
+     * inside.
+     */
+    private fun runWithoutRenames(): Boolean =
+        AutomixMigration.run(prefs, filesDir, deleteLater = { deferred += it }, rename = { _, _ -> false })
 
     private fun oldInstall() {
         File(filesDir, AutomixMigration.RETIRED_ANALYSIS_DIRECTORY).apply { mkdirs() }.resolve("123_11.json").writeText("{\"version\":1}")
@@ -99,12 +107,7 @@ class AutomixMigrationTest {
         fresh.writeText("{\"version\":3}")
         oldInstall()
         // The old directories cannot be renamed: they are emptied in place, later.
-        filesDir.setWritable(false)
-        try {
-            assertFalse(run())
-        } finally {
-            filesDir.setWritable(true)
-        }
+        assertFalse(runWithoutRenames())
         assertTrue(deferred.any { it.name == AutomixMigration.RETIRED_ANALYSIS_DIRECTORY })
         deferred.forEach { it.deleteRecursively() }
         deferred.clear()
@@ -140,14 +143,10 @@ class AutomixMigrationTest {
     @Test
     fun anOldDirectoryThatWillNotGoLeavesTheMoveToRunAgain() {
         oldInstall()
-        // A directory that can be neither renamed nor emptied: here, one under a read-only parent.
-        filesDir.setWritable(false)
-        try {
-            assertFalse(run())
-            assertFalse(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
-        } finally {
-            filesDir.setWritable(true)
-        }
+        // A directory that can be neither renamed nor emptied: the rename
+        // fails, and the deferred delete has not run yet.
+        assertFalse(runWithoutRenames())
+        assertFalse(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
         assertTrue(run())
         assertTrue(prefs.getBoolean(AutomixMigration.KEY_DONE, false))
     }

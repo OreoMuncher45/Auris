@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DragHandle
@@ -74,6 +75,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.ui.components.longPressMenuClickable
 import com.music.bitchord.ui.haptics.rememberHaptics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,6 +88,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueEdits
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -516,8 +519,8 @@ internal fun InlineQueue(
                         .onSizeChanged { footerPx = it.height },
                 ) {
                     QueueUndoBar(editing, reduceAnimation)
-                    QueueSelectionFooter(selection, allRows, reduceAnimation) { indices, action ->
-                        editing.onBulkAction(indices, action)
+                    QueueSelectionFooter(selection, allRows, reduceAnimation) { targets, action ->
+                        editing.onBulkAction(targets, action)
                     }
                 }
             }
@@ -546,17 +549,19 @@ private fun QueueSelectionFooter(
     selection: QueueSelectionState,
     rows: List<QueueTrack>,
     reduceAnimation: Boolean,
-    onAction: (List<Int>, QueueBulkAction) -> Unit,
+    onAction: (List<QueueEdits.Target>, QueueBulkAction) -> Unit,
 ) {
     QueueSelectionBar(
         visible = selection.active,
         enabled = selection.keys.isNotEmpty(),
         reduceAnimation = reduceAnimation,
     ) { action ->
-        val indices = selection.selected(rows).map { it.timelineIndex }
-        if (indices.isEmpty()) return@QueueSelectionBar
+        // The rows' own songs travel with their indices: an index alone would
+        // name whatever sits there by the time the host reads its queue.
+        val targets = selection.selected(rows).map { QueueEdits.Target(it.timelineIndex, it.song) }
+        if (targets.isEmpty()) return@QueueSelectionBar
         selection.clear()
-        onAction(indices, action)
+        onAction(targets, action)
     }
 }
 
@@ -965,10 +970,21 @@ private fun InlineQueueRow(
             // Disabled rather than ignored: a tap that ripples and then does
             // nothing reads as the app having missed it.
             .then(
-                if (onLongPress != null && selectionChecked == null) {
-                    Modifier.longPressMenuClickable(enabled = !locked, onClick = onClick, onLongClick = onLongPress)
-                } else {
-                    Modifier.clickable(enabled = !locked, onClick = onClick)
+                when {
+                    // In multi-select the whole row is the one checkbox, so
+                    // accessibility reads the song and its tick together.
+                    selectionChecked != null -> Modifier.toggleable(
+                        value = selectionChecked,
+                        enabled = !locked,
+                        role = Role.Checkbox,
+                        onValueChange = { onClick() },
+                    )
+                    onLongPress != null -> Modifier.longPressMenuClickable(
+                        enabled = !locked,
+                        onClick = onClick,
+                        onLongClick = onLongPress,
+                    )
+                    else -> Modifier.clickable(enabled = !locked, onClick = onClick)
                 },
             )
             .padding(vertical = 6.dp),
@@ -977,7 +993,8 @@ private fun InlineQueueRow(
         if (selectionChecked != null) {
             Checkbox(
                 checked = selectionChecked,
-                onCheckedChange = { onClick() },
+                // The row toggles; the box only shows the state.
+                onCheckedChange = null,
                 enabled = !locked,
                 colors = CheckboxDefaults.colors(
                     checkedColor = Color.White,
