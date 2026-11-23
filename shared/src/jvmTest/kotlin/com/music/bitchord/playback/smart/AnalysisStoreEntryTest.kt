@@ -38,7 +38,10 @@ class AnalysisStoreEntryTest {
     fun theCopyAResultWasMeasuredOnComesBackWithIt() {
         withStore { store, _ ->
             store.save("t", analysis(), measuredOn = "video#analysis#alt2")
-            assertEquals("video#analysis#alt2", assertNotNull(store.loadEntry("t")).measuredOn)
+            val entry = assertNotNull(store.loadEntry("t"))
+            assertEquals("video#analysis#alt2", entry.measuredOn)
+            // On the analysis itself too, so the grid and its copy arrive as one.
+            assertEquals("video#analysis#alt2", entry.analysis.measuredOn)
         }
     }
 

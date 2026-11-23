@@ -50,6 +50,18 @@ object AutomixAnalysisSource {
     fun isAnalysisSubstitute(videoId: String?, cacheKey: String): Boolean =
         videoId != null && cacheKey == analysisSubstituteKey(videoId)
 
+    /**
+     * The video id behind an analysis copy's key ([analysisCacheKey] or
+     * [analysisSubstituteKey]), or null for any other key. What lets a restored
+     * analysis of a source-backed track find its matched YouTube copy again
+     * without a fresh catalogue search.
+     */
+    fun videoIdOfAnalysisKey(cacheKey: String): String? {
+        val base = cacheKey.removeSuffix(SUBSTITUTE_KEY_SUFFIX)
+        if (!base.endsWith(ANALYSIS_KEY_SUFFIX)) return null
+        return base.removeSuffix(ANALYSIS_KEY_SUFFIX).takeIf { it.isNotEmpty() }
+    }
+
     private const val SUBSTITUTE_KEY_SUFFIX = "#alt2"
 
     /**
