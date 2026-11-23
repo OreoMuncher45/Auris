@@ -170,6 +170,47 @@ class AutoMixCoverTest {
         assertFalse(state.holdsCover())
     }
 
+    @Test
+    fun theBackdropsFollowTheCoversRevealAndLetGoWithIt() {
+        val state = AutoMixCoverState({ cover() }, { cover() }, ambientUrl = { "next" })
+        state.bind(outgoing, null, visual)
+        state.update(visual)
+        val mix = assertNotNull(state.ambientFor(outgoing))
+        assertEquals("next", mix.incomingUrl)
+        assertEquals(0f, mix.progress())
+        // The same instance on both sides of the track change, for effects keyed on it.
+        state.bind(incoming, null, visual)
+        assertSame(mix, state.ambientFor(incoming))
+        // Another song is none of this mix's business.
+        assertNull(state.ambientFor(QueueEntryIdentity("c", null, 0)))
+        // The backdrops read the cover's own eased progress.
+        state.update(visual.copy(audioSeconds = 2.0, artworkProgress = 0.5f))
+        assertEquals(com.music.bitchord.playback.AutoMixArtworkTuning.revealProgress(0.5f), mix.progress())
+        // Promoted with the cover at the window's end.
+        state.update(visual.copy(audioSeconds = 3.0, artworkProgress = 1f))
+        assertNull(state.ambientFor(incoming))
+    }
+
+    @Test
+    fun theBackdropsLetGoOnCancellationAndOnAGateThatSkipsTheMix() {
+        val state = AutoMixCoverState({ cover() }, { cover() }, ambientUrl = { "next" })
+        state.bind(outgoing, null, visual)
+        state.update(visual)
+        assertNotNull(state.ambientFor(outgoing))
+        assertNull(state.ambientFor(outgoing, AutoMixArtworkGate(enabled = true, skipThrough = visual.generation)))
+        state.update(visual.copy(phase = AutoMixVisualPhase.CANCELLED))
+        assertNull(state.ambientFor(outgoing))
+    }
+
+    @Test
+    fun noPreparedBackdropMeansTheCoverRevealsAlone() {
+        val state = AutoMixCoverState({ cover() }, { cover() }, ambientUrl = { null })
+        state.bind(outgoing, null, visual)
+        state.update(visual)
+        assertNotNull(state.framesFor(outgoing)?.incoming)
+        assertNull(state.ambientFor(outgoing))
+    }
+
     private fun cover() = DecodedAutoMixCover(object : Image {
         override val width = 1
         override val height = 1

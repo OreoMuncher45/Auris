@@ -1823,6 +1823,11 @@ fun NowPlayingScreen(
     val autoMixFrames: () -> AutoMixCoverFrames? = remember(autoMixCover, coverEntry, autoMixGate) {
         { autoMixCover.framesFor(coverEntry, autoMixGate) }
     }
+    // The backdrops follow that reveal — see [AutoMixAmbientMix]. A lambda, read
+    // by the backdrops alone, so the mix's two ends recompose them and not this.
+    val autoMixAmbient: () -> AutoMixAmbientMix? = remember(autoMixCover, coverEntry, autoMixGate) {
+        { autoMixCover.ambientFor(coverEntry, autoMixGate) }
+    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -2174,6 +2179,9 @@ fun NowPlayingScreen(
             playerPrewarmStage >= 1,
         darkTheme = darkTheme,
     )
+    // The next cover's mesh or colours, and its blur, made while an Automix
+    // reveal is armed, so the backdrops can follow it from its first frame.
+    AutoMixAmbientPrefetch(artPx, darkTheme, legacyPalette = legacyMeshBackdrop)
     // Where the backdrops publish what they show under the chrome — see
     // [resolveInk]. Written by the backdrops' own effects and read only by the
     // ink's, so neither recomposes this screen.
@@ -2272,6 +2280,7 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    val currentAutoMixAmbient = rememberUpdatedState(autoMixAmbient)
     val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
@@ -2299,6 +2308,7 @@ fun NowPlayingScreen(
                 whiteWash = { inkStates.panelWhiteWash.value },
                 onShown = publishPanelInk,
                 darkTheme = currentDarkTheme.value,
+                mix = currentAutoMixAmbient.value(),
             )
         }
     }
@@ -2587,6 +2597,7 @@ fun NowPlayingScreen(
             inkBlackWash = { inkStates.mainBlackWash.value },
             inkWhiteWash = { inkStates.mainWhiteWash.value },
             darkTheme = darkTheme,
+            ambientMix = autoMixAmbient,
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
