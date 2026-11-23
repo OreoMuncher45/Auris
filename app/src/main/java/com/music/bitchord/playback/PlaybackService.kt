@@ -7835,6 +7835,10 @@ class PlaybackService : MediaLibraryService() {
      * A cancel or a reset mid-fade lands in the `finally`, which turns the
      * player back up.
      */
+    /** The gain the sleep fade has the session player at, while it runs; null otherwise. */
+    @Volatile
+    private var sleepFadeGain: Float? = null
+
     private fun watchSleepTimer() {
         scope.launch {
             SleepTimer.deadline.collectLatest { deadline ->
@@ -7865,8 +7869,10 @@ class PlaybackService : MediaLibraryService() {
                         val span = deadline - SystemClock.elapsedRealtime()
                         while (span > 0) {
                             val left = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                            val gain = SleepTimer.fadeVolume(left, span)
+                            sleepFadeGain = gain
                             player?.let {
-                                it.volume = SleepTimer.fadeVolume(left, span)
+                                it.volume = gain
                                 faded = it
                             }
                             if (left <= 0L) break
@@ -7875,15 +7881,25 @@ class PlaybackService : MediaLibraryService() {
                     }
                     // While casting, the phone's player is already held paused
                     // and the receiver is what is playing, so that is what stops.
+                    // Locally, the standby too: a quality-upgrade overlap still
+                    // running at the deadline would otherwise play on at its
+                    // blend volume until the upgrade loop copies the pause over.
                     SleepTimer.pauseFor(
                         castActive = castPlayback.active,
                         pauseCast = castPlayback::pause,
-                        pauseLocal = { player?.pause() },
+                        pauseLocal = {
+                            val active = player
+                            active?.pause()
+                            spare?.takeIf { it !== active }?.pause()
+                        },
                     )
                     SleepTimer.cancel()
                 } finally {
                     SleepTimer.fadingOut = false
-                    faded?.volume = 1f
+                    sleepFadeGain = null
+                    // The player the fade last turned down: after a rebuild, the
+                    // replacement (see [rebuildPlayers]), never a released one.
+                    (player?.takeIf { faded != null } ?: faded)?.volume = 1f
                 }
             }
         }
@@ -8588,6 +8604,9 @@ class PlaybackService : MediaLibraryService() {
         mediaSession?.player = newSessionPlayer(newActive, newCrossfade)
         applyOutputRoute()
         if (items.isNotEmpty()) newActive.prepare()
+        // Mid sleep fade: the replacement starts where the fade had the old one,
+        // not at full gain until the fade's next step reaches it.
+        sleepFadeGain?.let { newActive.volume = it }
         newActive.playWhenReady = playWhenReady
 
         oldActive.release()
