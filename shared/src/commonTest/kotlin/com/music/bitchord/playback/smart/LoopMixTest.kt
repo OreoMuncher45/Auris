@@ -454,4 +454,21 @@ class LoopMixTest {
         val plan = LoopMix.plan(analysis(120.0, 200.0), 200.0, inn, 180.0, 0.0, clear, null)
         assertTrue(plan == null || plan.inn.loopStart <= LoopMix.IN_SEARCH_SEC, "incoming loop at ${plan?.inn?.loopStart}")
     }
+
+    @Test
+    fun aLoopSpansItsBarsInMeasuredBarLinesNotJustTime() {
+        // Bar lines the model put every two beats: 16 beats later is 8 of them, not 4.
+        val downbeats = (0 until 60).map { 140.5 + it * 1.0 }
+        val out = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        assertNull(plan(out, analysis(120.0, 180.0)))
+    }
+
+    @Test
+    fun maskFramesStraddlingTheSearchEdgesCountForTheirInsidePart() {
+        // 100 ms frames; the stretch 0.05-0.25 s starts and ends mid-frame.
+        val w = CurveWindow(0.0, 10.0, floatArrayOf(0.9f, 0.05f, 0.9f))
+        val stats = assertNotNull(LoopMix.maskStats(listOf(w), 0.05, 0.25))
+        // 50 ms sung at each edge, 100 ms clear between: half of it sung.
+        assertEquals(0.5, stats.share, 1e-9)
+    }
 }

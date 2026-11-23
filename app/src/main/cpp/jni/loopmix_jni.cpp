@@ -125,7 +125,10 @@ Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeFirstFrame(JNIEnv
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_playback_loopmix_LoopMixRenderer_nativeRender(
     JNIEnv* env, jclass, jlong handle, jlong frame, jfloatArray interleaved, jint offsetFrames, jint frames) {
-  if (handle == 0 || frames <= 0) return;
+  if (handle == 0 || frames <= 0 || offsetFrames < 0) return;
+  // Two floats a frame, all inside the array: never write past what Java handed over.
+  const jsize length = env->GetArrayLength(interleaved);
+  if (int64_t(offsetFrames) + frames > int64_t(length) / 2) return;
   // Critical access: no copy of the block, and render() itself never calls back into Java.
   auto* samples = static_cast<jfloat*>(env->GetPrimitiveArrayCritical(interleaved, nullptr));
   if (samples == nullptr) return;
