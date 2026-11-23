@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 /** Which "Mixed for you" cards Radio's Your Mixes carousel keeps, and in what order. */
 class YourMixesTest {
 
-    private fun mix(id: String, shown: String, english: String = shown) =
+    private fun mix(id: String, shown: String, english: String? = shown) =
         KeyedMix(ShelfItem(shown, "", null, null, id), english)
 
     @Test
@@ -26,6 +26,18 @@ class YourMixesTest {
             listOf("m1", "m2", "p", "s", "d", "n", "r"),
             yourMixes(page).map { it.browseId },
         )
+    }
+
+    @Test
+    fun leavesOutCardsWithNoEnglishTitle() {
+        // "Mix Détente 1" is a mood mix, but with no English title to tell
+        // its kind by it would otherwise have passed for the listener's own.
+        val page = listOf(
+            mix("d", "Mix Découverte", "Discover Mix"),
+            mix("c", "Mix Détente 1", null),
+            mix("m", "Mon mix 1", "My Mix 1"),
+        )
+        assertEquals(listOf("m", "d"), yourMixes(page).map { it.browseId })
     }
 
     @Test

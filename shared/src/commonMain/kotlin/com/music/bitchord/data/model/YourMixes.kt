@@ -3,9 +3,11 @@ package com.music.bitchord.data.model
 /**
  * A "Mixed for you" card and its English title. The English title says what
  * kind of mix it is whatever language [item] is shown in; see
- * [com.music.bitchord.data.YtMusicRepository.mixedForYouKeyed].
+ * [com.music.bitchord.data.YtMusicRepository.mixedForYouKeyed]. Null when the
+ * English read had no such card: its shown title may be in another language,
+ * and sorting that by the English patterns would misfile it.
  */
-data class KeyedMix(val item: ShelfItem, val englishTitle: String)
+data class KeyedMix(val item: ShelfItem, val englishTitle: String?)
 
 /**
  * The cards of Radio's "Your Mixes" carousel, out of the "Mixed for you" page.
@@ -21,12 +23,16 @@ data class KeyedMix(val item: ShelfItem, val englishTitle: String)
  *   and the ones YouTube titles by what they sound like ("Modern Punjabi
  *   Beats") rather than by number.
  * - The named mixes ([NAMED_MIXES]) follow, in a fixed order.
+ *
+ * A card with no English title is left out: there is nothing to tell its kind
+ * by, and a translated mood mix would otherwise pass for one of the
+ * listener's own.
  */
 fun yourMixes(mixes: List<KeyedMix>): List<ShelfItem> {
     val yours = mutableListOf<ShelfItem>()
     val named = mutableListOf<Pair<Int, ShelfItem>>()
     mixes.distinctBy { it.item.browseId ?: it.item.title }.forEach { mix ->
-        val key = mix.englishTitle.trim()
+        val key = mix.englishTitle?.trim() ?: return@forEach
         val rank = NAMED_MIXES.indexOf(key.lowercase())
         val numbered = NUMBERED_MIX.matchEntire(key)
         when {

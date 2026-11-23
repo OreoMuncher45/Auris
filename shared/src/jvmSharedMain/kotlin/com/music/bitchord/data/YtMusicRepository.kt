@@ -288,8 +288,10 @@ object YtMusicRepository {
      * app language the page is read twice, side by side: once in that language
      * to show, and once in English to sort by, matched up by the mix's
      * playlist id, which is the same in both. In English one request serves
-     * for both. If the English read fails, or a card is missing from it, that
-     * card's own title stands in.
+     * for both. If the English read fails the whole read fails, so the caller
+     * keeps the last list it had rather than one sorted by translated titles;
+     * a card missing from an English read that worked has no English title
+     * (see [KeyedMix.englishTitle]).
      *
      * Signed out there are no mixes, and nothing is asked.
      */
@@ -303,20 +305,14 @@ object YtMusicRepository {
                 null
             } else {
                 async {
-                    try {
-                        InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU, language = "en"))
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.w(TAG, "mixedForYou in English failed; sorting by shown titles: ${e.message}")
-                        null
-                    }
+                    InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU, language = "en"))
                 }
             }
             val items = shown.await()
-            val englishTitles = english?.await().orEmpty()
-                .associate { (it.browseId ?: it.title) to it.title }
-            items.map { KeyedMix(it, englishTitles[it.browseId ?: it.title] ?: it.title) }
+            val englishTitles = english?.await()
+                ?.associate { (it.browseId ?: it.title) to it.title }
+                ?: return@coroutineScope items.map { KeyedMix(it, it.title) }
+            items.map { KeyedMix(it, englishTitles[it.browseId ?: it.title]) }
         }
     }
 
