@@ -835,6 +835,10 @@ object Downloads {
         val ids = songs.map { it.videoId }.distinct()
         recordCollections { current ->
             val existing = current[target.id]
+            // The sync only grows a record that is still there: one deleted
+            // while its pass was reading stays deleted. The sync's first fill
+            // passes keepSwitch = false, since it is the one creating it.
+            if (keepSwitch && existing == null) return@recordCollections current
             val record = SavedCollection(
                 id = target.id,
                 title = target.title,
@@ -1080,7 +1084,10 @@ object Downloads {
 
     private fun recordCollections(update: (Map<String, SavedCollection>) -> Map<String, SavedCollection>) {
         synchronized(collectionLock) {
-            val map = update(_collections.value)
+            val before = _collections.value
+            val map = update(before)
+            // A declined update writes nothing, here or to disk.
+            if (map === before) return
             _collections.value = map
             if (::prefs.isInitialized) {
                 synchronized(recordLock) {
