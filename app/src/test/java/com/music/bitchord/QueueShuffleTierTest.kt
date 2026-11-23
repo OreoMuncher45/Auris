@@ -7,6 +7,8 @@ import com.music.bitchord.playback.queueEntryId
 import com.music.bitchord.playback.toMediaItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QueueShuffleTierTest {
@@ -33,6 +35,40 @@ class QueueShuffleTierTest {
 
         // playSongs reads this flag for the queue it is about to build (PlayerConnection).
         assertFalse(QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a refused play leaves shuffle and its saved order alone`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue()
+        QueueShuffle.rememberStartingOrder(listOf(testSong("a"), testSong("b")))
+
+        // Play asks for shuffle off; the play takes the request, then is refused
+        // (no controller, or the host holds the controls) and never applies it.
+        QueueShuffle.requestForNextQueue(false)
+        QueueShuffle.takeRequestForNextQueue()
+
+        assertTrue(QueueShuffle.enabled.value)
+        assertEquals(listOf("entry-a", "entry-b"), QueueShuffle.savedOrder)
+    }
+
+    @Test
+    fun `an accepted play applies the shuffle its button asked for`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue()
+        QueueShuffle.requestForNextQueue(false)
+
+        QueueShuffle.applyForNextQueue(QueueShuffle.takeRequestForNextQueue())
+
+        assertFalse(QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a request is taken once, so it never reaches a later play`() {
+        QueueShuffle.requestForNextQueue(true)
+
+        assertEquals(true, QueueShuffle.takeRequestForNextQueue())
+        assertNull(QueueShuffle.takeRequestForNextQueue())
     }
 
     @Test
