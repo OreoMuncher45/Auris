@@ -339,6 +339,9 @@ class SflxSignedSession(
         val trimmed = grant.trim()
         if (trimmed.isEmpty()) return false
         synchronized(lock) {
+            // A retired client can't save, so an exchange here would spend the
+            // single-use grant and report a session that never reached disk.
+            if (retired) throw SflxSessionRetired()
             val challenge = pending
             if (state != null && challenge != null && challenge.state.isNotEmpty() && state != challenge.state) {
                 Log.w(TAG, "sflx[$extensionId] grant state did not match the challenge; ignoring")
@@ -1126,3 +1129,6 @@ private fun JSONObject.field(name: String): String {
     }
     return ""
 }
+
+/** A grant reached a client an add-ons import has replaced; the next client can take it. */
+internal class SflxSessionRetired : SflxException("this session client was replaced by an import")
