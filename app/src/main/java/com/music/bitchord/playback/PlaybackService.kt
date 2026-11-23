@@ -867,9 +867,22 @@ class PlaybackService : MediaLibraryService() {
     private val spotifyPlaylistTracksMutex = Mutex()
     private val spotifyPlaylistTracksCache = ConcurrentHashMap<String, AccountScopedList<SpotifyTrack>>()
     private val spotifyPlaylistTracksInFlight = ConcurrentHashMap<String, InFlightSpotifyTracks>()
+    private data class PendingSpotifyQueueAppend(
+        val queueToken: Long,
+        val parentId: String,
+        val initialRawCount: Int,
+        val inFlight: InFlightSpotifyTracks,
+        val appliedSignal: CompletableDeferred<Unit> = CompletableDeferred(),
+    )
+
     private val spotifyAlbumTracksCache = ConcurrentHashMap<String, AccountScopedList<SpotifyTrack>>()
     private val spotifyArtistTracksCache = ConcurrentHashMap<String, AccountScopedList<SpotifyTrack>>()
     private val activeFolderRefreshes = ConcurrentHashMap<String, Job>()
+    private val spotifyQueueAppendLock = Any()
+    private val spotifyQueueTokenSeq = AtomicLong(0L)
+    @Volatile
+    private var pendingSpotifyQueueAppend: PendingSpotifyQueueAppend? = null
+    private var pendingSpotifyQueueAppendJob: Job? = null
 
     private val SPOTIFY_CACHE_TTL_MS = 60_000L
     private val SPOTIFY_DAYLIST_ID = "37i9dQZF1EP6YuccBxUcC1"
@@ -881,6 +894,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun syncSpotifyAccountCaches(token: String?) {
         if (lastSpotifyToken != token) {
+            cancelPendingSpotifyQueueAppend()
             autoSearchCache.entries.removeIf { it.value.provider == SearchProvider.SPOTIFY }
             autoTrackParentById.entries.removeIf {
                 it.value.startsWith("spotify_") || it.key.startsWith(SpotifyHomeSource.SPOTIFY_KEY_PREFIX)
@@ -1022,11 +1036,6 @@ class PlaybackService : MediaLibraryService() {
         val complete: Boolean get() = status == SpotifyPlaylistLoadStatus.COMPLETE
         val failed: Boolean get() = status == SpotifyPlaylistLoadStatus.FAILED
     }
-
-    private suspend fun loadSpotifyPlaylistTracks(
-        playlistId: String,
-        waitTimeoutMs: Long = 4_500L,
-    ): List<SpotifyTrack> = loadSpotifyPlaylistTracksWithStatus(playlistId, waitTimeoutMs).tracks
 
     private suspend fun loadSpotifyPlaylistTracksWithStatus(
         playlistId: String,
@@ -1506,6 +1515,129 @@ class PlaybackService : MediaLibraryService() {
         }
         job.invokeOnCompletion {
             activeFolderRefreshes.remove(parentId, job)
+        }
+        job.start()
+    }
+
+    private fun MediaItem.withAutoQueueToken(token: Long): MediaItem {
+        val extras = Bundle(mediaMetadata.extras ?: Bundle()).apply {
+            putLong(EXTRA_AUTO_QUEUE_TOKEN, token)
+        }
+        return buildUpon()
+            .setMediaMetadata(mediaMetadata.buildUpon().setExtras(extras).build())
+            .build()
+    }
+
+    private fun cancelPendingSpotifyQueueAppend(expected: PendingSpotifyQueueAppend? = null) {
+        val jobToCancel: Job?
+        synchronized(spotifyQueueAppendLock) {
+            if (expected != null && pendingSpotifyQueueAppend !== expected) return
+            pendingSpotifyQueueAppend = null
+            jobToCancel = pendingSpotifyQueueAppendJob
+            pendingSpotifyQueueAppendJob = null
+        }
+        jobToCancel?.cancel()
+    }
+
+    private fun scheduleSpotifyPlaylistQueueCompletion(pending: PendingSpotifyQueueAppend) {
+        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            val terminal = try {
+                pending.inFlight.deferred.await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (terminal == null || !terminal.succeeded || currentSpotifyToken() != pending.inFlight.token) {
+                return@launch
+            }
+            val remainingRaw = if (terminal.tracks.size > pending.initialRawCount) {
+                terminal.tracks.subList(pending.initialRawCount, terminal.tracks.size)
+            } else {
+                emptyList()
+            }
+            val remainingSongs = remainingRaw
+                .map(SpotifyHomeSource::songFor)
+                .filterNot(AppSettings::isSongBlocked)
+            if (remainingSongs.isEmpty()) return@launch
+            remainingSongs.forEach { song ->
+                songCache[song.videoId] = song
+                rememberAutoParent(song.videoId, pending.parentId)
+            }
+            val remainingItems = remainingSongs.map { song ->
+                song.toMediaItem(parentBrowseId = pending.parentId).withAutoQueueToken(pending.queueToken)
+            }
+            val applied = withTimeoutOrNull(5_000L) {
+                val alreadyApplied = withContext(Dispatchers.Main) {
+                    val activePlayer = player ?: return@withContext false
+                    (0 until activePlayer.mediaItemCount).any { index ->
+                        activePlayer.getMediaItemAt(index).mediaMetadata.extras
+                            ?.getLong(EXTRA_AUTO_QUEUE_TOKEN, 0L) == pending.queueToken
+                    }
+                }
+                if (!alreadyApplied) {
+                    pending.appliedSignal.await()
+                }
+                true
+            } ?: false
+            if (!applied) return@launch
+            withContext(Dispatchers.Main) {
+                if (currentSpotifyToken() != pending.inFlight.token) return@withContext
+                if (ListenTogether.state.value.controlsLocked) return@withContext
+                val stillActive = synchronized(spotifyQueueAppendLock) {
+                    if (pendingSpotifyQueueAppend !== pending) {
+                        false
+                    } else {
+                        pendingSpotifyQueueAppend = null
+                        true
+                    }
+                }
+                if (!stillActive) return@withContext
+                val activePlayer = player ?: return@withContext
+                var lastMatchingIndex = -1
+                for (index in 0 until activePlayer.mediaItemCount) {
+                    val extras = activePlayer.getMediaItemAt(index).mediaMetadata.extras
+                    if (extras?.getLong(EXTRA_AUTO_QUEUE_TOKEN, 0L) == pending.queueToken &&
+                        extras.getString(EXTRA_AUTO_PARENT) == pending.parentId
+                    ) {
+                        lastMatchingIndex = index
+                    }
+                }
+                if (lastMatchingIndex < 0) return@withContext
+                val currentIdx = activePlayer.currentMediaItemIndex
+                val insertIndex = if (
+                    currentIdx > lastMatchingIndex &&
+                    currentIdx in 0 until activePlayer.mediaItemCount &&
+                    activePlayer.getMediaItemAt(currentIdx).fromAutoplay
+                ) {
+                    currentIdx + 1
+                } else {
+                    lastMatchingIndex + 1
+                }
+                val wasEnded = activePlayer.playbackState == Player.STATE_ENDED && activePlayer.playWhenReady
+                activePlayer.addMediaItems(insertIndex, remainingItems)
+                if (wasEnded && insertIndex in 0 until activePlayer.mediaItemCount) {
+                    activePlayer.seekTo(insertIndex, 0L)
+                    activePlayer.prepare()
+                }
+            }
+        }
+        val previousJob: Job?
+        synchronized(spotifyQueueAppendLock) {
+            previousJob = pendingSpotifyQueueAppendJob
+            pendingSpotifyQueueAppend = pending
+            pendingSpotifyQueueAppendJob = job
+        }
+        previousJob?.cancel()
+        job.invokeOnCompletion {
+            synchronized(spotifyQueueAppendLock) {
+                if (pendingSpotifyQueueAppend === pending) {
+                    pendingSpotifyQueueAppend = null
+                }
+                if (pendingSpotifyQueueAppendJob === job) {
+                    pendingSpotifyQueueAppendJob = null
+                }
+            }
         }
         job.start()
     }
@@ -2188,6 +2320,18 @@ class PlaybackService : MediaLibraryService() {
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                val pending = pendingSpotifyQueueAppend
+                if (pending != null) {
+                    val hasPendingQueue = (0 until exoPlayer.mediaItemCount).any { index ->
+                        exoPlayer.getMediaItemAt(index).mediaMetadata.extras
+                            ?.getLong(EXTRA_AUTO_QUEUE_TOKEN, 0L) == pending.queueToken
+                    }
+                    if (hasPendingQueue) {
+                        pending.appliedSignal.complete(Unit)
+                    } else if (pending.appliedSignal.isCompleted) {
+                        cancelPendingSpotifyQueueAppend(expected = pending)
+                    }
+                }
                 castPlayback.onLocalQueueChanged()
                 saveQueueSnapshot(exoPlayer)
                 refreshCustomLayouts()
@@ -10177,6 +10321,7 @@ class PlaybackService : MediaLibraryService() {
                 runCatching { rpc.closeRPC() }
             }
         }
+        cancelPendingSpotifyQueueAppend()
         activeFolderRefreshes.values.forEach { it.cancel() }
         activeFolderRefreshes.clear()
         scope.cancel()
@@ -11651,11 +11796,18 @@ class PlaybackService : MediaLibraryService() {
             expandPlaylistContext(mediaSession, controller, mediaItems, startIndex, startPositionMs)?.let { return@future it }
             val targetIndex = startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
             var mappedStartIndex: Int? = null
-            val resolved = resolveMediaItems(mediaItems) { inputIndex, outputStartIndex, addedCount ->
-                if (inputIndex == targetIndex && addedCount > 0) {
-                    mappedStartIndex = outputStartIndex
-                }
-            }
+            var partialAppend: Triple<String, Int, InFlightSpotifyTracks>? = null
+            val resolved = resolveMediaItems(
+                mediaItems = mediaItems,
+                onItemResolved = { inputIndex, outputStartIndex, addedCount ->
+                    if (inputIndex == targetIndex && addedCount > 0) {
+                        mappedStartIndex = outputStartIndex
+                    }
+                },
+                onPartialSpotifyPlaylist = { parentId, initialRawCount, inFlight ->
+                    partialAppend = Triple(parentId, initialRawCount, inFlight)
+                },
+            )
             if (resolved.isEmpty()) {
                 return@future currentPlayerQueueOrNull() ?: MediaSession.MediaItemsWithStartPosition(
                     ImmutableList.of(),
@@ -11663,10 +11815,34 @@ class PlaybackService : MediaLibraryService() {
                     0L,
                 )
             }
-            val validIndex = mappedStartIndex ?: startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+            val pending = partialAppend
+            val finalItems = if (pending != null) {
+                val (parentId, initialRawCount, inFlight) = pending
+                val queueToken = spotifyQueueTokenSeq.incrementAndGet()
+                val tagged = resolved.map { item ->
+                    if (item.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT) == parentId) {
+                        item.withAutoQueueToken(queueToken)
+                    } else {
+                        item
+                    }
+                }
+                scheduleSpotifyPlaylistQueueCompletion(
+                    PendingSpotifyQueueAppend(
+                        queueToken = queueToken,
+                        parentId = parentId,
+                        initialRawCount = initialRawCount,
+                        inFlight = inFlight,
+                    ),
+                )
+                tagged
+            } else {
+                cancelPendingSpotifyQueueAppend()
+                resolved
+            }
+            val validIndex = mappedStartIndex ?: startIndex.coerceIn(0, (finalItems.size - 1).coerceAtLeast(0))
             val validPositionMs = if (mappedStartIndex != null) startPositionMs.coerceAtLeast(0L) else 0L
             MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.copyOf(resolved),
+                ImmutableList.copyOf(finalItems),
                 validIndex,
                 validPositionMs,
             )
@@ -11731,18 +11907,111 @@ class PlaybackService : MediaLibraryService() {
                 .getOrNull(startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0)))
             val tapped = tappedItem?.mediaId
             val startPos = startPositionMs.coerceAtLeast(0L)
+            if (parent.startsWith("spotify_playlist:")) {
+                val playlistId = parent.removePrefix("spotify_playlist:")
+                var loaded = loadSpotifyPlaylistTracksWithStatus(playlistId)
+                var rawTracks = loaded.tracks
+                var pendingInFlight = if (loaded.status == SpotifyPlaylistLoadStatus.IN_PROGRESS) loaded.inFlight else null
+                var songs = rawTracks
+                    .map(SpotifyHomeSource::songFor)
+                    .filterNot(AppSettings::isSongBlocked)
+                var found = if (tapped != null) songs.indexOfFirst { it.videoId == tapped } else 0
+                // If the tapped track lies beyond the currently loaded prefix during a slow paginated fetch,
+                // wait briefly for the shared worker so selection locates the track in the full playlist.
+                if (tapped != null && found < 0 && pendingInFlight != null) {
+                    val awaited = try {
+                        withTimeoutOrNull(10_000L) { pendingInFlight.deferred.await() }
+                    } catch (e: CancellationException) {
+                        if (!currentCoroutineContext().isActive) throw e
+                        null
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (currentSpotifyToken() != pendingInFlight.token) return null
+                    if (awaited != null) {
+                        rawTracks = awaited.tracks
+                        pendingInFlight = null
+                    } else {
+                        val cachedComplete = spotifyPlaylistTracksCache[playlistId]
+                            ?.takeIf { it.token == pendingInFlight.token && it.complete && it.items.isNotEmpty() }
+                            ?.items
+                        if (cachedComplete != null) {
+                            rawTracks = cachedComplete
+                            pendingInFlight = null
+                        } else {
+                            rawTracks = pendingInFlight.partial.get()
+                            if (pendingInFlight.deferred.isCompleted) {
+                                pendingInFlight = null
+                            }
+                        }
+                    }
+                    songs = rawTracks
+                        .map(SpotifyHomeSource::songFor)
+                        .filterNot(AppSettings::isSongBlocked)
+                    found = songs.indexOfFirst { it.videoId == tapped }
+                }
+                if (songs.isEmpty() || songs.size < mediaItems.size) return null
+                if (songs.size <= 1 && pendingInFlight == null) return null
+                if (tapped != null && found < 0) return null
+                songs.forEach { song ->
+                    songCache[song.videoId] = song
+                    rememberAutoParent(song.videoId, parent)
+                }
+                val index = if (found >= 0) found else 0
+                val positionMs = if (found >= 0) startPos else 0L
+                val queueToken = if (pendingInFlight != null) spotifyQueueTokenSeq.incrementAndGet() else 0L
+                val fullItems = songs.map { song ->
+                    val item = song.toMediaItem(parentBrowseId = parent)
+                    if (queueToken != 0L) item.withAutoQueueToken(queueToken) else item
+                }
+                if (pendingInFlight != null) {
+                    scheduleSpotifyPlaylistQueueCompletion(
+                        PendingSpotifyQueueAppend(
+                            queueToken = queueToken,
+                            parentId = parent,
+                            initialRawCount = rawTracks.size,
+                            inFlight = pendingInFlight,
+                        ),
+                    )
+                } else {
+                    cancelPendingSpotifyQueueAppend()
+                }
+                return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(fullItems), index, positionMs)
+            }
             val full = resolveMediaItems(listOf(MediaItem.Builder().setMediaId(parent).build()))
             if (full.size <= 1 || full.size < mediaItems.size) return null
             val found = if (tapped != null) full.indexOfFirst { it.mediaId == tapped } else -1
             if (tapped != null && found < 0) return null
             val index = if (found >= 0) found else 0
             val positionMs = if (found >= 0) startPos else 0L
+            cancelPendingSpotifyQueueAppend()
             return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, positionMs)
+        }
+
+        private suspend fun resolveSpotifyPlaylistItems(
+            playlistId: String,
+            parentId: String = "spotify_playlist:$playlistId",
+            onPartialSpotifyPlaylist: ((parentId: String, initialRawCount: Int, inFlight: InFlightSpotifyTracks) -> Unit)? = null,
+        ): List<MediaItem> {
+            val loaded = loadSpotifyPlaylistTracksWithStatus(playlistId)
+            val songs = loaded.tracks
+                .map(SpotifyHomeSource::songFor)
+                .filterNot(AppSettings::isSongBlocked)
+            songs.forEach { song ->
+                songCache[song.videoId] = song
+                rememberAutoParent(song.videoId, parentId)
+            }
+            val pending = loaded.inFlight
+            if (loaded.status == SpotifyPlaylistLoadStatus.IN_PROGRESS && pending != null && songs.isNotEmpty()) {
+                onPartialSpotifyPlaylist?.invoke(parentId, loaded.tracks.size, pending)
+            }
+            return songs.map { it.toMediaItem(parentBrowseId = parentId) }
         }
 
         private suspend fun resolveMediaItems(
             mediaItems: List<MediaItem>,
             onItemResolved: ((inputIndex: Int, outputStartIndex: Int, addedCount: Int) -> Unit)? = null,
+            onPartialSpotifyPlaylist: ((parentId: String, initialRawCount: Int, inFlight: InFlightSpotifyTracks) -> Unit)? = null,
         ): List<MediaItem> {
             val resolved = mutableListOf<MediaItem>()
             for ((inputIndex, item) in mediaItems.withIndex()) {
@@ -11761,11 +12030,12 @@ class PlaybackService : MediaLibraryService() {
                                 }
                             }
                             "playlist" -> {
-                                val songs = loadSpotifyPlaylistTracks(spId)
-                                    .map(SpotifyHomeSource::songFor)
-                                    .filterNot(AppSettings::isSongBlocked)
-                                songs.forEach { songCache[it.videoId] = it }
-                                resolved.addAll(songs.map { it.toMediaItem(parentBrowseId = "spotify_playlist:$spId") })
+                                resolved.addAll(
+                                    resolveSpotifyPlaylistItems(
+                                        playlistId = spId,
+                                        onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                                    ),
+                                )
                             }
                             "album" -> {
                                 val songs = loadSpotifyAlbumTracks(spId)
@@ -11788,11 +12058,12 @@ class PlaybackService : MediaLibraryService() {
                         val matchedFromSpotify = mutableListOf<MediaItem>()
                         if (currentSpotifyToken() != null) {
                             if (q.contains("daylist", ignoreCase = true) || q.contains("day list", ignoreCase = true)) {
-                                val dlSongs = loadSpotifyPlaylistTracks(SPOTIFY_DAYLIST_ID)
-                                    .map(SpotifyHomeSource::songFor)
-                                    .filterNot(AppSettings::isSongBlocked)
-                                dlSongs.forEach { songCache[it.videoId] = it }
-                                matchedFromSpotify.addAll(dlSongs.map { it.toMediaItem(parentBrowseId = "spotify_playlist:$SPOTIFY_DAYLIST_ID") })
+                                matchedFromSpotify.addAll(
+                                    resolveSpotifyPlaylistItems(
+                                        playlistId = SPOTIFY_DAYLIST_ID,
+                                        onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                                    ),
+                                )
                             } else {
                                 val (spSongs, spPlaylists, spAlbums) = searchSpotify(q)
                                 val wantsPlaylist = q.contains("playlist", ignoreCase = true) ||
@@ -11809,11 +12080,12 @@ class PlaybackService : MediaLibraryService() {
                                     }
                                     wantsPlaylist && spPlaylists.isNotEmpty() -> {
                                         val plId = spPlaylists.first().id
-                                        val songs = loadSpotifyPlaylistTracks(plId)
-                                            .map(SpotifyHomeSource::songFor)
-                                            .filterNot(AppSettings::isSongBlocked)
-                                        songs.forEach { songCache[it.videoId] = it }
-                                        matchedFromSpotify.addAll(songs.map { it.toMediaItem(parentBrowseId = "spotify_playlist:$plId") })
+                                        matchedFromSpotify.addAll(
+                                            resolveSpotifyPlaylistItems(
+                                                playlistId = plId,
+                                                onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                                            ),
+                                        )
                                     }
                                     spSongs.isNotEmpty() -> {
                                         val songs = spSongs.filterNot(AppSettings::isSongBlocked)
@@ -11822,11 +12094,12 @@ class PlaybackService : MediaLibraryService() {
                                     }
                                     spPlaylists.isNotEmpty() -> {
                                         val plId = spPlaylists.first().id
-                                        val songs = loadSpotifyPlaylistTracks(plId)
-                                            .map(SpotifyHomeSource::songFor)
-                                            .filterNot(AppSettings::isSongBlocked)
-                                        songs.forEach { songCache[it.videoId] = it }
-                                        matchedFromSpotify.addAll(songs.map { it.toMediaItem(parentBrowseId = "spotify_playlist:$plId") })
+                                        matchedFromSpotify.addAll(
+                                            resolveSpotifyPlaylistItems(
+                                                playlistId = plId,
+                                                onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                                            ),
+                                        )
                                     }
                                     spAlbums.isNotEmpty() -> {
                                         val albId = spAlbums.first().id
@@ -11878,11 +12151,13 @@ class PlaybackService : MediaLibraryService() {
                     id.startsWith("msg:") -> Unit
                     id.startsWith("spotify_playlist:") -> {
                         val playlistId = id.removePrefix("spotify_playlist:")
-                        val songs = loadSpotifyPlaylistTracks(playlistId)
-                            .map(SpotifyHomeSource::songFor)
-                            .filterNot(AppSettings::isSongBlocked)
-                        songs.forEach { songCache[it.videoId] = it }
-                        resolved.addAll(songs.map { it.toMediaItem(parentBrowseId = id) })
+                        resolved.addAll(
+                            resolveSpotifyPlaylistItems(
+                                playlistId = playlistId,
+                                parentId = id,
+                                onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                            ),
+                        )
                     }
                     id.startsWith("spotify_album:") -> {
                         val albumId = id.removePrefix("spotify_album:")
@@ -11917,17 +12192,21 @@ class PlaybackService : MediaLibraryService() {
                         resolved.addAll(songs.map { it.toMediaItem(parentBrowseId = MEDIA_QUICK_PICKS_ID) })
                     }
                     id == MEDIA_SPOTIFY_ID -> {
-                        val songs = if (currentSpotifyToken() != null) {
-                            loadSpotifyPlaylistTracks(SPOTIFY_DAYLIST_ID)
-                                .map(SpotifyHomeSource::songFor)
-                                .filterNot(AppSettings::isSongBlocked)
+                        val daylistItems = if (currentSpotifyToken() != null) {
+                            resolveSpotifyPlaylistItems(
+                                playlistId = SPOTIFY_DAYLIST_ID,
+                                onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                            )
                         } else {
                             emptyList()
-                        }.ifEmpty {
-                            cachedQuickPicksSongs().filterNot(AppSettings::isSongBlocked)
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        if (daylistItems.isNotEmpty()) {
+                            resolved.addAll(daylistItems)
+                        } else {
+                            val fallbackSongs = cachedQuickPicksSongs().filterNot(AppSettings::isSongBlocked)
+                            fallbackSongs.forEach { songCache[it.videoId] = it }
+                            resolved.addAll(fallbackSongs.map { it.toMediaItem() })
+                        }
                     }
                     id == MEDIA_LIKED_ID -> {
                         val songs = cachedLikedSongs().filterNot(AppSettings::isSongBlocked)
@@ -11961,11 +12240,12 @@ class PlaybackService : MediaLibraryService() {
                         } else if (currentSpotifyToken() != null) {
                             val firstSp = cachedSpotifyPlaylists().firstOrNull()
                             if (firstSp != null) {
-                                val spSongs = loadSpotifyPlaylistTracks(firstSp.id)
-                                    .map(SpotifyHomeSource::songFor)
-                                    .filterNot(AppSettings::isSongBlocked)
-                                spSongs.forEach { songCache[it.videoId] = it }
-                                resolved.addAll(spSongs.map { it.toMediaItem(parentBrowseId = "spotify_playlist:${firstSp.id}") })
+                                resolved.addAll(
+                                    resolveSpotifyPlaylistItems(
+                                        playlistId = firstSp.id,
+                                        onPartialSpotifyPlaylist = onPartialSpotifyPlaylist,
+                                    ),
+                                )
                             }
                         }
                     }
@@ -12860,6 +13140,7 @@ class PlaybackService : MediaLibraryService() {
         const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
         const val MAX_AUTO_PARENT_CACHE_ENTRIES = 2_000
+        private const val EXTRA_AUTO_QUEUE_TOKEN = "bitchord.auto.queue_token"
 
         val ROOT_CHILDREN: List<String> = listOf(
             MEDIA_QUICK_PICKS_ID,
