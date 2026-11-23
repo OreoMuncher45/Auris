@@ -633,11 +633,13 @@ class PlaybackService : MediaLibraryService() {
      * — the driver started something else — or the listener has played past
      * it. A later Auto start cancels it.
      *
-     * Called on the main thread while the folder's queue is being built, before
-     * Media3 has installed it, so the queue is read only after the next
-     * playlist change — the installation — and never as the one it replaces.
+     * Called on the main thread once the folder's queue is built, before
+     * Media3 has installed it, so the queue is read only after the playlist
+     * change that installs it — the one that puts [startEntryId] at
+     * [startIndex] — and never as the one it replaces, whatever else edits
+     * that one first.
      */
-    private fun followAutoBrowseContinuation(context: AutoBrowseContext) {
+    private fun followAutoBrowseContinuation(context: AutoBrowseContext, startEntryId: String?, startIndex: Int) {
         autoContinuationJob?.cancel()
         autoContinuationAdded.clear()
         val first = context.continuation ?: return
@@ -646,7 +648,11 @@ class PlaybackService : MediaLibraryService() {
         val installed = CompletableDeferred<Unit>()
         val installListener = object : Player.Listener {
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) installed.complete(Unit)
+                if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
+                val installedHere = isAutoQueueInstalled(startEntryId, startIndex, installedOn.mediaItemCount) {
+                    installedOn.getMediaItemAt(it).queueEntryId
+                }
+                if (installedHere) installed.complete(Unit)
             }
         }
         installedOn.addListener(installListener)
@@ -10856,7 +10862,10 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val currentIndex = exoPlayer?.currentMediaItemIndex ?: -1
                 QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
-                    .also { followAutoBrowseContinuation(context) }
+                    .also { built ->
+                        val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
+                        followAutoBrowseContinuation(context, startEntryId, built.startIndex)
+                    }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return MediaSession.MediaItemsWithStartPosition(
                 ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
