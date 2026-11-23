@@ -85,6 +85,7 @@ at once.
 - [x] `now_playing.text_glow` — Text glow
 - [x] `now_playing.show_lyrics` — Lyric line
 - [x] `now_playing.next_track_status` — Next track status
+- [x] `now_playing.show_best_part` — Best Part button
 - [x] `now_playing.upgrade_badge` — Upgrade badge
 - [x] `now_playing.lossless_badge` — Lossless badge
 - [x] `now_playing.hires_badge` — Hi-res badge
