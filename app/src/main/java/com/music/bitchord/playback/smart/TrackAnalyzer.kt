@@ -370,6 +370,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /**
+     * [whole], keeping the opening grid of the provisional head result it
+     * replaces when the whole-track pass found too few beats in the head
+     * window to have one. Without this the measured head grid was lost for
+     * the session and the incoming side could not be beatmatched.
+     *
+     * Only a grid measured on the same copy is carried over: grids from two
+     * renditions are not interchangeable, even at one length.
+     */
+    private fun keepHeadGrid(trackId: String, whole: TrackAnalysis, measuredOn: String?): TrackAnalysis {
+        if (whole.headBeats != null || trackId !in provisional) return whole
+        val head = results[trackId]?.headBeats ?: return whole
+        if (measuredOn == null || measuredCopies[trackId] != measuredOn) return whole
+        return whole.copy(headBeats = head)
+    }
+
+    /**
      * Remembers which copy a restored result was measured on, if it is the
      * result now cached. See [loopCopy].
      */
@@ -552,8 +568,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 }
                 if (usableComplete) {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
-                    val whole = outcome.analysis
                     val measuredOn = analysedCopies.remove(trackId)
+                    val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
                     if (whole != null) {
                         remember(trackId, whole)
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
