@@ -2787,6 +2787,17 @@ object AudioCache {
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
         val key = analysisKeyOfVideo(videoId)
+        // A background round is a whole recording, up to
+        // [MAX_ANALYSIS_TRACK_BYTES], so it follows the same metered-work
+        // policy as the whole-track read-ahead: not on a metered connection
+        // with the screen off and no charger. The tick asks again later. A
+        // caller waiting on the answer ([awaitAnalysisHead]) passes
+        // [ignoreBackoff] and is let through. Unmetered is read first, so the
+        // common case pays no system-service calls.
+        if (!ignoreBackoff && AppSettings.meteredConnection.value != false) {
+            val context = appContext
+            if (context != null && !PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) return false
+        }
         lateinit var round: Job
         // Admission is one step against a finishing round and a wipe — see
         // [analysisAdmission].
