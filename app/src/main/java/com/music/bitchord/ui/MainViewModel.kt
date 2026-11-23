@@ -4209,10 +4209,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             type = resolved,
         )
         val opened = markDetailOpened(browseId)
-        // Who the page was opened for: its continuation walk belongs to that
-        // listener, even when the first response lands after a switch.
-        val openedFor = listenerKey()
-        val credentials = Innertube.listenerGeneration
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -4274,6 +4270,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     browseId,
                 )
             }
+            // Who the page was opened for: its continuation walk belongs to that
+            // listener, even when the first response lands after a switch. Read
+            // once the session scope is in: installing it right after an account
+            // switch can move the listener, and the page's own browse waits for
+            // it anyway — capturing earlier would drop its continuation.
+            // Already-resolved scopes return at once; on-device pages skip it.
+            if (localPlaylist == null && remote == null && !browseId.startsWith("local:")) {
+                Innertube.ensureSessionScope()
+            }
+            val openedFor = listenerKey()
+            val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
                     name = localPlaylist.title
