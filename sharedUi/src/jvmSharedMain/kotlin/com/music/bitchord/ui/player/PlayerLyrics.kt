@@ -2807,7 +2807,12 @@ private fun CurrentLyricLine(
             if (swept != null) {
                 // Only the line being sung carries the glow and the feather's
                 // offscreen layer; the one sliding out keeps the plain fade.
-                val sung = itemIndex == index
+                // The whole target, not the index alone: a source that swaps
+                // in a new version of the same line keeps its index, and the
+                // outgoing copy would glow alongside the incoming one. By
+                // reference — the target holds [current] itself — so the
+                // check costs nothing per frame.
+                val sung = itemIndex == index && lineItem === current && lineText == text
                 SweptLyricLine(
                     line = swept,
                     clock = clock,

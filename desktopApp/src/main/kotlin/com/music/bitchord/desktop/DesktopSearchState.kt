@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.SearchFilter
 
@@ -38,4 +39,39 @@ internal class DesktopSearchState {
     var typing by mutableStateOf(false)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
+
+    /**
+     * The newest search asked for. Plain, not snapshot state: nothing draws it, it only decides
+     * whether an answer may still land.
+     */
+    private var newestRequest = 0L
+
+    /**
+     * Starts a search: every one before it is superseded. A Library search also remembers the
+     * [Innertube.listenerGeneration] it was asked under, since it is the account's own songs.
+     */
+    fun begin(filter: SearchFilter, generation: Long = Innertube.listenerGeneration): DesktopSearchTicket =
+        DesktopSearchTicket(++newestRequest, if (filter.requiresAuth) generation else null)
+
+    /** Whether [ticket]'s answer may still be shown. */
+    fun owns(ticket: DesktopSearchTicket, generation: Long = Innertube.listenerGeneration): Boolean =
+        ticket.id == newestRequest && (ticket.credentials == null || ticket.credentials == generation)
+
+    /**
+     * The listener changed. A Library search, on screen or in flight, was the leaving account's:
+     * it is superseded and its rows dropped, and signed out the filter goes back to All, since
+     * Library is no longer offered. A catalogue search is nobody's in particular and stays.
+     */
+    fun onListenerChanged(signedIn: Boolean) {
+        if (!filter.requiresAuth) return
+        newestRequest++
+        loading = false
+        rows = emptyList()
+        committed = false
+        error = null
+        if (!signedIn) filter = SearchFilter.ALL
+    }
 }
+
+/** One desktop search as it was asked: its place in line, and for Library its listener. */
+internal data class DesktopSearchTicket(val id: Long, val credentials: Long?)

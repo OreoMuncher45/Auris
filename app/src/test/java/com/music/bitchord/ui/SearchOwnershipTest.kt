@@ -58,6 +58,9 @@ class SearchOwnershipTest {
         val ticket = ownership.issue(SearchFilter.LIBRARY)
         generation++
         assertFalse(ownership.owns(ticket))
+        // Still the newest search, which is how the view model knows to ask
+        // it again rather than leave the page loading.
+        assertTrue(ownership.isNewest(ticket))
     }
 
     @Test

@@ -3864,6 +3864,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@collectLatest
                 }
 
+                // A Library answer belongs to the listener, and a candidate
+                // account under validation signs requests before the listener
+                // moves. Wait it out, as [fetchLibrary] does; validation that
+                // settles either way asks the search again as whoever is
+                // listening, superseding this one.
+                if (request.filter.requiresAuth) {
+                    credentialsInValidation.awaitSettled()
+                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                }
+
                 // Search is YouTube's alone. A module is a *substitution*
                 // layer, not a catalogue to browse: it never has cover art,
                 // radio, related tracks or an album page, so its rows arrived
@@ -3890,7 +3900,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 // A search that has been superseded shouldn't land on screen,
                 // whether it succeeded or failed.
-                if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                if (!searchOwnership.owns(request.ticket)) {
+                    // Still the newest search, so only the credentials moved
+                    // under it — a session scope installed with another
+                    // account index, say. Nothing else will ask again, so
+                    // this does, as the listener now signing requests.
+                    if (searchOwnership.isNewest(request.ticket)) onSearchListenerChanged()
+                    return@collectLatest
+                }
                 _results.value = result.fold(
                     onSuccess = { page ->
                         published(page, key, request.ticket, request.filter, request.source)
