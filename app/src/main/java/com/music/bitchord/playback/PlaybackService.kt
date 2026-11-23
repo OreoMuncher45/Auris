@@ -230,7 +230,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 
 /** Session command used by both the player UI and the media notification. */
@@ -371,6 +378,8 @@ class PlaybackService : MediaLibraryService() {
     )
     private data class CachedSearchResponse(
         val provider: SearchProvider,
+        val accountKey: String?,
+        val spotifyAccountKey: String? = null,
         val spotify: SpotifySearchSnapshot? = null,
         val ytSongs: List<Song> = emptyList(),
         val ytBrowses: List<BrowseItem> = emptyList(),
@@ -645,6 +654,11 @@ class PlaybackService : MediaLibraryService() {
         if (lastYtBrowseCookie != cookie) {
             ytBrowseSongsCache.clear()
             autoSearchCache.entries.removeIf { it.value.provider == SearchProvider.YOUTUBE }
+            autoTrackParentById.entries.removeIf {
+                !it.value.startsWith("spotify_") &&
+                    it.value != MEDIA_DOWNLOADS_ID &&
+                    it.value != MEDIA_LOCAL_MUSIC_ID
+            }
             lastYtBrowseCookie = cookie
         }
     }
@@ -677,19 +691,24 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty() && com.music.bitchord.data.innertube.Innertube.cookie == cookie) {
+        val currentCookie = com.music.bitchord.data.innertube.Innertube.cookie
+        if (currentCookie != cookie) {
+            syncYtBrowseCache(currentCookie)
+            return emptyList()
+        }
+        if (songs.isNotEmpty()) {
             songs.forEach { songCache[it.videoId] = it }
             if (ytBrowseSongsCache.size >= 30 && !ytBrowseSongsCache.containsKey(parentId)) {
                 ytBrowseSongsCache.clear()
             }
             ytBrowseSongsCache[parentId] = YtScopedSongs(
-                cookie = cookie,
+                cookie = currentCookie,
                 fetchedAtMs = SystemClock.elapsedRealtime(),
                 songs = songs,
             )
             return songs
         }
-        return cached?.takeIf { it.cookie == cookie }?.songs.orEmpty()
+        return cached?.takeIf { it.cookie == currentCookie }?.songs.orEmpty()
     }
 
     private suspend fun fetchFreshPlaylistCards(): List<ShelfItem>? = playlistsMutex.withLock {
@@ -902,7 +921,7 @@ class PlaybackService : MediaLibraryService() {
             syncSpotifyAccountCaches(currentToken)
             if (currentToken == null || currentToken != token) return null
             val running = spotifyPlaylistsInFlight
-            if (running != null && running.token == token && running.deferred.isActive) {
+            if (running != null && running.token == token && !running.deferred.isCompleted) {
                 running
             } else {
                 val deferred = scope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
@@ -984,27 +1003,40 @@ class PlaybackService : MediaLibraryService() {
         return entry.complete && entry.items.isNotEmpty() && isFresh(entry.fetchedAtMs, SPOTIFY_CACHE_TTL_MS)
     }
 
+    private data class SpotifyPlaylistTracksLoad(
+        val tracks: List<SpotifyTrack>,
+        val complete: Boolean,
+        val inFlight: InFlightSpotifyTracks? = null,
+    )
+
     private suspend fun loadSpotifyPlaylistTracks(
         playlistId: String,
         waitTimeoutMs: Long = 4_500L,
-    ): List<SpotifyTrack> {
+    ): List<SpotifyTrack> = loadSpotifyPlaylistTracksWithStatus(playlistId, waitTimeoutMs).tracks
+
+    private suspend fun loadSpotifyPlaylistTracksWithStatus(
+        playlistId: String,
+        waitTimeoutMs: Long = 4_500L,
+    ): SpotifyPlaylistTracksLoad {
         val token = currentSpotifyToken()
         syncSpotifyAccountCaches(token)
-        if (token == null) return emptyList()
+        if (token == null) return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
         val cached = spotifyPlaylistTracksCache[playlistId]
         if (cached != null && cached.token == token && cached.complete && cached.items.isNotEmpty()) {
-            return cached.items
+            return SpotifyPlaylistTracksLoad(cached.items, complete = true)
         }
         val inFlight = spotifyPlaylistTracksMutex.withLock {
             val currentToken = currentSpotifyToken()
             syncSpotifyAccountCaches(currentToken)
-            if (currentToken == null || currentToken != token) return emptyList()
+            if (currentToken == null || currentToken != token) {
+                return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
+            }
             val refreshedCache = spotifyPlaylistTracksCache[playlistId]
             if (refreshedCache != null && refreshedCache.token == token && refreshedCache.complete && refreshedCache.items.isNotEmpty()) {
-                return refreshedCache.items
+                return SpotifyPlaylistTracksLoad(refreshedCache.items, complete = true)
             }
             val existing = spotifyPlaylistTracksInFlight[playlistId]
-            if (existing != null && existing.token == token && existing.deferred.isActive) {
+            if (existing != null && existing.token == token && !existing.deferred.isCompleted) {
                 existing
             } else {
                 val partialRef = java.util.concurrent.atomic.AtomicReference<List<SpotifyTrack>>(emptyList())
@@ -1054,11 +1086,22 @@ class PlaybackService : MediaLibraryService() {
         val activeToken = currentSpotifyToken()
         if (activeToken != token) {
             syncSpotifyAccountCaches(activeToken)
-            return emptyList()
+            return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
         }
-        return completed?.takeIf { it.isNotEmpty() }
-            ?: spotifyPlaylistTracksCache[playlistId]?.takeIf { it.token == token }?.items
-            ?: inFlight.partial.get()
+        if (!completed.isNullOrEmpty()) {
+            return SpotifyPlaylistTracksLoad(completed, complete = true)
+        }
+        val cachedAfter = spotifyPlaylistTracksCache[playlistId]
+            ?.takeIf { it.token == token && it.complete && it.items.isNotEmpty() }
+        if (cachedAfter != null) {
+            return SpotifyPlaylistTracksLoad(cachedAfter.items, complete = true)
+        }
+        val stillRunning = !inFlight.deferred.isCompleted
+        return SpotifyPlaylistTracksLoad(
+            tracks = inFlight.partial.get(),
+            complete = !stillRunning,
+            inFlight = if (stillRunning) inFlight else null,
+        )
     }
 
     private fun JsonObject.spObj(key: String): JsonObject? =
@@ -1322,18 +1365,36 @@ class PlaybackService : MediaLibraryService() {
                     .header("User-Agent", com.music.bitchord.data.canvas.CANVAS_UA)
                     .apply { if (!clientToken.isNullOrBlank()) header("Client-Token", clientToken) }
                     .build()
-                val call = client.newCall(req)
-                val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-                    if (cause != null) call.cancel()
-                }
-                val payload = try {
-                    call.execute().use { resp ->
-                        if (!resp.isSuccessful) return@withTimeoutOrNull null
-                        resp.body?.string().orEmpty()
-                    }
-                } finally {
-                    cancelHandle?.dispose()
-                }
+                val payload = suspendCancellableCoroutine<String?> { cont ->
+                    val call = client.newCall(req)
+                    cont.invokeOnCancellation { call.cancel() }
+                    call.enqueue(object : Callback {
+                        override fun onFailure(call: Call, e: IOException) {
+                            if (cont.isActive) {
+                                cont.resumeWithException(e)
+                            }
+                        }
+
+                        override fun onResponse(call: Call, response: Response) {
+                            if (!cont.isActive) {
+                                response.close()
+                                return
+                            }
+                            try {
+                                val text = response.use { resp ->
+                                    if (!resp.isSuccessful) null else resp.body?.string().orEmpty()
+                                }
+                                if (cont.isActive) {
+                                    cont.resume(text)
+                                }
+                            } catch (error: Exception) {
+                                if (cont.isActive) {
+                                    cont.resumeWithException(error)
+                                }
+                            }
+                        }
+                    })
+                } ?: return@withTimeoutOrNull null
                 val obj = runCatching { spotifyApiJson.parseToJsonElement(payload).jsonObject }.getOrNull()
                     ?: return@withTimeoutOrNull null
                 val title = obj.spStr("name")?.takeIf { it.isNotBlank() } ?: return@withTimeoutOrNull null
@@ -1385,14 +1446,14 @@ class PlaybackService : MediaLibraryService() {
                 // The existing snapshot remains usable when revalidation fails.
             }
         }
-        val existing = activeFolderRefreshes.putIfAbsent(parentId, job)
-        if (existing != null && existing.isActive) {
-            job.cancel()
-            return
-        }
-        if (existing != null && !activeFolderRefreshes.replace(parentId, existing, job)) {
-            job.cancel()
-            return
+        while (true) {
+            val existing = activeFolderRefreshes.putIfAbsent(parentId, job)
+            if (existing == null) break
+            if (!existing.isCompleted) {
+                job.cancel()
+                return
+            }
+            if (activeFolderRefreshes.replace(parentId, existing, job)) break
         }
         job.invokeOnCompletion {
             activeFolderRefreshes.remove(parentId, job)
@@ -10916,7 +10977,6 @@ class PlaybackService : MediaLibraryService() {
                     createFolderItem(MEDIA_LOCAL_MUSIC_ID, getString(R.string.local_music), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
                 )
                 MEDIA_SPOTIFY_ID -> {
-                    val appName = getString(R.string.app_name)
                     val spotifySignedIn = currentSpotifyToken() != null
                     val spHomeSnap = if (spotifySignedIn) snapshotSpotifyHome() else null
                     val dlSnap = if (spotifySignedIn) snapshotSpotifyDaylist() else null
@@ -10956,157 +11016,60 @@ class PlaybackService : MediaLibraryService() {
                     val needRefreshYtHome = ytHomeSnap != null && !isHomeFresh()
                     if (needRefreshDl || needRefreshSpHome || needRefreshRecents || needRefreshQuick || needRefreshYtHome) {
                         refreshFolderInBackground(session, browser, parentId, params) {
-                            var updated = false
-                            var count = 0
-                            coroutineScope {
+                            val refreshed = coroutineScope {
                                 val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
                                 val rSpHome = if (needRefreshSpHome) async { fetchFreshSpotifyHomeFeed() } else null
                                 val rRec = if (needRefreshRecents) async { fetchFreshRecentsSongs() } else null
                                 val rQuick = if (needRefreshQuick) async { fetchFreshQuickPicksSongs() } else null
                                 val rYtHome = if (needRefreshYtHome) async { fetchFreshHomeFeed() } else null
-                                if (rDl?.await() != null) {
-                                    updated = true
-                                    count++
-                                }
-                                rSpHome?.await()?.let { fresh ->
-                                    updated = true
-                                    count += fresh.shortcuts.size + fresh.shelves.sumOf { it.cards.size }
-                                }
-                                rRec?.await()?.let { fresh ->
-                                    updated = true
-                                    count += fresh.size
-                                }
-                                rQuick?.await()?.let { fresh ->
-                                    updated = true
-                                    count += fresh.size
-                                }
-                                rYtHome?.await()?.let { fresh ->
-                                    updated = true
-                                    count += fresh.shelves.sumOf { it.items.size }
-                                }
+                                SpotifyHubBundle(
+                                    daylist = rDl?.await(),
+                                    spHome = rSpHome?.await(),
+                                    recents = rRec?.await().orEmpty(),
+                                    quickPicks = rQuick?.await().orEmpty(),
+                                    ytHome = rYtHome?.await(),
+                                )
                             }
-                            if (updated && count > 0) count else null
-                        }
-                    }
-
-                    val out = mutableListOf<MediaItem>()
-                    val seenIds = HashSet<String>()
-
-                    if (!spotifySignedIn) {
-                        out += createInfoItem(
-                            "msg:spotify_login",
-                            getString(R.string.auto_spotify_login_title),
-                            getString(R.string.auto_spotify_login_subtitle, appName),
-                        )
-                    }
-
-                    val madeForYouTitle = getString(R.string.auto_made_for_you)
-                    daylist?.let { dl ->
-                        if (seenIds.add("spotify_playlist:${dl.id}")) {
-                            out += spotifyPlaylistToGridItem(dl).withGroupTitle(madeForYouTitle)
-                        }
-                    }
-
-                    val jumpBackInTitle = getString(R.string.auto_jump_back_in)
-                    spHome?.shortcuts.orEmpty().forEach { card ->
-                        spotifyCardToMediaItem(card)?.let { mediaItem ->
-                            if (seenIds.add(mediaItem.mediaId)) {
-                                out += mediaItem.withGroupTitle(jumpBackInTitle)
-                            }
-                        }
-                    }
-                    spHome?.shelves.orEmpty().forEach { shelf ->
-                        val sectionTitle = shelf.title.ifBlank { madeForYouTitle }
-                        shelf.cards.forEach { card ->
-                            spotifyCardToMediaItem(card)?.let { mediaItem ->
-                                if (seenIds.add(mediaItem.mediaId)) {
-                                    out += mediaItem.withGroupTitle(sectionTitle)
-                                }
+                            val updated = refreshed.daylist != null ||
+                                refreshed.spHome != null ||
+                                refreshed.recents.isNotEmpty() ||
+                                refreshed.quickPicks.isNotEmpty() ||
+                                refreshed.ytHome != null
+                            if (!updated) {
+                                null
+                            } else {
+                                val signedInNow = currentSpotifyToken() != null
+                                buildSpotifyHubItems(
+                                    spotifySignedIn = signedInNow,
+                                    daylist = if (signedInNow) snapshotSpotifyDaylist() else null,
+                                    spHome = if (signedInNow) snapshotSpotifyHome() else null,
+                                    recents = snapshotRecents(),
+                                    quickPicks = snapshotQuickPicks(),
+                                    ytHome = snapshotHome(),
+                                    updateCaches = false,
+                                ).size
                             }
                         }
                     }
 
-                    val eligibleFlowSongs = com.music.bitchord.data.flow.FlowStore.readSnapshot()
-                        ?.first
-                        ?.filterNot(AppSettings::isSongBlocked)
-                        .orEmpty()
-                    val eligibleQuickPicks = quickPicks.filterNot(AppSettings::isSongBlocked)
-                    val flowSongs = eligibleFlowSongs.ifEmpty { eligibleQuickPicks }
-                    if (flowSongs.isNotEmpty() && seenIds.add(MEDIA_FLOW_PLAY_ID)) {
-                        out += createFlowPlayItem(flowSongs).withGroupTitle(madeForYouTitle)
-                    }
-
-                    val recentsTitle = getString(R.string.auto_recents)
-                    recents.filterNot(AppSettings::isSongBlocked).take(6).forEach { song ->
-                        if (seenIds.add(song.videoId)) {
-                            songCache[song.videoId] = song
-                            clearAutoParent(song.videoId)
-                            out += song.toMediaItem().withGroupTitle(recentsTitle)
-                        }
-                    }
-
-                    val quickPicksTitle = getString(R.string.auto_quick_picks)
-                    eligibleQuickPicks.take(8).forEach { song ->
-                        if (seenIds.add(song.videoId)) {
-                            songCache[song.videoId] = song
-                            clearAutoParent(song.videoId)
-                            out += song.toMediaItem().withGroupTitle(quickPicksTitle)
-                        }
-                    }
-
-                    val recommendedTitle = getString(R.string.auto_recommended)
-                    ytHome?.shelves.orEmpty().forEach { shelf ->
-                        val sectionTitle = shelf.title.ifBlank { recommendedTitle }
-                        shelf.items.forEach { shelfItem ->
-                            val song = shelfItem.toSongOrNull()
-                            val browseId = shelfItem.browseId
-                            if (song != null && !AppSettings.isSongBlocked(song)) {
-                                if (seenIds.add(song.videoId)) {
-                                    songCache[song.videoId] = song
-                                    clearAutoParent(song.videoId)
-                                    out += song.toMediaItem().withGroupTitle(sectionTitle)
-                                }
-                            } else if (browseId != null) {
-                                val gridItem = shelfToGridPlaylistItem(shelfItem)
-                                if (seenIds.add(gridItem.mediaId)) {
-                                    out += gridItem.withGroupTitle(sectionTitle)
-                                }
-                            }
-                        }
-                    }
-
-                    val hasContent = out.any { !it.mediaId.startsWith("msg:") }
-                    if (!hasContent) {
-                        val fallbackDownloads = Downloads.getDownloadedSongs(this@PlaybackService)
-                            .filterNot(AppSettings::isSongBlocked)
-                        val fallbackTitle = getString(R.string.auto_recent_and_downloads)
-                        fallbackDownloads.forEach { song ->
-                            if (seenIds.add(song.videoId)) {
-                                songCache[song.videoId] = song
-                                clearAutoParent(song.videoId)
-                                out += song.toMediaItem().withGroupTitle(fallbackTitle)
-                            }
-                        }
-                    }
-
-                    if (out.isNotEmpty()) {
-                        out
-                    } else {
-                        listOf(
-                            createInfoItem(
-                                "msg:empty_spotify",
-                                getString(R.string.auto_empty_spotify_title),
-                                getString(R.string.auto_empty_spotify_subtitle, appName),
-                            ),
-                        )
-                    }
+                    buildSpotifyHubItems(
+                        spotifySignedIn = spotifySignedIn,
+                        daylist = daylist,
+                        spHome = spHome,
+                        recents = recents,
+                        quickPicks = quickPicks,
+                        ytHome = ytHome,
+                        updateCaches = true,
+                    )
                 }
                 MEDIA_RECENTS_ID -> {
                     val snapshot = snapshotRecents()
                     val songs = if (snapshot.isNotEmpty()) {
                         if (!isRecentsFresh()) {
                             refreshFolderInBackground(session, browser, parentId, params) {
-                                fetchFreshRecentsSongs()?.size
+                                fetchFreshRecentsSongs()
+                                    ?.count { !AppSettings.isSongBlocked(it) }
+                                    ?.coerceAtLeast(1)
                             }
                         }
                         snapshot
@@ -11156,53 +11119,36 @@ class PlaybackService : MediaLibraryService() {
                     val needRefreshQp = snapshot.isNotEmpty() && !isQuickPicksFresh()
                     if (needRefreshDl || needRefreshQp) {
                         refreshFolderInBackground(session, browser, parentId, params) {
-                            var updated = false
-                            var count = 0
-                            coroutineScope {
+                            val (freshDl, freshQp) = coroutineScope {
                                 val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
                                 val rQp = if (needRefreshQp) async { fetchFreshQuickPicksSongs() } else null
-                                if (rDl?.await() != null) {
-                                    updated = true
-                                    count++
-                                }
-                                rQp?.await()?.let { fresh ->
-                                    updated = true
-                                    count += fresh.size
-                                }
+                                rDl?.await() to rQp?.await()
                             }
-                            if (updated && count > 0) count else null
+                            if (freshDl == null && freshQp == null) {
+                                null
+                            } else {
+                                val currentDaylist = if (currentSpotifyToken() != null) snapshotSpotifyDaylist() else null
+                                val currentSongs = snapshotQuickPicks().ifEmpty {
+                                    snapshotHome()?.shelves?.flatMap { it.items }
+                                        ?.mapNotNull { it.toSongOrNull() }
+                                        ?.distinctBy { it.videoId }
+                                        .orEmpty()
+                                }
+                                buildQuickPicksItems(
+                                    parentId = parentId,
+                                    daylist = currentDaylist,
+                                    songs = currentSongs,
+                                    updateCaches = false,
+                                ).size
+                            }
                         }
                     }
-                    val allowed = songs.filterNot(AppSettings::isSongBlocked)
-                    allowed.forEach {
-                        songCache[it.videoId] = it
-                        rememberAutoParent(it.videoId, parentId)
-                    }
-                    val out = mutableListOf<MediaItem>()
-                    if (daylist != null) {
-                        out += spotifyPlaylistToGridItem(daylist)
-                            .withGroupTitle(getString(R.string.auto_daylist))
-                        val quickPicksTitle = getString(R.string.auto_quick_picks)
-                        allowed.forEach { song ->
-                            out += song.toMediaItem(parentBrowseId = parentId)
-                                .withGroupTitle(quickPicksTitle)
-                        }
-                    } else {
-                        allowed.forEach { song ->
-                            out += song.toMediaItem(parentBrowseId = parentId)
-                        }
-                    }
-                    if (out.isNotEmpty()) {
-                        out
-                    } else {
-                        listOf(
-                            createInfoItem(
-                                "msg:empty_quick_picks",
-                                getString(R.string.auto_empty_quick_picks_title),
-                                getString(R.string.auto_empty_quick_picks_subtitle),
-                            ),
-                        )
-                    }
+                    buildQuickPicksItems(
+                        parentId = parentId,
+                        daylist = daylist,
+                        songs = songs,
+                        updateCaches = true,
+                    )
                 }
                 MEDIA_LIKED_ID -> {
                     if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
@@ -11212,7 +11158,9 @@ class PlaybackService : MediaLibraryService() {
                         val songs = if (snapshot.isNotEmpty()) {
                             if (!isLikedFresh()) {
                                 refreshFolderInBackground(session, browser, parentId, params) {
-                                    fetchFreshLikedSongs()?.size
+                                    fetchFreshLikedSongs()
+                                        ?.count { !AppSettings.isSongBlocked(it) }
+                                        ?.coerceAtLeast(1)
                                 }
                             }
                             snapshot
@@ -11298,8 +11246,7 @@ class PlaybackService : MediaLibraryService() {
                                 if (!freshSp.isNullOrEmpty() || !freshYt.isNullOrEmpty()) {
                                     updated = true
                                 }
-                                val total = (freshSp ?: snapshotSpotifyPlaylists()).size +
-                                    (freshYt ?: snapshotPlaylistCards()).size
+                                val total = snapshotSpotifyPlaylists().size + snapshotPlaylistCards().size
                                 if (updated && total > 0) total else null
                             }
                         }
@@ -11359,12 +11306,33 @@ class PlaybackService : MediaLibraryService() {
                     when {
                         parentId.startsWith("spotify_playlist:") -> {
                             val playlistId = parentId.removePrefix("spotify_playlist:")
-                            val songs = loadSpotifyPlaylistTracks(playlistId)
+                            val loaded = loadSpotifyPlaylistTracksWithStatus(playlistId)
+                            val songs = loaded.tracks
                                 .map(SpotifyHomeSource::songFor)
                                 .filterNot(AppSettings::isSongBlocked)
                             songs.forEach { song ->
                                 songCache[song.videoId] = song
                                 rememberAutoParent(song.videoId, parentId)
+                            }
+                            val pendingFetch = loaded.inFlight
+                            if (!loaded.complete && pendingFetch != null) {
+                                refreshFolderInBackground(session, browser, parentId, params) {
+                                    val completed = try {
+                                        pendingFetch.deferred.await()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        null
+                                    }
+                                    if (completed.isNullOrEmpty() || currentSpotifyToken() != pendingFetch.token) {
+                                        null
+                                    } else {
+                                        completed
+                                            .map(SpotifyHomeSource::songFor)
+                                            .count { !AppSettings.isSongBlocked(it) }
+                                            .takeIf { it > 0 }
+                                    }
+                                }
                             }
                             if (songs.isNotEmpty()) {
                                 songs.map { it.toMediaItem(parentBrowseId = parentId) }
@@ -11591,7 +11559,10 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<Void>> = scope.future(Dispatchers.IO) {
             val response = computeSearchResponse(query)
-            storeSearchResponse(query, response)
+            if (!storeSearchResponse(query, response)) {
+                session.notifySearchResultChanged(browser, query, 0, params)
+                return@future LibraryResult.ofVoid(params)
+            }
             val displayCount = buildSearchDisplayItems(query, response).size
             session.notifySearchResultChanged(browser, query, displayCount, params)
             LibraryResult.ofVoid(params)
@@ -11606,8 +11577,9 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
             val response = autoSearchCache[query]
-                ?: computeSearchResponse(query).also { storeSearchResponse(query, it) }
-            val items = buildSearchDisplayItems(query, response)
+                ?.takeIf(::isSearchResponseValidForCurrentAccount)
+                ?: computeSearchResponse(query).takeIf { storeSearchResponse(query, it) }
+            val items = if (response != null) buildSearchDisplayItems(query, response) else emptyList()
             val returnParams = LibraryParams.Builder().setExtras(
                 buildContentStyleBundle(
                     CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
@@ -11627,7 +11599,7 @@ class PlaybackService : MediaLibraryService() {
             // Android Auto hands over the tapped song, not the playlist around
             // it. Rebuild the folder so the queue follows the playlist's own
             // order and AutoPlay only starts after its last track.
-            expandPlaylistContext(mediaItems, startIndex, startPositionMs)?.let { return@future it }
+            expandPlaylistContext(mediaSession, controller, mediaItems, startIndex, startPositionMs)?.let { return@future it }
             val targetIndex = startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
             var mappedStartIndex: Int? = null
             val resolved = resolveMediaItems(mediaItems) { inputIndex, outputStartIndex, addedCount ->
@@ -11686,15 +11658,24 @@ class PlaybackService : MediaLibraryService() {
          * list is already the full folder — the caller then resolves it as-is.
          */
         private suspend fun expandPlaylistContext(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
             mediaItems: List<MediaItem>,
             startIndex: Int,
             startPositionMs: Long = 0L,
         ): MediaSession.MediaItemsWithStartPosition? {
             if (mediaItems.isEmpty()) return null
-            val parents = mediaItems.mapNotNull { item ->
+            val allowAutoParentFallback = mediaItems.size == 1 && (
+                controller.packageName != packageName ||
+                    session.isAutoCompanionController(controller) ||
+                    session.isAutomotiveController(controller)
+                )
+            val resolvedParents = mediaItems.map { item ->
                 item.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT)
-                    ?: autoTrackParentById[item.mediaId]
-            }.distinct()
+                    ?: if (allowAutoParentFallback) autoTrackParentById[item.mediaId] else null
+            }
+            if (resolvedParents.any { it == null }) return null
+            val parents = resolvedParents.filterNotNull().distinct()
             if (parents.size != 1) return null
             val parent = parents.first()
             val tappedItem = mediaItems
@@ -11813,7 +11794,10 @@ class PlaybackService : MediaLibraryService() {
                             resolved.addAll(matchedFromSpotify)
                         } else {
                             val cachedYt = autoSearchCache[searchQuery]
-                                ?.takeIf { it.provider == SearchProvider.YOUTUBE }
+                                ?.takeIf {
+                                    it.provider == SearchProvider.YOUTUBE &&
+                                        isSearchResponseValidForCurrentAccount(it)
+                                }
                                 ?.ytSongs
                             val rawSongs = if (!cachedYt.isNullOrEmpty()) {
                                 cachedYt
@@ -12004,6 +11988,177 @@ class PlaybackService : MediaLibraryService() {
         val ytHome: com.music.bitchord.data.model.HomeFeed?,
     )
 
+    private fun buildSpotifyHubItems(
+        spotifySignedIn: Boolean,
+        daylist: SpotifyPlaylist?,
+        spHome: SpotifyHomeFeed?,
+        recents: List<Song>,
+        quickPicks: List<Song>,
+        ytHome: com.music.bitchord.data.model.HomeFeed?,
+        updateCaches: Boolean,
+    ): List<MediaItem> {
+        val appName = getString(R.string.app_name)
+        val out = mutableListOf<MediaItem>()
+        val seenIds = HashSet<String>()
+
+        if (!spotifySignedIn) {
+            out += createInfoItem(
+                "msg:spotify_login",
+                getString(R.string.auto_spotify_login_title),
+                getString(R.string.auto_spotify_login_subtitle, appName),
+            )
+        }
+
+        val madeForYouTitle = getString(R.string.auto_made_for_you)
+        daylist?.let { dl ->
+            if (seenIds.add("spotify_playlist:${dl.id}")) {
+                out += spotifyPlaylistToGridItem(dl).withGroupTitle(madeForYouTitle)
+            }
+        }
+
+        val jumpBackInTitle = getString(R.string.auto_jump_back_in)
+        spHome?.shortcuts.orEmpty().forEach { card ->
+            spotifyCardToMediaItem(card, updateCaches = updateCaches)?.let { mediaItem ->
+                if (seenIds.add(mediaItem.mediaId)) {
+                    out += mediaItem.withGroupTitle(jumpBackInTitle)
+                }
+            }
+        }
+        spHome?.shelves.orEmpty().forEach { shelf ->
+            val sectionTitle = shelf.title.ifBlank { madeForYouTitle }
+            shelf.cards.forEach { card ->
+                spotifyCardToMediaItem(card, updateCaches = updateCaches)?.let { mediaItem ->
+                    if (seenIds.add(mediaItem.mediaId)) {
+                        out += mediaItem.withGroupTitle(sectionTitle)
+                    }
+                }
+            }
+        }
+
+        val eligibleFlowSongs = com.music.bitchord.data.flow.FlowStore.readSnapshot()
+            ?.first
+            ?.filterNot(AppSettings::isSongBlocked)
+            .orEmpty()
+        val eligibleQuickPicks = quickPicks.filterNot(AppSettings::isSongBlocked)
+        val flowSongs = eligibleFlowSongs.ifEmpty { eligibleQuickPicks }
+        if (flowSongs.isNotEmpty() && seenIds.add(MEDIA_FLOW_PLAY_ID)) {
+            out += createFlowPlayItem(flowSongs).withGroupTitle(madeForYouTitle)
+        }
+
+        val recentsTitle = getString(R.string.auto_recents)
+        recents.filterNot(AppSettings::isSongBlocked).take(6).forEach { song ->
+            if (seenIds.add(song.videoId)) {
+                if (updateCaches) {
+                    songCache[song.videoId] = song
+                    clearAutoParent(song.videoId)
+                }
+                out += song.toMediaItem().withGroupTitle(recentsTitle)
+            }
+        }
+
+        val quickPicksTitle = getString(R.string.auto_quick_picks)
+        eligibleQuickPicks.take(8).forEach { song ->
+            if (seenIds.add(song.videoId)) {
+                if (updateCaches) {
+                    songCache[song.videoId] = song
+                    clearAutoParent(song.videoId)
+                }
+                out += song.toMediaItem().withGroupTitle(quickPicksTitle)
+            }
+        }
+
+        val recommendedTitle = getString(R.string.auto_recommended)
+        ytHome?.shelves.orEmpty().forEach { shelf ->
+            val sectionTitle = shelf.title.ifBlank { recommendedTitle }
+            shelf.items.forEach { shelfItem ->
+                val song = shelfItem.toSongOrNull()
+                val browseId = shelfItem.browseId
+                if (song != null && !AppSettings.isSongBlocked(song)) {
+                    if (seenIds.add(song.videoId)) {
+                        if (updateCaches) {
+                            songCache[song.videoId] = song
+                            clearAutoParent(song.videoId)
+                        }
+                        out += song.toMediaItem().withGroupTitle(sectionTitle)
+                    }
+                } else if (browseId != null) {
+                    val gridItem = shelfToGridPlaylistItem(shelfItem)
+                    if (seenIds.add(gridItem.mediaId)) {
+                        out += gridItem.withGroupTitle(sectionTitle)
+                    }
+                }
+            }
+        }
+
+        val hasContent = out.any { !it.mediaId.startsWith("msg:") }
+        if (!hasContent) {
+            val fallbackDownloads = Downloads.getDownloadedSongs(this@PlaybackService)
+                .filterNot(AppSettings::isSongBlocked)
+            val fallbackTitle = getString(R.string.auto_recent_and_downloads)
+            fallbackDownloads.forEach { song ->
+                if (seenIds.add(song.videoId)) {
+                    if (updateCaches) {
+                        songCache[song.videoId] = song
+                        clearAutoParent(song.videoId)
+                    }
+                    out += song.toMediaItem().withGroupTitle(fallbackTitle)
+                }
+            }
+        }
+
+        return if (out.isNotEmpty()) {
+            out
+        } else {
+            listOf(
+                createInfoItem(
+                    "msg:empty_spotify",
+                    getString(R.string.auto_empty_spotify_title),
+                    getString(R.string.auto_empty_spotify_subtitle, appName),
+                ),
+            )
+        }
+    }
+
+    private fun buildQuickPicksItems(
+        parentId: String,
+        daylist: SpotifyPlaylist?,
+        songs: List<Song>,
+        updateCaches: Boolean,
+    ): List<MediaItem> {
+        val allowed = songs.filterNot(AppSettings::isSongBlocked)
+        if (updateCaches) {
+            allowed.forEach {
+                songCache[it.videoId] = it
+                rememberAutoParent(it.videoId, parentId)
+            }
+        }
+        val out = mutableListOf<MediaItem>()
+        if (daylist != null) {
+            out += spotifyPlaylistToGridItem(daylist)
+                .withGroupTitle(getString(R.string.auto_daylist))
+            val quickPicksTitle = getString(R.string.auto_quick_picks)
+            allowed.forEach { song ->
+                out += song.toMediaItem(parentBrowseId = parentId)
+                    .withGroupTitle(quickPicksTitle)
+            }
+        } else {
+            allowed.forEach { song ->
+                out += song.toMediaItem(parentBrowseId = parentId)
+            }
+        }
+        return if (out.isNotEmpty()) {
+            out
+        } else {
+            listOf(
+                createInfoItem(
+                    "msg:empty_quick_picks",
+                    getString(R.string.auto_empty_quick_picks_title),
+                    getString(R.string.auto_empty_quick_picks_subtitle),
+                ),
+            )
+        }
+    }
+
     private fun buildContentStyleBundle(browsableHint: Int, playableHint: Int): Bundle =
         Bundle().apply {
             putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, browsableHint)
@@ -12102,7 +12257,7 @@ class PlaybackService : MediaLibraryService() {
             folderType = MediaMetadata.FOLDER_TYPE_ARTISTS,
         )
 
-    private fun spotifyCardToMediaItem(card: SpotifyCard): MediaItem? = when (card.kind) {
+    private fun spotifyCardToMediaItem(card: SpotifyCard, updateCaches: Boolean = true): MediaItem? = when (card.kind) {
         SpotifyCard.Kind.PLAYLIST -> {
             val playlistId = if (card.id == "tracks") SpotifyLibrary.LIKED_ID else card.id
             spotifyPlaylistToGridItem(
@@ -12144,8 +12299,10 @@ class PlaybackService : MediaLibraryService() {
             if (AppSettings.isSongBlocked(song)) {
                 null
             } else {
-                songCache[song.videoId] = song
-                clearAutoParent(song.videoId)
+                if (updateCaches) {
+                    songCache[song.videoId] = song
+                    clearAutoParent(song.videoId)
+                }
                 song.toMediaItem()
             }
         }
@@ -12237,33 +12394,61 @@ class PlaybackService : MediaLibraryService() {
 
     private suspend fun searchSpotify(
         query: String,
+        expectedToken: String? = currentSpotifyToken(),
     ): Triple<List<Song>, List<SpotifyPlaylist>, List<SpotifyPlaylist>> {
         val safeQuery = query.trim().take(100)
-        if (safeQuery.isEmpty() || currentSpotifyToken() == null) {
+        val spToken = expectedToken ?: return Triple(emptyList(), emptyList(), emptyList())
+        if (safeQuery.isEmpty() || currentSpotifyToken() != spToken) {
             return Triple(emptyList(), emptyList(), emptyList())
         }
         val libraryMatches = snapshotSpotifyPlaylists()
             .filter { it.name.contains(safeQuery, ignoreCase = true) }
-        val daylistMatch = if (safeQuery.contains("daylist", ignoreCase = true)) {
-            listOfNotNull(cachedSpotifyDaylist())
-        } else {
-            emptyList()
-        }
+        val wantsDaylist = safeQuery.contains("daylist", ignoreCase = true)
+        var daylistMatch: List<SpotifyPlaylist> = emptyList()
         val apiResult = try {
             SpotifyGraphQL.withCallTimeout(4_500L) {
                 coroutineScope {
+                    val daylistJob = if (wantsDaylist) {
+                        async(Dispatchers.IO) {
+                            try {
+                                listOfNotNull(cachedSpotifyDaylist())
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                        }
+                    } else {
+                        null
+                    }
                     val tracksJob = async(Dispatchers.IO) {
-                        runCatching { SpotifySearch.searchPage(safeQuery, SearchFilter.SONGS).rows }
-                            .getOrDefault(emptyList())
+                        try {
+                            SpotifySearch.searchPage(safeQuery, SearchFilter.SONGS).rows
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
                     val playlistsJob = async(Dispatchers.IO) {
-                        runCatching { SpotifySearch.searchPage(safeQuery, SearchFilter.PLAYLISTS).rows }
-                            .getOrDefault(emptyList())
+                        try {
+                            SpotifySearch.searchPage(safeQuery, SearchFilter.PLAYLISTS).rows
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
                     val albumsJob = async(Dispatchers.IO) {
-                        runCatching { SpotifySearch.searchPage(safeQuery, SearchFilter.ALBUMS).rows }
-                            .getOrDefault(emptyList())
+                        try {
+                            SpotifySearch.searchPage(safeQuery, SearchFilter.ALBUMS).rows
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
+                    daylistMatch = daylistJob?.await().orEmpty()
                     val songs = tracksJob.await().mapNotNull { row ->
                         when (row) {
                             is SearchResult.Track -> row.song
@@ -12302,16 +12487,31 @@ class PlaybackService : MediaLibraryService() {
         val songs = apiResult?.first.orEmpty()
         val playlists = (daylistMatch + libraryMatches + apiResult?.second.orEmpty()).distinctBy { it.id }
         val albums = apiResult?.third.orEmpty().distinctBy { it.id }
+        if (currentSpotifyToken() != spToken) {
+            return Triple(emptyList(), emptyList(), emptyList())
+        }
         songs.forEach { songCache[it.videoId] = it }
         return Triple(songs, playlists, albums)
     }
 
+    private fun isSearchResponseValidForCurrentAccount(response: CachedSearchResponse): Boolean =
+        when (response.provider) {
+            SearchProvider.SPOTIFY ->
+                response.accountKey != null && response.accountKey == currentSpotifyToken()
+            SearchProvider.YOUTUBE ->
+                response.accountKey == com.music.bitchord.data.innertube.Innertube.cookie &&
+                    response.spotifyAccountKey == currentSpotifyToken()
+        }
+
     private suspend fun computeSearchResponse(query: String): CachedSearchResponse {
-        val (spSongs, spPlaylists, spAlbums) = searchSpotify(query)
+        val spTokenAtStart = currentSpotifyToken()
+        val (spSongs, spPlaylists, spAlbums) = searchSpotify(query, expectedToken = spTokenAtStart)
         val spTotal = spSongs.size + spPlaylists.size + spAlbums.size
         return if (spTotal > 0) {
             CachedSearchResponse(
                 provider = SearchProvider.SPOTIFY,
+                accountKey = spTokenAtStart,
+                spotifyAccountKey = spTokenAtStart,
                 spotify = SpotifySearchSnapshot(
                     songs = spSongs,
                     playlists = spPlaylists,
@@ -12319,16 +12519,24 @@ class PlaybackService : MediaLibraryService() {
                 ),
             )
         } else {
+            val ytCookieAtStart = com.music.bitchord.data.innertube.Innertube.cookie
+            val spAtYtStart = currentSpotifyToken()
             val (songs, browses) = searchAll(query)
             CachedSearchResponse(
                 provider = SearchProvider.YOUTUBE,
+                accountKey = ytCookieAtStart,
+                spotifyAccountKey = spAtYtStart,
                 ytSongs = songs,
                 ytBrowses = browses,
             )
         }
     }
 
-    private fun storeSearchResponse(query: String, response: CachedSearchResponse) {
+    private fun storeSearchResponse(query: String, response: CachedSearchResponse): Boolean {
+        if (!isSearchResponseValidForCurrentAccount(response)) {
+            autoSearchCache.entries.removeIf { !isSearchResponseValidForCurrentAccount(it.value) }
+            return false
+        }
         while (autoSearchCache.size >= MAX_AUTO_SEARCH_CACHE_ENTRIES) {
             val key = autoSearchCache.keys.firstOrNull() ?: break
             autoSearchCache.remove(key)
@@ -12336,6 +12544,7 @@ class PlaybackService : MediaLibraryService() {
         autoSearchCache[query] = response
         response.spotify?.songs?.forEach { songCache[it.videoId] = it }
         response.ytSongs.forEach { songCache[it.videoId] = it }
+        return true
     }
 
     private fun buildSearchDisplayItems(query: String, response: CachedSearchResponse): List<MediaItem> {
