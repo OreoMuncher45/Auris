@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -69,9 +70,17 @@ class AnalysisRoundLifecycleTest {
     @Suppress("UNCHECKED_CAST")
     private val heads get() = field("analysisHeads") as ConcurrentHashMap<String, Boolean>
 
+    @Suppress("UNCHECKED_CAST")
+    private val removing get() = field("removing") as Set<String>
+
     /** Registers a round that does not stop until [writerDone], claiming [id]. */
     private fun liveRound(): Job {
-        val round = scope.launch { withContext(NonCancellable) { writerDone.await() } }
+        // Undispatched, so its body is already inside NonCancellable when it is
+        // registered: a default-start job cancelled before it ran would skip
+        // the wait altogether and stand in for no writer at all.
+        val round = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            withContext(NonCancellable) { writerDone.await() }
+        }
         heads[id] = true
         jobs[id] = round
         return round
@@ -107,15 +116,19 @@ class AnalysisRoundLifecycleTest {
         val round = liveRound()
         val removal = scope.async { AudioCache.remove(id) }
 
-        Thread.sleep(300)
+        // Polled, not slept on: the removal has to have run far enough to
+        // cancel the round before the rest says anything.
+        assertTrue(idleMainUntil { round.isCancelled })
         // Still stopping: the claim keeps a replacement round out meanwhile.
         assertFalse(removal.isCompleted)
         assertTrue(heads.containsKey(id))
-        assertTrue(round.isCancelled)
+        // And reserved, so no round is admitted for it until the bytes are gone.
+        assertTrue(removing.contains(id))
 
         writerDone.complete(Unit)
         assertTrue(idleMainUntil { removal.isCompleted })
         assertFalse(heads.containsKey(id))
         assertTrue(round.isCompleted)
+        assertFalse(removing.contains(id))
     }
 }
