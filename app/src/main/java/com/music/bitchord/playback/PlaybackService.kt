@@ -370,6 +370,14 @@ class PlaybackService : MediaLibraryService() {
 
     private fun currentListener(): String? = com.music.bitchord.data.innertube.Innertube.listener
 
+    /** Who is listening now, and how many account switches it took to get here. */
+    private fun listenerStamp(): ListenerStamp {
+        // Generation first: a switch landing between the two reads then reads
+        // as stale, never as current.
+        val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+        return ListenerStamp(currentListener(), generation)
+    }
+
     /** [listing] when it was read for the listener now, and holds something. */
     private fun AutoListing?.forCurrentListener(): AutoListing? =
         this?.takeIf { it.songs.isNotEmpty() && it.listener == currentListener() }
@@ -385,7 +393,8 @@ class PlaybackService : MediaLibraryService() {
 
     private suspend fun cachedRecentsListing(): AutoListing? = recentsMutex.withLock {
         cachedRecents.forCurrentListener()?.let { if (isFresh(it.at, RECENTS_CACHE_TTL_MS)) return it }
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.recents().getOrNull()
@@ -394,8 +403,9 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedRecents = it }
     }
@@ -412,7 +422,8 @@ class PlaybackService : MediaLibraryService() {
 
     private suspend fun cachedQuickPicksListing(): AutoListing? = quickPicksMutex.withLock {
         cachedQuickPicks.forCurrentListener()?.let { if (isFresh(it.at, QUICK_PICKS_CACHE_TTL_MS)) return it }
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         val recentsIds = cachedRecents.forCurrentListener()?.songs?.mapTo(HashSet()) { it.videoId } ?: emptySet()
         val songs = try {
             withTimeoutOrNull(4000L) {
@@ -422,8 +433,9 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedQuickPicks = it }
     }
@@ -439,7 +451,8 @@ class PlaybackService : MediaLibraryService() {
     private suspend fun cachedLikedSongs(): List<Song> = cachedLikedListing()?.songs.orEmpty()
 
     private suspend fun cachedLikedListing(): AutoListing? = likedMutex.withLock {
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         if (listener == null) {
             cachedLiked = null
             return null
@@ -466,8 +479,9 @@ class PlaybackService : MediaLibraryService() {
         }
         val songs = page?.songs.orEmpty()
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening.
-        if (listener != currentListener()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
         songs.forEach { songCache[it.videoId] = it }
         LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
@@ -485,7 +499,8 @@ class PlaybackService : MediaLibraryService() {
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
-        val listener = currentListener()
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         cachedHome?.takeIf { it.listener == listener }?.let {
             if (SystemClock.elapsedRealtime() - it.at < HOME_CACHE_TTL_MS) return it.feed
         }
@@ -496,7 +511,7 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             null
         } ?: return null
-        if (listener != currentListener()) return null
+        if (stamp != listenerStamp()) return null
         cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, listener)
         feed
     }
@@ -11819,3 +11834,11 @@ internal fun lyricsSettingChanges(
 ): Flow<List<Any>> = combine(synced, sources, order, prioritizeSyllableSync) { s, src, o, p ->
     listOf(s, src, o, p)
 }.distinctUntilChanged()
+
+/**
+ * The account an Android Auto listing was read for and the
+ * [com.music.bitchord.data.innertube.Innertube.listenerGeneration] it started
+ * at. Two stamps are equal only when no switch landed in between, not even one
+ * that switched back to the same account.
+ */
+internal data class ListenerStamp(val listener: String?, val generation: Long)
