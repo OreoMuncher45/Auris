@@ -16,6 +16,7 @@ internal object LoopArmGate {
         repeatMode: Int,
         nextStillIncoming: Boolean,
         skipSilence: Boolean = false,
+        sleepAfterTrack: Boolean = false,
     ): String? = when {
         bitPerfect -> "bit-perfect is on"
         !automixOn -> "Automix was switched off"
@@ -26,6 +27,8 @@ internal object LoopArmGate {
         repeatMode == Player.REPEAT_MODE_ONE -> "repeat one is on"
         // Skipping silence moves the incoming song off the decks' timeline.
         skipSilence -> "skip silence is on"
+        // "Sleep after this song": the song ends the session, it isn't mixed out of.
+        sleepAfterTrack -> "sleep timer"
         !nextStillIncoming -> "the next entry changed"
         else -> null
     }
