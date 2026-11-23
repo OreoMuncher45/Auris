@@ -18,18 +18,31 @@ import com.music.bitchord.data.model.Song
 /**
  * The player's queue now. [known] (the screen's copy) only saves rebuilding a
  * [Song] for a row whose entry and tier it already has; it never decides
- * which rows there are or where they sit.
+ * which rows there are or where they sit. Those cached rows are good for
+ * identity and tier only: rows an edit will reinsert get their payload from
+ * the player through [refreshPayload].
  */
-private fun Player.liveTimeline(known: List<Song>?): List<Song> {
+private fun Player.liveTimeline(known: List<Song>?): MutableList<Song> {
     val count = mediaItemCount
     val cache = known?.takeIf { it.isNotEmpty() }?.let { songs ->
         HashMap<String, Song>(songs.size * 2).apply { for (s in songs) put(QueueEdits.identity(s), s) }
     }
-    return List(count) { i ->
+    return MutableList(count) { i ->
         val item = getMediaItemAt(i)
         val cached = cache?.get(QueueEdits.identity(item.mediaId, item.queueEntryId))
         if (cached != null && cached.queueTier == item.queueTier) cached else item.toSong()
     }
+}
+
+/**
+ * The rows at [indices] rebuilt from the player's own items. The service can
+ * replace a row's media in place and keep its entry id and tier (a video
+ * swapped for its catalogue audio, a stream for its download), so a matching
+ * id says where a row is, not that the screen's copy of it is current. Only
+ * the rows being moved or captured for Undo pay for this.
+ */
+private fun Player.refreshPayload(live: MutableList<Song>, indices: Collection<Int>) {
+    for (i in indices) live[i] = getMediaItemAt(i).toSong()
 }
 
 /** The player's queue now, as identities only: all that Undo needs to place rows. */
@@ -53,6 +66,7 @@ fun Player.removeQueueRows(targets: List<QueueEdits.Target>, known: List<Song>? 
     val current = currentMediaItemIndex
     val valid = QueueEdits.resolve(targets, live).filter { it > current }
     if (valid.isEmpty()) return null
+    refreshPayload(live, valid)
     val removal = QueueEdits.capture(live, valid)
     removeRuns(valid)
     return removal
@@ -63,6 +77,7 @@ fun Player.clearUserQueueRows(known: List<Song>? = null): QueueEdits.Removal? {
     val live = liveTimeline(known)
     val indices = QueueEdits.userQueueIndices(live, currentMediaItemIndex)
     if (indices.isEmpty()) return null
+    refreshPayload(live, indices)
     val removal = QueueEdits.capture(live, indices)
     removeRuns(indices)
     return removal
@@ -102,8 +117,9 @@ fun Player.moveQueueRowsToUser(
     if (targets.isEmpty()) return false
     val live = liveTimeline(known)
     val current = currentMediaItemIndex
-    val move = QueueEdits.moveToUserQueue(live, current, QueueEdits.resolve(targets, live), toHead)
-        ?: return false
+    val picked = QueueEdits.resolve(targets, live).filter { it > current }
+    refreshPayload(live, picked)
+    val move = QueueEdits.moveToUserQueue(live, current, picked, toHead) ?: return false
     removeRuns(move.remove)
     addMediaItems(move.insertAt.coerceIn(0, mediaItemCount), move.songs.map { it.toMediaItem() })
     return true
