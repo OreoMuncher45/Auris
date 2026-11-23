@@ -25,6 +25,34 @@ object AutomixAnalysisSource {
     private const val ANALYSIS_KEY_SUFFIX = "#analysis"
 
     /**
+     * Where the analysis round files the copy it falls back on when YouTube's
+     * Opus stream will not come: whatever the plain `watch?v=` address
+     * resolves to, which can be a substitute source.
+     *
+     * Never [analysisCacheKey]. That key names the YouTube recording, and
+     * [isCanonicalYouTubeRendition] trusts it by name; a substitute filed under
+     * it was taken for the canonical copy, and a retry counted the substitute's
+     * partial bytes against the Opus copy's size. Ends in the cache's `#alt2`
+     * substitute suffix, so everything that tells substitutes apart by key
+     * (the version aligner among them) reads it as one.
+     */
+    fun analysisSubstituteKey(videoId: String): String = "${analysisCacheKey(videoId)}$SUBSTITUTE_KEY_SUFFIX"
+
+    /**
+     * Whether the analyser may read [cacheKey] at all: a canonical rendition,
+     * or the analysis round's substitute copy. The substitute is a different
+     * source and can be a different cut, so a caller must check its length
+     * against the track's before using it, and prefer a canonical copy.
+     */
+    fun isAnalysisRendition(videoId: String?, cacheKey: String): Boolean =
+        isCanonicalYouTubeRendition(videoId, cacheKey) || isAnalysisSubstitute(videoId, cacheKey)
+
+    fun isAnalysisSubstitute(videoId: String?, cacheKey: String): Boolean =
+        videoId != null && cacheKey == analysisSubstituteKey(videoId)
+
+    private const val SUBSTITUTE_KEY_SUFFIX = "#alt2"
+
+    /**
      * A private playback URI for analysis-only reads.
      *
      * A normal `watch?v=` URI is allowed to reuse the source race already

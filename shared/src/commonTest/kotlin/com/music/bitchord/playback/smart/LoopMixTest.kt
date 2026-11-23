@@ -380,4 +380,37 @@ class LoopMixTest {
     fun noMaskAndNoLyricsMeansNoLoop() {
         assertNull(plan(analysis(120.0, 200.0), analysis(120.0, 180.0), null, null))
     }
+
+    @Test
+    fun theOutgoingLoopGoesByTheTailGridsOwnTrust() {
+        val downbeats = (0 until 30).map { 140.5 + it * 2.0 }
+        val trusted = analysis(120.0, 200.0).copy(beatConfidence = 0.0, tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        assertNotNull(plan(trusted, analysis(120.0, 180.0)))
+        val unsure = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.0))
+        assertNull(plan(unsure, analysis(120.0, 180.0)))
+    }
+
+    @Test
+    fun aMeasuredTailWithNoBarLineInTheSearchStillGetsNoLoopFromTheOpeningGrid() {
+        // The model's bar lines all lie before the playhead: the opening grid is not trusted past them.
+        val downbeats = (0 until 8).map { 140.5 + it * 2.0 }
+        val out = analysis(120.0, 200.0).copy(tailBeats = BeatSide(downbeats, downbeats, 120.0, 0.9))
+        val inn = analysis(120.0, 180.0)
+        assertNotNull(LoopMix.plan(out, out.duration, inn, inn.duration, 0.0, clear, clear))
+        assertNull(LoopMix.plan(out, out.duration, inn, inn.duration, 160.0, clear, clear))
+    }
+
+    @Test
+    fun anOpenLineFarFromTheNextIsLeftToTheMaskAllTheWayThere() {
+        val spans = LoopMix.sungSpans(
+            listOf(
+                LoopMix.Line(10_000, null, blank = false),
+                LoopMix.Line(40_000, null, blank = false),
+            ),
+        )
+        assertEquals(40.35, spans[0].end, 1e-9)
+        assertEquals(12.35, spans[0].certainUntil, 1e-9)
+        // The last line, with nothing after it, for the open-line length.
+        assertEquals(40.0 + LoopMix.LYRIC_OPEN_LINE_SEC + 0.35, spans[1].end, 1e-9)
+    }
 }

@@ -109,12 +109,17 @@ class LoopMixPort {
      */
     @Volatile private var positionSeq = 0
 
-    /** Records a reading; the sink's playback thread is the only writer. */
-    fun publishPosition(us: Long, nanos: Long) {
+    /**
+     * Records a reading; the sink's playback thread is the only writer.
+     * [takenUnder] is the [generation] read *before* the clock was: an arm that
+     * lands between the clock read and this call must not relabel the older
+     * reading as its own.
+     */
+    fun publishPosition(us: Long, nanos: Long, takenUnder: Int) {
         positionSeq++
         positionUs = us
         positionNanos = nanos
-        positionGeneration = generation
+        positionGeneration = takenUnder
         positionSeq++
     }
 

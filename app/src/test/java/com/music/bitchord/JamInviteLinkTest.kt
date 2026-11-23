@@ -19,6 +19,26 @@ import org.junit.Test
 
 class JamInviteLinkTest {
 
+    /**
+     * Before Android 12 only `pathPattern` routes a tapped invite, so each of
+     * the manifest's invite patterns must be one the parser accepts — and the
+     * common capitalisations must each have one.
+     */
+    @Test
+    fun `each manifest invite pattern before Android 12 reaches the parser`() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        val patterns = Regex("""android:pathPattern="(/[A-Za-z]+/\.{6})"""")
+            .findAll(manifest)
+            .map { it.groupValues[1] }
+            .filter { it.lowercase().startsWith("/invite/") }
+            .toList()
+        assertEquals(setOf("/invite/", "/INVITE/", "/Invite/"), patterns.map { it.dropLast(6) }.toSet())
+        patterns.forEach { pattern ->
+            val link = "https://bitchord.kushagrasingh.in" + pattern.replace("......", "ABC123")
+            assertEquals(pattern, "ABC123", JamInviteLink.parse(link))
+        }
+    }
+
     @Test
     fun `parses and normalizes a public invite`() {
         assertEquals(

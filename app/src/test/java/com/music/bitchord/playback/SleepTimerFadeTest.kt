@@ -27,4 +27,18 @@ class SleepTimerFadeTest {
         // No fade at all: full volume up to the pause.
         assertEquals(1f, SleepTimer.fadeVolume(5_000L, fadeMs = 0L), 0.001f)
     }
+
+    @Test
+    fun theReceiverIsPausedWhileCasting() {
+        val paused = mutableListOf<String>()
+        SleepTimer.pauseFor(castActive = true, pauseCast = { paused += "cast" }, pauseLocal = { paused += "local" })
+        assertEquals(listOf("cast"), paused)
+    }
+
+    @Test
+    fun thePhoneIsPausedWhenNotCasting() {
+        val paused = mutableListOf<String>()
+        SleepTimer.pauseFor(castActive = false, pauseCast = { paused += "cast" }, pauseLocal = { paused += "local" })
+        assertEquals(listOf("local"), paused)
+    }
 }
