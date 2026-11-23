@@ -30,4 +30,18 @@ class BuildForShuffleStateTest {
     fun `a superseded play installs nothing`() = runBlocking {
         assertNull(buildForShuffleState({ false }, { false }) { "order" })
     }
+
+    @Test
+    fun `a button's shuffle request holds even if the listener's setting moves`() = runBlocking {
+        val shuffleRequest: Boolean? = true
+        var listenerSetting = true
+        var builds = 0
+        val result = buildForShuffleState({ shuffleRequest ?: listenerSetting }, { true }) { shuffled ->
+            builds++
+            listenerSetting = false // toggled elsewhere mid-build; the button's request still decides
+            "order:$shuffled"
+        }
+        assertEquals(true to "order:true", result)
+        assertEquals(1, builds)
+    }
 }

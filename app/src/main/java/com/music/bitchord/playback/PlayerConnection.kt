@@ -1099,6 +1099,13 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
 suspend fun MediaController.playSongs(
     songs: List<Song>,
     startIndex: Int,
+    /**
+     * The shuffle a Play or Shuffle button asked for with this play
+     * ([QueueShuffle.takeRequestForNextQueue]), or null to keep the current
+     * one. Applied only once the play is accepted: a superseded play leaves
+     * the shuffle setting and its saved order as they were.
+     */
+    shuffleRequest: Boolean? = null,
     /** False once a newer play request has started; the queue is then left to it. */
     stillCurrent: () -> Boolean = { true },
 ): Boolean {
@@ -1107,7 +1114,9 @@ suspend fun MediaController.playSongs(
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
     val (shuffled, items) = buildForShuffleState(
-        shuffleEnabled = { QueueShuffle.enabled.value },
+        // A button's request fixes the mode for this queue; otherwise the
+        // listener's own setting, read again once the build is done.
+        shuffleEnabled = { shuffleRequest ?: QueueShuffle.enabled.value },
         stillCurrent = stillCurrent,
     ) { shuffled ->
         withContext(Dispatchers.Default) {
@@ -1119,6 +1128,7 @@ suspend fun MediaController.playSongs(
             queue.map { it.toMediaItem() }
         }
     } ?: return false
+    QueueShuffle.applyForNextQueue(shuffleRequest)
     if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
