@@ -842,7 +842,7 @@ class CrossfadeController(
                 val into = incoming ?: return bail()
                 TrackLog.d(TAG, "outgoing ran on into the next track before the handoff")
                 out.volume = 0f
-                handOff(out, into)
+                handOff(out, into, late = true)
             }
             else -> Unit
         }
@@ -1936,19 +1936,24 @@ class CrossfadeController(
      * point it becomes the louder of the two. From here [outgoing] is the idle
      * player, still audible, being faded away.
      */
-    /** False when it bailed instead: the queue no longer has the incoming track next. */
+    /**
+     * False when it bailed instead: the queue no longer has the incoming track next.
+     * [late]: the outgoing player already ran on into the incoming track, so that
+     * track is its current entry rather than its next.
+     */
     private fun handOff(
         out: ExoPlayer,
         into: ExoPlayer,
         visualAudioSeconds: Double? = null,
         visualEndSeconds: Double? = null,
+        late: Boolean = false,
     ): Boolean {
         if (handedOff) return true
         // AutoPlay may have appended to the queue since the standby was loaded
         // with a copy of it — during arming or the first half of the blend,
         // both of which the outgoing player owned — and those tracks would
         // otherwise be lost at the swap.
-        if (!reconcileQueue(out, into)) {
+        if (!reconcileQueue(out, into, late)) {
             bail(recover = false)
             return false
         }
@@ -2025,41 +2030,40 @@ class CrossfadeController(
      * entry: the standby's queue is replaced from the first entry that differs,
      * as long as that is after the incoming track, and entries removed from
      * the end are removed from the standby too. An edit that reaches the
-     * playing or incoming track — the next item removed or replaced — changes
-     * what the incoming track *is*. A replaced queue or a new playing item is
+     * playing or incoming track — a history row removed, the next item removed
+     * or replaced — changes what the standby would swap in with, so it is not
+     * patched over. [late]: the outgoing player already ran on into the
+     * incoming track, which is then its current entry, not its next. A replaced queue or a new playing item is
      * bailed by [listener]; an edit that leaves the playing item in place
      * reports no item transition, so it is caught here, and false tells
      * [handOff] not to swap onto a standby holding the wrong track.
      */
-    private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer): Boolean {
+    private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer, late: Boolean): Boolean {
         val queue = runCatching { (0 until out.mediaItemCount).map(out::getMediaItemAt) }.getOrNull() ?: return true
-        val liveNext = queue.getOrNull(out.nextMediaItemIndex)
-        if (liveNext == null || !sameQueueEntry(liveNext, into.currentMediaItem)) {
-            TrackLog.w(TAG, "the queue no longer has the incoming track next; not handing off")
-            return false
-        }
         val held = into.mediaItemCount
-        val shared = minOf(queue.size, held)
-        val firstDifference = (0 until shared).firstOrNull { !sameQueueEntry(queue[it], into.getMediaItemAt(it)) }
-        if (firstDifference == null) {
-            if (queue.size > held) {
-                into.addMediaItems(queue.subList(held, queue.size))
-                TrackLog.d(TAG, "reconciled ${queue.size - held} appended item(s) onto the incoming player")
-            } else if (queue.size < held && queue.size > into.currentMediaItemIndex) {
-                into.removeMediaItems(queue.size, held)
-                TrackLog.d(TAG, "reconciled ${held - queue.size} removed item(s) off the incoming player")
+        val heldQueue = (0 until held).map(into::getMediaItemAt)
+        val liveIncoming = if (late) out.currentMediaItemIndex else out.nextMediaItemIndex
+        when (val plan = QueueReconcile.plan(queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry)) {
+            QueueReconcile.Bail -> {
+                TrackLog.w(TAG, "the queue changed at or before the incoming track; not handing off")
+                return false
             }
-            queuedItemCount = queue.size
-            return true
+            QueueReconcile.Same -> Unit
+            is QueueReconcile.Append -> {
+                into.addMediaItems(queue.subList(plan.from, queue.size))
+                TrackLog.d(TAG, "reconciled ${queue.size - plan.from} appended item(s) onto the incoming player")
+            }
+            is QueueReconcile.TrimTo -> {
+                into.removeMediaItems(plan.size, held)
+                TrackLog.d(TAG, "reconciled ${held - plan.size} removed item(s) off the incoming player")
+            }
+            is QueueReconcile.ReplaceFrom -> {
+                into.removeMediaItems(plan.from, held)
+                into.addMediaItems(queue.subList(plan.from, queue.size))
+                TrackLog.d(TAG, "reconciled the queue from entry ${plan.from} onto the incoming player")
+            }
         }
-        if (firstDifference <= into.currentMediaItemIndex) {
-            TrackLog.w(TAG, "queue changed at $firstDifference, at or before the incoming track; not reconciled")
-            return true
-        }
-        into.removeMediaItems(firstDifference, held)
-        into.addMediaItems(queue.subList(firstDifference, queue.size))
         queuedItemCount = queue.size
-        TrackLog.d(TAG, "reconciled the queue from entry $firstDifference onto the incoming player")
         return true
     }
 
