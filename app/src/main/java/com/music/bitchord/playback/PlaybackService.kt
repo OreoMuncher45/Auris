@@ -840,10 +840,15 @@ class PlaybackService : MediaLibraryService() {
         val deferred: Deferred<List<SpotifyPlaylist>?>,
     )
 
+    private data class SpotifyPlaylistFetchOutcome(
+        val tracks: List<SpotifyTrack>,
+        val succeeded: Boolean,
+    )
+
     private data class InFlightSpotifyTracks(
         val token: String,
         val partial: java.util.concurrent.atomic.AtomicReference<List<SpotifyTrack>>,
-        val deferred: Deferred<List<SpotifyTrack>?>,
+        val deferred: Deferred<SpotifyPlaylistFetchOutcome>,
     )
 
     @Volatile
@@ -1003,11 +1008,20 @@ class PlaybackService : MediaLibraryService() {
         return entry.complete && entry.items.isNotEmpty() && isFresh(entry.fetchedAtMs, SPOTIFY_CACHE_TTL_MS)
     }
 
+    private enum class SpotifyPlaylistLoadStatus {
+        COMPLETE,
+        IN_PROGRESS,
+        FAILED,
+    }
+
     private data class SpotifyPlaylistTracksLoad(
         val tracks: List<SpotifyTrack>,
-        val complete: Boolean,
+        val status: SpotifyPlaylistLoadStatus,
         val inFlight: InFlightSpotifyTracks? = null,
-    )
+    ) {
+        val complete: Boolean get() = status == SpotifyPlaylistLoadStatus.COMPLETE
+        val failed: Boolean get() = status == SpotifyPlaylistLoadStatus.FAILED
+    }
 
     private suspend fun loadSpotifyPlaylistTracks(
         playlistId: String,
@@ -1020,20 +1034,22 @@ class PlaybackService : MediaLibraryService() {
     ): SpotifyPlaylistTracksLoad {
         val token = currentSpotifyToken()
         syncSpotifyAccountCaches(token)
-        if (token == null) return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
+        if (token == null) {
+            return SpotifyPlaylistTracksLoad(emptyList(), SpotifyPlaylistLoadStatus.FAILED)
+        }
         val cached = spotifyPlaylistTracksCache[playlistId]
         if (cached != null && cached.token == token && cached.complete && cached.items.isNotEmpty()) {
-            return SpotifyPlaylistTracksLoad(cached.items, complete = true)
+            return SpotifyPlaylistTracksLoad(cached.items, SpotifyPlaylistLoadStatus.COMPLETE)
         }
         val inFlight = spotifyPlaylistTracksMutex.withLock {
             val currentToken = currentSpotifyToken()
             syncSpotifyAccountCaches(currentToken)
             if (currentToken == null || currentToken != token) {
-                return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
+                return SpotifyPlaylistTracksLoad(emptyList(), SpotifyPlaylistLoadStatus.FAILED)
             }
             val refreshedCache = spotifyPlaylistTracksCache[playlistId]
             if (refreshedCache != null && refreshedCache.token == token && refreshedCache.complete && refreshedCache.items.isNotEmpty()) {
-                return SpotifyPlaylistTracksLoad(refreshedCache.items, complete = true)
+                return SpotifyPlaylistTracksLoad(refreshedCache.items, SpotifyPlaylistLoadStatus.COMPLETE)
             }
             val existing = spotifyPlaylistTracksInFlight[playlistId]
             if (existing != null && existing.token == token && !existing.deferred.isCompleted) {
@@ -1054,16 +1070,19 @@ class PlaybackService : MediaLibraryService() {
                     } catch (_: Exception) {
                         null
                     }
-                    if (!result.isNullOrEmpty() && currentSpotifyToken() == token) {
-                        spotifyPlaylistTracksCache[playlistId] = AccountScopedList(
-                            token = token,
-                            fetchedAtMs = SystemClock.elapsedRealtime(),
-                            items = result,
-                            complete = true,
-                        )
-                        result
+                    if (result != null && currentSpotifyToken() == token) {
+                        if (result.isNotEmpty()) {
+                            spotifyPlaylistTracksCache[playlistId] = AccountScopedList(
+                                token = token,
+                                fetchedAtMs = SystemClock.elapsedRealtime(),
+                                items = result,
+                                complete = true,
+                            )
+                        }
+                        SpotifyPlaylistFetchOutcome(tracks = result, succeeded = true)
                     } else {
-                        null
+                        val partial = if (currentSpotifyToken() == token) partialRef.get() else emptyList()
+                        SpotifyPlaylistFetchOutcome(tracks = partial, succeeded = false)
                     }
                 }
                 val created = InFlightSpotifyTracks(token, partialRef, deferred)
@@ -1075,32 +1094,63 @@ class PlaybackService : MediaLibraryService() {
                 created
             }
         }
-        val completed = try {
+        val outcome = try {
             withTimeoutOrNull(waitTimeoutMs) { inFlight.deferred.await() }
         } catch (e: CancellationException) {
             if (!currentCoroutineContext().isActive) throw e
-            null
+            SpotifyPlaylistFetchOutcome(tracks = inFlight.partial.get(), succeeded = false)
         } catch (_: Exception) {
-            null
+            SpotifyPlaylistFetchOutcome(tracks = inFlight.partial.get(), succeeded = false)
         }
         val activeToken = currentSpotifyToken()
         if (activeToken != token) {
             syncSpotifyAccountCaches(activeToken)
-            return SpotifyPlaylistTracksLoad(emptyList(), complete = true)
+            return SpotifyPlaylistTracksLoad(emptyList(), SpotifyPlaylistLoadStatus.FAILED)
         }
-        if (!completed.isNullOrEmpty()) {
-            return SpotifyPlaylistTracksLoad(completed, complete = true)
+        if (outcome != null) {
+            return if (outcome.succeeded) {
+                SpotifyPlaylistTracksLoad(outcome.tracks, SpotifyPlaylistLoadStatus.COMPLETE)
+            } else {
+                SpotifyPlaylistTracksLoad(outcome.tracks, SpotifyPlaylistLoadStatus.FAILED)
+            }
         }
         val cachedAfter = spotifyPlaylistTracksCache[playlistId]
             ?.takeIf { it.token == token && it.complete && it.items.isNotEmpty() }
         if (cachedAfter != null) {
-            return SpotifyPlaylistTracksLoad(cachedAfter.items, complete = true)
+            return SpotifyPlaylistTracksLoad(cachedAfter.items, SpotifyPlaylistLoadStatus.COMPLETE)
         }
-        val stillRunning = !inFlight.deferred.isCompleted
+        if (inFlight.deferred.isCompleted) {
+            val terminal = try {
+                inFlight.deferred.await()
+            } catch (e: CancellationException) {
+                if (!currentCoroutineContext().isActive) throw e
+                null
+            } catch (_: Exception) {
+                null
+            }
+            val tokenAfter = currentSpotifyToken()
+            if (tokenAfter != token) {
+                syncSpotifyAccountCaches(tokenAfter)
+                return SpotifyPlaylistTracksLoad(emptyList(), SpotifyPlaylistLoadStatus.FAILED)
+            }
+            return if (terminal != null && terminal.succeeded) {
+                SpotifyPlaylistTracksLoad(terminal.tracks, SpotifyPlaylistLoadStatus.COMPLETE)
+            } else {
+                SpotifyPlaylistTracksLoad(
+                    tracks = terminal?.tracks ?: inFlight.partial.get(),
+                    status = SpotifyPlaylistLoadStatus.FAILED,
+                )
+            }
+        }
+        val tokenBeforePartial = currentSpotifyToken()
+        if (tokenBeforePartial != token) {
+            syncSpotifyAccountCaches(tokenBeforePartial)
+            return SpotifyPlaylistTracksLoad(emptyList(), SpotifyPlaylistLoadStatus.FAILED)
+        }
         return SpotifyPlaylistTracksLoad(
             tracks = inFlight.partial.get(),
-            complete = !stillRunning,
-            inFlight = if (stillRunning) inFlight else null,
+            status = SpotifyPlaylistLoadStatus.IN_PROGRESS,
+            inFlight = inFlight,
         )
     }
 
@@ -1429,7 +1479,6 @@ class PlaybackService : MediaLibraryService() {
 
     private fun refreshFolderInBackground(
         session: MediaLibrarySession,
-        browser: MediaSession.ControllerInfo,
         parentId: String,
         params: LibraryParams?,
         fetch: suspend () -> Int?,
@@ -1438,7 +1487,7 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val freshCount = fetch()
                 if (freshCount != null && freshCount > 0) {
-                    session.notifyChildrenChanged(browser, parentId, freshCount, params)
+                    session.notifyChildrenChanged(parentId, freshCount, params)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -11015,7 +11064,7 @@ class PlaybackService : MediaLibraryService() {
                     val needRefreshQuick = quickSnap.isNotEmpty() && !isQuickPicksFresh()
                     val needRefreshYtHome = ytHomeSnap != null && !isHomeFresh()
                     if (needRefreshDl || needRefreshSpHome || needRefreshRecents || needRefreshQuick || needRefreshYtHome) {
-                        refreshFolderInBackground(session, browser, parentId, params) {
+                        refreshFolderInBackground(session, parentId, params) {
                             val refreshed = coroutineScope {
                                 val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
                                 val rSpHome = if (needRefreshSpHome) async { fetchFreshSpotifyHomeFeed() } else null
@@ -11066,7 +11115,7 @@ class PlaybackService : MediaLibraryService() {
                     val snapshot = snapshotRecents()
                     val songs = if (snapshot.isNotEmpty()) {
                         if (!isRecentsFresh()) {
-                            refreshFolderInBackground(session, browser, parentId, params) {
+                            refreshFolderInBackground(session, parentId, params) {
                                 fetchFreshRecentsSongs()
                                     ?.count { !AppSettings.isSongBlocked(it) }
                                     ?.coerceAtLeast(1)
@@ -11118,7 +11167,7 @@ class PlaybackService : MediaLibraryService() {
                     val needRefreshDl = spotifySignedIn && dlSnap != null && !isSpotifyDaylistFresh()
                     val needRefreshQp = snapshot.isNotEmpty() && !isQuickPicksFresh()
                     if (needRefreshDl || needRefreshQp) {
-                        refreshFolderInBackground(session, browser, parentId, params) {
+                        refreshFolderInBackground(session, parentId, params) {
                             val (freshDl, freshQp) = coroutineScope {
                                 val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
                                 val rQp = if (needRefreshQp) async { fetchFreshQuickPicksSongs() } else null
@@ -11157,7 +11206,7 @@ class PlaybackService : MediaLibraryService() {
                         val snapshot = snapshotLiked()
                         val songs = if (snapshot.isNotEmpty()) {
                             if (!isLikedFresh()) {
-                                refreshFolderInBackground(session, browser, parentId, params) {
+                                refreshFolderInBackground(session, parentId, params) {
                                     fetchFreshLikedSongs()
                                         ?.count { !AppSettings.isSongBlocked(it) }
                                         ?.coerceAtLeast(1)
@@ -11228,7 +11277,7 @@ class PlaybackService : MediaLibraryService() {
                             (ytSnap.isNotEmpty() && !isPlaylistsFresh()) || ytPlaylists.isEmpty()
                         )
                         if (needRefreshSp || needRefreshYt) {
-                            refreshFolderInBackground(session, browser, parentId, params) {
+                            refreshFolderInBackground(session, parentId, params) {
                                 var updated = false
                                 val (freshSp, freshYt) = coroutineScope {
                                     val rSp = if (needRefreshSp) {
@@ -11315,19 +11364,19 @@ class PlaybackService : MediaLibraryService() {
                                 rememberAutoParent(song.videoId, parentId)
                             }
                             val pendingFetch = loaded.inFlight
-                            if (!loaded.complete && pendingFetch != null) {
-                                refreshFolderInBackground(session, browser, parentId, params) {
-                                    val completed = try {
+                            if (loaded.status == SpotifyPlaylistLoadStatus.IN_PROGRESS && pendingFetch != null) {
+                                refreshFolderInBackground(session, parentId, params) {
+                                    val terminal = try {
                                         pendingFetch.deferred.await()
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (_: Exception) {
                                         null
                                     }
-                                    if (completed.isNullOrEmpty() || currentSpotifyToken() != pendingFetch.token) {
+                                    if (terminal == null || !terminal.succeeded || terminal.tracks.isEmpty() || currentSpotifyToken() != pendingFetch.token) {
                                         null
                                     } else {
-                                        completed
+                                        terminal.tracks
                                             .map(SpotifyHomeSource::songFor)
                                             .count { !AppSettings.isSongBlocked(it) }
                                             .takeIf { it > 0 }
