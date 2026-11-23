@@ -1914,7 +1914,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
             uri
         } else {
-            sourceAnalysisUris[trackId] ?: return null
+            // A result restored after a restart arrives before any catalogue
+            // match: the copy it names is the matched YouTube copy.
+            sourceAnalysisUris[trackId]
+                ?: results[trackId]?.measuredOn
+                    ?.let(AutomixAnalysisSource::videoIdOfAnalysisKey)
+                    ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
+                ?: return null
         }
         val began = SystemClock.elapsedRealtime()
         // Off the copy the markers were measured on, when that is known: a
