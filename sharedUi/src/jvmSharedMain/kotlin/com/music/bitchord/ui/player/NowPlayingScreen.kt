@@ -1401,6 +1401,8 @@ fun NowPlayingScreen(
 ) {
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+    // The Best Part pill leaves composition under panels; this screen stays for every track.
+    LaunchedEffect(song.videoId) { bestPartTrackChanged(song.videoId) }
 
     // The size of the copy of the cover this player draws: the width of the
     // window it is drawn in, capped at the largest rung on the ladder — see
