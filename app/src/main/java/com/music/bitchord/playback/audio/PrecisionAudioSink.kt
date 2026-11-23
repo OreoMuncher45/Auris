@@ -250,12 +250,14 @@ class PrecisionAudioSink(
     private var loopInStarted = false
 
     /**
-     * What the delegate's timeline is ahead of the track's by, µs: silence
-     * inserted adds to it, frames dropped take from it. Handed to the delegate
-     * so its clock runs on without a jump, and taken back off every position
-     * reported, so the player still sees the true track position.
+     * What the delegate's timeline is ahead of the track's by: silence
+     * inserted adds to it, frames dropped take from it. Its [ShiftTimeline.writtenUs]
+     * is handed to the delegate so its clock runs on without a jump, and each
+     * shift is taken back off the positions reported once it is heard, so the
+     * player still sees the true track position.
      */
-    private var delegateOffsetUs = 0L
+    private val shifts = ShiftTimeline()
+    private val delegateOffsetUs: Long get() = shifts.writtenUs
 
     private val loopScratch = FloatArray(AudioBlock.DEFAULT_CAPACITY_FRAMES * 2)
 
@@ -852,8 +854,10 @@ class PrecisionAudioSink(
                     if (shift > 0) {
                         val drop = minOf(shift, (inputBuffer.remaining() / bytesPerFrame).toLong())
                         inputBuffer.position(inputBuffer.position() + (drop * bytesPerFrame).toInt())
+                        // Where the next written frame lands on the delegate's timeline.
+                        val boundaryUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) + delegateOffsetUs
                         framesEmittedForInput += drop
-                        delegateOffsetUs -= Util.sampleCountToDurationUs(drop, configuredSampleRate)
+                        shifts.drop(boundaryUs, Util.sampleCountToDurationUs(drop, configuredSampleRate))
                         port.pendingShift.addAndGet(-drop)
                         continue
                     } else {
@@ -1004,8 +1008,9 @@ class PrecisionAudioSink(
         val delegatePosition = super.getCurrentPositionUs(sourceEnded)
         if (delegatePosition == AudioSink.CURRENT_POSITION_NOT_SET) return delegatePosition
         // The delegate counts any silence the loop mix inserted, and none of the
-        // frames it dropped; the player is told the track's own position.
-        val position = delegatePosition - delegateOffsetUs
+        // frames it dropped; the player is told the track's own position, each
+        // shift taken off from the moment it is heard.
+        val position = shifts.trackPositionUs(delegatePosition)
         val processed = processedEndUs
         if (processed != C.TIME_UNSET) {
             dspChain.transition.leadUs = (processed - position).coerceAtLeast(0L)
@@ -1163,7 +1168,7 @@ class PrecisionAudioSink(
         PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)
         outputByteBuffer.flip()
         val blockUs = trackBlockUs + delegateOffsetUs
-        delegateOffsetUs += Util.sampleCountToDurationUs(frames.toLong(), configuredSampleRate)
+        shifts.insertSilence(blockUs, Util.sampleCountToDurationUs(frames.toLong(), configuredSampleRate))
         pendingPresentationTimeUs = blockUs
         pendingAccessUnitCount = 0
         // Accepted or not, the frames are the delegate's now (a partial write drains next call).
@@ -1185,7 +1190,7 @@ class PrecisionAudioSink(
         loopGenerating = false
         loopRendering = false
         loopInStarted = false
-        delegateOffsetUs = 0L
+        shifts.reset()
     }
 
     override fun flush() {
