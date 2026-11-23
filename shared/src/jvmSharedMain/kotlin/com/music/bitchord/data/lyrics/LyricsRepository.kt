@@ -190,7 +190,7 @@ object LyricsRepository {
 
             val found = runCatching { await() }.getOrNull() ?: continue
             if (found.lines.any { it.isWordSynced }) return found
-            if (found.lines.any { it.timeMs > 0 }) {
+            if (found.lines.any { it.isTimed }) {
                 if (!prioritizeSyllableSync) return found
                 if (lineSynced == null) lineSynced = found
             } else if (plain == null) {

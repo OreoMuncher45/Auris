@@ -986,7 +986,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
     private fun isDetailOpen(browseId: String, opening: Long): Boolean =
-        detailOpenings[browseId] == opening && _detailStack.value.any { it.browseId == browseId }
+        detailOpenings[browseId] == opening && _detailStack.value.any { it.opening == opening }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -3327,7 +3327,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { fetchLibrary(identity) }
     }
 
-    private suspend fun fetchLibrary(identity: String?) {
+    private suspend fun fetchLibrary(identity: String?, attempt: Int = 0) {
         // A candidate account under validation signs requests before
         // [listenerKey] moves, so wait it out: then the credentials read below
         // are the listener's own.
@@ -3365,7 +3365,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
-        if (identity == listenerKey()) _library.value = next
+        if (identity != listenerKey()) return
+        // The request reads its cookie and account when it is built, after the
+        // wait above, so credentials installed in between answered for another
+        // account. That is never published as this listener's library: it is
+        // asked for again under the settled credentials.
+        if (Innertube.listenerGeneration != credentials) {
+            if (attempt < LIBRARY_CREDENTIAL_RETRIES) fetchLibrary(identity, attempt + 1)
+            return
+        }
+        _library.value = next
     }
 
     /**
@@ -4387,6 +4396,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val resolved = browseTypeOf(browseId, type)
+        val opened = markDetailOpened(browseId)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4394,8 +4404,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             thumbnailUrl = thumbnailUrl,
             songs = UiState.Loading,
             type = resolved,
+            opening = opened,
         )
-        val opened = markDetailOpened(browseId)
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -5025,7 +5035,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // a real track that first showed up as a suggestion is still new.
         val seen = HashSet<String>()
         val seenSuggested = HashSet<String>()
-        _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
+        _detailStack.value.firstOrNull { it.opening == opened }?.let { page ->
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
             page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
@@ -5064,7 +5074,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ) { batch ->
                 if (!stillOurs()) return@followContinuations false
                 val stack = _detailStack.value
-                val index = stack.indexOfFirst { it.browseId == browseId }
+                // The entry this opening pushed, not the first with its id.
+                val index = stack.indexOfFirst { it.opening == opened }
                 if (index < 0) return@followContinuations false
                 val current = stack[index]
                 val existing = (current.songs as? UiState.Success)?.data ?: return@followContinuations false
@@ -6033,6 +6044,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /** How many of a mood station's playlists are opened for its pool. */
+/** How often a library read crossed by a credential change is asked for again. */
+private const val LIBRARY_CREDENTIAL_RETRIES = 2
+
 private const val FLOW_MOOD_PLAYLISTS = 4
 
 /** How many songs are taken from each of those playlists. */

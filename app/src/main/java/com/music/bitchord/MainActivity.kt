@@ -1742,7 +1742,6 @@ internal fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
-            QueueShuffle.applyForNextQueue(shuffle)
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
@@ -1762,7 +1761,7 @@ internal fun BitChordApp(
                     source = source,
                     upcomingPartyTracks = upcomingPartyTracks,
                 )
-                c.playSongs(timeline, 0) { request == playRequestGeneration }
+                c.playSongs(timeline, 0, shuffleRequest = shuffle) { request == playRequestGeneration }
             } else {
                 val result = QueueCoordinator.buildContextQueue(
                     currentTimeline = currentTimeline,
@@ -1771,7 +1770,9 @@ internal fun BitChordApp(
                     selectedIndex = index,
                     contextSource = source,
                 )
-                c.playSongs(result.timeline, result.startIndex) { request == playRequestGeneration }
+                c.playSongs(result.timeline, result.startIndex, shuffleRequest = shuffle) {
+                    request == playRequestGeneration
+                }
             }
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }

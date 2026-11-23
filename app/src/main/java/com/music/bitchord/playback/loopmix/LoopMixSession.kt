@@ -24,6 +24,8 @@ class LoopMixSession private constructor(
     val inId: String,
     val renderer: LoopMixRenderer,
     val sampleRate: Int,
+    /** The incoming deck's level against the outgoing sink's, as the two players' gains stood at build time. */
+    val inLevel: Float,
 ) {
     /** Track microseconds of the outgoing loop start: where the sink splices. */
     val takeoverUs: Long = (plan.out.loopStart * 1_000_000).roundToLong()
@@ -241,7 +243,7 @@ class LoopMixSession private constructor(
                 renderer.prepare(AudioBlock.DEFAULT_CAPACITY_FRAMES)
                 // The incoming deck hands over to its own player at the same track position.
                 renderer.setFadeOut(LoopMixRenderer.IN, clock.elementTrackTime)
-                return LoopMixSession(plan, clock, outId, inId, renderer, sampleRate).also { it.planIncomingStart() }
+                return LoopMixSession(plan, clock, outId, inId, renderer, sampleRate, inLevel).also { it.planIncomingStart() }
             } catch (t: Throwable) {
                 renderer.close()
                 throw t

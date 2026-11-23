@@ -183,8 +183,11 @@ fun PlaylistPickerSheet(
                     )
                 }
                 // Capped so a long list can't push the sheet past the screen;
-                // it scrolls inside the sheet instead.
-                LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                // it scrolls inside the sheet instead. Weighted, not filling,
+                // so it is measured after the Add button: with room to spare
+                // it is the same capped list, and when the keyboard takes the
+                // room it is the list that gives way, not the button.
+                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 320.dp)) {
                     items(shown, key = { it.playlistId }) { playlist ->
                         val ticked = playlist.playlistId in selected
                         PlaylistRow(

@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import androidx.media3.common.MediaItem
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 
@@ -12,10 +13,58 @@ import com.music.bitchord.data.model.Song
  * into what AutoPlay appended): rows behind that last track are then history,
  * and a page slipped in there would be "upcoming" tracks nobody hears.
  */
-internal fun autoContinuationInsertIndex(queue: List<Song>, sourceId: String, currentIndex: Int): Int? {
-    val last = queue.indexOfLast { it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId }
-    if (last < 0 || last < currentIndex) return null
-    return last + 1
+internal fun autoContinuationInsertIndex(
+    queue: List<Song>,
+    sourceId: String,
+    currentIndex: Int,
+    /**
+     * The queue entries the folder was installed as, and those this
+     * continuation added. A new queue carrying the same source id (the same
+     * playlist started again from the phone) mints new entry ids, so its rows
+     * are not this folder's. Null matches on the source id alone.
+     */
+    folderEntries: Set<String>? = null,
+): Int? {
+    val last = queue.indexOfLast {
+        it.queueTier == QueueTier.CONTEXT && it.playbackSourceId == sourceId &&
+            (folderEntries == null || it.queueEntryId in folderEntries)
+    }
+    if (last < 0) return null
+    // Play Next entries queued right behind the folder stay ahead of its next
+    // page: the listener asked for them next.
+    var end = last + 1
+    while (end < queue.size && queue[end].queueTier == QueueTier.USER_QUEUE) end++
+    if (currentIndex >= end) return null
+    return end
+}
+
+/** A queue row's identity: its entry id, minted per queue build, or its media id without one. */
+internal fun MediaItem.queueKey(): String = queueEntryId ?: mediaId
+
+/** One page an Auto folder's continuation added: its entries, right after [anchor]'s. */
+internal class ContinuationInsert(val anchor: String, val entries: List<String>)
+
+/**
+ * Whether [active] is [original] with nothing changed but the folder pages in
+ * [inserts] added where the continuation put them. Entries are queue entry
+ * keys, AutoPlay's left out. Moving or removing an added row is an edit like
+ * any other, which comparing the queue with the added rows taken out could
+ * not see.
+ */
+internal fun queueOnlyGrewByContinuation(
+    original: List<String>,
+    active: List<String>,
+    inserts: List<ContinuationInsert>,
+): Boolean {
+    if (inserts.isEmpty()) return active == original
+    val expected = ArrayList<String>(original.size + inserts.sumOf { it.entries.size })
+    expected.addAll(original)
+    for (insert in inserts) {
+        val at = expected.indexOf(insert.anchor)
+        if (at < 0) return false
+        expected.addAll(at + 1, insert.entries)
+    }
+    return expected == active
 }
 
 /**
