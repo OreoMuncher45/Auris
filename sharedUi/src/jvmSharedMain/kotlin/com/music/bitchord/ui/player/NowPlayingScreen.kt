@@ -2280,7 +2280,10 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
-    val currentAutoMixAmbient = rememberUpdatedState(autoMixAmbient)
+    // Only the portrait sleeve draws the cover reveal, so only there does the
+    // blur follow it: in landscape the sleeve changes at the track change and
+    // the blur keeps its ordinary crossfade with it.
+    val currentAutoMixAmbient = rememberUpdatedState(if (landscape) NoAutoMixAmbient else autoMixAmbient)
     val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve

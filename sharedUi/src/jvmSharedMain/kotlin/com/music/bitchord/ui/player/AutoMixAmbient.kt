@@ -34,6 +34,9 @@ class AutoMixAmbientMix internal constructor(
     val progress: () -> Float,
 )
 
+/** For a surface whose cover draws no reveal: its backdrop keeps its own fade. */
+internal val NoAutoMixAmbient: () -> AutoMixAmbientMix? = { null }
+
 /**
  * Waits until [mix] has the incoming backdrop half on screen, for a backdrop's
  * ink: the chrome is re-judged once, at the halfway point, and not on every
