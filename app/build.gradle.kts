@@ -397,6 +397,57 @@ val newPipeExtractorStripped = tasks.register<org.gradle.api.tasks.bundling.Jar>
     }
 }
 
+/**
+ * The Android framework jars Robolectric runs the tests against.
+ *
+ * Left to itself, Robolectric downloads these (~150 MB each) from Maven
+ * Central at test time, on its own HTTP client with no retries and outside
+ * Gradle's cache. On a fresh CI runner, whichever test class reaches the
+ * sandbox first fails every one of its tests if that download drops
+ * (AssertionError at MavenArtifactFetcher). Gradle resolves the jars instead,
+ * with its own retries and the cache that setup-gradle restores, and the tests
+ * run Robolectric offline against them.
+ *
+ * Two jars, because Robolectric needs two: the SDK a test runs on (every test
+ * pins `@Config(sdk = [34])`), and the newest SDK it knows (35 for 4.14.1;
+ * targetSdk is clamped to it), which it uses to parse the app's own package.
+ * The versions are what Robolectric 4.14.1 maps those SDKs to (its
+ * DefaultSdkProvider). Bump them together with Robolectric, and add one for
+ * any new SDK a test pins. A missing jar fails the test at once and names the
+ * file. Nothing is downloaded behind your back.
+ */
+// One configuration per jar: they are two versions of one module, and a
+// single configuration would resolve the conflict down to the newer one.
+val robolectricAndroidAll = listOf(
+    "14-robolectric-10818077-i7",
+    "15-robolectric-12650502-i7",
+).map { version ->
+    configurations.create("robolectricAndroidAll-$version") {
+        isTransitive = false
+        isCanBeConsumed = false
+    }.also { dependencies.add(it.name, "org.robolectric:android-all-instrumented:$version") }
+}
+// Robolectric looks for the jars by their Maven file names in one directory,
+// and Gradle's cache keeps each version in a directory of its own.
+val robolectricAndroidAllDir = layout.buildDirectory.dir("robolectric-android-all")
+val syncRobolectricAndroidAll = tasks.register<Sync>("syncRobolectricAndroidAll") {
+    from(robolectricAndroidAll)
+    into(robolectricAndroidAllDir)
+}
+tasks.withType<Test>().configureEach {
+    // The jars' content is an input, but their path isn't: an absolute path
+    // would make the test result machine-specific.
+    inputs.files(syncRobolectricAndroidAll).withPathSensitivity(PathSensitivity.NONE)
+        .withPropertyName("robolectricAndroidAll")
+    val dir = robolectricAndroidAllDir
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf(
+            "-Drobolectric.offline=true",
+            "-Drobolectric.dependency.dir=${dir.get().asFile.absolutePath}",
+        )
+    })
+}
+
 dependencies {
     implementation(project(":shared"))
     implementation(project(":sharedUi"))
@@ -552,6 +603,7 @@ dependencies {
     // were dead shipped twice before anything noticed. Robolectric runs the
     // real tree on the JVM; it needs Conscrypt's native lib, which is x86_64
     // only, so these are skipped on aarch64 hosts (see testOptions).
+    // Bumping this? Bump robolectricAndroidAll with it.
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")
