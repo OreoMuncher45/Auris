@@ -263,10 +263,10 @@
     <string name="queue_selected_count">%1$d चुने गए</string>
     <string name="queue_close_selection">चयन बंद करें</string>
     <string name="queue_selection_remove">हटाएं</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">प्लेलिस्ट में जोड़ें</string>
     <string name="queue_download">डाउनलोड करें</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s हटाया गया</string>
+    <string name="queue_removed_songs">%1$d गाने हटाए गए</string>
+    <string name="queue_undo_action">पूर्ववत करें</string>
+    <string name="queue_cleared">\"कतार में अगला\" खाली किया गया</string>
 </resources>
