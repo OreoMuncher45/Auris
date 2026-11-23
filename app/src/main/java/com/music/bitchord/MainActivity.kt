@@ -3143,6 +3143,9 @@ internal fun BitChordApp(
             }
         }
     }
+    queueEditing.onSwipeRemove = { index, song ->
+        offerQueueUndo(controller?.removeQueueRows(listOf(QueueEdits.Target(index, song)), player.queue), false)
+    }
     queueEditing.onBulkAction = { targets, action ->
         // The songs the user ticked, as the screen showed them — not whatever
         // sits at those indices in the queue by now.

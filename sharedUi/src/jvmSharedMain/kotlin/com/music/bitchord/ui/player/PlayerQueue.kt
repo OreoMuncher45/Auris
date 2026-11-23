@@ -348,7 +348,8 @@ internal fun InlineQueue(
             val live = resolve(original) ?: return@commit false
             when (action) {
                 QueueSwipeAction.REMOVE -> {
-                    onRemove(live.timelineIndex)
+                    val host = editing
+                    if (host != null) host.onSwipeRemove(live.timelineIndex, live.song) else onRemove(live.timelineIndex)
                     true
                 }
                 QueueSwipeAction.QUEUE -> editing?.onSwipeToQueue(live.timelineIndex, live.song) == true
