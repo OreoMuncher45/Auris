@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.ui.components.YouTubeThumbnailFallback
 import android.app.Application
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
@@ -53,6 +54,13 @@ import java.util.concurrent.FutureTask
 import kotlin.concurrent.thread
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
+
+    init {
+        // SLF4J (through Ktor) has no provider here and says so on System.err, which
+        // R8's Log stripping cannot reach. Only errors from its own setup in a release
+        // build. In the constructor, ahead of the content providers that can reach it first.
+        if (!BuildConfig.DEBUG) System.setProperty("slf4j.internal.verbosity", "ERROR")
+    }
 
     @OptIn(UnstableApi::class)
     @kotlin.OptIn(ExperimentalComposeUiApi::class)
@@ -252,6 +260,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             backgroundScope().launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
+        // After AppSettings: with the model download switched on, fetches
+        // Automix's models as soon as Automix is on rather than waiting for the
+        // first song it would mix. Bundled, it only notes where they unpack to.
+        com.music.bitchord.playback.smart.AutomixModels.install(this)
         com.music.bitchord.data.settings.MediaProgress.init(this)
         com.music.bitchord.data.settings.PodcastLibrary.init(this)
         // Before anything resolves a track: an addon with `checkValidLossless`
@@ -382,6 +394,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 // Covers filed on the SMB share; anything else falls
                 // through to Coil's own fetchers. See SmbCoverFetcher.
                 add(SmbCoverFetcher.Factory())
+                // A larger YouTube cover than the video has 404s; this
+                // falls back to the size every video has. See the class.
+                add(YouTubeThumbnailFallback())
             }
             .memoryCache {
                 // A fifth of the heap, as before, except on a phone that calls

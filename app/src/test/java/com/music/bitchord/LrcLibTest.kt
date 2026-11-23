@@ -26,6 +26,38 @@ class LrcLibTest {
     }
 
     @Test
+    fun `a line with several stamps is sung at each of them`() {
+        val lines = LrcLib.parseLrc(
+            """
+            [00:12.00][00:45.00]chorus
+            [00:20.00]verse
+            """.trimIndent(),
+        )
+
+        assertEquals(listOf(12_000L, 20_000L, 45_000L), lines.filterNot { it.isGap }.map { it.timeMs })
+        assertEquals(listOf("chorus", "verse", "chorus"), lines.words())
+    }
+
+    @Test
+    fun `each repeat of a stamped line gets word timings at its own time`() {
+        val lines = LrcLib.parseLrc("[00:12.00][00:45.00]<00:12.00>chorus <00:12.50>line<00:13.00>")
+            .filterNot { it.isGap }
+
+        assertEquals(listOf(12_000L, 12_500L), lines[0].words.map { it.startMs })
+        assertEquals(listOf(45_000L, 45_500L), lines[1].words.map { it.startMs })
+        assertEquals(46_000L, lines[1].words.last().endMs)
+        assertEquals(lines[0].text, lines[1].text)
+    }
+
+    @Test
+    fun `stamps with a space between them are still one run`() {
+        val lines = LrcLib.parseLrc("[00:12.00] [00:45.00] chorus").filterNot { it.isGap }
+
+        assertEquals(listOf(12_000L, 45_000L), lines.map { it.timeMs })
+        assertEquals(listOf("chorus", "chorus"), lines.words())
+    }
+
+    @Test
     fun `parses millisecond stamps`() {
         val lines = LrcLib.parseLrc("[02:03.456] third line").filterNot { it.isGap }
         assertEquals(123_456L, lines.single().timeMs)

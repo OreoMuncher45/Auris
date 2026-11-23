@@ -133,15 +133,24 @@ class AddonClient(rawBaseUrl: String) {
      *   catalogue that publishes the immersive mix as its own row — Tidal does
      *   — offers it as a row or not at all, and a search that did not ask
      *   would never bring it back to be preferred.
+     *
+     * [title] and [artist], when known, go along as their own parameters
+     * beside `q`. `q` mixes the two into one string, so an addon cannot tell
+     * which words name the singer; given them apart it can keep the right
+     * recording of a title several artists have sung. An addon that does not
+     * read them ignores them, as it does any unknown parameter.
      */
     suspend fun search(
         query: String,
         tier: String,
         wantsAtmos: Boolean = false,
+        title: String = "",
+        artist: String = "",
     ): Result<List<AddonTrack>> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return Result.success(emptyList())
-        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos))
+        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos)) +
+            listOf("title" to title.trim(), "artist" to artist.trim()).filter { it.second.isNotEmpty() }
         return searches.get(
             // The parameters are in the key because they are in the request:
             // the same query at a different quality is a different question,

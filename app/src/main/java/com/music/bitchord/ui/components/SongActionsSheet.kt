@@ -37,7 +37,6 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
@@ -237,12 +236,6 @@ fun SongActionsSheet(
      * create/join page otherwise. Player-only.
      */
     onOpenListenTogether: (() -> Unit)? = null,
-    /**
-     * Opens the Automix panel for this track: what was measured about it, what
-     * was planned for the handoff, and the listener's own answer to both.
-     * Player-only, and null everywhere else.
-     */
-    onOpenAutomix: (() -> Unit)? = null,
     /** Party size while listening together, or null when there is no party. */
     listenTogetherMembers: Int? = null,
     /**
@@ -329,27 +322,32 @@ fun SongActionsSheet(
             GroupSeparator(palette)
         }
 
-        if (signedIn && !isOffline) {
-            ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
-                tint = if (liked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleLike,
-            )
-            ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
-                tint = if (disliked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleDislike,
-            )
-            ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
+        // Remove stands without an account too: a playlist imported onto this
+        // device is the listener's to edit while signed out or offline.
+        val accountRows = signedIn && !isOffline
+        if (accountRows || onRemoveFromPlaylist != null) {
+            if (accountRows) {
+                ActionRow(
+                    icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                    tint = if (liked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleLike,
+                )
+                ActionRow(
+                    icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                    label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
+                    tint = if (disliked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleDislike,
+                )
+                ActionRow(
+                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    label = stringResource(R.string.add_to_playlist),
+                    accent = palette.accent,
+                    onClick = onAddToPlaylist,
+                )
+            }
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = Icons.Rounded.PlaylistRemove,
@@ -493,18 +491,6 @@ fun SongActionsSheet(
                 icon = Icons.Rounded.Groups,
                 label = stringResource(R.string.listen_together),
                 value = listenTogetherMembers?.toString(),
-                accent = palette.accent,
-                onClick = it,
-            )
-        }
-        // Automix analysis: what the app measured about this track and what it
-        // planned for the handoff into the next one, and the listener's own
-        // answer to both. Player-only for the same reason the four above are:
-        // it is about the track playing right now.
-        onOpenAutomix?.let {
-            ActionRow(
-                icon = Icons.Rounded.GraphicEq,
-                label = stringResource(R.string.automix_analysis_menu),
                 accent = palette.accent,
                 onClick = it,
             )

@@ -328,6 +328,27 @@ jobs:
             }
           done
 
+      # Signalsmith Stretch and Linear are compiled into the loop-mix library,
+      # and their MIT licences have to ship with that code; see the
+      # thirdPartyNotices task in app/build.gradle.kts.
+      - name: The third-party notices are in the APK
+        run: |
+          set -euo pipefail
+          for apk in dist/*.apk; do
+            for name in signalsmith-stretch signalsmith-linear; do
+              # Byte for byte against the vendored file: a truncated copy
+              # can still contain any phrase a grep would look for.
+              unzip -p "$apk" "assets/licenses/$name.txt" > notice.txt || {
+                echo "no $name licence in $apk" >&2
+                exit 1
+              }
+              cmp notice.txt "native/third_party/$name/LICENSE.txt" || {
+                echo "$name licence in $apk differs from the vendored one" >&2
+                exit 1
+              }
+            done
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: android-draft-apk

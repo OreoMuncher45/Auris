@@ -729,7 +729,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val key = LyricsLookupKey(
             videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
         )
-        if (lyricsFor == key) return
+        if (lyricsFor == key) {
+            // The lookup is already running, perhaps still reading the file
+            // without a length; keep the length for when it needs one.
+            if (durationMs > 0L) currentLyricsRequest = currentLyricsRequest
+                ?.takeIf { it.videoId == videoId && it.durationMs <= 0L }?.copy(durationMs = durationMs)
+                ?: currentLyricsRequest
+            return
+        }
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
         // lookup first and giving it up asynchronously means the very re-trigger
@@ -764,6 +771,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // only needed to *match* a track against a stranger's database, and
             // nothing is being matched here — these lyrics were written into
             // this exact file, for this exact recording.
+            // Plain words from the file: shown at once, but they only stand in
+            // until a source answers with timing. Most taggers store lyrics
+            // untimed (an MP3's USLT nearly always is), and ending the lookup
+            // on them would cost every such file the synced lyrics it got
+            // before the file's own words were read at all.
+            var embeddedPlain: List<LyricLine>? = null
             if (localUri != null) {
                 EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
                     _lyrics.value = embedded
@@ -771,16 +784,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // not which of the eight services they came from months ago.
                     _lyricsSource.value = null
                     _lyricsChecked.value = true
-                    return@launch
+                    if (EmbeddedLyrics.isSynced(embedded)) return@launch
+                    embeddedPlain = embedded
                 }
             }
-            if (durationMs <= 0L) {
+            // A length that came in while the file was read.
+            val lengthMs = durationMs.takeIf { it > 0L }
+                ?: currentLyricsRequest?.takeIf { it.videoId == videoId }?.durationMs ?: 0L
+            if (lengthMs <= 0L) {
                 // Duration arrives a beat after the track does; wait for it.
                 lyricsFor = null
                 return@launch
             }
             val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
+                videoId, title, artist, lengthMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
                 onSourceStarted = { source -> providerStarted(generation, source) },
                 onSourceResult = { source, result ->
@@ -788,9 +805,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
             )
-            val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
-            _lyrics.value = selected?.lines
-            _lyricsSource.value = selected?.source
+            val picked = selectedLyricsSource?.let(lyricsProviderResults::get)
+            // The file's own words beat a stranger's untimed copy; only timing,
+            // or a provider the listener picked by hand, displaces them.
+            val selected = picked
+                ?: found?.takeIf { embeddedPlain == null || EmbeddedLyrics.isSynced(it.lines) }
+            if (selected == null && embeddedPlain != null) {
+                _lyrics.value = embeddedPlain
+                _lyricsSource.value = null
+            } else {
+                _lyrics.value = selected?.lines
+                _lyricsSource.value = selected?.source
+            }
             _lyricsChecked.value = true
         }
     }
@@ -942,6 +968,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * album page and pressing back returns to the album, not to search.
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
+
+    /** Which opening of each browse id is the current one; see [markDetailOpened]. Main thread only. */
+    private val detailOpenings = HashMap<String, Long>()
+    private var detailOpeningCount = 0L
+
+    /** Records that [browseId] was just pushed, returning that opening's number. */
+    private fun markDetailOpened(browseId: String): Long =
+        (++detailOpeningCount).also { detailOpenings[browseId] = it }
+
+    /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
+    private fun isDetailOpen(browseId: String, opening: Long): Boolean =
+        detailOpenings[browseId] == opening && _detailStack.value.any { it.opening == opening }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -1313,12 +1351,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val recordingRatingVersion = HashMap<String, Int>()
 
     /**
-     * True while [onWebSession] has installed candidate credentials that have
+     * Active while [onWebSession] has installed candidate credentials that have
      * not been validated yet. Row ratings don't write during it: until the
      * candidate is accepted, a write would go to an account that may never
-     * become the listener.
+     * become the listener. Reads filed under a listener (the library, a
+     * page's continuation) wait for it to end before they capture whose
+     * credentials they go out with.
      */
-    private var credentialsInValidation = false
+    private val credentialsInValidation = CandidateValidation()
 
     private fun cancelRowRatings() {
         // A cancelled tap was never sent: put each row back to what the server
@@ -1366,7 +1406,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (listenerKey() != listener) return@withLock
                 // Held off during sign-in validation: not sent, and settled
                 // below like any other unwritten tap.
-                val sendable = videoId != null && !credentialsInValidation
+                val sendable = videoId != null && !credentialsInValidation.active
                 val recordingVersion = if (sendable) bumpRecordingRating(videoId!!) else null
                 // Confirmed the moment YouTube accepts it, so a cancel during
                 // the housekeeping that follows settles to it, not to the
@@ -3169,7 +3209,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { fetchLibrary(identity) }
     }
 
-    private suspend fun fetchLibrary(identity: String?) {
+    private suspend fun fetchLibrary(identity: String?, attempt: Int = 0) {
+        // A candidate account under validation signs requests before
+        // [listenerKey] moves, so wait it out: then the credentials read below
+        // are the listener's own.
+        credentialsInValidation.awaitSettled()
+        // Validation that switched the account reloads the library itself.
+        if (identity != listenerKey()) return
+        // The scope too, before the credentials are read: installing it can
+        // change them for the same listener (a restored profile with no stored
+        // account index), which would then drop this page's cache write and
+        // the Liked Music sync. Returns at once when it is already in.
+        Innertube.ensureSessionScope()
+        if (identity != listenerKey()) return
+        val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
         identity?.let { id ->
@@ -3177,7 +3230,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 LikeState.seedLiked(cached.mapTo(HashSet()) { it.videoId })
             }
         }
-        val next = YtMusicRepository.library().fold(
+        // Likes are seeded below, behind the same credential check as the
+        // cache: LikeState is shared, and another account's hearts must not
+        // land in it.
+        val next = YtMusicRepository.library(seedLikes = false).fold(
             onSuccess = { page ->
                 // Liked Music is published with just its first page on the tab;
                 // the rest of the collection is synced into LikeState here, in
@@ -3185,14 +3241,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // a liked track past the first page still reads as liked.
                 // The cache takes the first page now; the walk below appends
                 // the rest as it lands, so a force-stop never loses the list.
-                identity?.let { id -> LikedCache.write(id, page.likedSongs) }
-                page.likedContinuation?.let { token -> syncLikedMusic(identity, token) }
+                if (Innertube.listenerGeneration == credentials) {
+                    LikeState.seedLiked(page.likedSongs.mapTo(HashSet()) { it.videoId })
+                    identity?.let { id -> LikedCache.write(id, page.likedSongs) }
+                    page.likedContinuation?.let { token -> syncLikedMusic(identity, credentials, token) }
+                }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page.copy(likedContinuation = null))
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
-        if (identity == listenerKey()) _library.value = next
+        if (identity != listenerKey()) return
+        // The request reads its cookie and account when it is built, after the
+        // wait above, so credentials installed in between answered for another
+        // account. That is never published as this listener's library: it is
+        // asked for again under the settled credentials.
+        if (Innertube.listenerGeneration != credentials) {
+            if (attempt < LIBRARY_CREDENTIAL_RETRIES) fetchLibrary(identity, attempt + 1)
+            return
+        }
+        _library.value = next
     }
 
     /**
@@ -3207,15 +3275,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * page: [LikeState] is a single shared map, not scoped per account, so a
      * sync still in flight when the listener switches must stop rather than
      * go on seeding the old account's likes into the new one's session.
+     * [credentials] is the [Innertube.listenerGeneration] the token was read
+     * under; a page fetched across a change of it is dropped.
      */
-    private fun syncLikedMusic(identity: String?, token: String) {
+    private fun syncLikedMusic(identity: String?, credentials: Long, token: String) {
         likedSyncJob?.cancel()
         likedSyncJob = viewModelScope.launch {
+            fun stillOurs() = identity == listenerKey() && Innertube.listenerGeneration == credentials
             YtMusicRepository.syncLikedMusic(token) { next ->
-                if (identity != listenerKey()) {
+                if (!stillOurs()) {
                     null
                 } else {
-                    YtMusicRepository.moreSongs(next).getOrNull()?.also { page ->
+                    YtMusicRepository.moreSongs(next).getOrNull()?.takeIf { stillOurs() }?.also { page ->
                         identity?.let { id -> LikedCache.mergeBottom(id, page.songs) }
                     }
                 }
@@ -4144,6 +4215,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val resolved = browseTypeOf(browseId, type)
+        val opened = markDetailOpened(browseId)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4151,6 +4223,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             thumbnailUrl = thumbnailUrl,
             songs = UiState.Loading,
             type = resolved,
+            opening = opened,
         )
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
@@ -4213,6 +4286,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     browseId,
                 )
             }
+            // Who the page was opened for: its continuation walk belongs to that
+            // listener, even when the first response lands after a switch.
+            // Captured before the scope wait below, so a switch during that
+            // wait leaves the page with the listener it was opened for, and
+            // [fillIn] stops rather than continue it as the new one. A
+            // candidate account under validation is waited out first: until it
+            // ends, the credentials are not the listener's.
+            val remotePage = localPlaylist == null && remote == null && !browseId.startsWith("local:")
+            if (remotePage) credentialsInValidation.awaitSettled()
+            val openedFor = listenerKey()
+            // The credentials, though, are read once the session scope is in:
+            // installing it right after an account switch can change them for
+            // the same listener, and the page's own browse waits for it anyway —
+            // reading them earlier would drop its continuation. Already-resolved
+            // scopes return at once; on-device pages skip it.
+            if (remotePage) Innertube.ensureSessionScope()
+            val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
                     name = localPlaylist.title
@@ -4368,7 +4458,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Only once the first page is on screen: [fillIn] appends to it,
             // and has nothing to append to before this.
-            more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
+            if (listenerKey() == openedFor) {
+                more?.let { fillIn(browseId, opened, it, thumbnailUrl ?: artwork, openedFor, credentials) }
+            }
         }
     }
 
@@ -4747,7 +4839,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * and asked for as the listener scrolls to the end of the list — see
      * [loadMoreDetail].
      */
-    private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
+    private fun fillIn(
+        browseId: String,
+        opened: Long,
+        token: String,
+        artworkFallback: String?,
+        listener: String?,
+        credentials: Long,
+    ) {
         val endless = browseId.isEndlessMix()
         // Every id the chain has produced so far, first page included, for the
         // loop guard below. Only the request side touches it, one page at a time.
@@ -4755,14 +4854,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // a real track that first showed up as a suggestion is still new.
         val seen = HashSet<String>()
         val seenSuggested = HashSet<String>()
-        _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
+        _detailStack.value.firstOrNull { it.opening == opened }?.let { page ->
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
             page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
+        // The page stays on the stack across a profile or account switch, so a
+        // walk (and its retries) still running then must neither ask for the
+        // new listener nor publish into its page or Liked Music cache. The
+        // credentials too: validating another account swaps them before the
+        // listener key moves. And only into the page instance it was started
+        // for: closed, or closed and opened again, ends it.
+        fun stillOurs() = listenerKey() == listener &&
+            Innertube.listenerGeneration == credentials &&
+            isDetailOpen(browseId, opened)
         viewModelScope.launch {
             followContinuations(
                 token = token,
-                fetch = { next -> YtMusicRepository.moreSongs(next).getOrNull() },
+                // One dropped request used to end the walk for good, leaving a
+                // long playlist cut short on screen and in its menu.
+                fetch = { next ->
+                    retryingOrNull(FILL_IN_RETRIES_MS, stop = { !stillOurs() }) {
+                        YtMusicRepository.moreSongs(next).getOrNull()
+                    }?.takeIf { stillOurs() }
+                },
                 nextToken = { fetched ->
                     // A page with nothing new on it means the feed has looped
                     // back rather than run dry with a token still attached.
@@ -4777,8 +4891,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // this no longer adds to the time the full list takes.
                 holdFirstMillis = 150,
             ) { batch ->
+                if (!stillOurs()) return@followContinuations false
                 val stack = _detailStack.value
-                val index = stack.indexOfFirst { it.browseId == browseId }
+                // The entry this opening pushed, not the first with its id.
+                val index = stack.indexOfFirst { it.opening == opened }
                 if (index < 0) return@followContinuations false
                 val current = stack[index]
                 val existing = (current.songs as? UiState.Success)?.data ?: return@followContinuations false
@@ -4800,7 +4916,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     addedSuggested += rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
                 }
                 if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
-                    LikedCache.mergeBottom(listenerKey(), added)
+                    LikedCache.mergeBottom(listener, added)
                 }
                 if (anyNew) {
                     _detailStack.value = stack.toMutableList().also {
@@ -5015,8 +5131,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onComplete(false)
             return
         }
-        val oldAccountId = _activeAccountId.value
-        val oldProfileId = _activeProfileId.value
         viewModelScope.launch {
             // Validate the exact cookie/profile pair before writing any of it.
             // The old implementation persisted first and unconditionally set
@@ -5025,11 +5139,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Queued row ratings must not go out under the candidate: drop
             // them, and hold new ones off until validation is over.
             cancelRowRatings()
-            credentialsInValidation = true
-            try {
+            credentialsInValidation.during {
+                // Read inside the serialized transaction: a validation still
+                // running ahead of this one may change who the listener is,
+                // and restoring has to put back what was there when this one began.
+                val oldAccountId = _activeAccountId.value
+                val oldProfileId = _activeProfileId.value
                 validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
-            } finally {
-                credentialsInValidation = false
             }
         }
     }
@@ -5741,6 +5857,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /** How many of a mood station's playlists are opened for its pool. */
+/** How often a library read crossed by a credential change is asked for again. */
+private const val LIBRARY_CREDENTIAL_RETRIES = 2
+
 private const val FLOW_MOOD_PLAYLISTS = 4
 
 /** How many songs are taken from each of those playlists. */
@@ -5769,3 +5888,25 @@ internal data class LyricsLookupKey(
     val order: List<LyricsSource>,
     val prioritizeSyllableSync: Boolean,
 )
+
+/** Waits before each retry of a page's fill-in, as the service's own loader waits. */
+private val FILL_IN_RETRIES_MS = longArrayOf(2_000L, 5_000L, 15_000L)
+
+/**
+ * [attempt], then again after each of [waitsMs] while it answers null; null if
+ * it never answers, or as soon as [stop] says there is no one left to answer for.
+ */
+internal suspend fun <T : Any> retryingOrNull(
+    waitsMs: LongArray,
+    stop: () -> Boolean = { false },
+    attempt: suspend () -> T?,
+): T? {
+    if (stop()) return null
+    attempt()?.let { return it }
+    for (wait in waitsMs) {
+        delay(wait)
+        if (stop()) return null
+        attempt()?.let { return it }
+    }
+    return null
+}

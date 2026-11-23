@@ -10,14 +10,13 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
-import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.TransitionWindow
-import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.music.bitchord.playback.AutoMixVisualState
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -32,6 +31,12 @@ import kotlinx.coroutines.flow.StateFlow
  */
 interface PlayerHost {
     val settings: PlayerSettingsSource
+
+    /** Optional in-process feed; platforms without AutoMix leave it absent. */
+    val autoMixVisualState: StateFlow<AutoMixVisualState?>? get() = null
+
+    /** Visual-only seek intent, before the scrubber dispatches its transport command. */
+    fun onAutoMixScrubIntent() = Unit
 
     /** A Canvas already settled for [song], without a lookup. */
     fun cachedCanvas(song: Song): CanvasArtwork?
@@ -235,11 +240,6 @@ interface PlayerSettingsSource {
     /** Whether that badge may say "Hi-Res Lossless" instead of "Lossless". */
     val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
-    /**
-     * Everything the Automix panel shows: the analysis in full, the plan that
-     * came out of it, and the listener's own choice for the playing track.
-     */
-    val automixPanel: StateFlow<AutomixPanelState>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
@@ -266,47 +266,6 @@ interface PlayerSettingsSource {
 
     /** Draws the album art a little smaller inside its card, or not. */
     fun setZoomOutAlbumArt(value: Boolean)
-
-    /**
-     * Stores the listener's own Automix choice for a track.
-     *
-     * The choice lives with the song, so it means the same thing every time
-     * that song plays. An empty choice is the same as no choice, and clears
-     * the track's entry rather than storing an empty one.
-     */
-    fun setAutomixProfile(trackId: String, override: AutomixOverride)
-
-    /** Forgets the listener's Automix choice for a track, leaving Automix to decide. */
-    fun clearAutomixProfile(trackId: String)
-
-    /**
-     * Whether this platform can play a preview of the transition on demand.
-     *
-     * False hides the button altogether rather than offering one that does
-     * nothing: a desktop has no second deck to mix with, and a control that
-     * does nothing when it is pressed is worse than no control at all.
-     */
-    val automixPreviewAvailable: Boolean get() = true
-
-    /**
-     * Plays the planned transition, or stops the one that is playing.
-     *
-     * A preview of the handoff and nothing else: the music either side of it
-     * is left where it was afterwards, so hearing the transition does not
-     * consume it. A platform with no second deck to blend with does nothing.
-     */
-    fun previewAutomix(start: Boolean)
-
-    /**
-     * Asks for the pair's analysis to be fetched and measured *now*.
-     *
-     * The panel's own demand, and the reason it is not the same as the
-     * background analysis the engine already does: the background analysis
-     * runs on its own schedule, and the panel opens on two lanes that the
-     * listener is looking at. A platform with no analysis engine does
-     * nothing.
-     */
-    fun forceAutomixAnalysis() = Unit
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */

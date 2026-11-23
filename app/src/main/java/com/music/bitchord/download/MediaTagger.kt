@@ -7,6 +7,7 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.artwork.ArtworkCompressor
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayOutputStream
@@ -480,25 +481,33 @@ object MediaTagger {
         return fetchCover(url, track.videoId)
     }
 
+    /**
+     * An old or low-resolution upload has no `maxresdefault` and answers 404
+     * for it, so that one size is retried at the `hqdefault` every video has
+     * — what this saved before covers were asked for larger.
+     */
     private fun fetchCover(url: String, logId: String): Artwork? {
         return runCatching {
-            val request = okhttp3.Request.Builder().url(url).build()
-            Http.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@runCatching null
-                val raw = response.body?.bytes() ?: return@runCatching null
-                // Compressed rather than kept as it arrived: the cover is filed
-                // inside the track and beside it, and it is read at thumbnail
-                // size by every other player — see [ArtworkCompressor].
-                //
-                // The decode is subsampled to the size the cover is kept at
-                // and both bitmaps are freed here rather than left to the GC,
-                // because a batch download tags one track after another and
-                // each decode is megabytes.
-                val jpeg = ArtworkCompressor.toJpeg(raw, COVER_MAX_SIDE)
-                    ?: return@runCatching null
-                Artwork(jpeg, "image/jpeg")
-            }
+            downloadCover(url) ?: youTubeThumbnailFallback(url)?.let(::downloadCover)
         }.onFailure { Log.d(TAG, "no cover saved for $logId: ${it.message}") }.getOrNull()
+    }
+
+    private fun downloadCover(url: String): Artwork? {
+        val request = okhttp3.Request.Builder().url(url).build()
+        return Http.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val raw = response.body?.bytes() ?: return null
+            // Compressed rather than kept as it arrived: the cover is filed
+            // inside the track and beside it, and it is read at thumbnail
+            // size by every other player — see [ArtworkCompressor].
+            //
+            // The decode is subsampled to the size the cover is kept at
+            // and both bitmaps are freed here rather than left to the GC,
+            // because a batch download tags one track after another and
+            // each decode is megabytes.
+            val jpeg = ArtworkCompressor.toJpeg(raw, COVER_MAX_SIDE) ?: return null
+            Artwork(jpeg, "image/jpeg")
+        }
     }
 
     /** How long the file is, or null when it cannot be asked. */
