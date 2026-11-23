@@ -76,7 +76,7 @@ object LoopMix {
     const val LYRIC_LEAD_SEC = 0.15
     const val LYRIC_TAIL_SEC = 0.35
 
-    /** A line with no stated end is taken as sung until the next line, at most this long. */
+    /** The last line, with no stated end and no line after it, is taken as sung this long. */
     const val LYRIC_OPEN_LINE_SEC = 10.0
 
     /**
@@ -470,8 +470,10 @@ object LoopMix {
     /**
      * A song's sung stretches from its synced lyric lines: each from just before
      * its start to just after its end. A line with no stated end is taken as sung
-     * until the next line (at most [LYRIC_OPEN_LINE_SEC]), which can only make a
-     * loop pickier, never let a word through.
+     * until the next line (the last one for [LYRIC_OPEN_LINE_SEC]), its first
+     * [OPEN_LINE_CERTAIN_SEC] for sure and the rest left to the vocal mask. That
+     * can only make a loop pickier, never let a word through: a cap short of the
+     * next line let a line still being sung clear a loop on the lyrics alone.
      */
     fun sungSpans(lines: List<Line>): List<Span> {
         val sorted = lines.sortedBy { it.timeMs }
@@ -484,7 +486,7 @@ object LoopMix {
             val end = if (stated) {
                 line.endMs!! / 1000.0
             } else {
-                min(start + LYRIC_OPEN_LINE_SEC, (next ?: (line.timeMs + 10_000)) / 1000.0)
+                next?.let { it / 1000.0 } ?: (start + LYRIC_OPEN_LINE_SEC)
             }
             val certain = if (stated) end else min(end, start + OPEN_LINE_CERTAIN_SEC)
             spans += Span(start - LYRIC_LEAD_SEC, end + LYRIC_TAIL_SEC, certain + LYRIC_TAIL_SEC)

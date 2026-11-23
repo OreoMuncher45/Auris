@@ -399,4 +399,18 @@ class LoopMixTest {
         assertNotNull(LoopMix.plan(out, out.duration, inn, inn.duration, 0.0, clear, clear))
         assertNull(LoopMix.plan(out, out.duration, inn, inn.duration, 160.0, clear, clear))
     }
+
+    @Test
+    fun anOpenLineFarFromTheNextIsLeftToTheMaskAllTheWayThere() {
+        val spans = LoopMix.sungSpans(
+            listOf(
+                LoopMix.Line(10_000, null, blank = false),
+                LoopMix.Line(40_000, null, blank = false),
+            ),
+        )
+        assertEquals(40.35, spans[0].end, 1e-9)
+        assertEquals(12.35, spans[0].certainUntil, 1e-9)
+        // The last line, with nothing after it, for the open-line length.
+        assertEquals(40.0 + LoopMix.LYRIC_OPEN_LINE_SEC + 0.35, spans[1].end, 1e-9)
+    }
 }
