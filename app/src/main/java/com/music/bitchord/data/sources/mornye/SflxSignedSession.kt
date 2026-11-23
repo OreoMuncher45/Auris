@@ -71,6 +71,24 @@ class SflxSignedSession(
 
     private val lock = Any()
 
+    /**
+     * Set when an add-ons import replaces this client's record on disk. A
+     * retired client never writes again, so a refresh that read the old
+     * record can't overwrite the imported one. See [retire].
+     */
+    @Volatile
+    private var retired = false
+
+    /**
+     * Stops this client writing its record. Takes [lock], so a save already
+     * in progress (record read, network call, write, all under the lock)
+     * finishes first, and every later save is skipped.
+     */
+    fun retire() = synchronized(lock) { retired = true }
+
+    /** Whether [retire] has run: for the host's tests. */
+    internal val isRetired: Boolean get() = retired
+
     /** A challenge the listener has been sent to, so the grant can be matched. */
     @Volatile
     private var pending: Pending? = null
@@ -539,7 +557,14 @@ class SflxSignedSession(
             // Bootstrap can authenticate without a page. That session is the
             // answer to the failure above, not a reason to make the extension
             // issue the same signed request a second time.
-            is Bootstrap.Session -> signedFetch(method, path, body, headers, depth)
+            // A retired client can't save what bootstrap returned, so a retry would read
+            // the same unauthenticated record and bootstrap again, forever. End this call
+            // instead; the engine's next call reaches a current client (SflxHost.sessionCallFor).
+            is Bootstrap.Session -> if (retired) {
+                JSONObject().put("ok", false).put("error", "signed session was replaced; try again")
+            } else {
+                signedFetch(method, path, body, headers, depth)
+            }
             is Bootstrap.Challenge -> afterChallenge(bootstrap.url, method, path, body, headers, depth)
         }
     }
@@ -791,7 +816,17 @@ class SflxSignedSession(
         return record
     }
 
-    private fun save(record: Record) {
+    /**
+     * Writes [record]. The [retired] check and the write happen together under
+     * [lock], the lock [retire] takes. Some callers (a refresh, for one) reach
+     * here without holding it, so a save can't pass the check, lose the race
+     * to [retire] and an import, and then write its stale record anyway. The
+     * monitor is reentrant, so callers that already hold the lock are
+     * unaffected.
+     */
+    private fun save(record: Record): Unit = synchronized(lock) {
+        // An import has replaced this record; writing now would put the old one back.
+        if (retired) return
         val root = JSONObject()
             .put("install_id", record.installId)
             .put("session_id", record.sessionId)
