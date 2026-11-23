@@ -178,8 +178,17 @@ object DownloadedPlaylistSync {
      */
     fun setKeepLiked(context: Context, on: Boolean) {
         AppSettings.setDownloadLikedSongs(on)
-        Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
-            ?.let { Downloads.setAutoDownloadNewSongs(it.id, on) }
+        // The saved Liked Music record only exists once the download index has
+        // loaded; set before that, the load would bring back its old switch.
+        // Applied from the preference as it stands then, so quick toggles end
+        // where the last one left it.
+        scope.launch {
+            Downloads.awaitIndexReady()
+            val wanted = AppSettings.downloadLikedSongs.value
+            Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
+                ?.takeIf { it.autoDownload != wanted }
+                ?.let { Downloads.setAutoDownloadNewSongs(it.id, wanted) }
+        }
         if (on) refresh(context, YtMusicRepository.LIKED_MUSIC, force = true)
     }
 

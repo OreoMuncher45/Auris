@@ -552,4 +552,22 @@ class LyricClockTest {
         )
         assertTrue(abs(last - (15_000 - 1_500)) < 40)
     }
+
+    /** Paused while a seek is still gliding: the words settle where the seek landed, not where they were. */
+    @Test fun pausingMidSeekGlideSettlesAtTheLanding() {
+        val clock = LyricClock(10_000)
+        clock.frame(0.0, 10_000, 0.0, 0)
+        // A short seek back, announced: it glides rather than cuts.
+        clock.frame(16.0, 9_000, 16.0, 1)
+        val shown = clock.observe(
+            com.music.bitchord.ui.player.LyricClockReading(9_004, 20.0, 1, isPlaying = false),
+            20.0,
+        )
+        assertEquals(9_004L, shown)
+        // And later stopped readings keep it there.
+        assertEquals(
+            9_004L,
+            clock.observe(com.music.bitchord.ui.player.LyricClockReading(9_004, 500.0, 1, isPlaying = false), 500.0),
+        )
+    }
 }

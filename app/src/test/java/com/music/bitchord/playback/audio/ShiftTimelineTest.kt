@@ -60,4 +60,17 @@ class ShiftTimelineTest {
         assertEquals(0L, t.writtenUs)
         assertEquals(2_000L, t.trackPositionUs(2_000L))
     }
+
+    @Test
+    fun aDropSpreadOverBuffersMergesDespiteMicrosecondRounding() {
+        val t = ShiftTimeline(capacity = 2)
+        // Each input buffer's boundary is rounded on its own: a microsecond apart.
+        t.drop(1_000_000L, 10_000L)
+        t.drop(1_000_001L, 10_000L)
+        t.drop(999_999L, 10_000L)
+        assertEquals(-30_000L, t.writtenUs)
+        // One shift, so nothing was pushed out early.
+        assertEquals(500_000L, t.trackPositionUs(500_000L))
+        assertEquals(1_030_000L, t.trackPositionUs(1_000_000L))
+    }
 }

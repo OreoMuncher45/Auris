@@ -157,6 +157,13 @@ data class LyricLine(
     val isWordSynced: Boolean get() = words.isNotEmpty()
 
     /**
+     * Whether this line carries any timing: a start past zero, word timings,
+     * or a stated end. A synced first line can start at 0, so its start alone
+     * can't tell it from a plain line.
+     */
+    val isTimed: Boolean get() = timeMs > 0L || isWordSynced || sungUntilMs != null
+
+    /**
      * Where each of [words] sits in [text], as character ranges.
      *
      * Walked from where the last one ended rather than searched from the start,

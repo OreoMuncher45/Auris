@@ -40,7 +40,12 @@ struct Biquad {
 
   void lowShelf(double sampleRate, double frequency, double gainDb);
   void highPass(double sampleRate, double frequency, double q);
-  void bypass() { b0 = 1; b1 = b2 = a1 = a2 = 0; }
+  /** Unity, and no memory of the filter it was: its delay state would otherwise leak into the next two samples. */
+  void bypass() {
+    b0 = 1;
+    b1 = b2 = a1 = a2 = 0;
+    z1[0] = z1[1] = z2[0] = z2[1] = 0;
+  }
   inline float tick(int channel, float x) {
     const float y = b0 * x + z1[channel];
     z1[channel] = b1 * x - a1 * y + z2[channel];
