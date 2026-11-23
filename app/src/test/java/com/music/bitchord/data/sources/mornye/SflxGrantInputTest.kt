@@ -40,6 +40,15 @@ class SflxGrantInputTest {
             SflxGrantInput("fake-grant", "fake-state"),
             SflxGrantInput.parse("Open this: \"mornye://session-grant?grant=fake-grant&state=fake-state\""),
         )
+        // The grant last, so a closing quote would otherwise stick to it.
+        assertEquals(
+            SflxGrantInput("fake-grant", "fake-state"),
+            SflxGrantInput.parse("Use \"mornye://session-grant?state=fake-state&grant=fake-grant\" here"),
+        )
+        assertEquals(
+            SflxGrantInput("fake-grant", null),
+            SflxGrantInput.parse("see <grant=fake-grant>"),
+        )
     }
 
     @Test

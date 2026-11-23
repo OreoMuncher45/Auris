@@ -151,6 +151,13 @@ class SflxVerifyActivity : AppCompatActivity() {
     private var finished = false
 
     /**
+     * Advances whenever [showChallenge] loads a challenge. An exchange captures
+     * it when it starts and only closes the page if it still matches, so a late
+     * answer for an earlier challenge can't close the one now on screen.
+     */
+    private var challengeGeneration = 0
+
+    /**
      * Grants already handed to an exchange. The WebView reports one callback URL
      * through several of its hooks, and the bridge can post the same grant too;
      * a grant is single-use, so only its first delivery is redeemed.
@@ -285,6 +292,7 @@ class SflxVerifyActivity : AppCompatActivity() {
         val url = intent.getStringExtra(EXTRA_URL).orEmpty()
         challengeUrl = url
         finished = false
+        challengeGeneration++
         titleView?.text = if (displayName.isBlank()) "Verify" else "Verify $displayName"
         progressView?.visibility = ProgressBar.VISIBLE
         pasteStatus?.visibility = View.GONE
@@ -367,9 +375,14 @@ class SflxVerifyActivity : AppCompatActivity() {
         pasteButton?.isEnabled = false
         showPasteStatus("Redeeming…", error = false)
         val id = extensionId
+        val generation = challengeGeneration
         redeem({ redeemGrant(id, input, typed = true) }) { result ->
             Log.d(TAG, "sflx verification: pasted grant ${if (result.isSuccess) "redeemed" else "refused"}")
-            if (result.isSuccess) {
+            if (generation != challengeGeneration) {
+                // Answered for a challenge this page no longer shows.
+                pasteButton?.isEnabled = true
+                pasteStatus?.visibility = View.GONE
+            } else if (result.isSuccess) {
                 finishWith(true)
             } else {
                 redeeming.remove(input.grant)
@@ -436,10 +449,12 @@ class SflxVerifyActivity : AppCompatActivity() {
     private fun deliver(payload: String) {
         val input = SflxGrantInput.parse(payload) ?: return
         if (!redeeming.add(input.grant)) return
+        val generation = challengeGeneration
         redeem({ redeemGrant(null, input, typed = false) }) { result ->
             Log.d(TAG, "sflx verification: grant ${if (result.isSuccess) "redeemed" else "refused"}")
             // A refusal (a dropped connection, say) can be pasted and tried again.
-            if (result.isSuccess) finishWith(true) else redeeming.remove(input.grant)
+            if (!result.isSuccess) redeeming.remove(input.grant)
+            else if (generation == challengeGeneration) finishWith(true)
         }
     }
 
@@ -485,9 +500,10 @@ class SflxVerifyActivity : AppCompatActivity() {
         }
 
         if (!redeeming.add(grant)) return true
+        val generation = challengeGeneration
         redeem({ runCatching { SflxCatalog.host?.completeGrant(id, grant, state) == true }.getOrDefault(false) }) { ok ->
             Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
-            finishWith(ok)
+            if (generation == challengeGeneration) finishWith(ok)
         }
         return true
     }

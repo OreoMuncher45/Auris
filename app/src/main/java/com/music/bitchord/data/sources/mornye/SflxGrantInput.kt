@@ -16,12 +16,12 @@ internal data class SflxGrantInput(val grant: String, val state: String?) {
 
         /** Reads [raw], or null when it carries no grant at all. */
         fun parse(raw: String?): SflxGrantInput? {
-            val text = raw?.trim()?.trim('"', '\'', '<', '>')?.trim().orEmpty()
+            val text = raw?.trim()?.trim(*WRAPPERS)?.trim().orEmpty()
             if (text.isEmpty()) return null
             // A paste can carry words around the link; the part that holds the
             // grant is the part that matters.
             val token = text.split(Regex("\\s+")).firstOrNull { it.contains("grant=", ignoreCase = true) }
-            if (token != null) return fromQuery(token)
+            if (token != null) return fromQuery(token.trim(*WRAPPERS))
             // A URL with no grant in it is not a grant, and neither is a sentence.
             if (text.contains("://") || text.any(Char::isWhitespace)) return null
             return SflxGrantInput(text, null)
@@ -41,6 +41,9 @@ internal data class SflxGrantInput(val grant: String, val state: String?) {
             }
             return if (grant.isEmpty()) null else SflxGrantInput(grant, state)
         }
+
+        /** What a link is quoted or bracketed with in surrounding text. */
+        private val WRAPPERS = charArrayOf('"', '\'', '<', '>')
 
         /** Percent-decoding only: a `+` in a grant is a character, not a space. */
         private fun decode(value: String): String =
