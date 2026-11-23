@@ -32,7 +32,6 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import com.metrolist.innertubex.extraction.StreamResolveException
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
@@ -386,16 +385,24 @@ object MusicVideoEngine {
         if (videoId !in ageGated) {
             val plain = try {
                 withContext(Dispatchers.IO) { InnerTubeXResolver.extractVideo(videoId, cap, skip) }
-            } catch (e: StreamResolveException) {
-                if (e.reason !in ESCALATED_REASONS) throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.d(TAG, "video: the plain ask found nothing (${e.message})", about = videoId)
                 null
             }
             if (plain != null) return plain
             TrackLog.d(TAG, "video: nothing asked plainly; asking as age-restricted", about = videoId)
         }
-        return withContext(Dispatchers.IO) {
-            InnerTubeXResolver.extractVideo(videoId, cap, skip, ageRestricted = true)
-        }?.also { ageGated += videoId }
+        return try {
+            withContext(Dispatchers.IO) {
+                InnerTubeXResolver.extractVideo(videoId, cap, skip, ageRestricted = true)
+            }?.also { ageGated += videoId }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun load(videoId: String) {
@@ -409,15 +416,6 @@ object MusicVideoEngine {
                     ?: resolve(videoId, cap)?.also { streams[videoId] = Triple(it, cap, System.currentTimeMillis()) }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: StreamResolveException) {
-                TrackLog.w(TAG, "video: no picture (${e.reason}): ${e.message}", about = videoId)
-                if (loadedId != videoId) return@launch
-                loadedId = null
-                // Settled until something changes it: the age gate by a sign-in
-                // (which clears [noPicture]), the rest not at all. A network
-                // failure is asked again on the next surface or track change.
-                if (e.reason != StreamResolveException.Reason.NETWORK) noPicture += videoId
-                return@launch
             } catch (e: Exception) {
                 // Not remembered as pictureless: the next surface or track
                 // change asks again.
@@ -539,15 +537,6 @@ object MusicVideoEngine {
     /** How many refused clients a picture is worth before it's given up — the audio's three. */
     private const val MAX_REFUSED_CLIENTS = 3
 
-    /**
-     * What the plain ask fails with when the age gate is why: InnerTubeX names
-     * the gate only when no client answered at all, and otherwise reports the
-     * clients that answered without a picture as no playable stream.
-     */
-    private val ESCALATED_REASONS = setOf(
-        StreamResolveException.Reason.AGE_RESTRICTED,
-        StreamResolveException.Reason.NO_PLAYABLE_STREAM,
-    )
 }
 
 /**
