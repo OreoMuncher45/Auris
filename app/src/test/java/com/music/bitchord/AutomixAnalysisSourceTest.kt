@@ -35,6 +35,21 @@ class AutomixAnalysisSourceTest {
     }
 
     @Test
+    fun `the analysis round's substitute copy is never taken for the canonical one`() {
+        val key = AutomixAnalysisSource.analysisSubstituteKey("video")
+        assertFalse(key == AutomixAnalysisSource.analysisCacheKey("video"))
+        assertFalse(AutomixAnalysisSource.isCanonicalYouTubeRendition("video", key))
+        // Still readable, as a substitute: that is what the fallback is for.
+        assertTrue(AutomixAnalysisSource.isAnalysisRendition("video", key))
+        assertTrue(AutomixAnalysisSource.isAnalysisSubstitute("video", key))
+        assertFalse(AutomixAnalysisSource.isAnalysisSubstitute("video", "video#analysis"))
+        assertFalse(AutomixAnalysisSource.isAnalysisRendition("video", "video#hifi"))
+        assertFalse(AutomixAnalysisSource.isAnalysisRendition("other", key))
+        // And the cache reads it as a substitute too, so the aligner does.
+        assertTrue(com.music.bitchord.playback.AudioCache.isAltKey(key))
+    }
+
+    @Test
     fun `youtube switched off still leaves the analysis reachable`() {
         SourceRegistry.configs.value = listOf(
             SourceConfig(kind = SourceKind.YOUTUBE, enabled = false),

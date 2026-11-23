@@ -486,7 +486,10 @@ fun assessTransitionTier(
     val outgoingBpm = analysis.bpm.orZero()
     val incomingBpm = nextAnalysis.bpm.orZero()
     val outgoingConfidence = analysis.beatConfidence.orZero()
-    val incomingConfidence = nextAnalysis.beatConfidence.orZero()
+    // The incoming song is mixed in on its opening, so its trust is the head
+    // grid's own where the model measured one, as the planner's phase lock reads
+    // it. The tempo stays the whole song's: it is what the planner stretches to.
+    val incomingConfidence = nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()
     val floorConfidence = min(outgoingConfidence, incomingConfidence)
     val reasons = mutableListOf<String>()
 
