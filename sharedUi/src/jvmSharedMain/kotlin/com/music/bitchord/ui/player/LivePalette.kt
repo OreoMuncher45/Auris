@@ -48,12 +48,17 @@ internal enum class LiveColorSource {
 }
 
 /**
- * A set of colours read off a picture, and where that picture came from.
+ * What a moving picture puts behind the chrome, read off its frames, and
+ * where that picture came from.
+ *
+ * The bands only, not a palette of the picture's colours: the ink wears the
+ * record's own colour over a clip as it does over the sleeve, and the frames
+ * answer only how light it goes and how much grade it needs — see
+ * [inkOutcome]. A palette read off the frames re-themed the deck as the clip
+ * cut from one colour to another.
  */
 @Immutable
 internal data class LivePalette(
-    /** The ink, the alphas — see [NowPlayingPalette]. */
-    val palette: NowPlayingPalette,
     val source: LiveColorSource,
     /**
      * What a Canvas shows under the chrome — its frame under the deck's scrim —
@@ -69,39 +74,38 @@ internal data class LivePalette(
 )
 
 /**
- * The colours of a moving picture, read as it moves.
- *
- * The same rules as the sleeve's own palette — a legible tint of the picture's
- * secondary colour, darkened or lightened by how bright the picture is — but
- * read from a frame rather than from a cover, and read *quickly*, because
- * this runs several times a second while a clip is playing.
+ * What a moving picture puts behind the chrome, read as it moves: the
+ * lightest and darkest of each band the controls stand on. One copy of the
+ * frame and a pass over its pixels, because this runs several times a second
+ * while a clip is playing.
  *
  * The picture it reads is the one on screen, which is the whole point: the
- * controls must belong to what is behind them, and what is behind them is a
- * video.
+ * controls must hold against what is behind them, and what is behind them is
+ * a video.
  */
 internal fun computeLivePalette(frame: ImageBitmap, source: LiveColorSource): LivePalette {
-    if (frame.width <= 0 || frame.height <= 0) {
-        return LivePalette(computeNowPlayingPalette(emptyList()), source)
-    }
-    // One read of the frame serves both the palette's samples and, for a
-    // Canvas, the bands the chrome stands on.
+    if (frame.width <= 0 || frame.height <= 0) return LivePalette(source)
     val pixels = IntArray(frame.width * frame.height)
     frame.readPixels(pixels, startX = 0, startY = 0, width = frame.width, height = frame.height)
+    return computeLivePalette(pixels, frame.width, frame.height, source)
+}
+
+/** [computeLivePalette] off a frame's pixels, already read. */
+internal fun computeLivePalette(pixels: IntArray, width: Int, height: Int, source: LiveColorSource): LivePalette {
     // What the controls stand on when this picture is behind them: a Canvas
     // under its deck scrim, or a portrait motion cover under its own scrim.
     val surface = when (source) {
-        LiveColorSource.CANVAS -> canvasInkSurface(pixels, frame.width, frame.height)
-        LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, frame.width, frame.height))
+        LiveColorSource.CANVAS -> canvasInkSurface(pixels, width, height)
+        LiveColorSource.LIVE_ART -> portraitClipInkSurface(bandBounds(pixels, width, height))
         LiveColorSource.STATIC_ART -> null
     }
     // A Canvas also owns the screen behind the header, under its scrim alone.
     val header = if (source == LiveColorSource.CANVAS) {
-        canvasHeaderInkSurface(pixels, frame.width, frame.height)
+        canvasHeaderInkSurface(pixels, width, height)
     } else {
         null
     }
-    return LivePalette(computeNowPlayingPalette(pixels.liveSamples()), source, surface, header)
+    return LivePalette(source, surface, header)
 }
 
 /**
@@ -184,18 +188,11 @@ internal fun rememberLivePalette(
 }
 
 /**
- * Whether the ink has moved far enough to be worth a redraw.
- *
- * A difference of less than a percent of the range is under three levels of
- * eight-bit colour: not a difference the eye picks out of a tint, and not one
- * it would notice arriving a moment later either. The alphas are held to a
- * tighter tolerance, because they are legibility rather than colour — a
- * half-percent of opacity is the difference between a label that reads and
- * one that does not.
+ * Whether what the chrome stands on has moved far enough to be worth judging
+ * the ink again: a few levels of eight-bit colour in any band.
  */
 internal fun inkMoved(previous: LivePalette, next: LivePalette): Boolean =
-    inkMoved(previous.palette, next.palette) ||
-        inkSurfaceMoved(previous.surface, next.surface) ||
+    inkSurfaceMoved(previous.surface, next.surface) ||
         // The header is judged on a band of its own: a bright patch can move
         // into the top of a Canvas while the deck's rows stand still.
         inkSurfaceMoved(previous.header, next.header)
@@ -222,65 +219,8 @@ private fun bandsMoved(previous: IntArray, next: IntArray): Boolean {
     return false
 }
 
-/** Three levels of eight-bit colour: the same threshold [inkMoved] holds the ink to. */
+/** Three levels of eight-bit colour, about a percent: not a difference the eye picks out. */
 private const val SURFACE_MOVE_LEVELS = 3
-
-private fun inkMoved(previous: NowPlayingPalette, next: NowPlayingPalette): Boolean {
-    val a = previous.fg
-    val b = next.fg
-    if (
-        kotlin.math.abs(a.red - b.red) > INK_MOVE_EPSILON ||
-        kotlin.math.abs(a.green - b.green) > INK_MOVE_EPSILON ||
-        kotlin.math.abs(a.blue - b.blue) > INK_MOVE_EPSILON ||
-        kotlin.math.abs(a.alpha - b.alpha) > INK_MOVE_EPSILON
-    ) {
-        return true
-    }
-    val pa = previous.alphas
-    val na = next.alphas
-    return kotlin.math.abs(pa.primary - na.primary) > ALPHA_MOVE_EPSILON ||
-        kotlin.math.abs(pa.secondary - na.secondary) > ALPHA_MOVE_EPSILON ||
-        kotlin.math.abs(pa.tertiary - na.tertiary) > ALPHA_MOVE_EPSILON ||
-        kotlin.math.abs(pa.track - na.track) > ALPHA_MOVE_EPSILON ||
-        kotlin.math.abs(pa.buttonFill - na.buttonFill) > ALPHA_MOVE_EPSILON
-}
-
-/**
- * A bounded sample of a picture's pixels, in reading order.
- *
- * The copy is the only part that costs anything, and the picture it is copied
- * from is already small — a frame read off a clip is a few dozen pixels
- * across, not the screen. The sample is taken off that copy on a stride, so
- * the number of colours read is fixed however big the picture was, and the
- * order is kept: the last samples are the lower half of the picture, which is
- * where the controls stand.
- */
-internal fun ImageBitmap.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
-    if (width <= 0 || height <= 0) return emptyList()
-    val pixels = IntArray(width * height)
-    readPixels(pixels, startX = 0, startY = 0, width = width, height = height)
-    return pixels.liveSamples(limit)
-}
-
-/** [liveSamples] off pixels already read. */
-private fun IntArray.liveSamples(limit: Int = LIVE_SAMPLES): List<Int> {
-    val step = (size / limit).coerceAtLeast(1)
-    return buildList(minOf(size, limit)) {
-        var index = 0
-        while (index < this@liveSamples.size) {
-            add(this@liveSamples[index])
-            index += step
-        }
-    }
-}
-
-/**
- * How many pixels are read off a moving picture.
- *
- * Enough to tell a black clip from a white one and to find the colour that
- * belongs to it; few enough that the clustering behind it stays cheap.
- */
-private const val LIVE_SAMPLES = 1_024
 
 /**
  * How long between reads of a moving picture for the ink, with live blur off.
@@ -298,7 +238,7 @@ private const val PALETTE_MIN_GAP_MS = 400L
  *
  * Four times a second. It used to be the picture's own rate — a read every
  * thirty-three milliseconds, nineteen reads a second, each one a copy of the
- * whole frame and a clustering of a thousand of its pixels. What it bought
+ * whole frame and, then, a clustering of a thousand of its pixels. What it bought
  * was an ink that landed on the picture's colour rather than on the colour it
  * had half a second ago, and the picture's colour does not move that fast:
  * a clip's average drifts over seconds, not over frames.
@@ -307,9 +247,3 @@ private const val PALETTE_MIN_GAP_MS = 400L
  * see, and it is a quarter of the reads.
  */
 private const val PALETTE_MIN_GAP_LIVE_MS = 250L
-
-/** How far the ink has to move before it is published. See [inkMoved]. */
-private const val INK_MOVE_EPSILON = 0.01f
-
-/** How far an opacity has to move before it is published. See [inkMoved]. */
-private const val ALPHA_MOVE_EPSILON = 0.005f
