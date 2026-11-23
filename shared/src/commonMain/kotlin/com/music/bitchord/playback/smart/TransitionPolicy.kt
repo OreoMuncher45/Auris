@@ -277,7 +277,8 @@ fun simultaneousVocalFraction(
         if (!time.isFinite() || time < outStart) continue
         if (time > outEnd) break
         total += 1
-        if (outMask[index] < VOCAL_ACTIVE_THRESHOLD) continue
+        // Written so a NaN (an unmeasured instant) counts as not singing.
+        if (!(outMask[index] >= VOCAL_ACTIVE_THRESHOLD)) continue
         val target = inStart + (time - outStart) * step
         while (inIndex + 1 < inCurve.size && inCurve[inIndex + 1].time <= target) inIndex += 1
         if (inMask[inIndex] >= VOCAL_ACTIVE_THRESHOLD) both += 1
