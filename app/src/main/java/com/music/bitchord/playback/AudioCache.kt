@@ -3637,7 +3637,12 @@ object AudioCache {
                 // only runs once the job has finished, which the blocking
                 // cache() below keeps it from doing, so a cancelled fetch used to
                 // run to its end (and [clear], which joins it, waited on that).
-                val watcher = launch {
+                //
+                // Undispatched, so it is already parked in awaitCancellation()
+                // when cache() blocks: a default-start child cancelled before
+                // its body ran never reached the finally, and the writer was
+                // never told to stop.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
                     try {
                         awaitCancellation()
                     } finally {
