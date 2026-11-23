@@ -248,12 +248,15 @@ class SflxHost(
             listOf(Triple(target, null, false))
         } else {
             val signed = store.list().filter(::enabled).mapNotNull(::sessionFor)
-            val waiting = signed.filter { it.pendingState() != null }
-            val byState = waiting.filter { state != null && it.pendingState() == state }
+            // pendingState() is read without the session lock, so each is read
+            // once: a second read could see a challenge cleared mid-bootstrap and
+            // carry no state to bind the exchange to.
+            val waiting = signed.mapNotNull { session -> session.pendingState()?.let { session to it } }
+            val byState = waiting.filter { (_, pending) -> state != null && pending == state }
             when {
-                byState.isNotEmpty() -> byState.map { Triple(it, state, false) }
+                byState.isNotEmpty() -> byState.map { (session, _) -> Triple(session, state, false) }
                 state == null && waiting.size == 1 ->
-                    listOf(Triple(waiting.single(), waiting.single().pendingState(), false))
+                    waiting.single().let { (session, pending) -> listOf(Triple(session, pending, false)) }
                 waiting.isEmpty() && signed.size == 1 -> listOf(Triple(signed.single(), null, true))
                 else -> emptyList()
             }
