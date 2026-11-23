@@ -341,6 +341,45 @@ object Downloads {
     private val running = LinkedHashMap<String, Job?>()
 
     /**
+     * Queued tracks whose service start is still unanswered, to how many
+     * enqueue calls are waiting on that answer. Guarded by [lock].
+     *
+     * A track here is in [pending] only provisionally: if every caller's
+     * start fails it is taken back off the queue. So a second caller does not
+     * count it as already queued — it joins the wait and starts the service
+     * too, and only a start that succeeds makes it real for either of them.
+     */
+    private val starting = HashMap<String, Int>()
+
+    /**
+     * Settle the service start [ids] were waiting on, under [lock].
+     *
+     * A start that worked confirms them all. A failed one takes back each id
+     * no other caller is still waiting on and no successful start has already
+     * confirmed. Returns the ids that are now really queued or running, and
+     * the ids this failure took off the queue.
+     */
+    private fun settleStart(ids: Collection<String>, started: Boolean): Pair<Set<String>, List<String>> =
+        synchronized(lock) {
+            if (started) {
+                ids.forEach { starting.remove(it) }
+                return@synchronized ids.toSet() to emptyList()
+            }
+            val dropped = ArrayList<String>()
+            for (id in ids) {
+                val waiting = starting[id] ?: continue
+                if (waiting > 1) {
+                    starting[id] = waiting - 1
+                } else {
+                    starting.remove(id)
+                    if (pending.remove(id) != null) dropped += id
+                }
+            }
+            val kept = ids.filterTo(HashSet()) { it !in starting && (it in pending || it in running) }
+            kept to dropped
+        }
+
+    /**
      * Completed once the index has been read off disk.
      *
      * The read happens on a background thread, so for a moment after [init]
@@ -498,24 +537,38 @@ object Downloads {
             }
             return
         }
-        synchronized(lock) {
-            if (id in pending || id in running) return
-            pending[id] = song
+        val joined = synchronized(lock) {
+            val waiting = starting[id]
+            when {
+                // Another call's start is still unanswered: wait on it too,
+                // and start the service from here as well. See [starting].
+                waiting != null -> {
+                    starting[id] = waiting + 1
+                    true
+                }
+                id in pending || id in running -> return
+                else -> {
+                    pending[id] = song
+                    starting[id] = 1
+                    false
+                }
+            }
         }
-        _active.update { it + (id to DownloadState.Queued) }
-        DownloadSession.queued(song, from)
+        if (!joined) {
+            _active.update { it + (id to DownloadState.Queued) }
+            DownloadSession.queued(song, from)
+        }
 
         val app = context.applicationContext
-        runCatching {
+        val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
         }.onFailure {
             // Refused only when the app has no window and no exemption, which
             // means the queue has nothing to drain it and would sit there
             // looking accepted forever.
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { pending.remove(id) }
-            fail(id, "Downloads can't start right now")
-        }
+        }.isSuccess
+        settleStart(listOf(id), started).second.forEach { fail(it, "Downloads can't start right now") }
     }
 
     /**
@@ -544,6 +597,8 @@ object Downloads {
         val accepted = mutableListOf<Song>()
         val refused = mutableListOf<Song>()
         val already = mutableSetOf<String>()
+        // Queued by another call whose service start is still unanswered.
+        val joined = mutableListOf<String>()
         if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
             // One ask per track: a list that names a track twice would
@@ -551,6 +606,13 @@ object Downloads {
             // queued — by this very call.
             for (song in songs.distinctBy { it.videoId }) {
                 val id = song.videoId
+                val waiting = starting[id]
+                if (waiting != null) {
+                    // Not admitted yet, only provisionally queued: see [starting].
+                    starting[id] = waiting + 1
+                    joined += id
+                    continue
+                }
                 if (id in pending || id in running) {
                     already += id
                     continue
@@ -560,6 +622,7 @@ object Downloads {
                     continue
                 }
                 pending[id] = song
+                starting[id] = 1
                 accepted += song
             }
         }
@@ -575,18 +638,21 @@ object Downloads {
             DownloadSession.queued(song, from)
             fail(song.videoId, WIFI_ONLY_REFUSAL)
         }
-        if (accepted.isEmpty()) return already
+        if (accepted.isEmpty() && joined.isEmpty()) return already
         val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
         }.onFailure {
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
-            accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
         }.isSuccess
-        val acceptedIds = accepted.mapTo(HashSet(accepted.size)) { it.videoId }
-        // On a failed start this call's own tracks were taken back off the
-        // queue, so none of them may be reported as admitted.
-        return if (started) already + acceptedIds else already - acceptedIds
+        val waitedOn = ArrayList<String>(accepted.size + joined.size)
+        accepted.mapTo(waitedOn) { it.videoId }
+        waitedOn += joined
+        // Only what a successful start confirmed counts as admitted: a track
+        // a failed start took back off the queue is left for the caller to
+        // try again, whichever call first queued it.
+        val (kept, dropped) = settleStart(waitedOn, started)
+        dropped.forEach { fail(it, "Downloads can't start right now") }
+        return already + kept
     }
 
     /**
