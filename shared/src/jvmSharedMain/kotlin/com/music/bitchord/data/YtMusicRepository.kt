@@ -569,8 +569,12 @@ object YtMusicRepository {
      * every saved collection has its own browse id. They're fetched in
      * parallel and a feed that fails or is simply empty (a fresh account has
      * no saved albums) is dropped rather than failing the whole page.
+     *
+     * [seedLikes] seeds [LikeState] with the first page of Liked Music. A
+     * caller that must first check whose credentials answered passes false
+     * and seeds from [LibraryPage.likedSongs] itself once it has.
      */
-    suspend fun library(): Result<LibraryPage> = call("library") {
+    suspend fun library(seedLikes: Boolean = true): Result<LibraryPage> = call("library") {
         coroutineScope {
             // Liked Music is read one page at a time. The first page is what
             // the Library tab needs to fill and is published straight away;
@@ -597,7 +601,7 @@ object YtMusicRepository {
             val likedPage = liked.await()
             val likedSongs = likedPage?.songs.orEmpty()
             val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
-            LikeState.seedLiked(likedIds)
+            if (seedLikes) LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
                 // Thumbs-up'd tracks are also in the library feed; only what
@@ -1102,22 +1106,9 @@ object YtMusicRepository {
      * name, rather than offering to reorder something it can't.
      */
     suspend fun playlistEntries(browseId: String): Result<List<Song>> = call("entries:$browseId") {
-        val out = LinkedHashMap<String, Song>()
-        var response = Innertube.browse(browseId)
-        var page = 1
-        while (true) {
-            val shelf = InnertubeParser.parsePlaylistShelf(response, byEntry = true) ?: break
-            shelf.songs.forEach { song ->
-                val setVideoId = song.setVideoId ?: error("playlist entry without an id")
-                out.putIfAbsent(setVideoId, song)
-            }
-            val token = shelf.continuation ?: break
-            // Same cap as [songsPaged] — a playlist past it can't be listed
-            // whole, and a partial list can't be reordered safely.
-            if (page++ >= MAX_PAGES) error("playlist too long to reorder")
-            response = Innertube.browseContinuation(token)
-        }
-        out.values.toList()
+        // Same cap as [songsPaged]; a later page it can't read fails the read
+        // rather than cutting the list short — see [collectPlaylistEntries].
+        collectPlaylistEntries(Innertube.browse(browseId), MAX_PAGES) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
