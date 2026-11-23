@@ -378,6 +378,9 @@ class SflxVerifyActivity : AppCompatActivity() {
         val generation = challengeGeneration
         redeem({ redeemGrant(id, input, typed = true) }) { result ->
             Log.d(TAG, "sflx verification: pasted grant ${if (result.isSuccess) "redeemed" else "refused"}")
+            // A refused grant (a dropped connection, a BUSY import) wasn't spent,
+            // so it may be tried again whichever challenge is now on screen.
+            if (!result.isSuccess) redeeming.remove(input.grant)
             if (generation != challengeGeneration) {
                 // Answered for a challenge this page no longer shows.
                 pasteButton?.isEnabled = true
@@ -385,7 +388,6 @@ class SflxVerifyActivity : AppCompatActivity() {
             } else if (result.isSuccess) {
                 finishWith(true)
             } else {
-                redeeming.remove(input.grant)
                 pasteButton?.isEnabled = true
                 val reason = result.exceptionOrNull()?.message ?: SflxGrantRefused.REFUSED
                 showPasteStatus("Couldn't redeem: ${reason.replaceFirstChar { it.lowercase() }}", error = true)
@@ -529,7 +531,9 @@ class SflxVerifyActivity : AppCompatActivity() {
     private fun handleDeepLink(intent: Intent?): Boolean {
         val uri = intent?.data ?: return false
         if (uri.getQueryParameter("grant").isNullOrBlank()) return false
-        extensionId = intent.getStringExtra(EXTRA_ID)
+        // An outside deep link carries no extension id. It must not wipe the id
+        // of the page already open, which the paste box redeems for.
+        intent.getStringExtra(EXTRA_ID)?.let { extensionId = it }
         deliver(uri.toString())
         return true
     }

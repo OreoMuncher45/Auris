@@ -178,6 +178,17 @@ class SflxHostGrantRedeemTest {
     }
 
     @Test
+    fun aPasteThatDoesNotNameItsExtensionIsNotGuessed() {
+        val only = install("only")
+
+        val result = host.redeemGrant(null, "pasted-grant", null, typed = true)
+
+        assertEquals(SflxGrantRefused.NOT_WAITING, result.exceptionOrNull()?.message)
+        assertEquals(emptyList<String>(), exchanged)
+        assertFalse(authenticated(only))
+    }
+
+    @Test
     fun aRefusedExchangeSaysSo() {
         val demo = install("demo")
         exchangeCode = 400

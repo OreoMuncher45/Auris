@@ -235,10 +235,11 @@ class SflxHost(
         if (grant.isBlank()) return Result.failure(SflxGrantRefused(SflxGrantRefused.REFUSED))
         val target = (if (typed) extensionId else null)
             ?.let { id -> store.find(id)?.let { installed -> sessionFor(installed) } }
-        // A paste for an extension that has since been removed (or no longer
-        // declares a signed session) is that extension's grant; handing it to
-        // whichever one is left would sign the listener in somewhere else.
-        if (typed && extensionId != null && target == null) {
+        // A paste is for the extension the page was opened for. If that one has
+        // since been removed (or no longer declares a signed session), or the
+        // page doesn't know it, the grant isn't any other extension's: handing
+        // it to whichever one is left would sign the listener in somewhere else.
+        if (typed && target == null) {
             return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
         }
         val candidates: List<Pair<SflxSignedSession, String?>> = if (target != null) {
