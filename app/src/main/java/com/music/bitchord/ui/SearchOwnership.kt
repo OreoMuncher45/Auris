@@ -35,6 +35,9 @@ internal class SearchOwnership(
         newest.incrementAndGet()
     }
 
+    /** Whether no search has been asked for since [ticket]'s. */
+    fun isNewest(ticket: SearchTicket): Boolean = ticket.id == newest.get()
+
     fun owns(ticket: SearchTicket): Boolean =
         ticket.id == newest.get() && (ticket.credentials == null || ticket.credentials == listenerGeneration())
 }
