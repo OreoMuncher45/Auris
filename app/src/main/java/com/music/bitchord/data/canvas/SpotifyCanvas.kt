@@ -99,13 +99,14 @@ object SpotifyCanvas {
     }
 
     /**
-     * Doesn't re-check the hit's title and artist the way [searchViaRest]
-     * does: the fields a GraphQL response like this carries aren't published
-     * anywhere, so pulling `name`/`artists` back out the way the REST
-     * response's documented shape allows would be a guess. Spotify's own
-     * relevance ranking on a "title artist album" query is trusted instead,
-     * the same way [firstTrackUri] trusts an album's own track listing rather
-     * than re-checking it.
+     * Held to the same exact title-and-artists check as [searchViaRest]. This
+     * used to take Spotify's first result on trust and label it with the
+     * title and artist that were asked for, which made every later check
+     * compare the request with itself. On a common title ("Rang De") that
+     * first result is often another song, so its Canvas played behind the
+     * wrong track. [SpotifyTrackSearch] reads each hit's own name and credits
+     * back, and a hit it can't read doesn't count. When nothing matches this
+     * returns null and the REST search gets its turn.
      */
     private fun searchViaPathfinder(title: String, artist: String, album: String?, token: String): TrackHit? {
         val clientToken = SpotifyToken.clientToken()
@@ -148,25 +149,17 @@ object SpotifyCanvas {
             Log.w(TAG, "pathfinder search failed, http $code")
             return null
         }
-        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-        val firstItem = root?.get("data")?.jsonObject
-            ?.get("searchV2")?.jsonObject
-            ?.get("tracksV2")?.jsonObject
-            ?.get("items")?.jsonArray
-            ?.firstOrNull()
-            ?.jsonObject?.get("item")?.jsonObject
-            ?.get("data")?.jsonObject
-        if (firstItem == null) {
-            Log.w(TAG, "pathfinder response had no hit (http $code): ${body.take(200)}")
+        val hits = SpotifyTrackSearch.parse(body)
+        if (hits.isEmpty()) {
+            Log.w(TAG, "pathfinder response had no readable hit (http $code): ${body.take(200)}")
             return null
         }
-        val uri = firstItem["uri"]?.jsonPrimitive?.contentOrNull
-            ?: firstItem["id"]?.jsonPrimitive?.contentOrNull?.let { "spotify:track:$it" }
-        if (uri == null) {
-            Log.w(TAG, "pathfinder hit had neither uri nor id")
+        val hit = SpotifyTrackSearch.bestMatch(hits, title, artist)
+        if (hit == null) {
+            Log.d(TAG, "pathfinder: none of ${hits.size} hits is '$title' by '$artist'")
             return null
         }
-        return TrackHit(uri, title, artist, album)
+        return TrackHit(hit.uri, hit.title, hit.artists.joinToString(", "), hit.album)
     }
 
     private fun searchViaRest(title: String, artist: String, album: String?, token: String): TrackHit? {
@@ -276,13 +269,8 @@ object SpotifyCanvas {
         return headers
     }
 
-    private fun isMatch(gotName: String, gotArtists: List<String>, wantName: String, wantArtist: String): Boolean {
-        if (gotName.normalizeForMatch() != wantName.normalizeForMatch()) return false
-        val wanted = splitArtists(wantArtist)
-        val credited = gotArtists.map { it.normalizeForMatch() }.filter { it.isNotBlank() }
-        if (wanted.isEmpty() || credited.isEmpty()) return false
-        return wanted.all { want -> credited.any { it == want } }
-    }
+    private fun isMatch(gotName: String, gotArtists: List<String>, wantName: String, wantArtist: String): Boolean =
+        canvasTrackMatches(gotName, gotArtists, wantName, wantArtist)
 
     // ---- Pathfinder: the `canvas` GraphQL query ------------------------
 
