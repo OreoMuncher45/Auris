@@ -122,14 +122,16 @@ object AutomixModels {
     /**
      * The path of [model] on disk, for a tracker about to open it.
      *
-     * Throws [FileNotFoundException] while it is not there — the trackers treat
+     * Throws [FileNotFoundException] while it, or the other model, is not there — the trackers treat
      * that like any unreadable model and produce nothing — and makes sure a
      * fetch is under way (when the connection allows one) so a later pass
      * finds it.
      */
     fun path(model: Model): String {
         val file = fileFor(model) ?: throw FileNotFoundException("AutomixModels.install was never called")
-        if (isPresent(model)) return file.absolutePath
+        // Both or neither: a beat grid from one model beside a heuristic vocal
+        // mask is a result the analyser would only have to measure again.
+        if (ALL.all(::isPresent)) return file.absolutePath
         request(force = false, explicit = false)
         throw FileNotFoundException("${model.fileName} has not been downloaded yet")
     }
