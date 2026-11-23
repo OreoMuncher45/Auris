@@ -1255,10 +1255,10 @@ class CrossfadeController(
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
         val nextItem = player.nextItemOrNull() ?: return
-        // Even a manual catalogue match is still video-origin. AutoMix's
-        // analysis and cueing are deliberately never applied to either side
-        // of a transition involving a video row.
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) {
+        // An item playing video gets no AutoMix; audio converted from a
+        // music-video row blends like any other (only the loop mix refuses it,
+        // see [VideoRowAutomix]).
+        if (!VideoRowAutomix.mayBlend(currentItem.isVideo, nextItem.isVideo)) {
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
             return
@@ -1487,7 +1487,7 @@ class CrossfadeController(
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
         val nextItem = player.nextItemOrNull() ?: return
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
+        if (!VideoRowAutomix.mayBlend(currentItem.isVideo, nextItem.isVideo)) return
         requestAnalysis(currentItem, duration)
         requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
     }
@@ -2795,6 +2795,7 @@ class CrossfadeController(
     /** Why [current] -> [next] can't be a loop mix right now, or null when it can. */
     private fun loopRefusalFor(player: ExoPlayer, current: MediaItem, next: MediaItem, state: SmartAnalysis): String? = when {
         !LoopMixRenderer.available -> "no renderer"
+        !VideoRowAutomix.mayLoop(current.isVideoOrigin, next.isVideoOrigin) -> "a music-video row"
         AppSettings.playbackSpeed.value != 1f -> "playback speed is not 1x"
         player.skipSilenceEnabled -> "skip silence is on"
         SleepTimer.afterTrack.value -> "sleep timer"
