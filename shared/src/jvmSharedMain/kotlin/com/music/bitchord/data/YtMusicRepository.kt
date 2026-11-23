@@ -420,9 +420,13 @@ object YtMusicRepository {
         return try {
             pending.await().also {
                 // The request reads the account again when it is built, so a
-                // switch while it was out leaves its account unknown: not kept.
-                if (Innertube.listenerGeneration != generation) synchronized(suggestionsLock) {
-                    if (lastSuggestions?.answer === pending) lastSuggestions = null
+                // switch while it was out leaves its account unknown: neither
+                // kept nor handed back as the new account's completions.
+                if (Innertube.listenerGeneration != generation) {
+                    synchronized(suggestionsLock) {
+                        if (lastSuggestions?.answer === pending) lastSuggestions = null
+                    }
+                    throw IllegalStateException("account changed while suggestions were loading")
                 }
             }
         } catch (failure: Throwable) {

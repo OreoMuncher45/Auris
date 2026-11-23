@@ -94,6 +94,8 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test"))
             implementation("junit:junit:4.13.2")
+            // A Main dispatcher for tests that drive collectAsStateWithLifecycle headlessly.
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
         }
         androidMain.dependencies {
             // The phone's own versions, so nothing here moves them.

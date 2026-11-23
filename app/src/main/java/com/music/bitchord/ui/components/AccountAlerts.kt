@@ -807,7 +807,7 @@ fun <T> ChoiceAlert(
 }
 
 @Composable
-private fun ChoiceRow(
+internal fun ChoiceRow(
     label: String,
     detail: String?,
     checked: Boolean,

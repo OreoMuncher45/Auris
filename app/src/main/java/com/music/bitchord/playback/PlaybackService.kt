@@ -669,6 +669,11 @@ class PlaybackService : MediaLibraryService() {
         installed: CompletableDeferred<Unit>,
     ) {
         val seen = context.songs.mapTo(HashSet()) { it.videoId }
+        // Any account switch from here on, even one that switches back, ends
+        // the folder: a page in flight across it may be the other account's.
+        val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+        fun stillOurs() = context.belongsTo(currentListener()) &&
+            com.music.bitchord.data.innertube.Innertube.listenerGeneration == generation
         // A token handed back a second time is the feed looping back.
         val tokens = hashSetOf(first)
         var next: String? = first
@@ -686,7 +691,7 @@ class PlaybackService : MediaLibraryService() {
                     null
                 }
             } ?: return
-            if (!context.belongsTo(currentListener())) return
+            if (!stillOurs()) return
             // Only a missing or repeated token ends the folder: a page of songs
             // already queued, or only blocked ones, can still have more after
             // it. [AUTO_CONTINUATION_MAX_PAGES] bounds a feed that never ends.
@@ -699,7 +704,7 @@ class PlaybackService : MediaLibraryService() {
             // Until Media3 has installed the folder, the queue is the one it replaces.
             withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() } ?: return
             // The wait can be long enough for the account to change.
-            if (!context.belongsTo(currentListener())) return
+            if (!stillOurs()) return
             // Not tied to the player it was installed on: a crossfade hands the same queue to the
             // other player. Whether the queue still holds this folder is what
             // decides, below.
@@ -2300,6 +2305,9 @@ class PlaybackService : MediaLibraryService() {
             .map { originalPlayer.getMediaItemAt(it) }
             .filterNot { it.fromAutoplay }
             .map { it.mediaId }
+        // Folder pages already queued are part of what the driver sees: only
+        // ones appended after this point may differ without cancelling.
+        val baselineContinuation = autoContinuationAdded.toHashSet()
 
         stationActionJob?.cancel()
         stationActionJob = scope.launch {
@@ -2323,10 +2331,11 @@ class PlaybackService : MediaLibraryService() {
                 .map { activePlayer.getMediaItemAt(it) }
                 .filterNot { it.fromAutoplay }
                 .map { it.mediaId }
-            // A folder page appended meanwhile is not the driver's edit.
+            // A folder page appended meanwhile is not the driver's edit, but
+            // removing a row that was already queued is.
+            val appendedSince = autoContinuationAdded.filterNotTo(HashSet()) { it in baselineContinuation }
             if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId ||
-                activeManualQueue.filterNot { it in autoContinuationAdded } !=
-                originalManualQueue.filterNot { it in autoContinuationAdded }
+                activeManualQueue.filterNot { it in appendedSince } != originalManualQueue
             ) {
                 return@launch
             }
@@ -10707,6 +10716,7 @@ class PlaybackService : MediaLibraryService() {
                             val id = parentId.substringAfter(':')
                             val browseId = if (parentId.startsWith("playlist:")) "VL$id" else id
                             val listener = currentListener()
+                            val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
                             val songPage = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs(browseId).getOrNull()
@@ -10716,8 +10726,11 @@ class PlaybackService : MediaLibraryService() {
                                 null
                             }
                             // Discarded if the account changed during the read: the
-                            // request may have been signed as either account.
-                            if (songPage == null || listener != currentListener()) emptyList() else {
+                            // request may have been signed as either account. The
+                            // generation also catches an A→B→A switch.
+                            if (songPage == null || listener != currentListener() ||
+                                com.music.bitchord.data.innertube.Innertube.listenerGeneration != generation
+                            ) emptyList() else {
                                 songPage.songs.forEach { songCache[it.videoId] = it }
                                 // The queue is labelled as the app labels it:
                                 // the page's own title, else the card's.
