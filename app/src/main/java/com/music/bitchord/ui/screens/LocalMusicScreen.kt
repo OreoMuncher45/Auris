@@ -236,6 +236,12 @@ fun LocalMusicScreen(
     // album or playlist has one worth showing — a tag-derived grouping's
     // "artwork" is just whichever of its rows happened to be first.
     var drillDownArt by remember { mutableStateOf<String?>(null) }
+    // The order the list was opened in: a sort picked while it is open
+    // reorders it, the one it opened under leaves its order as it was.
+    var drillDownSort by remember { mutableStateOf(sortOrder) }
+    val shownDrillDownSongs = remember(drillDownSongs, drillDownSort, sortOrder) {
+        if (sortOrder == drillDownSort) drillDownSongs else drillDownSongs.sortedForLibrary(sortOrder)
+    }
 
     val inDrillDown = drillDownLabel != null
 
@@ -399,7 +405,7 @@ fun LocalMusicScreen(
                     DrillDownSongList(
                         label = drillDownLabel ?: "",
                         artworkUrl = drillDownArt,
-                        songs = drillDownSongs,
+                        songs = shownDrillDownSongs,
                         viewType = viewType,
                         selectedIds = selectedDownloadIds,
                         currentSong = currentSong,
@@ -418,7 +424,7 @@ fun LocalMusicScreen(
                         onSongSwipe = onSongSwipe,
                         onShuffle = onShuffle,
                         onMore = onCollectionLongPress?.let { more ->
-                            { more(drillDownLabel ?: "", drillDownSongs) }
+                            { more(drillDownLabel ?: "", shownDrillDownSongs) }
                         },
                         onBack = leaveDrillDown,
                         contentPadding = bodyContentPadding,
@@ -468,6 +474,7 @@ fun LocalMusicScreen(
                         onArtistClick = { artist, artistSongs ->
                             drillDownLabel = artist
                             drillDownSongs = artistSongs
+                            drillDownSort = sortOrder
                             drillDownArt = null
                         },
                         onArtistLongPress = onCollectionLongPress,
@@ -494,6 +501,7 @@ fun LocalMusicScreen(
                             } else {
                                 drillDownLabel = entry.title
                                 drillDownSongs = entry.songs
+                                drillDownSort = sortOrder
                                 drillDownArt = entry.thumbnailUrl
                             }
                         },
