@@ -29,9 +29,10 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 
 /**
- * What a backdrop's track-change fade costs in composition: scopes entered on
- * the frames after a palette change, across the legacy backdrop's 1400ms
- * colour fade. A JVM proxy; device numbers come from gfxinfo.
+ * What a backdrop's track change costs in composition: scopes entered on the
+ * frames after a palette change, across the legacy backdrop's 1400ms colour
+ * fade; and on the frames of an Automix reveal the mesh backdrop follows. A
+ * JVM proxy; device numbers come from gfxinfo.
  *
  * A measuring tool rather than a check, so it only runs when asked:
  * `AMBIENT_PROBE=1 ./gradlew :app:testProdDebugUnitTest --tests '*AmbientFadeCostProbe*' --info`,
@@ -66,6 +67,95 @@ class AmbientFadeCostProbe {
             }
         }
         error("no recomposer")
+    }
+
+    private fun observe(root: Composition, recomposer: Recomposer, counter: Counter): List<CompositionObserverHandle> {
+        val handles = mutableListOf<CompositionObserverHandle>()
+        root.setObserver(counter)?.let { handles += it }
+        handles += recomposer.observe(object : CompositionRegistrationObserver {
+            override fun onCompositionRegistered(composition: ObservableComposition) {
+                handles += composition.setObserver(counter)
+            }
+            override fun onCompositionUnregistered(composition: ObservableComposition) {}
+        })
+        return handles
+    }
+
+    private fun mesh(color: Int): ArtworkMesh {
+        val image = androidx.compose.ui.graphics.ImageBitmap(4, 4)
+        androidx.compose.ui.graphics.Canvas(image).drawRect(
+            0f, 0f, 4f, 4f, androidx.compose.ui.graphics.Paint().apply { this.color = Color(color) },
+        )
+        // Internal to sharedUi; this probe only needs two distinct meshes.
+        val ctor = ArtworkMesh::class.java.declaredConstructors.first { it.parameterCount == 3 }
+        ctor.isAccessible = true
+        return ctor.newInstance(image, false, null) as ArtworkMesh
+    }
+
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun meshFollowsAReveal() {
+        Assume.assumeTrue("set AMBIENT_PROBE=1 to run", System.getenv("AMBIENT_PROBE") == "1")
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<Application>()
+        PlayerPlatform.install(AndroidPlayerHost(ctx))
+        val a = mesh(0xFFE8603C.toInt())
+        val b = mesh(0xFF1F9EA8.toInt())
+        val progress = androidx.compose.runtime.mutableFloatStateOf(0f)
+        val mixCtor = AutoMixAmbientMix::class.java.declaredConstructors.first { it.parameterCount == 3 }
+        mixCtor.isAccessible = true
+        val reveal = mixCtor.newInstance(1L, "next", { progress.floatValue }) as AutoMixAmbientMix
+        var shown by mutableStateOf(a)
+        var mix by mutableStateOf<AutoMixAmbientMix?>(null)
+        var recomposer: Recomposer? = null
+        var root: Composition? = null
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            val composition = currentComposer.composition
+            SideEffect { if (recomposer == null) { recomposer = recomposerOf(composition); root = composition } }
+            Box(Modifier.size(400.dp, 800.dp)) {
+                ArtworkMeshBackdrop(mesh = shown, mix = mix, mixMesh = if (mix != null) b else null)
+            }
+        }
+        compose.mainClock.advanceTimeBy(10_000)
+        compose.waitForIdle()
+        val counter = Counter()
+        val handles = observe(root!!, recomposer!!, counter)
+        fun frame() {
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+            compose.mainClock.advanceTimeByFrame()
+        }
+        // An ordinary skip, for comparison: the 900ms fade.
+        counter.enters = 0
+        shown = b; frame()
+        val skipChange = counter.enters
+        counter.enters = 0
+        repeat(100) { frame() }
+        val skipFade = counter.enters
+        shown = a
+        compose.mainClock.advanceTimeBy(10_000)
+        // A reveal: armed, the track change part way in, 2.6s of window, the end.
+        counter.enters = 0
+        mix = reveal; frame()
+        val start = counter.enters
+        counter.enters = 0
+        repeat(30) { frame() }
+        shown = b; frame()
+        repeat(29) { frame() }
+        val beforeWindow = counter.enters
+        counter.enters = 0
+        repeat(160) { i -> progress.floatValue = (i + 1) / 160f; frame() }
+        val window = counter.enters
+        counter.enters = 0
+        mix = null; frame()
+        val end = counter.enters
+        counter.enters = 0
+        repeat(60) { frame() }
+        val settle = counter.enters
+        handles.forEach { it.dispose() }
+        println(
+            "PROBE meshReveal skip: change=$skipChange fade100=$skipFade | " +
+                "reveal: start=$start trackChange+60frames=$beforeWindow window160=$window end=$end settle60=$settle",
+        )
     }
 
     @Test
