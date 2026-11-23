@@ -5,6 +5,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class AnalysisStoreEntryTest {
 
@@ -30,6 +31,28 @@ class AnalysisStoreEntryTest {
             // Just under a 0.55 threshold; rounded to three places it passed it.
             store.save("t", analysis(confidence = 0.5496))
             assertEquals(0.5496, assertNotNull(store.load("t")).headBeats!!.confidence)
+        }
+    }
+
+    @Test
+    fun theCopyAResultWasMeasuredOnComesBackWithIt() {
+        withStore { store, _ ->
+            store.save("t", analysis(), measuredOn = "video#analysis#alt2")
+            assertEquals("video#analysis#alt2", assertNotNull(store.loadEntry("t")).measuredOn)
+        }
+    }
+
+    @Test
+    fun anEntryFromBeforeTheCopyWasRecordedStillLoadsAndNamesNone() {
+        withStore { store, directory ->
+            store.save("t", analysis())
+            // As an older build wrote it: no field at all.
+            val file = directory.walkTopDown().single { it.isFile && it.name.endsWith(".json") }
+            file.writeText(file.readText().replace(Regex(",?\"measuredOn\":null"), ""))
+
+            val entry = assertNotNull(store.loadEntry("t"))
+            assertEquals(120.0, entry.analysis.bpm)
+            assertNull(entry.measuredOn)
         }
     }
 }

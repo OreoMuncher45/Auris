@@ -85,14 +85,27 @@ class AnalysisStore(
     }
 
     /** Reads [trackId]'s stored analysis, or null when there isn't one. */
-    fun load(trackId: String): TrackAnalysis? {
+    fun load(trackId: String): TrackAnalysis? = loadEntry(trackId)?.analysis
+
+    /**
+     * A stored analysis with the copy it was measured on.
+     *
+     * [measuredOn] is the cache key of the rendition the grid was read off, or
+     * null for an entry written before it was recorded. A loop deck is cut
+     * from that exact copy and from no other: two renditions of one length can
+     * still have their beats in different places.
+     */
+    class Entry(val analysis: TrackAnalysis, val measuredOn: String?)
+
+    /** [load], with the copy the result was measured on. */
+    fun loadEntry(trackId: String): Entry? {
         if (trackId.isBlank()) return null
         if (known[trackId] == false) return null
         val file = File(directory, fileNameFor(trackId))
         return synchronized(files) { loadLocked(trackId, file) }
     }
 
-    private fun loadLocked(trackId: String, file: File): TrackAnalysis? {
+    private fun loadLocked(trackId: String, file: File): Entry? {
         if (!file.exists()) {
             known[trackId] = false
             return null
@@ -103,7 +116,7 @@ class AnalysisStore(
             // way, and a wrong beat grid is worse than none — so it is dropped
             // and re-earned rather than migrated.
             require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
-            stored.toAnalysis(trackId)
+            Entry(stored.toAnalysis(trackId), stored.measuredOn)
         }
             .onFailure {
                 // A half-written or outdated file is worth exactly nothing and
@@ -121,9 +134,11 @@ class AnalysisStore(
      * tempo: a failure is cheap to rediscover and worth rediscovering, since
      * the reason for it is usually missing bytes rather than the track itself.
      */
-    fun save(trackId: String, analysis: TrackAnalysis) {
+    fun save(trackId: String, analysis: TrackAnalysis, measuredOn: String? = null) {
         if (trackId.isBlank() || !analysis.isUsable) return
-        val encoded = runCatching { json.encodeToString(Stored.serializer(), Stored.of(analysis)) }
+        val encoded = runCatching {
+            json.encodeToString(Stored.serializer(), Stored.of(analysis).copy(measuredOn = measuredOn))
+        }
             .onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
             .getOrNull() ?: return
         runCatching {
@@ -228,6 +243,8 @@ class AnalysisStore(
         val tailBeats: StoredBeats? = null,
         val vocalWindows: List<StoredCurve> = emptyList(),
         val levelWindows: List<StoredCurve> = emptyList(),
+        /** See [Entry.measuredOn]. Optional, so entries from before it still read. */
+        val measuredOn: String? = null,
     ) {
         fun toAnalysis(trackId: String) = TrackAnalysis(
             status = TrackAnalysis.STATUS_READY,
