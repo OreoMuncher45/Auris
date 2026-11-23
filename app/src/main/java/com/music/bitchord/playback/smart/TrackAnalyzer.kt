@@ -1265,6 +1265,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         triedRenditions.add(copy.key)
         analysedCopies[trackId] = copy.key
         val openSource = copy.open
+        // Given up for the player or a party, not failed: the copy has not
+        // really been read, so it stays one that can reopen a written-off track.
+        fun interrupted(): WholeTrack {
+            triedRenditions.remove(copy.key)
+            return WholeTrack(null)
+        }
 
         var effectiveDuration = durationSeconds
         if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
@@ -1305,7 +1311,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read *before* the two lines below, not after, because an abort comes
         // back from [structure] as a decode that produced nothing, and that is
         // exactly what those lines write a permanent "cannot be analysed" for.
-        if (stopped || structural.aborted) return WholeTrack(null)
+        if (stopped || structural.aborted) return interrupted()
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
         val outOfMemory = structural.outOfMemory
         // A track over the cap, or one Pass 1 ran out of memory on, has no
@@ -1336,10 +1342,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // that would be published, and persisted, with the DSP estimate
             // standing in. A result assembled out of a half-finished analysis
             // is worse than none.
-            if (abort.poll()) return WholeTrack(null)
+            if (abort.poll()) return interrupted()
             region(openSource, from, to, features, abort = abort::poll)?.let(regions::add)
         }
-        if (abort.poll()) return WholeTrack(null)
+        if (abort.poll()) return interrupted()
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
