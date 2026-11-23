@@ -362,10 +362,20 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // rather than on every tick.
         if (!restoreAttempted.add(trackId)) return
         restoreExecutor.execute {
-            val stored = store.load(trackId) ?: return@execute
+            val entry = store.loadEntry(trackId) ?: return@execute
+            val stored = entry.analysis
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
-            rememberIfAbsent(trackId, stored)
+            restoreCopy(trackId, entry, rememberIfAbsent(trackId, stored))
         }
+    }
+
+    /**
+     * Remembers which copy a restored result was measured on, if it is the
+     * result now cached. See [loopCopy].
+     */
+    private fun restoreCopy(trackId: String, entry: AnalysisStore.Entry, cached: TrackAnalysis) {
+        if (cached !== entry.analysis) return
+        entry.measuredOn?.let { measuredCopies.putIfAbsent(trackId, it) }
     }
 
     /** True once [trackId] has a result, including a failure. Nothing more will arrive. */
@@ -527,8 +537,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // restored and then immediately spends seven seconds
                 // recomputing the identical numbers. A provisional result is
                 // exempt: superseding one is the whole point of it.
-                val landed = results[trackId] ?: store.load(trackId)?.let { stored ->
-                    rememberIfAbsent(trackId, stored)
+                val landed = results[trackId] ?: store.loadEntry(trackId)?.let { entry ->
+                    rememberIfAbsent(trackId, entry.analysis).also { restoreCopy(trackId, entry, it) }
                 }
                 if (landed != null && landed.isUsable && trackId !in provisional) return@execute
                 // The queue this task sat in is single-threaded, so a party
@@ -555,7 +565,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
                         // Not a deliberately partial answer: see [WholeTrack.persist].
-                        if (outcome.persist) store.save(trackId, whole)
+                        if (outcome.persist) store.save(trackId, whole, measuredOn)
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS
@@ -1255,6 +1265,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         triedRenditions.add(copy.key)
         analysedCopies[trackId] = copy.key
         val openSource = copy.open
+        // Given up for the player or a party, not failed: the copy has not
+        // really been read, so it stays one that can reopen a written-off track.
+        fun interrupted(): WholeTrack {
+            triedRenditions.remove(copy.key)
+            return WholeTrack(null)
+        }
 
         var effectiveDuration = durationSeconds
         if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
@@ -1295,7 +1311,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read *before* the two lines below, not after, because an abort comes
         // back from [structure] as a decode that produced nothing, and that is
         // exactly what those lines write a permanent "cannot be analysed" for.
-        if (stopped || structural.aborted) return WholeTrack(null)
+        if (stopped || structural.aborted) return interrupted()
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
         val outOfMemory = structural.outOfMemory
         // A track over the cap, or one Pass 1 ran out of memory on, has no
@@ -1326,10 +1342,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // that would be published, and persisted, with the DSP estimate
             // standing in. A result assembled out of a half-finished analysis
             // is worse than none.
-            if (abort.poll()) return WholeTrack(null)
+            if (abort.poll()) return interrupted()
             region(openSource, from, to, features, abort = abort::poll)?.let(regions::add)
         }
-        if (abort.poll()) return WholeTrack(null)
+        if (abort.poll()) return interrupted()
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -1804,12 +1820,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * The copy a loop deck is cut from: the rendition the track's grid was
      * measured on, never another one — a copy of the same length is not the
      * same timing. Null when that rendition has gone, so the pair gets an
-     * ordinary blend. A grid restored from an earlier session names no copy,
-     * and reads the one [copyToRead] picks.
+     * ordinary blend. A grid restored from an earlier session names the copy
+     * it was stored with; one stored before that was recorded names none and
+     * gets the blend too, since nothing can show which copy it came from.
      */
     private fun loopCopy(trackId: String, uri: Uri, durationSeconds: Double): Copy? {
+        if (LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
         val measured = measuredCopies[trackId]
-        if (measured == null || LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
+        if (measured == null) {
+            Log.d(TAG, "No loop region for $trackId: its grid does not say which copy it was measured on")
+            return null
+        }
         val rendition = cache.renditionsOf(uri).firstOrNull { it.key == measured && it.key !in badRenditions }
         if (rendition == null) {
             Log.d(TAG, "No loop region for $trackId: the copy its grid was measured on ($measured) is gone")
