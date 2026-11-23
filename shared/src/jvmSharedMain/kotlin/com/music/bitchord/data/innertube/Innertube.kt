@@ -437,6 +437,33 @@ object Innertube {
         channelOverride?.authUser ?: session?.authUser ?: "0"
 
     /**
+     * What one signed request goes out with, read in one go under
+     * [identityLock]: the cookie, the account and channel it acts as, and the
+     * visitor id.
+     *
+     * Read field by field while a sign-in or channel switch was half-way
+     * through, a request could pair the new channel with the old cookie or
+     * scope — credentials no published [listener] ever named, so a caller's
+     * before-and-after [listenerGeneration] check could not tell. Taken whole
+     * under the lock, every request goes out as a state that was published at
+     * some generation, and generations only grow: a caller that reads the
+     * same generation before the request and after it got that listener's
+     * answer.
+     */
+    private class RequestCredentials(
+        val cookie: String?,
+        val authUser: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val visitorData: String?,
+    )
+
+    private fun requestCredentials(): RequestCredentials = synchronized(identityLock) {
+        val session = scope
+        RequestCredentials(cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData)
+    }
+
+    /**
      * The WEB_REMIX version to claim, live if the shell has been read.
      *
      * Worth taking from the shell rather than pinning: the stats pings carry it
@@ -708,16 +735,16 @@ object Innertube {
     suspend fun accountSwitcher(): JsonObject {
         requireSession()
         ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         val text = withRetry {
             client.get("$YOUTUBE_ORIGIN/getAccountSwitcherEndpoint") {
                 header("User-Agent", WEB_USER_AGENT)
                 header("Accept-Language", acceptLanguageHeader)
                 header("X-Origin", YOUTUBE_ORIGIN)
                 header("Referer", "$YOUTUBE_ORIGIN/")
-                cookie?.let { c ->
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
-                    header("X-Goog-AuthUser", authUserFor(session))
+                    header("X-Goog-AuthUser", credentials.authUser)
                     sapisidFrom(c)?.let {
                         header("Authorization", sapisidHash(it, YOUTUBE_ORIGIN))
                     }
@@ -956,10 +983,10 @@ object Innertube {
         // Playback can outlive the Activity that restored the session. Ensure
         // the selected profile's headers exist before this first history ping.
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("cpn", cpn)
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -970,7 +997,7 @@ object Innertube {
         extras: HttpRequestBuilder.() -> Unit,
     ): Int {
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("ver", "2")
             parameter("c", "WEB_REMIX")
@@ -986,7 +1013,7 @@ object Innertube {
             parameter("hl", "en_US")
             parameter("cr", "US")
             extras()
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -996,16 +1023,16 @@ object Innertube {
      * player response; sending fewer is what makes a ping land somewhere other
      * than the listener's own history.
      */
-    private fun HttpRequestBuilder.statsHeaders(session: SessionScope?) {
+    private fun HttpRequestBuilder.statsHeaders(credentials: RequestCredentials) {
         header("X-Origin", MUSIC_ORIGIN)
         header("Origin", MUSIC_ORIGIN)
         header("Referer", "$MUSIC_ORIGIN/")
         header("User-Agent", WEB_USER_AGENT)
-        visitorData?.let { header("X-Goog-Visitor-Id", it) }
-        cookie?.let { c ->
+        credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+        credentials.cookie?.let { c ->
             header("Cookie", c)
-            header("X-Goog-AuthUser", authUserFor(session))
-            pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+            header("X-Goog-AuthUser", credentials.authUser)
+            credentials.pageId?.let { header("X-Goog-PageId", it) }
             sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
         }
     }
@@ -1292,7 +1319,7 @@ object Innertube {
         // through it. Waiting here makes restoration process-wide rather than
         // a special case implemented by whichever screen happened to open.
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         val clientVersion = webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
@@ -1309,14 +1336,14 @@ object Innertube {
                 // id is minted on the first call and reused for the session.
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                cookie?.let { c ->
+                credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
                     // Which account in the jar, and which brand channel of it.
                     // Both were fixed at "the first one" before — see
                     // [SessionScope].
-                    header("X-Goog-AuthUser", authUserFor(session))
-                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+                    header("X-Goog-AuthUser", credentials.authUser)
+                    credentials.pageId?.let { header("X-Goog-PageId", it) }
                     sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
                 }
                 setBody(
@@ -1327,7 +1354,7 @@ object Innertube {
                                 put("clientVersion", clientVersion)
                                 put("hl", currentLanguage)
                                 put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
+                                credentials.visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
@@ -1336,7 +1363,7 @@ object Innertube {
                                 // `onBehalfOfUser` it cannot tie to the cookie
                                 // with 401, so a guess here would take the
                                 // whole app down rather than just history.
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                credentials.dataSyncId?.let { put("onBehalfOfUser", it) }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
