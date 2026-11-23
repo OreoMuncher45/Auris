@@ -1866,9 +1866,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             Log.d(TAG, "No loop region for $trackId: its grid does not say which copy it was measured on")
             return null
         }
+        return measuredCopy(trackId, uri, measured)
+    }
+
+    /** The rendition [measured] of [uri], or null (logged) when it has gone. */
+    private fun measuredCopy(trackId: String, uri: Uri, measured: String): Copy? {
         val rendition = cache.renditionsOf(uri).firstOrNull { it.key == measured && it.key !in badRenditions }
         if (rendition == null) {
-            Log.d(TAG, "No loop region for $trackId: the copy its grid was measured on ($measured) is gone")
+            Log.d(TAG, "No measured copy for $trackId: the copy its grid was measured on ($measured) is gone")
             return null
         }
         return Copy(key = rendition.key, rendition = rendition) { cache.renditionDataSource(uri, rendition) }
@@ -1895,7 +1900,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             sourceAnalysisUris[trackId] ?: return null
         }
         val began = SystemClock.elapsedRealtime()
-        val copy = runCatching { copyToRead(trackId, analysisUri, durationSeconds) }.getOrNull() ?: return null
+        // Off the copy the markers were measured on, when that is known: a
+        // later canonical copy can sit on a different timeline from the
+        // substitute the grid came from. Gone, the waveform is left out rather
+        // than drawn from another copy.
+        val measured = measuredCopies[trackId]?.takeUnless { LocalAudioSource.isLocal(analysisUri) }
+        val copy = runCatching {
+            if (measured != null) {
+                measuredCopy(trackId, analysisUri, measured)
+            } else {
+                copyToRead(trackId, analysisUri, durationSeconds)
+            }
+        }.getOrNull() ?: return null
         val chosen = SystemClock.elapsedRealtime()
         val bands = copy.open()?.use { source ->
             MixWaveform.build(source, fromSeconds, toSeconds, bins) { stopped }
