@@ -754,6 +754,12 @@ data class DetailPage(
     val continuation: String? = null,
     /** A next page is on the wire for this page. */
     val loadingMore: Boolean = false,
+    /**
+     * Which opening of [browseId] this stack entry is. The same page can be on
+     * the stack twice (opened again from itself, say), and work started for
+     * one opening must land on that entry, not the first with the same id.
+     */
+    val opening: Long = 0L,
 )
 
 /**

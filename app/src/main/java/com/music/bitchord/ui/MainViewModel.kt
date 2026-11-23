@@ -979,7 +979,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
     private fun isDetailOpen(browseId: String, opening: Long): Boolean =
-        detailOpenings[browseId] == opening && _detailStack.value.any { it.browseId == browseId }
+        detailOpenings[browseId] == opening && _detailStack.value.any { it.opening == opening }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -4211,6 +4211,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val resolved = browseTypeOf(browseId, type)
+        val opened = markDetailOpened(browseId)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4218,8 +4219,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             thumbnailUrl = thumbnailUrl,
             songs = UiState.Loading,
             type = resolved,
+            opening = opened,
         )
-        val opened = markDetailOpened(browseId)
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -4849,7 +4850,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // a real track that first showed up as a suggestion is still new.
         val seen = HashSet<String>()
         val seenSuggested = HashSet<String>()
-        _detailStack.value.firstOrNull { it.browseId == browseId }?.let { page ->
+        _detailStack.value.firstOrNull { it.opening == opened }?.let { page ->
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
             page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
@@ -4888,7 +4889,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ) { batch ->
                 if (!stillOurs()) return@followContinuations false
                 val stack = _detailStack.value
-                val index = stack.indexOfFirst { it.browseId == browseId }
+                // The entry this opening pushed, not the first with its id.
+                val index = stack.indexOfFirst { it.opening == opened }
                 if (index < 0) return@followContinuations false
                 val current = stack[index]
                 val existing = (current.songs as? UiState.Success)?.data ?: return@followContinuations false
