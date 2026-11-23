@@ -62,6 +62,11 @@ internal class AnalysisResultCache(private val maxEntries: Int) {
     fun trimTo(max: Int, pinned: (String) -> Boolean): List<String> =
         synchronized(order) { trimLocked(max, pinned) }
 
+    /** Removes [trackId]'s result only if it is still [analysis]. Returns whether it did. */
+    fun remove(trackId: String, analysis: TrackAnalysis): Boolean = synchronized(order) {
+        results.remove(trackId, analysis).also { if (it) order.remove(trackId) }
+    }
+
     fun clear() = synchronized(order) {
         results.clear()
         order.clear()

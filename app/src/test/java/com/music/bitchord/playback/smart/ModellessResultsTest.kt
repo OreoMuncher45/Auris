@@ -10,18 +10,24 @@ class ModellessResultsTest {
     private fun analysis(id: String, bpm: Double = 120.0) =
         TrackAnalysis(status = TrackAnalysis.STATUS_READY, trackId = id, duration = 200.0, bpm = bpm)
 
+    private fun cacheOf(vararg entries: Pair<String, TrackAnalysis>) =
+        AnalysisResultCache(maxEntries = 16).apply {
+            for ((id, analysis) in entries) put(id, analysis) { false }
+        }
+
     @Test
     fun `drop forgets a DSP-only result and its copy so the track is measured again`() {
         val modelless = ModellessResults()
         val dsp = analysis("a")
-        val results = mutableMapOf("a" to dsp, "b" to analysis("b"))
+        val results = cacheOf("a" to dsp, "b" to analysis("b"))
         val tried = mutableSetOf("a#opus", "b#opus")
         val measured = mutableMapOf("a" to "a#opus", "b" to "b#opus")
         modelless.record("a", dsp, "a#opus")
 
         modelless.drop(results, tried, measured)
 
-        assertEquals(setOf("b"), results.keys)
+        assertFalse(results.containsKey("a"))
+        assertTrue(results.containsKey("b"))
         assertEquals(setOf("b#opus"), tried)
         assertEquals(mapOf("b" to "b#opus"), measured)
         assertTrue(modelless.isEmpty())
@@ -32,7 +38,7 @@ class ModellessResultsTest {
         val modelless = ModellessResults()
         modelless.record("a", analysis("a"), "a#opus")
         val withModels = analysis("a", bpm = 124.0)
-        val results = mutableMapOf("a" to withModels)
+        val results = cacheOf("a" to withModels)
         val tried = mutableSetOf("a#hifi")
         val measured = mutableMapOf("a" to "a#hifi")
 
@@ -52,8 +58,8 @@ class ModellessResultsTest {
         modelless.forget("a")
         assertTrue(modelless.isEmpty())
 
-        val results = mutableMapOf("a" to dsp)
+        val results = cacheOf("a" to dsp)
         modelless.drop(results, mutableSetOf("a#opus"), mutableMapOf())
-        assertFalse(results.isEmpty())
+        assertTrue(results.containsKey("a"))
     }
 }

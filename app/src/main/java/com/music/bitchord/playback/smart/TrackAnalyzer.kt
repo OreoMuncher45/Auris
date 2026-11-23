@@ -2071,7 +2071,7 @@ internal class ModellessResults {
      * from [measured], leaving alone anything that has since been replaced.
      */
     fun drop(
-        results: MutableMap<String, TrackAnalysis>,
+        results: AnalysisResultCache,
         tried: MutableSet<String>,
         measured: MutableMap<String, String>,
     ) {
