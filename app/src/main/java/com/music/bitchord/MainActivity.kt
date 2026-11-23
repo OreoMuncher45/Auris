@@ -1716,6 +1716,8 @@ internal fun BitChordApp(
     }
 
     val playFrom: (List<Song>, Int, QueueSource) -> Unit = playFrom@{ allSongs, allIndex, source ->
+        // Taken before anything can turn this play away, applied only once it is accepted.
+        val shuffle = QueueShuffle.takeRequestForNextQueue()
         // A Spotify page lists songs it has not found on YouTube Music yet (or
         // never will); those can't be queued, so play the rest in their order.
         if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return@playFrom
@@ -1726,6 +1728,7 @@ internal fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
+            QueueShuffle.applyForNextQueue(shuffle)
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
@@ -1788,7 +1791,11 @@ internal fun BitChordApp(
     val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit = browse@{ page, songs, index ->
         val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
         val ready = songs.asSpotifyQueueRows()
-        if (ready.isEmpty()) return@browse
+        if (ready.isEmpty()) {
+            // Nothing to play: drop the shuffle a Play button asked for with it.
+            QueueShuffle.takeRequestForNextQueue()
+            return@browse
+        }
         val at = index?.coerceIn(0, (ready.size - 1).coerceAtLeast(0)) ?: 0
         playFrom(ready, at, source)
     }
@@ -6654,13 +6661,14 @@ private data class PageActions(
 )
 
 /**
- * A release's Play or Shuffle button setting shuffle for the queue it is about
- * to start. Skipped when the party host has taken the controls: that play is
- * refused, and the listener's shuffle and its saved order must survive it.
+ * A release's Play or Shuffle button asking for shuffle on the queue it is
+ * about to start. Call it right before that play: `playFrom` takes the request
+ * and applies it only once the play is accepted, so a play refused because
+ * the party host has the controls, or because there is no controller yet,
+ * leaves the listener's shuffle and its saved order as they were.
  */
 private fun setShuffleForNextQueue(on: Boolean) {
-    if (ListenTogether.state.value.controlsLocked) return
-    if (on) QueueShuffle.enableForNextQueue() else QueueShuffle.disableForNextQueue()
+    QueueShuffle.requestForNextQueue(on)
 }
 
 /**
