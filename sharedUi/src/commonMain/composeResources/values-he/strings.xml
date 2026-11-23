@@ -263,10 +263,10 @@
     <string name="queue_selected_count">%1$d נבחרו</string>
     <string name="queue_close_selection">סגירת מצב הבחירה</string>
     <string name="queue_selection_remove">הסר</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">הוסף לפלייליסט</string>
     <string name="queue_download">הורדה</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s הוסר</string>
+    <string name="queue_removed_songs">%1$d שירים הוסרו</string>
+    <string name="queue_undo_action">ביטול</string>
+    <string name="queue_cleared">„הבא בתור“ רוקן</string>
 </resources>
