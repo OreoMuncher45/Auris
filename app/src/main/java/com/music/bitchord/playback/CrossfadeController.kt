@@ -3074,6 +3074,10 @@ class CrossfadeController(
             return loopBail("a sink was flushed", settle = false)
         }
         if (!sessionPlayer.playWhenReady) return loopBail("paused", settle = true)
+        // Bit-perfect allows no blend but the sleep fade, and a loop mix is the
+        // renderer's audio for many bars: settle onto the song ahead in it, at
+        // its mix position, rather than play the rest altered.
+        if (AppSettings.bitPerfect.value) return loopBail("bit-perfect is on", settle = true)
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {
