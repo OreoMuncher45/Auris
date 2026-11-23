@@ -585,10 +585,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 if (usableComplete) {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val measuredOn = analysedCopies.remove(trackId)
+                    // The copy travels inside the result, so no reader sees the
+                    // new grid with the old copy's key or the other way round.
                     val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
+                        ?.copy(measuredOn = measuredOn)
                     if (whole != null) {
-                        remember(trackId, whole)
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
+                        remember(trackId, whole)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
                         // Only the whole-track pass is persisted. A head result
@@ -634,12 +637,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
                     if (head != null) {
                         provisional.add(trackId)
-                        remember(trackId, head)
                         measuredCopies[trackId] = headRendition.key
+                        // The very object published, so the model-less record's
+                        // identity check matches what the cache holds.
+                        val published = head.copy(measuredOn = headRendition.key)
+                        remember(trackId, published)
                         if (modelsBefore && modelsReady()) {
                             modelless.forget(trackId)
                         } else {
-                            modelless.recordHead(trackId, head, headRendition.key, headRendition.cachedPrefix)
+                            modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
                         }
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
@@ -1868,6 +1874,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * what the player plays, and a deck spliced in from another master would
      * land off the song it takes over from. Blocking — call it off the main
      * thread.
+     *
+     * [plannedOn] is the [TrackAnalysis.measuredOn] of the analysis the loop
+     * was planned from. When given, the deck is cut only if the current result
+     * still names that copy; a newer result measured elsewhere gets the
+     * ordinary blend instead.
      */
     fun loopRegion(
         trackId: String,
@@ -1876,10 +1887,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         fromSeconds: Double,
         toSeconds: Double,
         sampleRate: Int,
+        plannedOn: String? = null,
     ): com.music.bitchord.playback.loopmix.LoopRegion? {
         if (uri.getQueryParameter("v") == null && uri.authority == "source") return null
         val began = SystemClock.elapsedRealtime()
-        val copy = runCatching { loopCopy(trackId, uri, durationSeconds) }.getOrNull() ?: return null
+        val copy = runCatching { loopCopy(trackId, uri, durationSeconds, plannedOn) }.getOrNull() ?: return null
         val (stereo, start) = copy.open()?.use { source ->
             AudioDecoder.decodeRegionStereo(source, max(0.0, fromSeconds), toSeconds) { stopped }
         } ?: return null
@@ -1911,11 +1923,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * it was stored with; one stored before that was recorded names none and
      * gets the blend too, since nothing can show which copy it came from.
      */
-    private fun loopCopy(trackId: String, uri: Uri, durationSeconds: Double): Copy? {
+    private fun loopCopy(trackId: String, uri: Uri, durationSeconds: Double, plannedOn: String?): Copy? {
         if (LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
-        val measured = measuredCopies[trackId]
+        // Read off the published result itself, so the key is the one that
+        // came with the grid rather than one written beside it.
+        val measured = results[trackId]?.measuredOn
         if (measured == null) {
             Log.d(TAG, "No loop region for $trackId: its grid does not say which copy it was measured on")
+            return null
+        }
+        // A plan made from an earlier result is cut from that result's copy or
+        // not at all: a later result can name a different one.
+        if (plannedOn != null && plannedOn != measured) {
+            Log.d(TAG, "No loop region for $trackId: planned on $plannedOn, now measured on $measured")
             return null
         }
         return measuredCopy(trackId, uri, measured)
@@ -1949,14 +1969,20 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
             uri
         } else {
-            sourceAnalysisUris[trackId] ?: return null
+            // A result restored after a restart arrives before any catalogue
+            // match: the copy it names is the matched YouTube copy.
+            sourceAnalysisUris[trackId]
+                ?: results[trackId]?.measuredOn
+                    ?.let(AutomixAnalysisSource::videoIdOfAnalysisKey)
+                    ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
+                ?: return null
         }
         val began = SystemClock.elapsedRealtime()
         // Off the copy the markers were measured on, when that is known: a
         // later canonical copy can sit on a different timeline from the
         // substitute the grid came from. Gone, the waveform is left out rather
         // than drawn from another copy.
-        val measured = measuredCopies[trackId]?.takeUnless { LocalAudioSource.isLocal(analysisUri) }
+        val measured = results[trackId]?.measuredOn?.takeUnless { LocalAudioSource.isLocal(analysisUri) }
         val copy = runCatching {
             if (measured != null) {
                 measuredCopy(trackId, analysisUri, measured)

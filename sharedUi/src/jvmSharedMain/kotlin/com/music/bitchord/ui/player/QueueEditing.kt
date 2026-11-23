@@ -34,6 +34,12 @@ class QueueUndoNotice(val id: Long, val kind: QueueUndoKind, val onUndo: () -> U
  */
 @Stable
 class QueueEditing {
+    /**
+     * Removes a swiped row, given its timeline index and its own song so the
+     * host can follow it by entry if the queue has moved since.
+     */
+    var onSwipeRemove: (Int, Song) -> Unit = { _, _ -> }
+
     /** Moves the row at a timeline index into Next in queue; true once done. */
     var onSwipeToQueue: (Int, Song) -> Boolean = { _, _ -> false }
 
