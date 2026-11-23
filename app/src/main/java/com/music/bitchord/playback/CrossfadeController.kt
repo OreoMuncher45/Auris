@@ -730,6 +730,10 @@ class CrossfadeController(
         visualCurrentIndex = C.INDEX_UNSET
     }
 
+    /** The same queue entry, playing the same stream or file: a download can replace an entry's stream in place. */
+    private fun samePlayableEntry(expected: MediaItem, actual: MediaItem): Boolean =
+        sameQueueEntry(expected, actual) && expected.localConfiguration == actual.localConfiguration
+
     /** The same queue entry, not just the same song: a song can be queued twice. */
     private fun sameQueueEntry(expected: MediaItem, actual: MediaItem?): Boolean =
         actual != null && expected.mediaId == actual.mediaId && expected.queueEntryId == actual.queueEntryId
@@ -2049,7 +2053,9 @@ class CrossfadeController(
         val held = into.mediaItemCount
         val heldQueue = (0 until held).map(into::getMediaItemAt)
         val liveIncoming = if (late) out.currentMediaItemIndex else out.nextMediaItemIndex
-        when (val plan = QueueReconcile.plan(queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry)) {
+        when (val plan = QueueReconcile.plan(
+            queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry, ::samePlayableEntry,
+        )) {
             QueueReconcile.Bail -> {
                 TrackLog.w(TAG, "the queue changed at or before the incoming track; not handing off")
                 return false
