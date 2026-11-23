@@ -58,6 +58,10 @@ object SflxCatalog {
     @Volatile
     private var appVersion: String = ""
 
+    /** Where signed-session records live; null until [init]. */
+    @Volatile
+    private var sessionsDirectory: File? = null
+
     /** Every installed extension, newest install last. */
     private val _installed = MutableStateFlow<List<InstalledSflx>>(emptyList())
     val installed: StateFlow<List<InstalledSflx>> = _installed.asStateFlow()
@@ -125,6 +129,7 @@ object SflxCatalog {
         // Kept out of backups and device transfer: they are content keys.
         com.music.bitchord.playback.cenc.CencKeys.init(context.noBackupFilesDir)
         val sessions = File(context.filesDir, SIGNED_SESSIONS_DIRECTORY).apply { mkdirs() }
+        this.sessionsDirectory = sessions
         // Extensions that ask for files get a private folder each, in the
         // cache: what they write there is a decrypted track, and the system
         // may reclaim it like any other cache.
@@ -347,6 +352,112 @@ object SflxCatalog {
     fun settingsOf(id: String): JsonObject =
         runCatching { Json.parseToJsonElement(hostRef?.settingsJson(id) ?: "{}") as JsonObject }
             .getOrDefault(JsonObject(emptyMap()))
+
+    // ── Add-ons backup ───────────────────────────────────────────────────
+
+    /** Every installed package's files by id, in install order. Disk reads, so never on the main thread. */
+    internal fun backupPackages(): Map<String, Map<String, ByteArray>> {
+        val store = store ?: return emptyMap()
+        val host = hostRef ?: return emptyMap()
+        // Each package is read under the host's lifecycle lock, so an install
+        // or removal running at the same moment can't leave a half-read copy.
+        return runCatching { store.list() }.getOrDefault(emptyList())
+            .mapNotNull { installed -> host.exportFiles(installed.id)?.let { installed.id to it } }
+            .toMap()
+    }
+
+    /** Every signed-session record by file name. Disk reads, so never on the main thread. */
+    internal fun backupSessions(): Map<String, ByteArray> {
+        val directory = sessionsDirectory ?: return emptyMap()
+        return directory.listFiles { file -> file.isFile && file.name.endsWith(".json") }
+            .orEmpty()
+            .associate { it.name to it.readBytes() }
+    }
+
+    /** The names of the session records on disk now. */
+    internal fun sessionNames(): Set<String> =
+        sessionsDirectory?.list { _, name -> name.endsWith(".json") }?.toSet().orEmpty()
+
+    /**
+     * Writes one session record from a backup, atomically.
+     *
+     * The caller has already checked [name] is a plain file name. It's checked
+     * again here so this function is safe on its own.
+     */
+    internal fun restoreSession(name: String, bytes: ByteArray): Boolean {
+        val directory = sessionsDirectory ?: return false
+        // Same rule as the archive: one plain segment, so no separators and no leading dot.
+        if (!com.music.bitchord.data.sources.backup.AddonBackupArchive.isSessionName(name)) return false
+        if (!directory.isDirectory) directory.mkdirs()
+        // A short staging name: "$name.tmp" would exceed the 255-byte filename
+        // limit for a session name already near it. Ends in .tmp, so a leftover is never read as a record.
+        val staging = runCatching { File.createTempFile(".session", ".tmp", directory) }.getOrNull() ?: return false
+        return try {
+            staging.writeBytes(bytes)
+            // Atomic or nothing: when the rename fails, the existing record is left
+            // exactly as it was rather than overwritten in place.
+            staging.renameTo(File(directory, name))
+        } catch (e: Exception) {
+            false
+        } finally {
+            // Gone after a successful rename; removed here after any failure.
+            staging.delete()
+        }
+    }
+
+    /**
+     * Writes session records from a backup with no running client able to
+     * write a stale record over them (see [SflxHost.replaceSessionRecords]).
+     * Returns how many could not be written.
+     */
+    internal fun restoreSessions(records: Map<String, ByteArray>): Int {
+        if (records.isEmpty()) return 0
+        val write = { records.count { (name, bytes) -> !restoreSession(name, bytes) } }
+        return hostRef?.replaceSessionRecords(write) ?: write()
+    }
+
+    /** Writes a package from a backup. Call [snapshotAfterRestore] once every package is written. */
+    internal fun restorePackage(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
+        hostRef?.restore(id, files) ?: Result.failure(SflxException("the extension host is not ready"))
+
+    /** What [refresh] reads from disk, gathered off the main thread for [publishRestore]. */
+    internal class RestoreSnapshot(
+        val packages: List<InstalledSflx>,
+        val statuses: Map<String, SflxSignedSession.Snapshot>,
+        val lyricsLabel: String?,
+        val lyricsSetup: LyricsRepository.ExtensionSetup?,
+    )
+
+    /**
+     * The disk half of finishing a restore: makes running extensions forget
+     * their session clients, then reads the packages and session statuses.
+     * File I/O, so call it on [kotlinx.coroutines.Dispatchers.IO].
+     */
+    internal fun snapshotAfterRestore(): RestoreSnapshot? {
+        val store = store ?: return null
+        val host = hostRef ?: return null
+        host.reloadSessions()
+        val packages = runCatching { store.list() }.getOrDefault(emptyList())
+        val lyrics = packages.filter { it.manifest.isLyricsProvider }
+        return RestoreSnapshot(
+            packages = packages,
+            statuses = runCatching { host.sessionStatuses() }.getOrDefault(emptyMap()),
+            lyricsLabel = lyrics.firstOrNull()?.manifest?.displayName,
+            lyricsSetup = lyrics.firstNotNullOfOrNull { missingLyricsSetup(it) },
+        )
+    }
+
+    /**
+     * The main-thread half: puts the restored packages on the sources list,
+     * all without a restart. Does no file I/O.
+     */
+    internal fun publishRestore(snapshot: RestoreSnapshot) {
+        _installed.value = snapshot.packages
+        syncSources(snapshot.packages)
+        LyricsRepository.extensionLabel = snapshot.lyricsLabel
+        LyricsRepository.extensionSetup = snapshot.lyricsSetup
+        _statuses.value = snapshot.statuses
+    }
 
     // ── Sources list ─────────────────────────────────────────────────────
 

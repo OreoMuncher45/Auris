@@ -9,13 +9,12 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * ## Why this is not [com.music.bitchord.data.canvas.normalizeForMatch]
  *
- * That one is right for the Spotify-canvas matcher and wrong here, because it
- * reduces to `[^a-z0-9\s]` before comparing — every character that is not a
- * lowercase ASCII letter becomes a space. A Cyrillic, Greek, Devanagari or CJK
- * name therefore folds to the empty string, and every one of them folds to the
- * *same* empty string: asking for `Мата` would accept a page called `Мета`, and
- * `中島美嘉` would match anything at all. An exact-name check that does that is
- * not a check.
+ * That one also folds punctuation away, which is right for matching a canvas
+ * search hit and wrong here: an artist page's name is compared as written. It
+ * once folded to `[^a-z0-9\s]` as well, which turned every Cyrillic, Greek,
+ * Devanagari or CJK name into the *same* empty string, so `Мата` accepted a
+ * page called `Мета` and `中島美嘉` matched anything at all. An exact-name
+ * check that does that is not a check.
  *
  * So the folding here is case, accents and spacing, and nothing else. Letters of
  * every script survive it; only the marks a locale decorates its letters with,
