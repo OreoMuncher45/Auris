@@ -222,6 +222,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             restoreAttempted.remove(trackId)
             provisional.remove(trackId)
             measuredCopies.remove(trackId)
+            // A model-less result was never stored, so nothing restores it;
+            // its record goes with it rather than pinning its curves in memory.
+            modelless.release(trackId) { results[it] }
         }
     }
     private val running = ConcurrentHashMap.newKeySet<String>()
@@ -421,7 +424,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // read. Dropping only makes the tracks unmeasured; each is re-analysed
         // when it is next requested, so the usual demand limits apply.
         if (!modelless.isEmpty() && AutomixModels.state.value == AutomixModels.State.Ready) {
-            modelless.drop(results, triedRenditions, measuredCopies)
+            modelless.drop(results, triedRenditions, measuredCopies, provisional, headAttempts)
         }
         // A track measured in an earlier session costs nothing to restore, so
         // only the work below waits for the phone to cool. Queued before the
@@ -598,11 +601,20 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // Marked before it is published, so a reader on the playback
                     // thread can never see a provisional result that is not
                     // flagged as one.
+                    // Read on both sides, as in [analyze]: a head measured
+                    // without the beat model is a DSP estimate that must give
+                    // way to a model pass on the same bytes once they arrive.
+                    val modelsBefore = modelsReady()
                     val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
                     if (head != null) {
                         provisional.add(trackId)
                         remember(trackId, head)
                         measuredCopies[trackId] = headRendition.key
+                        if (modelsBefore && modelsReady()) {
+                            modelless.forget(trackId)
+                        } else {
+                            modelless.recordHead(trackId, head, headRendition.key, headRendition.cachedPrefix)
+                        }
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
                         // same prefix gets another go once the decoder is free.
@@ -2050,7 +2062,8 @@ internal fun mergeVocalMasks(
  * both can be forgotten once the models arrive. See [TrackAnalyzer.request].
  */
 internal class ModellessResults {
-    private class Entry(val analysis: TrackAnalysis, val copyKey: String?)
+    /** [headPrefix] is set for a head result: the prefix [TrackAnalyzer]'s head claim holds. */
+    private class Entry(val analysis: TrackAnalysis, val copyKey: String?, val headPrefix: Long? = null)
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
@@ -2060,27 +2073,50 @@ internal class ModellessResults {
         entries[trackId] = Entry(analysis, copyKey)
     }
 
+    /** A provisional head result read off [copyKey]'s first [prefix] bytes. */
+    fun recordHead(trackId: String, analysis: TrackAnalysis, copyKey: String, prefix: Long) {
+        entries[trackId] = Entry(analysis, copyKey, prefix)
+    }
+
     fun forget(trackId: String) {
         entries.remove(trackId)
+    }
+
+    /**
+     * Forgets [trackId]'s record once [cached] no longer holds the result it
+     * describes: after an eviction. A newer record whose result is still
+     * cached is kept.
+     */
+    fun release(trackId: String, cached: (String) -> TrackAnalysis?) {
+        entries.computeIfPresent(trackId) { _, entry -> entry.takeIf { cached(trackId) === it.analysis } }
     }
 
     fun clear() = entries.clear()
 
     /**
-     * Removes each recorded result from [results], its copy from [tried] and
-     * from [measured], leaving alone anything that has since been replaced.
+     * Removes each recorded result from [results], leaving alone anything that
+     * has since been replaced. A whole-track result also gives up its copy in
+     * [tried] and [measured]; a head result gives up its [provisional] mark,
+     * its copy in [measured] and its claim in [headAttempts], so the same
+     * prefix gets one more attempt without having to grow.
      */
     fun drop(
         results: AnalysisResultCache,
         tried: MutableSet<String>,
         measured: MutableMap<String, String>,
+        provisional: MutableSet<String>,
+        headAttempts: MutableMap<String, Long>,
     ) {
         for ((trackId, entry) in entries) {
             if (!entries.remove(trackId, entry)) continue
             if (!results.remove(trackId, entry.analysis)) continue
-            entry.copyKey?.let { key ->
+            val key = entry.copyKey ?: continue
+            measured.remove(trackId, key)
+            if (entry.headPrefix != null) {
+                provisional.remove(trackId)
+                headAttempts.remove(key, entry.headPrefix)
+            } else {
                 tried.remove(key)
-                measured.remove(trackId, key)
             }
         }
     }
