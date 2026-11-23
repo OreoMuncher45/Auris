@@ -505,6 +505,8 @@ class SflxVerifyActivity : AppCompatActivity() {
         val generation = challengeGeneration
         redeem({ runCatching { SflxCatalog.host?.completeGrant(id, grant, state) == true }.getOrDefault(false) }) { ok ->
             Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
+            // A refused grant wasn't spent; free it so a paste can retry it.
+            if (!ok) redeeming.remove(grant)
             if (generation == challengeGeneration) finishWith(ok)
         }
         return true
