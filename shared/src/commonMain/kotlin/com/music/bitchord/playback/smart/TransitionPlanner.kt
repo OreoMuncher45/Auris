@@ -1711,7 +1711,8 @@ private fun planTransitionInner(
         )?.takeIf { plan ->
             // A measured cue past the skip limit is not this phrase any more once
             // capped: the adaptive plan takes the pair instead.
-            plan.incomingCueTime <= latestIncomingCue(nextLength) + 1e-9
+            // The same test capIncomingSkip applies, so a cue it would move never passes here.
+            plan.incomingCueTime <= latestIncomingCue(nextLength)
         }?.let { plan ->
             if (playbackTime < plan.transitionEnd) {
                 val started = playbackTime >= plan.transitionStart
@@ -1813,8 +1814,10 @@ private fun mixPlan(
     // measured and could not trust says its beat there is no match to blend on,
     // whatever the outgoing grid says.
     val incomingOpening = nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()
+    // Advanced blends beat on beat, so a measured opening needs the beat-match bar there.
+    val openingFloor = if (traits != null) MIN_BEATMATCH_CONFIDENCE else MIN_DJ_CONFIDENCE
     val openingUntrusted = nextAnalysis.headBeats != null &&
-        (incomingOpening < MIN_DJ_CONFIDENCE || openingTempoDisagrees(nextAnalysis))
+        (incomingOpening < openingFloor || openingTempoDisagrees(nextAnalysis))
     val sameBeatBlend =
         currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
