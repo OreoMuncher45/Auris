@@ -95,7 +95,7 @@ object AppleMusicHome {
      * found by id rather than by position, because the page carries other JSON
      * scripts and the first one is not this one.
      */
-    private fun serverData(html: String): JsonObject? {
+    internal fun serverData(html: String): JsonObject? {
         val marker = html.indexOf("serialized-server-data")
         if (marker < 0) return null
         val open = html.indexOf('>', marker)
@@ -107,7 +107,7 @@ object AppleMusicHome {
         return runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
     }
 
-    private fun sections(page: JsonObject): List<JsonObject> =
+    internal fun sections(page: JsonObject): List<JsonObject> =
         page["data"]?.jsonArray?.firstOrNull()?.jsonObject
             ?.get("data")?.jsonObject
             ?.get("sections")?.jsonArray
@@ -117,26 +117,25 @@ object AppleMusicHome {
     /** One `section` as a shelf, or null for a kind that is not a row of cards. */
     internal fun shelf(section: JsonObject): HomeShelf? {
         val kind = section.str("itemKind") ?: return null
-        // The lockup kinds Apple's browse pages use; link lists and page
-        // headers are not rows.
+        // The lockup kinds Apple's browse and artist pages use; link lists and
+        // page headers are not rows. A station-promo video shelf is not a row
+        // this app can open either.
         val wide = when (kind) {
-            "squareLockup" -> false
-            "flowcaseLockup", "horizontalLockup", "verticalVideoLockup" -> true
-            "trackLockup" -> false
-            "brickLockup" -> true
+            "squareLockup", "adaptiveSquareLockup", "trackLockup", "bubbleLockup" -> false
+            "flowcaseLockup", "horizontalLockup", "brickLockup", "adaptiveHorizontalSquareLockup" -> true
             else -> return null
         }
-        // A video shelf of station promos is not what this app can open; only
-        // real clips would earn a place, and none here is a collection.
-        if (kind == "verticalVideoLockup") return null
         val title = section.obj("header")?.obj("item")?.obj("titleLink")?.str("title")
             // A hero writes no heading; naming it keeps the row from drawing
             // an empty one.
             ?.takeIf { it.isNotBlank() } ?: "Featured"
         val items = mutableListOf<ShelfItem>()
         val seen = HashSet<String>()
-        for (item in section.arr("items").orEmpty()) {
-            val tile = item as? JsonObject ?: continue
+        for (raw in section.arr("items").orEmpty()) {
+            val outer = raw as? JsonObject ?: continue
+            // An "adaptive" entry is a wrapper around the real lockup, so the
+            // card is the inner one; everything else is the item itself.
+            val tile = outer.obj("squareLockup") ?: outer.obj("horizontalLockup") ?: outer
             // A hero writes its title itself; a lockup keeps it behind a link.
             val name = tile.str("title")
                 ?: tile.arr("titleLinks")?.firstOrNull()?.jsonObject?.str("title")
@@ -160,6 +159,10 @@ object AppleMusicHome {
                 "playlist" -> ShelfItem(
                     title = name, subtitle = subtitle, thumbnailUrl = artwork,
                     videoId = null, browseId = AppleMusicSearch.PLAYLIST_PREFIX + id,
+                )
+                "artist" -> ShelfItem(
+                    title = name, subtitle = subtitle, thumbnailUrl = artwork,
+                    videoId = null, browseId = AppleMusicSearch.ARTIST_PREFIX + id,
                 )
                 "song" -> ShelfItem(
                     title = name, subtitle = subtitle, thumbnailUrl = artwork,
@@ -270,7 +273,7 @@ object AppleMusicHome {
      * picture arrives at the shape it was asked for rather than stretched. A
      * template without placeholders is taken as it comes.
      */
-    private fun fill(template: String, size: Pair<Int, Int>): String? {
+    internal fun fill(template: String, size: Pair<Int, Int>): String? {
         if (!template.startsWith("https://")) return null
         if (!template.contains("{w}")) return template
         val (w, h) = size

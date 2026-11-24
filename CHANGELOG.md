@@ -7,6 +7,19 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **Apple artist pages open, with their releases.** An Apple artist card was
+  handed to YouTube Music as though `apple:artist:<id>` were a video id, which
+  is the `400 INVALID_ARGUMENT` it answered with. It now opens the artist's own
+  Apple page: their picture and name, their **Top Songs** as the track list, and
+  their shelves — **Albums**, **Singles & EPs**, **Essential Albums**, **Appears
+  On**, **Similar Artists** — read from Apple's own `serialized-server-data` and
+  drawn as their own cards. The adaptive and bubble lockups those shelves use are
+  read too, so "Essential Albums" unwraps to its card and "Similar Artists" gives
+  artist cards that open their own pages.
+- **Spotify artist counts.** A Spotify artist opened from Spotify's catalogue
+  carried the artist's id all along, but the monthly-listener/follower figure was
+  looked up by *name* — which could miss. It is now scraped from the page the id
+  names, so the counts appear. An Apple artist no longer wears Spotify's counts.
 - **AutoPlay works on Apple rows.** An Apple row is metadata, not a YouTube
   video, but it was being handed to the radio as though `apple:song:123` were
   one — so AutoPlay seeded nothing. Apple rows are now catalogue rows, the same

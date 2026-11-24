@@ -46,6 +46,25 @@ object SpotifyArtistStatsProvider {
         stats
     }
 
+    /**
+     * The same stats for an artist whose Spotify id is already known.
+     *
+     * An artist page opened from Spotify's own catalogue carries the id in its
+     * browse id, so the by-name search — which can land on the wrong artist, or
+     * on none at all — is skipped entirely and the page is scraped directly.
+     */
+    suspend fun loadById(spotifyArtistId: String): SpotifyArtistStats? = withContext(Dispatchers.IO) {
+        val id = spotifyArtistId.trim()
+        if (id.isEmpty()) return@withContext null
+        val key = "id:$id"
+        cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }
+            ?.let { return@withContext it.stats }
+        val stats = runCatching { scrapedStats(id) }.getOrNull()
+            ?: return@withContext null
+        cache[key] = Cached(stats, System.currentTimeMillis())
+        stats
+    }
+
     private suspend fun searchArtistId(name: String): String? {
         val token = runCatching { SpotifyToken.accessToken() }.getOrNull()
             ?: anonymousToken()

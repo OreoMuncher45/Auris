@@ -34,6 +34,7 @@ import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.HomeProvider
+import com.music.bitchord.data.apple.AppleMusicArtist
 import com.music.bitchord.data.apple.AppleMusicCatalog
 import com.music.bitchord.data.apple.AppleMusicHome
 import com.music.bitchord.data.apple.AppleMusicLibrary
@@ -4564,6 +4565,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openApplePage(browseId, title, subtitle, thumbnailUrl)
             return
         }
+        // An Apple artist: their own page, read from Apple's artist page. Not
+        // this app's YouTube browse — an `apple:artist:<id>` is not a YouTube
+        // id, and handing it over was the 400 the artist card answered with.
+        if (browseId.startsWith(AppleMusicSearch.ARTIST_PREFIX)) {
+            openAppleArtist(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
         // The account's own playlists and albums: same page, same cards, read
         // from Apple's `/me/library` instead of its catalog.
         if (AppleMusicLibrary.isLibraryId(browseId)) {
@@ -4959,6 +4967,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     thumbnailUrl = page?.thumbnailUrl ?: current.thumbnailUrl,
                     songs = page?.songs ?: UiState.Error("Apple Music page unavailable"),
                     type = page?.type ?: current.type,
+                )
+            }
+        }
+    }
+
+    /**
+     * An Apple artist card: push the page, then fill in their shelves and top
+     * songs.
+     *
+     * The same shape as the release path. The page's own name and picture
+     * replace the card's, its discography and related-artist shelves become
+     * [DetailPage.sections], and its top songs are the track list.
+     */
+    private fun openAppleArtist(
+        browseId: String,
+        title: String,
+        subtitle: String,
+        thumbnailUrl: String?,
+    ) {
+        _detailStack.value += DetailPage(
+            browseId = browseId,
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = thumbnailUrl,
+            songs = UiState.Loading,
+            type = BrowseType.ARTIST,
+        )
+        viewModelScope.launch {
+            val page = runCatching {
+                AppleMusicArtist.page(browseId.removePrefix(AppleMusicSearch.ARTIST_PREFIX))
+            }.getOrNull()
+            _detailStack.value = _detailStack.value.map { current ->
+                if (current.browseId != browseId) return@map current
+                current.copy(
+                    title = page?.name ?: current.title,
+                    thumbnailUrl = page?.artwork ?: current.thumbnailUrl,
+                    songs = if (page != null) {
+                        UiState.Success(page.topSongs)
+                    } else {
+                        UiState.Error("Apple Music artist unavailable")
+                    },
+                    sections = page?.shelves.orEmpty(),
                 )
             }
         }

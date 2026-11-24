@@ -63,6 +63,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
+import com.music.bitchord.data.model.APPLE_ARTIST_PREFIX
+import com.music.bitchord.data.spotify.SPOTIFY_ARTIST_PREFIX
 import com.music.bitchord.data.spotify.SpotifyArtistStats
 import com.music.bitchord.data.spotify.SpotifyArtistStatsProvider
 import androidx.compose.material.icons.rounded.Close
@@ -399,7 +401,18 @@ fun DetailScreen(
     var spotifyStats by remember(page.browseId) { mutableStateOf<SpotifyArtistStats?>(null) }
     LaunchedEffect(page.browseId, page.title, nameSettled, isArtist) {
         if (isArtist && nameSettled) {
-            spotifyStats = SpotifyArtistStatsProvider.load(page.title)
+            // Only where the audience is Spotify's. An artist opened from
+            // Spotify's own catalogue carries their id in the browse id, so the
+            // page is scraped directly rather than searched for by name; a
+            // YouTube artist has no such id and keeps the by-name lookup. An
+            // Apple artist is Apple's, and its page does not wear Spotify's
+            // counts.
+            spotifyStats = when {
+                page.browseId.startsWith(APPLE_ARTIST_PREFIX) -> null
+                page.browseId.startsWith(SPOTIFY_ARTIST_PREFIX) ->
+                    SpotifyArtistStatsProvider.loadById(page.browseId.removePrefix(SPOTIFY_ARTIST_PREFIX))
+                else -> SpotifyArtistStatsProvider.load(page.title)
+            }
         }
     }
     val palette = rememberArtworkPalette(

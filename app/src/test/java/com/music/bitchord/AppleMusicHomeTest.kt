@@ -105,4 +105,54 @@ class AppleMusicHomeTest {
             ),
         )
     }
+
+    /** An artist page's "Essential Albums" is an adaptive wrapper around the lockup. */
+    @Test
+    fun anAdaptiveLockupIsUnwrappedToItsCard() {
+        val shelf = AppleMusicHome.shelf(
+            section(
+                """
+                {
+                  "itemKind": "adaptiveHorizontalSquareLockup",
+                  "header": { "item": { "titleLink": { "title": "Essential Albums" } } },
+                  "items": [ {
+                    "horizontalLockup": {
+                      "titleLinks": [ { "title": "Divide" } ],
+                      "subtitleLinks": [ { "title": "Ed Sheeran" } ],
+                      "artwork": { "dictionary": { "url": "https://x/{w}x{h}bb.jpg" } },
+                      "contentDescriptor": {
+                        "kind": "album",
+                        "identifiers": { "storeAdamID": "1440934728" }
+                      }
+                    }
+                  } ]
+                }
+                """.trimIndent(),
+            ),
+        )!!
+        assertEquals("apple:album:1440934728", shelf.items.single().browseId)
+    }
+
+    /** "Similar Artists" is a bubble shelf of artists, each opening its own page. */
+    @Test
+    fun aBubbleShelfCarriesArtistCards() {
+        val shelf = AppleMusicHome.shelf(
+            section(
+                """
+                {
+                  "itemKind": "bubbleLockup",
+                  "header": { "item": { "titleLink": { "title": "Similar Artists" } } },
+                  "items": [ {
+                    "title": "Shawn Mendes",
+                    "contentDescriptor": {
+                      "kind": "artist",
+                      "identifiers": { "storeAdamID": "890403665" }
+                    }
+                  } ]
+                }
+                """.trimIndent(),
+            ),
+        )!!
+        assertEquals("apple:artist:890403665", shelf.items.single().browseId)
+    }
 }
