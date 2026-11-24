@@ -1730,7 +1730,9 @@ private fun planTransitionInner(
     }
 
     phraseSwitch(analysis, nextAnalysis, length, nextLength, advanced)
-        ?.takeIf { playbackTime < it.transitionEnd }
+        // Scored on its own cue: one the skip cap would move describes audio
+        // that will not play, so the adaptive plan (capped first) takes it.
+        ?.takeIf { playbackTime < it.transitionEnd && it.incomingCueTime <= latestIncomingCue(nextLength) }
         ?.let { plan ->
             val started = playbackTime >= plan.transitionStart
             return capIncomingSkip(
