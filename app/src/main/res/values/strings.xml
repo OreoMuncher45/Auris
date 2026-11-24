@@ -1589,6 +1589,8 @@
     <string name="addon_backup_read_failed_message">Check the file is still there and try again.</string>
     <string name="addon_backup_restore_signins">Restore sign-ins</string>
     <string name="addon_backup_export_too_large">These add-ons are too large for one backup file.</string>
+    <string name="video_conversion_prompt" translatable="false">Offer to convert to video</string>
+    <string name="video_conversion_prompt_help" translatable="false">Shows a one-time, five-second offer over the artwork on a song that has a music video. Off hides it; the song menu still has the switch.</string>
     <string name="apple_music" translatable="false">Apple Music</string>
     <string name="home_provider_apple_subtitle" translatable="false">Apple Music&#8217;s charts and catalog. Audio is matched to a playable source.</string>
     <string name="player_backdrop_overlay">Overlay for better button visibility</string>

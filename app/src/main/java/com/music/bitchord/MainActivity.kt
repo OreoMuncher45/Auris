@@ -3272,7 +3272,8 @@ internal fun BitChordApp(
             durationMs = player.durationMs,
             audioVersionSwitching = versions.switchingAudioVersion,
             videoConversionPrompt = if (
-                !displayedSong.isVideo && displayedSong.videoId.isNotBlank() &&
+                AppSettings.videoConversionPromptEnabled.value &&
+                    !displayedSong.isVideo && displayedSong.videoId.isNotBlank() &&
                     !partyState.inParty && !versions.switchingAudioVersion
             ) {
                 VideoConversionPrompt(

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.ZoomOut
@@ -78,6 +79,7 @@ internal fun NowPlayingSettings(
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
     val backdropOverlay by AppSettings.backdropOverlay.collectAsStateWithLifecycle()
+    val videoConversionPromptEnabled by AppSettings.videoConversionPromptEnabled.collectAsStateWithLifecycle()
     val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
@@ -266,6 +268,21 @@ internal fun NowPlayingSettings(
                     )
                 },
                 onClick = { AppSettings.setBackdropOverlay(!backdropOverlay) },
+            )
+        }
+        val convertPromptTitle = stringResource(R.string.video_conversion_prompt)
+        row(convertPromptTitle, "convert", "video", "prompt", "player", "offer") {
+            SettingsRow(
+                icon = Icons.Rounded.Videocam,
+                title = convertPromptTitle,
+                subtitle = stringResource(R.string.video_conversion_prompt_help),
+                trailing = {
+                    SettingsSwitch(
+                        checked = videoConversionPromptEnabled,
+                        onCheckedChange = AppSettings::setVideoConversionPromptEnabled,
+                    )
+                },
+                onClick = { AppSettings.setVideoConversionPromptEnabled(!videoConversionPromptEnabled) },
             )
         }
         val perfMonitorTitle = stringResource(R.string.perf_monitor)

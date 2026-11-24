@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -87,6 +88,12 @@ internal fun ConvertToVideoPill(
         val description = stringResource(Res.string.convert_to_video_description)
         Column(
             modifier = Modifier
+                // The width of its own content, not the artwork's: the progress
+                // bar below is `fillMaxWidth`, and inside a Column with no
+                // intrinsic width that resolves to the whole row of the page —
+                // which is the long bar this used to be. IntrinsicSize.Max
+                // makes the bar fill the row of text instead.
+                .width(IntrinsicSize.Max)
                 .clip(CircleShape)
                 .background(PROMPT_FILL)
                 .border(1.dp, PROMPT_RIM, CircleShape)

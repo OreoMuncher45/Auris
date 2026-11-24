@@ -7,6 +7,16 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The Apple home no longer flips to YouTube.** Pull-to-refresh ran the
+  Spotify-or-YouTube refresh path, which special-cased Spotify only, so it
+  rebuilt the page as YouTube's. It has its own refresh now,
+  and keeps the page if a read comes back empty.
+- **More Apple rows.** The Apple home was three chart rows; it is now the
+  charts **plus a row per genre** (twelve), read concurrently.
+- **The "Convert to Video" offer is a pill again.** Its progress bar was
+  `fillMaxWidth`, so the pill stretched to the whole artwork width; it now hugs
+  its text. And the offer has a switch — **Now Playing settings → Offer to
+  convert to video** — for turning it off entirely.
 - **Apple Music as a catalogue.** Settings' **Home provider** now offers Apple
   Music. The Home screen shows Apple's charts — top songs, top albums, top
   playlists — read anonymously through the web player's own bearer, and a tapped

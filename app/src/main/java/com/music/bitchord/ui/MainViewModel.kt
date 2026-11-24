@@ -3091,6 +3091,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * A pull-to-refresh on the Apple page: read the rows again and replace the
+     * page whole, keeping whatever is up if the read comes back empty — the
+     * same rule [refreshSpotifyHome] follows.
+     */
+    private suspend fun refreshAppleHome(identity: String?) {
+        val generation = homeLoadGeneration.get()
+        val shelves = runCatching { AppleMusicHome.shelves() }.getOrNull().orEmpty()
+        if (!isCurrentHomeLoad(identity, generation)) return
+        if (shelves.isEmpty()) return
+        _homeHeader.value = null
+        homeCachedRaw = null
+        _homeShowingCached.value = false
+        homeSeenTitles.clear()
+        _homeRaw.value = emptyList()
+        publishHomeShelves(shelves)
+    }
+
     private fun loadSpotifyHome(identity: String?, generation: Long, cacheOwner: String) {
         homeContinuation = null
         val facet = homeFacet.value
@@ -3288,6 +3306,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // whole of what it does — see [refreshSpotifyHome].
         if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
             refreshSpotifyHome(identity)
+            return@coroutineScope
+        }
+        // Apple's too. Missing this branch is why a pull-to-refresh on the
+        // Apple page replaced it with the YouTube feed: the fall-through below
+        // is YouTube's loader.
+        if (AppSettings.homeProvider.value == HomeProvider.APPLE) {
+            refreshAppleHome(identity)
             return@coroutineScope
         }
         // As in [refreshSpotifyHome]: kept only if no newer load has started.
