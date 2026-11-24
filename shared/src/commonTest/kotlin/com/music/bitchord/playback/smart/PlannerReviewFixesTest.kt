@@ -87,4 +87,10 @@ class PlannerReviewFixesTest {
         val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
     }
+
+    @Test
+    fun anAdvancedCloseTempoBlendNeedsTheBeatMatchBarOnTheOpening() {
+        val next = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, 120.0, 0.3)) }
+        assertNotEquals(TransitionStyle.DJ_BLEND, plan(track(120.0), next).transitionStyle)
+    }
 }
