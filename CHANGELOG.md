@@ -25,9 +25,12 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 - **Your Apple Music library, if you connect it.** Settings → Account has an
   **Apple Music** row: paste your `Music-User-Token` (stored encrypted) and Home
   leads with **Your Playlists**, **Your Albums** and **Your Songs**, each opening
-  its own page. The credential is resolved pasted first, then an installed Apple
-  addon's configured token, then nothing — never invented. Apple's audio is DRM
-  and plays through the normal source match either way.
+  its own page. A pasted token reads Apple's `/v1/me/library` directly; with none
+  but an **Apple addon** installed, the same rows come from the addon's own
+  `/library` routes instead — the addon holds the Apple account server-side, so
+  its credential is never handed to Apple. With neither, no account rows are
+  drawn at all. Apple's audio is DRM and plays through the normal source match
+  either way.
 - **The Apple home no longer flips to YouTube.** Pull-to-refresh ran the
   Spotify-or-YouTube refresh path, which special-cased Spotify only, so it
   rebuilt the page as YouTube's. It has its own refresh now,

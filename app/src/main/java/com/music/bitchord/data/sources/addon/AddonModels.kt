@@ -150,6 +150,49 @@ data class AddonLibraryAuth(
 )
 
 /**
+ * One page of an addon's account library.
+ *
+ * The addon's own contract, distinct from Apple's: the addon has already
+ * talked to Apple, so the ids and shapes here are the addon's, and the client
+ * never presents one of Apple's tokens in their place.
+ */
+@Serializable
+data class AddonLibraryPage(
+    @SerialName("items") val items: List<AddonLibraryItem> = emptyList(),
+    @SerialName("offset") val offset: Int = 0,
+    @SerialName("limit") val limit: Int = 0,
+    @SerialName("total") val total: Int? = null,
+    @SerialName("hasMore") val hasMore: Boolean? = null,
+    @SerialName("nextOffset") val nextOffset: Int? = null,
+)
+
+/**
+ * A playlist, album or song in the addon's library.
+ *
+ * The identifiers mean different things and are kept apart: [id] is the
+ * object's id in the listener's library, [catalogId] is Apple's catalogue id
+ * when the addon knows it, and [streamId] is what the addon accepts to open a
+ * stream. Only [title] is required by the app; the rest degrade to blank.
+ */
+@Serializable
+data class AddonLibraryItem(
+    @SerialName("id") val id: String = "",
+    @SerialName("catalogId") val catalogId: String = "",
+    @SerialName("streamId") val streamId: String = "",
+    @SerialName("title") val title: String = "",
+    @SerialName("artist") val artist: String = "",
+    @SerialName("album") val album: String = "",
+    @SerialName("artworkURL") val artworkURL: String = "",
+    @SerialName("duration") val duration: Double? = null,
+) {
+    /** The duration in whole seconds, when the addon stated one. */
+    val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
+
+    /** Apple's catalogue id, when there is one to open the row on. */
+    val catalogueId: String get() = catalogId.ifBlank { id }
+}
+
+/**
  * One declared setting, reduced to the things this app does with it.
  *
  * [default] is what gets sent, and [options] is what a `quality` request is

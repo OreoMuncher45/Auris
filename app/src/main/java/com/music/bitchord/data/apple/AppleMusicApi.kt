@@ -83,7 +83,7 @@ object AppleMusicApi {
      * The same 401-retry as [get]: a rejected token re-scrapes the bearer.
      */
     suspend fun meGet(path: String, query: Map<String, String> = emptyMap()): JsonObject? {
-        val userToken = AppleMusicAuth.userToken() ?: return null
+        val userToken = AppleMusicAuth.directUserToken() ?: return null
         repeat(2) {
             val bearer = AppleMusicCanvas.bearer() ?: return null
             val url = "$AMP_ROOT/me/$path"
