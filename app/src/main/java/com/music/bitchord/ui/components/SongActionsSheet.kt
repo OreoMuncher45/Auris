@@ -106,6 +106,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** Audio always offers conversion; the reverse direction still needs a known audio cut. */
+internal fun shouldOfferAudioVersionToggle(
+    fromPlayer: Boolean,
+    inParty: Boolean,
+    isAudioVersion: Boolean,
+    hasAlternateVersion: Boolean,
+    switching: Boolean,
+    isCurrentSong: Boolean,
+): Boolean = fromPlayer && !inParty && !switching && isCurrentSong &&
+    (isAudioVersion || hasAlternateVersion)
+
 /**
  * Long-press menu for a track, in the shape music apps normally use.
  *
@@ -201,8 +212,8 @@ fun SongActionsSheet(
     upgradeQualityInProgress: Boolean = false,
     /**
      * Switches the playing track between its video and audio-only cuts. Null
-     * hides the row — offered only from the player, and only once an
-     * alternate cut is known to exist. See
+     * hides the row. Every current audio track can ask for a matching video;
+     * the reverse direction needs an alternate cut known to exist. See
      * [com.music.bitchord.playback.PlaybackService.smoothSwapCurrentTrackVersion].
      */
     onToggleAudioVersion: (() -> Unit)? = null,

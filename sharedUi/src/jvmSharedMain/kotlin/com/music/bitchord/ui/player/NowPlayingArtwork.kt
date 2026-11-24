@@ -307,6 +307,8 @@ internal fun BoxScope.PortraitSleeve(
     bestPart: @Composable (Modifier) -> Unit = {},
     /** The Automix reveal's pictures for the playing track, or null; see [AutoMixCoverState]. */
     autoMixFrames: () -> AutoMixCoverFrames? = { null },
+    /** The one-shot conversion offer, above the artwork's pinned stats. */
+    convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
     // The cover on its way out until it has gone, then the playing track's —
     // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
@@ -860,7 +862,8 @@ internal fun BoxScope.PortraitSleeve(
         // following the compact credits to the bottom edge.
         //
         // The Best Part pill stacks above them: the column is pinned to the
-        // bottom, so the pill coming and going never moves the stats.
+        // bottom, so the pill coming and going never moves the stats. The
+        // one-shot conversion prompt stacks in the same place.
         WhileShown({ !collapsePastHalf() }) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -871,6 +874,7 @@ internal fun BoxScope.PortraitSleeve(
                     },
             ) {
                 bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                convertToVideo(Modifier.padding(bottom = CONVERT_PROMPT_INSET))
                 SleeveNerdStats(
                     song = song,
                     isPlaying = isPlaying,
@@ -1028,3 +1032,6 @@ internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
 
 /** The Best Part pill's gap above the foot of the artwork. */
 internal val BEST_PART_INSET = 14.dp
+
+/** The conversion prompt's gap above the foot of the artwork. */
+internal val CONVERT_PROMPT_INSET = 14.dp

@@ -311,6 +311,7 @@ import com.music.bitchord.ui.components.menu.MenuHeader
 import androidx.compose.ui.geometry.Rect
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
+import com.music.bitchord.ui.components.shouldOfferAudioVersionToggle
 import com.music.bitchord.ui.components.HeldContextMenu
 import com.music.bitchord.ui.components.HeldItem
 import androidx.media3.session.MediaController
@@ -376,6 +377,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.VideoConversionPrompt
 import com.music.bitchord.ui.player.rememberMiniAutoMixArtwork
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.components.VolumeHud
@@ -1706,6 +1708,9 @@ internal fun BitChordApp(
                 return
             }
 
+            // An explicit opt-in wins over "Prefer music only" for this visit.
+            // Without the pin, that default would immediately undo the switch.
+            versions.keepVideoId = video.videoId
             versions.convertedFromAudio = song
             versions.convertedVideoId = video.videoId
             TrackLog.d("Player", "video switch applying '${video.title}' (${video.videoId})", song.videoId)
@@ -1930,7 +1935,8 @@ internal fun BitChordApp(
         }
     }
 
-    // Check if alternate (video vs audio) version exists in background.
+    // Check the reverse (video to audio) match in the background. Audio to
+    // video needs no eligibility lookup: every audio track offers the action.
     // Skipped entirely in a Listen Together party: the track playing there is
     // shared by everyone in it, and a per-listener version switch would put
     // each member on their own cut of what is supposed to be one song — see
@@ -1955,9 +1961,9 @@ internal fun BitChordApp(
                     resolved.videoId != song.videoId
                 }.getOrDefault(false)
             } else {
-                runCatching {
-                    YtMusicRepository.resolveVideo(song) != null
-                }.getOrDefault(false)
+                // Audio-to-video is always offered and resolved on demand;
+                // no speculative lookup decides whether a song is worthy.
+                false
             }
         }
         if (player.song?.videoId == song.videoId) {
@@ -3222,6 +3228,7 @@ internal fun BitChordApp(
                 )
             }
             ?: effectiveSong
+        val conversionPromptHistory by AppSettings.videoConversionPromptHistory.collectAsStateWithLifecycle()
         val playedBy = partyState
             .takeIf {
                 it.inParty && it.playback.track?.videoId == displayedSong.videoId
@@ -3264,6 +3271,21 @@ internal fun BitChordApp(
             position = player.position,
             durationMs = player.durationMs,
             audioVersionSwitching = versions.switchingAudioVersion,
+            videoConversionPrompt = if (
+                !displayedSong.isVideo && displayedSong.videoId.isNotBlank() &&
+                    !partyState.inParty && !versions.switchingAudioVersion
+            ) {
+                VideoConversionPrompt(
+                    trackId = displayedSong.videoId,
+                    alreadyShown = displayedSong.videoId in conversionPromptHistory,
+                    onShown = { AppSettings.markVideoConversionPromptShown(displayedSong.videoId) },
+                    onConvert = {
+                        scope.launch { switchToVideo(displayedSong, pauseWhileResolving = false) }
+                    },
+                )
+            } else {
+                null
+            },
             qualityUpgraded = player.isQualityUpgraded,
             onPlayPause = {
                 togglePlayPause()
@@ -3825,10 +3847,15 @@ internal fun BitChordApp(
             } else {
                 !song.isVideo && versions.convertedVideoId != song.videoId
             }
-            val onToggleVersion: (() -> Unit)? = if (playerOnly &&
-                versions.hasAlternateVersion &&
-                !versions.switchingAudioVersion &&
-                controller?.currentMediaItem?.mediaId == song.videoId
+            val onToggleVersion: (() -> Unit)? = if (
+                shouldOfferAudioVersionToggle(
+                    fromPlayer = fromPlayer,
+                    inParty = partyState.inParty,
+                    isAudioVersion = menuIsAudioVersion,
+                    hasAlternateVersion = versions.hasAlternateVersion,
+                    switching = versions.switchingAudioVersion,
+                    isCurrentSong = controller?.currentMediaItem?.mediaId == song.videoId,
+                )
             ) {
                 {
                     sheets.songMenu.song = null

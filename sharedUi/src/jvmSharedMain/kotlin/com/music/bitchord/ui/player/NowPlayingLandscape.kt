@@ -142,6 +142,8 @@ internal fun LandscapeNowPlaying(
     modifier: Modifier = Modifier,
     /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
     bestPart: @Composable (Modifier) -> Unit = {},
+    /** The one-shot conversion offer, above the artwork's pinned stats. */
+    convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
     // Paused always wins outright over a scrub in progress — see
     // [ARTWORK_PAUSE_SHRINK_SCALE].
@@ -290,14 +292,18 @@ internal fun LandscapeNowPlaying(
                     // they leave it along with the rest of the player.
                     // Faded with the player rather than flown with the
                     // sleeve: the cover in the bar has none. The Best Part
-                    // pill stacks above the stats, which stay pinned.
+                    // pill and the conversion prompt stack above the stats,
+                    // which stay pinned.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
                     ) {
-                        if (!panelOpen) bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                        if (!panelOpen) {
+                            bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                            convertToVideo(Modifier.padding(bottom = CONVERT_PROMPT_INSET))
+                        }
                         SleeveNerdStats(
                             song = song,
                             isPlaying = isPlaying,
