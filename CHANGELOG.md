@@ -7,6 +7,15 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The cover flight actually fires now.** Two things had been stopping it:
+  the app cancelled any flight on *every* page change (opening a release is the
+  page change a flight needs), and the flying layer was drawn at the top of the
+  page slot, so the page drew over it. It is cancelled on **tab changes** only
+  now, and the layer sits above the page and below the bars — so a tap lifts the
+  cover and carries it into the release sleeve, and Back carries it home.
+- **The Play button is the wide pill.** A release's action row is Shuffle ·
+  **▶ Play** · save, as upstream and Zenith have it, instead of a circular play
+  among the other circles.
 - **The album / playlist page, and the cover that flies to it.** A playlist,
   album or folder now opens on its own framed sleeve, centred at the head of the
   page — the artwork, then the title, credit and meta centred under it, over the

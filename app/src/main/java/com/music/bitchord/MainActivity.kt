@@ -4498,11 +4498,14 @@ internal fun BitChordApp(
                 // that tracks what passes underneath it.
                 LaunchedEffect(pageKey) {
                     GlassMotion.nav.moved()
-                    // A page change leaves neither end of a flight where it was
-                    // measured, so whatever is in the air is dropped rather
-                    // than finished over a page it has nothing to do with.
-                    cancelArtworkFlight()
                 }
+                // A tab change is the one move a flight cannot survive: neither
+                // end is where it was measured, and finishing it would draw a
+                // cover over a page it has nothing to do with. A push — a card
+                // opening its release — is exactly what a flight *is*, so it is
+                // not cancelled here. Cancelling on every page key killed each
+                // flight in the frame it started, which is why nothing flew.
+                LaunchedEffect(nav.selectedTab) { cancelArtworkFlight() }
                 AnimatedContent(
                     targetState = pageKey,
                     // Tabs swap outright; everything else crossfades.
@@ -4606,6 +4609,13 @@ internal fun BitChordApp(
                 ) { key ->
                     RootPage(key = key, inputs = pageInputs)
                 }
+
+                // The travelling sleeve, over the page and under the bars: a
+                // card's cover crossing the window into the page it opened.
+                // Drawn *after* the page it crosses, so it is over that page
+                // rather than behind it — it used to sit at the top of RootPage
+                // and every page drew over it.
+                ArtworkFlightLayer()
 
                 // The top-bar footprint is transparent on every page so the
                 // shared app-level gradient is continuous; its controls float
@@ -5445,9 +5455,6 @@ private fun RootPage(
             key != "discord" && key != "replay" && key != "history" && key != "flow" &&
             key != "library_show_all"
     }
-        // The travelling sleeve, over the page and under the bars: a
-        // card's cover crossing the window into the page it opened.
-        ArtworkFlightLayer()
     // Held for the same reason, one step further on: a popped
     // page is off the stack before it has finished animating
     // out, so `live` goes null under it and it would spend its

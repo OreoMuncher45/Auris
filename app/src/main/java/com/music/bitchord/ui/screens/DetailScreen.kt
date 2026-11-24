@@ -1053,18 +1053,39 @@ private fun ReleaseHeader(
                 // header gutter instead of running off the edge.
                 val circles = listOfNotNull(library, onMore).size + 2 // + Shuffle, Search
                 val full = circles >= 4
-                val circleSize = if (full) 46.dp else 50.dp
+                // The labelled Play pill is wider than the circle it replaces, so
+                // a full row comes down a little and closes up a little to keep
+                // five controls inside the gutter on a 360dp screen.
+                val circleSize = if (full) 42.dp else 50.dp
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = HEADER_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(
-                        if (full) 8.dp else 10.dp,
+                        if (full) 6.dp else 10.dp,
                         Alignment.CenterHorizontally,
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    CircleIconButton(
+                        icon = BitChordIcons.Shuffle,
+                        contentDescription = stringResource(R.string.shuffle),
+                        palette = palette,
+                        onClick = onShuffle,
+                        haptic = Haptic.Resume,
+                        size = circleSize,
+                    )
+                    // The primary action is the labelled pill Apple Music (and
+                    // Zenith) lead with — "Play" spelled out — not one more
+                    // circle among the rest. Shuffle, Play, then save: the order
+                    // upstream puts them in.
+                    PlayPill(
+                        onClick = onPlay,
+                        iconOnly = false,
+                        size = circleSize,
+                        horizontalPadding = if (full) 16.dp else 26.dp,
+                    )
                     if (library != null) {
                         CircleIconButton(
                             // A tick, not a filled-in plus: the pair reads as
@@ -1081,19 +1102,6 @@ private fun ReleaseHeader(
                             size = circleSize,
                         )
                     }
-                    CircleIconButton(
-                        icon = BitChordIcons.Shuffle,
-                        contentDescription = stringResource(R.string.shuffle),
-                        palette = palette,
-                        onClick = onShuffle,
-                        haptic = Haptic.Resume,
-                        size = circleSize,
-                    )
-                    PlayPill(
-                        onClick = onPlay,
-                        iconOnly = true,
-                        size = circleSize,
-                    )
                     // Where the download circle used to be. Downloading a
                     // release is a thing done once and then not thought about;
                     // finding a track on a long playlist is a thing done while
