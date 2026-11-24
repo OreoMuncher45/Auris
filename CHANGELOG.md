@@ -7,6 +7,16 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **Faster artwork.** Library and episode rows now ask for the row-sized
+  rendition, and the cover flight departs from that same cached copy instead of
+  fetching a second, larger one on the tap. Spotify's parsers no longer pick the
+  **widest** source: they take the smallest rendition at least 640 wide — the
+  size Spotify's own player draws a sleeve at — so a card no longer downloads a
+  1280px cover only to throw the pixels away.
+- **Timed Convert to Video prompt (upstream #111).** The player offers the
+  conversion once, on a timer, and the song menu's audio/video toggle now goes
+  through the shared `shouldOfferAudioVersionToggle` rule (player-only, not in a
+  party, current track).
 - **The cover flight actually fires now.** Two things had been stopping it:
   the app cancelled any flight on *every* page change (opening a release is the
   page change a flight needs), and the flying layer was drawn at the top of the
