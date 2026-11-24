@@ -43,6 +43,18 @@ object AppleMusicCanvas {
         Locale.getDefault().country.takeIf { it.length == 2 }?.lowercase(Locale.ROOT) ?: "us"
     }
 
+    /**
+     * The anonymous web-player bearer, for [com.music.bitchord.data.apple.AppleMusicApi].
+     *
+     * The same scraped, rotating token the motion lookups use. Exposed here
+     * rather than growing a second scraper: one implementation of Apple's
+     * token dance, and one place its 401/back-off already lives.
+     */
+    internal fun bearer(): String? = token()
+
+    /** One authenticated catalog read, for [com.music.bitchord.data.apple.AppleMusicApi]. */
+    internal fun catalogGet(url: String, bearer: String): String? = get(url, bearer)
+
     fun search(title: String, artist: String, album: String?): CanvasArtwork? {
         val bearer = token() ?: return null
 
