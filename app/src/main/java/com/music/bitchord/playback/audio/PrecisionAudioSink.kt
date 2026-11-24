@@ -1537,7 +1537,11 @@ class PrecisionAudioSink(
 
     private fun retireLoopForFormatChange() {
         val port = loop
-        if (port.outArm != null || port.inArm != null) port.interrupted = true
+        val armed = port.armed
+        // Adopted first: an arm this sink had not seen a buffer for yet would
+        // otherwise be adopted on the next one, and adoption clears the flag.
+        if (armed.generation != loopGeneration) adoptLoopGeneration(port, armed.generation)
+        if (armed.out != null || armed.inn != null) port.interrupted = true
         loopGenerating = false
         loopRendering = false
         loopCrossing = false
