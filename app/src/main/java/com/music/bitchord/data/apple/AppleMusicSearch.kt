@@ -1,5 +1,9 @@
 package com.music.bitchord.data.apple
 
+import com.music.bitchord.data.model.APPLE_ALBUM_PREFIX
+import com.music.bitchord.data.model.APPLE_ARTIST_PREFIX
+import com.music.bitchord.data.model.APPLE_PLAYLIST_PREFIX
+import com.music.bitchord.data.model.APPLE_SONG_PREFIX
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
@@ -24,10 +28,10 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 object AppleMusicSearch {
 
-    const val SONG_PREFIX = "apple:song:"
-    const val ALBUM_PREFIX = "apple:album:"
-    const val ARTIST_PREFIX = "apple:artist:"
-    const val PLAYLIST_PREFIX = "apple:playlist:"
+    const val SONG_PREFIX = APPLE_SONG_PREFIX
+    const val ALBUM_PREFIX = APPLE_ALBUM_PREFIX
+    const val ARTIST_PREFIX = APPLE_ARTIST_PREFIX
+    const val PLAYLIST_PREFIX = APPLE_PLAYLIST_PREFIX
 
     /**
      * Search the catalog and map what comes back, in tab order: songs, albums,

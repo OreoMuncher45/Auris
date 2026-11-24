@@ -69,6 +69,9 @@ private const val PREPARED_PIN_WAIT_MS = 1_500L
 /** Prefix of a queue id that exists only in Spotify's catalogue. */
 private val SPOTIFY_ROW_PREFIX = com.music.bitchord.data.spotify.SpotifyHomeSource.SPOTIFY_KEY_PREFIX
 
+/** Prefix of a queue id that exists only in Apple's catalogue. */
+private val APPLE_ROW_PREFIX = com.music.bitchord.data.model.APPLE_ROW_PREFIX
+
 /**
  * Dispatches by scheme *after* [resolver] has replaced the app's virtual URI.
  *
@@ -153,13 +156,13 @@ internal class PlaybackStreamResolver(
             return serveUpgraded(dataSpec, videoId, upgraded)
         }
         servePinned(dataSpec, videoId, about)?.let { return it }
-        // A row that exists only in Spotify's catalogue. There is no
-        // YouTube id behind it, so the sources are asked for the recording
-        // by name — which is the arrangement: Spotify supplies the row, a
-        // source supplies the bytes. A track none of them holds is a track
-        // that cannot play, and it says so instead of playing silence.
-        if (videoId.startsWith(SPOTIFY_ROW_PREFIX)) {
-            return resolveSpotifyRow(dataSpec, videoId, about)
+        // A row that exists only in Spotify's catalogue, or in Apple's. There
+        // is no YouTube id behind either, so the sources are asked for the
+        // recording by name — which is the arrangement: the catalogue supplies
+        // the row, a source supplies the bytes. A track none of them holds is a
+        // track that cannot play, and it says so instead of playing silence.
+        if (videoId.startsWith(SPOTIFY_ROW_PREFIX) || videoId.startsWith(APPLE_ROW_PREFIX)) {
+            return resolveCatalogueRow(dataSpec, videoId, about)
         }
         // A track queued from YouTube may be held by a source the user
         // ranked above it — see [SourceResolver.substituteForYouTube] and
@@ -491,10 +494,12 @@ internal class PlaybackStreamResolver(
                 // Only substituted, non-lossless choices need this. A pinned
                 // YouTube URL has no source result to promote, and a lossless
                 // module result already satisfies the request.
-                // A Spotify row's YouTube fallback is pinned as YouTube's, not
+                // A catalogue row's YouTube fallback is pinned as YouTube's, not
                 // as a substitute, but it still deserves a later look: a source
                 // may answer for the row after all.
-                if ((StreamChoice.isSubstitute(videoId) || videoId.startsWith(SPOTIFY_ROW_PREFIX)) &&
+                if ((StreamChoice.isSubstitute(videoId) ||
+                        videoId.startsWith(SPOTIFY_ROW_PREFIX) ||
+                        videoId.startsWith(APPLE_ROW_PREFIX)) &&
                     serving.format.isLossless != true &&
                     QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
                 ) {
@@ -514,8 +519,8 @@ internal class PlaybackStreamResolver(
         return null
     }
 
-    /** A row that exists only in Spotify's catalogue, served by whichever source holds it. */
-    private fun resolveSpotifyRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
+    /** The stream a catalogue row resolves to: its own pin, or a fresh look by name. */
+    private fun resolveCatalogueRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
         // The pin: the copy already chosen for this row.
         //
         // Every writer for a catalogue row — the player's own open,

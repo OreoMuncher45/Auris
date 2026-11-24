@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.model.APPLE_ROW_PREFIX
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -56,6 +57,10 @@ object RatingTarget {
         videoId.startsWith(SPOTIFY_ROW_PREFIX) ||
             videoId.startsWith(SPOTIFY_PENDING_PREFIX) ||
             videoId.startsWith(SPOTIFY_MISSING_PREFIX) ||
+            // An Apple row is the same kind of thing: catalogue metadata with
+            // no playable id behind it, resolved to the recording by name —
+            // see [com.music.bitchord.data.model.APPLE_ROW_PREFIX].
+            videoId.startsWith(APPLE_ROW_PREFIX) ||
             SourceTrackKeys.parse(videoId) != null
 
     /** The Spotify track id behind a row id, when it is one. */

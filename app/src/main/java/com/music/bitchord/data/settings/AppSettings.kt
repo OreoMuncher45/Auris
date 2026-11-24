@@ -1655,19 +1655,6 @@ object AppSettings {
         // them. Before [readAll], so nothing reads a key that is on its way out.
         com.music.bitchord.playback.smart.AutomixMigration.run(prefs, context.filesDir)
         readAll()
-        // The Apple account token, out of its own encrypted store. Opened
-        // defensively: this runs on every launch, and a Keystore that cannot be
-        // used must not take the launch down with it.
-        appleSecrets = runCatching {
-            com.music.bitchord.auth.EncryptedPrefs.open(
-                context.applicationContext,
-                "bitchord_apple",
-                "bitchord_apple_plain",
-            )
-        }.getOrNull()
-        appleUserToken.value = appleSecrets
-            ?.getString(KEY_APPLE_USER_TOKEN, null)
-            ?.takeIf { it.isNotBlank() }
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
         // app goes through — see [com.music.bitchord.data.NetworkPolicy].
@@ -1682,6 +1669,29 @@ object AppSettings {
                 com.music.bitchord.data.NetworkPolicy.offline = offline
             }
         }
+    }
+
+    /**
+     * Opens the encrypted store the Apple account token lives in and publishes
+     * what it holds.
+     *
+     * Separate from [init] on purpose: it touches the device Keystore, and
+     * [init] is called by tests that have no business standing one up. The
+     * application calls this once, right after [init]; a caller that never does
+     * simply has no Apple account token, which is the same state as never
+     * having pasted one.
+     */
+    fun initAppleAccount(context: Context) {
+        appleSecrets = runCatching {
+            com.music.bitchord.auth.EncryptedPrefs.open(
+                context.applicationContext,
+                "bitchord_apple",
+                "bitchord_apple_plain",
+            )
+        }.getOrNull()
+        appleUserToken.value = appleSecrets
+            ?.getString(KEY_APPLE_USER_TOKEN, null)
+            ?.takeIf { it.isNotBlank() }
     }
 
     /**

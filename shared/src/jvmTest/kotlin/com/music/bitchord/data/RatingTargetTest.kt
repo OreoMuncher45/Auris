@@ -1,5 +1,8 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.model.APPLE_ALBUM_PREFIX
+import com.music.bitchord.data.model.APPLE_LIBRARY_PREFIX
+import com.music.bitchord.data.model.APPLE_SONG_PREFIX
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
@@ -34,6 +37,18 @@ class RatingTargetTest {
         assertFalse(RatingTarget.isRowId("dQw4w9WgXcQ"))
         assertFalse(RatingTarget.isRowId(""))
         assertNull(RatingTarget.spotifyIdOf("dQw4w9WgXcQ"))
+    }
+
+    /**
+     * An Apple row is catalogue metadata too: the heart on it likes the YouTube
+     * recording behind it, and AutoPlay seeds a station from that recording
+     * rather than handing YouTube a video id that does not exist.
+     */
+    @Test
+    fun anAppleRowIsNotAYouTubeVideoId() {
+        assertTrue(RatingTarget.isRowId("${APPLE_SONG_PREFIX}1440833098"))
+        assertTrue(RatingTarget.isRowId("${APPLE_ALBUM_PREFIX}1440934728"))
+        assertTrue(RatingTarget.isRowId("${APPLE_LIBRARY_PREFIX}playlist:p.abc"))
     }
 
     @Test

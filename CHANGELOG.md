@@ -7,6 +7,12 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **AutoPlay works on Apple rows.** An Apple row is metadata, not a YouTube
+  video, but it was being handed to the radio as though `apple:song:123` were
+  one — so AutoPlay seeded nothing. Apple rows are now catalogue rows, the same
+  as Spotify's: **AutoPlay** seeds a station from the recording behind the row,
+  the **heart** likes that recording, and playback resolves the row through the
+  normal source match (an addon, then YouTube by name) instead of failing.
 - **The Apple home is Apple's own page now.** Instead of three chart rows, the
   Home screen reads Apple's web player home (`serialized-server-data`) and draws
   its real shelves: a leading editorial row of curated playlists, then a row per

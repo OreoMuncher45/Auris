@@ -90,6 +90,13 @@ object AudioCache {
      */
     private const val SPOTIFY_ROW_PREFIX = SpotifyHomeSource.SPOTIFY_KEY_PREFIX
 
+    /** Prefix of a catalogue row that exists only in Apple's catalogue. */
+    private const val APPLE_ROW_PREFIX = com.music.bitchord.data.model.APPLE_ROW_PREFIX
+
+    /** Whether [videoId] is a catalogue row — Spotify's or Apple's — not a YouTube id. */
+    private fun catalogueRow(videoId: String): Boolean =
+        videoId.startsWith(SPOTIFY_ROW_PREFIX) || videoId.startsWith(APPLE_ROW_PREFIX)
+
     /**
      * The disk budget, straight from [AppSettings] — 512MB by default, roughly
      * 150 tracks at the highest bitrate offered, adjustable up to 10GB — or
@@ -1950,7 +1957,7 @@ object AudioCache {
                     // only find the same nothing.
                     ?.takeIf {
                         !pinnedToYouTube &&
-                            (StreamChoice.isSubstitute(next) || next.startsWith(SPOTIFY_ROW_PREFIX))
+                            (StreamChoice.isSubstitute(next) || catalogueRow(next))
                     }
                 val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
                     // Announced before the search, not after: the player opens
@@ -2011,7 +2018,7 @@ object AudioCache {
                                         // its own answer and throwing the preparation
                                         // away. Which is what the first tap on a radio
                                         // row paid: the wait, and then the search.
-                                        if (next.startsWith(SPOTIFY_ROW_PREFIX)) {
+                                        if (catalogueRow(next)) {
                                             SourceResolver.substituteForYouTube(target)
                                         } else {
                                             SourceResolver.prepareForPlayback(target)
@@ -2062,7 +2069,7 @@ object AudioCache {
                         // recording *by name*, and the name is in the URI — so
                         // the id-only URI asked for an empty title, matched
                         // nothing, and cached nothing.
-                        val rowUri = head.uri?.takeIf { next.startsWith(SPOTIFY_ROW_PREFIX) }
+                        val rowUri = head.uri?.takeIf { catalogueRow(next) }
                         if (rowUri != null) {
                             fetch(cacheKeyOf(rowUri), rowUri, 0, PRELOAD_BYTES, pinKey = true)
                         } else {
@@ -2500,7 +2507,7 @@ object AudioCache {
      * whether it can be measured is that source's own switch, read where the
      * row is resolved — not YouTube's.
      */
-    private fun isCatalogueRow(videoId: String): Boolean = videoId.startsWith(SPOTIFY_ROW_PREFIX)
+    private fun isCatalogueRow(videoId: String): Boolean = catalogueRow(videoId)
 
     /** The base key of a source-backed track's own entry — see [keyFactory]. */
     private fun sourceBaseKey(uri: Uri): String? {

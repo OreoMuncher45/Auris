@@ -260,6 +260,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             backgroundScope().launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
+        // The Apple account token's own encrypted store; see the call's own
+        // note for why it is not inside AppSettings.init.
+        AppSettings.initAppleAccount(this)
         // After AppSettings: fetches Automix's models as soon as Automix is on
         // (and the connection allows it) rather than waiting for the first
         // song it would mix.

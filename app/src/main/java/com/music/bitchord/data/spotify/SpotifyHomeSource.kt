@@ -448,15 +448,18 @@ internal object SpotifyHomeSource {
      * The link a song menu's Share sends for [videoId].
      *
      * A `spotify:<id>` row has no YouTube video behind it until it is played,
-     * so it is shared as the Spotify track it names; anything else is a
-     * YouTube Music video id.
+     * so it is shared as the Spotify track it names; an `apple:song:<id>` row
+     * is shared as the Apple Music song it names; anything else is a YouTube
+     * Music video id.
      */
-    fun shareUrl(videoId: String): String =
-        if (videoId.startsWith(SPOTIFY_KEY_PREFIX)) {
+    fun shareUrl(videoId: String): String = when {
+        videoId.startsWith(SPOTIFY_KEY_PREFIX) ->
             "https://open.spotify.com/track/${videoId.removePrefix(SPOTIFY_KEY_PREFIX)}"
-        } else {
-            "https://music.youtube.com/watch?v=$videoId"
-        }
+        videoId.startsWith(com.music.bitchord.data.model.APPLE_SONG_PREFIX) ->
+            "https://music.apple.com/${com.music.bitchord.data.canvas.AppleMusicCanvas.storefront}/song/" +
+                videoId.removePrefix(com.music.bitchord.data.model.APPLE_SONG_PREFIX)
+        else -> "https://music.youtube.com/watch?v=$videoId"
+    }
 
     /** One row of [tracks], matched, or an empty list when none of them were. */
     private suspend fun match(tracks: List<SpotifyTrack>): List<ShelfItem> =
