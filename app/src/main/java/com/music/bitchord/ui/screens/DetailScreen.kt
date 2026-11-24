@@ -63,7 +63,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
-import com.music.bitchord.data.model.APPLE_ARTIST_PREFIX
 import com.music.bitchord.data.spotify.SPOTIFY_ARTIST_PREFIX
 import com.music.bitchord.data.spotify.SpotifyArtistStats
 import com.music.bitchord.data.spotify.SpotifyArtistStatsProvider
@@ -401,17 +400,16 @@ fun DetailScreen(
     var spotifyStats by remember(page.browseId) { mutableStateOf<SpotifyArtistStats?>(null) }
     LaunchedEffect(page.browseId, page.title, nameSettled, isArtist) {
         if (isArtist && nameSettled) {
-            // Only where the audience is Spotify's. An artist opened from
-            // Spotify's own catalogue carries their id in the browse id, so the
-            // page is scraped directly rather than searched for by name; a
-            // YouTube artist has no such id and keeps the by-name lookup. An
-            // Apple artist is Apple's, and its page does not wear Spotify's
-            // counts.
-            spotifyStats = when {
-                page.browseId.startsWith(APPLE_ARTIST_PREFIX) -> null
-                page.browseId.startsWith(SPOTIFY_ARTIST_PREFIX) ->
-                    SpotifyArtistStatsProvider.loadById(page.browseId.removePrefix(SPOTIFY_ARTIST_PREFIX))
-                else -> SpotifyArtistStatsProvider.load(page.title)
+            // One set of counts on every artist page, whichever catalogue it
+            // was opened from — Auris's search already reads Spotify and
+            // YouTube together, so an artist is the same artist everywhere.
+            // Opened from Spotify's catalogue the id is in hand and the page is
+            // scraped directly; an Apple or YouTube artist has no Spotify id, so
+            // the artist is found by name and read the same way.
+            spotifyStats = if (page.browseId.startsWith(SPOTIFY_ARTIST_PREFIX)) {
+                SpotifyArtistStatsProvider.loadById(page.browseId.removePrefix(SPOTIFY_ARTIST_PREFIX))
+            } else {
+                SpotifyArtistStatsProvider.load(page.title)
             }
         }
     }
