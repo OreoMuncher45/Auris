@@ -63,7 +63,22 @@ internal fun JsonArray.bestSourceUrl(): String? =
         val source = source.objOrNull() ?: return@mapNotNull null
         val url = source.str("url") ?: return@mapNotNull null
         url to (source.int("width") ?: 0)
-    }.maxByOrNull { it.second }?.first
+    }.pickedRendition()
+
+/**
+ * The rendition to download: the smallest at least [minWidth] wide, or the
+ * largest when every one is smaller.
+ *
+ * Spotify's sources run 64 / 300 / 640 and sometimes larger. Picking the widest
+ * downloaded a 1280px cover for a 150dp card and a 44dp row — bytes and decode
+ * spent on pixels the screen throws away. 640 is the size Spotify's own player
+ * draws a sleeve at, so nothing in this app is drawn larger than that; the
+ * smallest rendition at or above it is the one worth fetching.
+ */
+internal fun List<Pair<String, Int>>.pickedRendition(minWidth: Int = 640): String? {
+    val atLeast = filter { it.second >= minWidth }.minByOrNull { it.second }
+    return (atLeast ?: maxByOrNull { it.second })?.first
+}
 
 /**
  * The element at a dotted [path], or null.

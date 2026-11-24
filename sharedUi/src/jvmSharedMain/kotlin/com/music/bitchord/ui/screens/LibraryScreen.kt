@@ -61,9 +61,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.YtMusicRepository
-import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
@@ -726,7 +726,10 @@ private fun LibraryListRow(
             .padding(vertical = 6.dp),
     ) {
         AsyncImage(
-            model = item.thumbnailUrl,
+            // The row is 44dp; ask for the row rendition, not whatever the feed
+            // handed over. YouTube covers are rewritten to it; a Spotify cover
+            // already is one, so this is their only size there.
+            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -737,7 +740,10 @@ private fun LibraryListRow(
                 // away while its own copy is in the air.
                 .artworkDeparture(
                     token = item,
-                    model = item.thumbnailUrl?.artworkAt(CARD_ART_PX),
+                    // The same rendition the row is showing, so the flight starts
+                    // from a picture already in the cache rather than fetching a
+                    // second, larger copy at the moment of the tap.
+                    model = item.thumbnailUrl?.artworkAt(ROW_ART_PX),
                     corner = 8.dp,
                 ),
         )

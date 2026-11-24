@@ -201,7 +201,7 @@ object SpotifyLibrary {
             put("enableWatchFeedEntrypoint", false)
         }
         val root = gql("fetchPlaylist", variables)
-        largestSource(root.obj("data")?.obj("playlistV2")?.obj("images"))
+        coverSource(root.obj("data")?.obj("playlistV2")?.obj("images"))
     }
 
     private suspend fun likedPage(
@@ -339,17 +339,16 @@ internal fun parseLikedPage(root: JsonObject): TrackPage {
  * sizes in no fixed order — a 60px thumbnail can come last — so the list is
  * read by width rather than by position.
  */
-private fun largestSource(images: JsonObject?): String? =
+private fun coverSource(images: JsonObject?): String? =
     images?.arr("items")?.firstOrNull()?.objOrNull()?.arr("sources")
         ?.mapNotNull { source ->
             val source = source.objOrNull() ?: return@mapNotNull null
             val url = source.str("url") ?: return@mapNotNull null
             url to (source.int("width") ?: 0)
         }
-        ?.maxByOrNull { it.second }
-        ?.first
+        ?.pickedRendition()
 
-private fun coverUrl(images: JsonObject?): String? = largestSource(images)
+private fun coverUrl(images: JsonObject?): String? = coverSource(images)
 
 private fun JsonArray.lastUrl(): String? =
     mapNotNull { it.objOrNull()?.str("url") }.lastOrNull()

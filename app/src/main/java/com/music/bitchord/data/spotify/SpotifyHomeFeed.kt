@@ -233,7 +233,7 @@ internal object SpotifyHomeFeedParser {
             val source = source.objOrNull() ?: return@mapNotNull null
             val url = source.str("url") ?: return@mapNotNull null
             url to (source.int("width") ?: 0)
-        }.maxByOrNull { it.second }?.first
+        }.pickedRendition()
     }
 
 }
