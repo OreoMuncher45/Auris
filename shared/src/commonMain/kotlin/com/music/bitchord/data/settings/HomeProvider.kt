@@ -36,6 +36,14 @@ enum class HomeProvider {
      * sign-in still shows music.
      */
     SPOTIFY,
+
+    /**
+     * Apple Music: its charts and catalog rows, read anonymously through the
+     * web player's own bearer — no listener account needed. Audio is not
+     * fetched here (Apple's streams are DRM); a row plays through the same
+     * source match as every other. See docs/APPLE_MUSIC_INTEGRATION.md.
+     */
+    APPLE,
     ;
 
     /** Whether this catalogue can only be read by a signed-in listener. */

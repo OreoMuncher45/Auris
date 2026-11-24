@@ -59,7 +59,7 @@ object AppleMusicSearch {
             ?.mapNotNull { it as? JsonObject }
             .orEmpty()
 
-    private fun song(hit: JsonObject): Song? {
+    internal fun song(hit: JsonObject): Song? {
         val id = hit["id"]?.jsonPrimitive?.contentOrNull ?: return null
         val a = hit["attributes"]?.jsonObject ?: return null
         val title = a["name"]?.jsonPrimitive?.contentOrNull ?: return null
@@ -84,7 +84,7 @@ object AppleMusicSearch {
         )
     }
 
-    private fun browse(hit: JsonObject, type: BrowseType, prefix: String): BrowseItem? {
+    internal fun browse(hit: JsonObject, type: BrowseType, prefix: String): BrowseItem? {
         val id = hit["id"]?.jsonPrimitive?.contentOrNull ?: return null
         val a = hit["attributes"]?.jsonObject ?: return null
         val title = a["name"]?.jsonPrimitive?.contentOrNull ?: return null

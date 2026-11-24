@@ -453,6 +453,7 @@ internal fun HomeProvider.localizedLabel(): String = stringResource(
     when (this) {
         HomeProvider.YOUTUBE -> R.string.home_provider_youtube
         HomeProvider.SPOTIFY -> R.string.spotify
+        HomeProvider.APPLE -> R.string.apple_music
     },
 )
 
@@ -479,6 +480,7 @@ internal fun ColumnScope.HomeProviderMenu(close: () -> Unit) {
                     when (provider) {
                         HomeProvider.YOUTUBE -> R.string.home_provider_youtube_subtitle
                         HomeProvider.SPOTIFY -> R.string.home_provider_spotify_subtitle
+                        HomeProvider.APPLE -> R.string.home_provider_apple_subtitle
                     },
                 ),
                 selected = provider == selected,

@@ -7,6 +7,13 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **Apple Music as a catalogue.** Settings' **Home provider** now offers Apple
+  Music. The Home screen shows Apple's charts — top songs, top albums, top
+  playlists — read anonymously through the web player's own bearer, and a tapped
+  album or playlist opens on Apple's id with its tracks. Apple's **audio is DRM**
+  and is never fetched: a row plays through the same source match as every other
+  catalogue, and says so when nothing answers. Plan of record and the remaining
+  phases: `docs/APPLE_MUSIC_INTEGRATION.md`.
 - **Faster artwork.** Library and episode rows now ask for the row-sized
   rendition, and the cover flight departs from that same cached copy instead of
   fetching a second, larger one on the tap. Spotify's parsers no longer pick the

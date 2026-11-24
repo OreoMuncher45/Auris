@@ -34,6 +34,9 @@ import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.HomeProvider
+import com.music.bitchord.data.apple.AppleMusicCatalog
+import com.music.bitchord.data.apple.AppleMusicHome
+import com.music.bitchord.data.apple.AppleMusicSearch
 import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.data.settings.withoutBlockedArtists
 import com.music.bitchord.data.settings.withoutBlockedRecommendations
@@ -2894,6 +2897,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loadSpotifyHome(identity, generation, cacheOwner)
             return
         }
+        if (AppSettings.homeProvider.value == HomeProvider.APPLE) {
+            _homePendingShelves.value = 0
+            _homeRecentlyPlayedLoading.value = false
+            loadAppleHome(identity, generation)
+            return
+        }
         // When the cached page gives way to the fresh one: once the core feed
         // is in, and Recents too when there is one coming, so the swap lands
         // a page with its lead shelf rather than one waiting on a skeleton.
@@ -3053,6 +3062,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * is a fixed set of rows read once, so [homeContinuation] stays null and
      * scrolling to the bottom simply stops.
      */
+    /**
+     * [loadHome]'s Apple half: Apple's charts as the page.
+     *
+     * Read anonymously through the web player's bearer, so there is no account
+     * to wait on and nothing pages — the page is a fixed set of rows, and the
+     * header is cleared because a header belongs to YouTube's feed.
+     * [AppleMusicHome] owns the read; this only publishes what it returns.
+     */
+    private fun loadAppleHome(identity: String?, generation: Long) {
+        homeContinuation = null
+        viewModelScope.launch {
+            val shelves = runCatching { AppleMusicHome.shelves() }.getOrNull().orEmpty()
+            if (!isCurrentHomeLoad(identity, generation)) return@launch
+            if (shelves.isEmpty()) {
+                // The catalogue's own answer was empty — an unreachable
+                // amp-api, or a bearer it refused. Said plainly rather than
+                // as "nothing to show".
+                _home.value = UiState.Error("Apple Music returned nothing to show")
+                return@launch
+            }
+            _homeHeader.value = null
+            homeCachedRaw = null
+            _homeShowingCached.value = false
+            homeSeenTitles.clear()
+            _homeRaw.value = emptyList()
+            publishHomeShelves(shelves)
+        }
+    }
+
     private fun loadSpotifyHome(identity: String?, generation: Long, cacheOwner: String) {
         homeContinuation = null
         val facet = homeFacet.value
@@ -4399,6 +4437,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openSpotifyCollection(browseId, title, subtitle, thumbnailUrl)
             return
         }
+        if (browseId.startsWith(AppleMusicSearch.ALBUM_PREFIX) ||
+            browseId.startsWith(AppleMusicSearch.PLAYLIST_PREFIX)
+        ) {
+            openApplePage(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
         val resolved = browseTypeOf(browseId, type)
         val opened = markDetailOpened(browseId)
         _detailStack.value += DetailPage(
@@ -4747,6 +4791,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * as they arrive. A page of forty tracks that takes a minute to match is
      * a page that can be played from while it finishes.
      */
+    /**
+     * An Apple album or playlist card: push the page, then fill it in.
+     *
+     * The same shape as the Spotify path — a card that opens nothing is a dead
+     * end, so a pushed page loads its own tracks and reports a page it could
+     * not read rather than sitting on a spinner.
+     */
+    private fun openApplePage(
+        browseId: String,
+        title: String,
+        subtitle: String,
+        thumbnailUrl: String?,
+    ) {
+        _detailStack.value += DetailPage(
+            browseId = browseId,
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = thumbnailUrl,
+            songs = UiState.Loading,
+            type = when {
+                browseId.startsWith(AppleMusicSearch.ALBUM_PREFIX) -> BrowseType.ALBUM
+                else -> BrowseType.PLAYLIST
+            },
+        )
+        viewModelScope.launch {
+            val page = runCatching {
+                AppleMusicCatalog.detail(browseId, title, subtitle, thumbnailUrl)
+            }.getOrNull()
+            _detailStack.value = _detailStack.value.map { current ->
+                if (current.browseId != browseId) return@map current
+                current.copy(
+                    title = page?.title ?: current.title,
+                    subtitle = page?.subtitle ?: current.subtitle,
+                    thumbnailUrl = page?.thumbnailUrl ?: current.thumbnailUrl,
+                    songs = page?.songs ?: UiState.Error("Apple Music page unavailable"),
+                    type = page?.type ?: current.type,
+                )
+            }
+        }
+    }
+
     private fun openSpotifyCollection(
         browseId: String,
         title: String,
