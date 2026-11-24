@@ -3076,11 +3076,8 @@ class CrossfadeController(
         // longer has the armed song next.
         if (!session.outPort.tookOver) {
             val into = incoming ?: return loopBail("no incoming player", settle = false)
-            val liveNext = out.nextMediaItemIndex
             val armed = into.currentMediaItem
-            val nextStillIncoming = liveNext != C.INDEX_UNSET && armed != null &&
-                runCatching { out.getMediaItemAt(liveNext) }.getOrNull()?.let { sameQueueEntry(it, armed) } == true
-            loopArmRefusal(out, nextStillIncoming)?.let { return loopBail(it, settle = false) }
+            loopArmRefusal(out, nextStillArmed(out, into))?.let { return loopBail(it, settle = false) }
             val outItem = out.currentMediaItem
             if (outItem != null && levelMoved(session.inLevel, loopLevel(outItem, armed!!))) {
                 return loopFallBack("the loudness gain changed before the loop")
@@ -3103,6 +3100,14 @@ class CrossfadeController(
         }
         val m = session.mixSeconds(System.nanoTime(), out.isPlaying) ?: return
         if (m > 1.0) loopBail("the sink never reached the loop")
+    }
+
+    /** Whether the session's next entry is still the one [into] was armed with. */
+    private fun nextStillArmed(out: ExoPlayer, into: ExoPlayer): Boolean {
+        val liveNext = out.nextMediaItemIndex
+        val armed = into.currentMediaItem ?: return false
+        return liveNext != C.INDEX_UNSET &&
+            runCatching { out.getMediaItemAt(liveNext) }.getOrNull()?.let { sameQueueEntry(it, armed) } == true
     }
 
     /** The incoming deck's level against the outgoing sink's: the ratio of the two players' gains. */
@@ -3144,6 +3149,10 @@ class CrossfadeController(
         // song is the session: this song ends the session, so the mix settles
         // back onto it rather than bring the next one in.
         if (!handedOff && SleepTimer.afterTrack.value) return loopBail("sleep timer", settle = true)
+        // The queue's next entry changed after the takeover: the decks are for
+        // the old one, and a handoff would fail without restoring the song's
+        // position. Settle onto the playing song at the mix's position instead.
+        if (!handedOff && !nextStillArmed(out, into)) return loopBail("the next entry changed", settle = true)
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {

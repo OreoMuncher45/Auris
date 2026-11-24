@@ -561,6 +561,38 @@ class PrecisionAudioSinkTest {
     }
 
     /**
+     * A format change after an arm but before the sink saw a buffer for it ends
+     * that arm: adopting it on the next buffer must not clear the interruption.
+     */
+    @Test
+    fun `an arm a format change preceded its first buffer stays interrupted`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT, channelCount = 1)).build())
+        assertTrue(port.interrupted)
+        port.requestShift(-480)
+        val next = ByteBuffer.allocate(480 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480) { _ -> it.putShort(1000) }
+            it.flip()
+        }
+        assertTrue(sink.handleBuffer(next, 0L, 1))
+        assertTrue("still interrupted after the first buffer", port.interrupted)
+        assertSame("forwarded untouched, not muted or shifted", next, fakeDelegate.lastHandledBuffer)
+    }
+
+    /**
      * A flush after the incoming side started ends the mix: the next buffer is
      * neither muted nor shifted for it, even before the controller disarms.
      */

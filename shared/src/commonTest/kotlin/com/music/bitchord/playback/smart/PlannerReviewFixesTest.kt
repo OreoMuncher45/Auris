@@ -93,4 +93,16 @@ class PlannerReviewFixesTest {
         val next = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, 120.0, 0.3)) }
         assertNotEquals(TransitionStyle.DJ_BLEND, plan(track(120.0), next).transitionStyle)
     }
+
+    @Test
+    fun aFixedPhraseCuedJustPastTheSkipLimitIsRejected() {
+        // A 60 s incoming song may be cued at most 15 s in; its first bar line sits just past that.
+        val next = track(120.0, duration = 60.0).let { t ->
+            val bars = generateSequence(15.25) { it + 2.0 }.takeWhile { it < 59.0 }.toList()
+            t.copy(downbeats = bars, phraseBoundaries = bars, firstBeat = 15.25, audibleStartTime = 15.2, mixInTime = bars[2])
+        }
+        val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
+        assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
+        assertTrue(p.incomingCueTime <= latestIncomingCue(60.0), "cue ${p.incomingCueTime}")
+    }
 }
