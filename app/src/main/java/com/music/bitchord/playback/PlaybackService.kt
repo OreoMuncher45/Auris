@@ -1567,8 +1567,8 @@ class PlaybackService : MediaLibraryService() {
             .build()
     }
 
-    private fun MediaItem.withAutoSpotifyToken(spotifyToken: String?): MediaItem {
-        val accountKey = spotifyAccountKey(spotifyToken) ?: return this
+    private fun MediaItem.withAutoSpotifyAccountKey(accountKey: String?): MediaItem {
+        if (accountKey == null) return this
         val extras = Bundle(mediaMetadata.extras ?: Bundle()).apply {
             putString(EXTRA_AUTO_SPOTIFY_TOKEN, accountKey)
         }
@@ -1576,6 +1576,12 @@ class PlaybackService : MediaLibraryService() {
             .setMediaMetadata(mediaMetadata.buildUpon().setExtras(extras).build())
             .build()
     }
+
+    private fun MediaItem.withAutoSpotifyToken(spotifyToken: String?): MediaItem =
+        withAutoSpotifyAccountKey(spotifyAccountKey(spotifyToken))
+
+    private fun MediaItem.preservingAutoSpotifyAccountKey(source: MediaItem): MediaItem =
+        withAutoSpotifyAccountKey(source.mediaMetadata.extras?.getString(EXTRA_AUTO_SPOTIFY_TOKEN))
 
     private fun hasStaleSpotifyAccountItems(mediaItems: List<MediaItem>): Boolean {
         val liveAccountKey = spotifyAccountKey()
@@ -11993,6 +11999,9 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+            if (hasStaleSpotifyAccountItems(mediaItems)) {
+                throw CancellationException("Spotify account changed before queue replacement")
+            }
             // Android Auto hands over the tapped song, not the playlist around
             // it. Rebuild the folder so the queue follows the playlist's own
             // order and AutoPlay only starts after its last track.
@@ -12022,7 +12031,10 @@ class PlaybackService : MediaLibraryService() {
                 resolved = resolved,
                 partialSpans = partialSpans,
             )
-            if (batch.spotifyAccountKey != null && spotifyAccountKey() != batch.spotifyAccountKey) {
+            if (
+                hasStaleSpotifyAccountItems(batch.items) ||
+                (batch.spotifyAccountKey != null && spotifyAccountKey() != batch.spotifyAccountKey)
+            ) {
                 batch.scheduled.forEach(::cancelPendingSpotifyQueueAppend)
                 throw CancellationException("Spotify account changed before queue replacement")
             }
@@ -12041,6 +12053,9 @@ class PlaybackService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: List<MediaItem>,
         ): ListenableFuture<List<MediaItem>> = scope.future(Dispatchers.IO) {
+            if (hasStaleSpotifyAccountItems(mediaItems)) {
+                throw CancellationException("Spotify account changed before queue items were added")
+            }
             val partialSpans = mutableListOf<PartialSpotifySpan>()
             val resolved = resolveMediaItems(
                 mediaItems = mediaItems,
@@ -12052,7 +12067,10 @@ class PlaybackService : MediaLibraryService() {
                 resolved = resolved,
                 partialSpans = partialSpans,
             )
-            if (batch.spotifyAccountKey != null && spotifyAccountKey() != batch.spotifyAccountKey) {
+            if (
+                hasStaleSpotifyAccountItems(batch.items) ||
+                (batch.spotifyAccountKey != null && spotifyAccountKey() != batch.spotifyAccountKey)
+            ) {
                 batch.scheduled.forEach(::cancelPendingSpotifyQueueAppend)
                 throw CancellationException("Spotify account changed before queue items were added")
             }
@@ -12549,19 +12567,9 @@ class PlaybackService : MediaLibraryService() {
                     songCache.containsKey(id) -> {
                         val cached = songCache[id]!!
                         if (!AppSettings.isSongBlocked(cached)) {
-                            val storedAccountKey = item.mediaMetadata.extras?.getString(EXTRA_AUTO_SPOTIFY_TOKEN)
-                            val rebuilt = cached.toMediaItem(parentBrowseId = autoTrackParentById[id])
                             resolved.add(
-                                if (storedAccountKey != null) {
-                                    val extras = Bundle(rebuilt.mediaMetadata.extras ?: Bundle()).apply {
-                                        putString(EXTRA_AUTO_SPOTIFY_TOKEN, storedAccountKey)
-                                    }
-                                    rebuilt.buildUpon()
-                                        .setMediaMetadata(rebuilt.mediaMetadata.buildUpon().setExtras(extras).build())
-                                        .build()
-                                } else {
-                                    rebuilt
-                                },
+                                cached.toMediaItem(parentBrowseId = autoTrackParentById[id])
+                                    .preservingAutoSpotifyAccountKey(item),
                             )
                         }
                     }
@@ -12574,7 +12582,10 @@ class PlaybackService : MediaLibraryService() {
                         }
                         if (resolvedSong != null && !AppSettings.isSongBlocked(resolvedSong)) {
                             songCache[resolvedSong.videoId] = resolvedSong
-                            resolved.add(resolvedSong.toMediaItem(parentBrowseId = autoTrackParentById[id]))
+                            resolved.add(
+                                resolvedSong.toMediaItem(parentBrowseId = autoTrackParentById[id])
+                                    .preservingAutoSpotifyAccountKey(item),
+                            )
                         }
                     }
                     item.localConfiguration != null -> {
@@ -12594,7 +12605,7 @@ class PlaybackService : MediaLibraryService() {
                                 thumbnailUrl = null,
                             )
                             if (!AppSettings.isSongBlocked(song)) {
-                                resolved.add(song.toMediaItem())
+                                resolved.add(song.toMediaItem().preservingAutoSpotifyAccountKey(item))
                             }
                         } else {
                             resolved.add(item.buildUpon().setUri(uri).build())
@@ -12603,7 +12614,7 @@ class PlaybackService : MediaLibraryService() {
                     else -> {
                         val song = songCache[id] ?: item.toSong()
                         if (song.videoId.isNotBlank() && !AppSettings.isSongBlocked(song)) {
-                            resolved.add(song.toMediaItem())
+                            resolved.add(song.toMediaItem().preservingAutoSpotifyAccountKey(item))
                         }
                     }
                 }
