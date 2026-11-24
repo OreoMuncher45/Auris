@@ -63,6 +63,24 @@
     <string name="auto_empty_offline_subtitle">Download songs on your phone to listen here</string>
     <string name="auto_unavailable_title">Content unavailable</string>
     <string name="auto_unavailable_subtitle">Reopen the folder and try again</string>
+    <string name="auto_made_for_you" translatable="false">Made for you</string>
+    <string name="auto_jump_back_in" translatable="false">Jump back in</string>
+    <string name="auto_recommended" translatable="false">Recommended</string>
+    <string name="auto_recent_and_downloads" translatable="false">Recent &amp; Downloads</string>
+    <string name="auto_playlists_and_albums" translatable="false">Playlists &amp; Albums</string>
+    <string name="auto_spotify_playlists" translatable="false">Spotify playlists</string>
+    <string name="auto_youtube_playlists" translatable="false">YouTube Music playlists</string>
+    <string name="auto_daylist" translatable="false">Daylist</string>
+    <string name="auto_album" translatable="false">Album</string>
+    <string name="auto_artist" translatable="false">Artist</string>
+    <string name="auto_spotify_login_title" translatable="false">Sign in to Spotify</string>
+    <string name="auto_spotify_login_subtitle" translatable="false">Connect Spotify in %1$s on your phone</string>
+    <string name="auto_empty_spotify_title" translatable="false">No Spotify playlists</string>
+    <string name="auto_empty_spotify_subtitle" translatable="false">Open Spotify in %1$s on your phone to refresh</string>
+    <string name="auto_empty_spotify_tracks_title" translatable="false">No tracks found</string>
+    <string name="auto_empty_spotify_tracks_subtitle" translatable="false">Open this playlist on your phone and retry</string>
+    <string name="auto_empty_spotify_album_title" translatable="false">No album tracks found</string>
+    <string name="auto_empty_spotify_album_subtitle" translatable="false">Check your Spotify connection in %1$s</string>
     <string name="add_to_playlist">Add to playlist</string>
     <string name="add_to_library">Add to library</string>
     <string name="remove_from_library">Remove from library</string>

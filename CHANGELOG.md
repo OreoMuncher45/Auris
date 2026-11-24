@@ -7,6 +7,18 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **Spotify comes to Android Auto.** The open **#103** has been merged: Android Auto now browses your **Spotify
+  playlists**, **albums** and **artists**, the **Daylist**, and Home's
+  recommendations, and plays them in the car; a Spotify queue handed to the
+  service is guarded against the account changing mid-hand-off. This brought
+  #103's Android Auto implementation in whole (its Android Auto cache, browse
+  tree and media resolver), with the branch's own Auto browse/account-switch
+  behaviour re-expressed on it and every non-Auto change — sleep fade, Cast
+  seed, AutoMix loop mix, downloads-liked — kept.
+- **One set of counts on every artist page.** Apple and Spotify artist pages
+  now show the same monthly-listener/follower stats the YouTube one already
+  did — Auris's search reads Spotify and YouTube together, so an artist is the
+  same artist everywhere.
 - **Apple artist pages open, with their releases.** An Apple artist card was
   handed to YouTube Music as though `apple:artist:<id>` were a video id, which
   is the `400 INVALID_ARGUMENT` it answered with. It now opens the artist's own
