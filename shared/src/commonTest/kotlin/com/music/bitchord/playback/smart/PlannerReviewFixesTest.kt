@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -104,5 +105,30 @@ class PlannerReviewFixesTest {
         val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
         assertTrue(p.incomingCueTime <= latestIncomingCue(60.0), "cue ${p.incomingCueTime}")
+    }
+
+    /** [base] with a vocal mask on its energy curve: singing wherever [sung] says. */
+    private fun singing(base: TrackAnalysis, sung: (Double) -> Boolean) =
+        base.copy(vocalActivityMask = base.energyCurve.map { if (sung(it.time)) 1.0 else 0.0 })
+
+    @Test
+    fun theVocalOverlapIsMeasuredOnTheCueTheSkipCapLeaves() {
+        // Too far apart in tempo to blend, so the filter mix cues the incoming song at its audible start, 20 s.
+        // A 60 s song may be cued at most 15 s in: the cap moves the cue back over a vocal at 14-19 s.
+        val out = singing(track(120.0)) { true }
+        val inn = singing(track(160.0, duration = 60.0).copy(audibleStartTime = 20.0, mixInTime = 30.0)) { it in 14.0..19.0 }
+        val p = plan(out, inn)
+        assertTrue(p.incomingCueTime <= latestIncomingCue(60.0) + 1e-9, "cue ${p.incomingCueTime}")
+        assertTrue(p.vocalOverlap > 0.0, "the vocal now in the overlap is counted: ${p.vocalOverlap}")
+    }
+
+    @Test
+    fun aCueTheSkipCapLeavesAloneIsScoredWhereItIs() {
+        // A 200 s song may be cued 50 s in: the 20 s cue stands, and the 14-19 s vocal stays out of the overlap.
+        val out = singing(track(120.0)) { true }
+        val inn = singing(track(160.0).copy(audibleStartTime = 20.0, mixInTime = 30.0)) { it in 14.0..19.0 }
+        val p = plan(out, inn)
+        assertEquals(20.0, p.incomingCueTime, 1e-9)
+        assertEquals(0.0, p.vocalOverlap, 1e-9)
     }
 }
