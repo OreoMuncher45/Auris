@@ -619,6 +619,8 @@ private fun PlaylistShelf(
         // them; it leads only when there is nothing else in the row.
         leadingCard = newPlaylistCard.takeIf { shelf.items.isEmpty() },
         trailingCard = newPlaylistCard.takeIf { shelf.items.isNotEmpty() },
+        // The way back to the list, which the grid used to leave off.
+        trailing = { ViewTypeToggle(viewType = viewType, onToggle = toggle) },
     )
 }
 
@@ -779,6 +781,8 @@ internal fun LibraryGridShelf(
     leadingCard: (@Composable () -> Unit)? = null,
     trailingCard: (@Composable () -> Unit)? = null,
     pinnedPlaylists: List<String> = emptyList(),
+    /** The heading's own control — the list/grid switch, on a shelf that can be either. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val extraCount = (if (leadingCard != null) 1 else 0) + (if (trailingCard != null) 1 else 0)
     val visibleItems = remember(shelf.items, extraCount) {
@@ -792,6 +796,7 @@ internal fun LibraryGridShelf(
             title = shelf.title,
             subtitle = shelf.subtitle,
             onShowAll = onShowAll.takeIf { shelf.items.size + extraCount > LIBRARY_ROW_MAX_ITEMS },
+            trailing = trailing,
         )
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),

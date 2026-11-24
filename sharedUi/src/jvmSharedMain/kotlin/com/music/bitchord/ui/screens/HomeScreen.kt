@@ -1157,9 +1157,10 @@ internal fun SectionHeader(
                 )
             }
         }
-        if (trailing != null) {
-            trailing()
-        } else if (onShowAll != null) {
+        // Both, when a shelf offers both: "Show all" and the list/grid switch
+        // belong at the same end of the heading, and a shelf that can be either
+        // layout must keep the way out of the one it is in.
+        if (onShowAll != null) {
             Text(
                 text = stringResource(Res.string.show_all),
                 style = MaterialTheme.typography.titleSmall,
@@ -1168,7 +1169,10 @@ internal fun SectionHeader(
                     .clickable(onClick = onShowAll)
                     .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
-        } else if (onNavigate != null) {
+        }
+        if (trailing != null) {
+            trailing()
+        } else if (onShowAll == null && onNavigate != null) {
             Icon(
                 imageVector = BitChordIcons.ChevronRight,
                 contentDescription = null,

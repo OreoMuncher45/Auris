@@ -7,6 +7,13 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The lyrics video has its audio.** An export now cuts from the audio the
+  player is actually using — the same media item, read through the same cache
+  and source resolver — so a downloaded, cached or source-substituted track
+  exports with its sound instead of coming out silent.
+- **The Library's grid can be left again.** In grid mode the heading keeps the
+  list/grid switch, beside "Show all", so there is a way back to the list;
+  before, the grid dropped the switch and trapped the listener in squares.
 - **The Library is a list.** Playlists, On Device, Artists and Albums are rows
   now — a small cover, the name, and the count or credit under it — instead of
   rows of big squares. Playlists keeps its list/grid switch, which now opens on

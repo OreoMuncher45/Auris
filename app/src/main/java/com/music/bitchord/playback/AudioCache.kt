@@ -1676,6 +1676,23 @@ object AudioCache {
         upstreamFactory = factory
     }
 
+    /**
+     * The audio [song] actually plays, as a source the lyrics video can cut
+     * from: the same media item the player builds, read through the same
+     * cache-and-resolver chain the player reads it through.
+     *
+     * So a share carries the recording the listener is hearing — a downloaded
+     * file, a cached copy, a source substitute — instead of a fresh YouTube
+     * resolve that can be refused or that no source answers. Null until the
+     * player's cache and upstream exist.
+     */
+    fun shareSource(song: Song): Pair<DataSource.Factory, Uri>? {
+        if (!::cache.isInitialized) return null
+        val upstream = upstreamFactory ?: return null
+        val uri = song.toMediaItem().localConfiguration?.uri ?: return null
+        return playbackFactory(upstream) to uri
+    }
+
     private var job: Job? = null
     private var pendingQueue: List<String> = emptyList()
 

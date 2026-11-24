@@ -17,7 +17,6 @@ import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceBitmapLoader
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.transformer.Composition
@@ -34,7 +33,8 @@ import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
-import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.data.DebugLog as Log
 import java.io.File
 import java.util.Locale
@@ -160,7 +160,7 @@ internal suspend fun exportLyricsVideo(
         }.getOrNull()
     } ?: return null
 
-    val audio = timeline?.let { shareAudioFor(request.song.videoId, it) }
+    val audio = timeline?.let { shareAudioFor(request.song, it) }
 
     suspend fun attempt(withAudio: Boolean): Boolean {
         val sound = if (withAudio) audio ?: return false else null
@@ -251,26 +251,19 @@ private object SongAudio
 private class ShareAudio(val factory: DataSource.Factory, val uri: Uri, val timeline: ShareTimeline)
 
 /**
- * The song's audio, resolved fresh for this export.
+ * The audio the player is actually using for [song], as the source this export
+ * cuts from: the same media item the player builds, read through the same
+ * cache-and-resolver chain.
  *
- * A share is cut from YouTube's own progressive stream for the track, with the
- * headers googlevideo wants. A non-YouTube row (an addon or Spotify match, a
- * local file) resolves to nothing and the video is made silent.
+ * So the video carries the recording the listener is hearing — a downloaded
+ * file, a cached copy, a source substitute — rather than a second, fresh
+ * YouTube resolve that can be refused, which is why an export used to come out
+ * silent. Null only when the player's cache and upstream are not up yet.
  */
-private suspend fun shareAudioFor(videoId: String, timeline: ShareTimeline): ShareAudio? {
-    if (videoId.isBlank()) return null
-    if (!videoId.matches(YOUTUBE_ID)) return null
-    val url = runCatching { StreamResolver.resolve(videoId) }.getOrNull() ?: return null
-    val headers = runCatching { StreamResolver.mediaHeadersFor(url) }.getOrDefault(emptyMap())
-    val factory = DefaultHttpDataSource.Factory()
-        .setUserAgent(USER_AGENT)
-        .setAllowCrossProtocolRedirects(true)
-        .setDefaultRequestProperties(headers)
-    return ShareAudio(factory, Uri.parse(url), timeline)
+private fun shareAudioFor(song: Song, timeline: ShareTimeline): ShareAudio? {
+    val source = AudioCache.shareSource(song) ?: return null
+    return ShareAudio(source.first, source.second, timeline)
 }
-
-/** A plain YouTube id, and not one of the app's source keys. */
-private val YOUTUBE_ID = Regex("^[A-Za-z0-9_-]{6,}$")
 
 @androidx.annotation.OptIn(UnstableApi::class)
 private suspend fun transform(
@@ -424,7 +417,3 @@ private const val TAG = "LyricsShareVideo"
 
 /** Comfortably past what Instagram re-encodes a 1080p story to. */
 private const val VIDEO_BITRATE = 10_000_000
-
-/** The headers googlevideo expects from a browser-shaped client. */
-private const val USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
