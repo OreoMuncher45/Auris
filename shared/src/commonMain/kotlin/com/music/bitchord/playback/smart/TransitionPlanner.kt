@@ -1667,7 +1667,8 @@ private fun planTransitionInner(
     // sounds right for these.
     if (isUnmixablePair(analysis, nextAnalysis)) {
         val transitionStart = max(0.0, finalMixAnchor - standardFade)
-        val incomingCueTime = incomingStartPoint(nextAnalysis)
+        // Capped before the vocal overlap is measured, so it describes what will play.
+        val incomingCueTime = cappedIncomingCue(incomingStartPoint(nextAnalysis), nextAnalysis, nextLength)
         val started = playbackTime >= transitionStart
         return capIncomingSkip(
             TransitionPlan(
