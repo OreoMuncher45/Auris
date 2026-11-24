@@ -131,4 +131,21 @@ class PlannerReviewFixesTest {
         assertEquals(20.0, p.incomingCueTime, 1e-9)
         assertEquals(0.0, p.vocalOverlap, 1e-9)
     }
+
+    @Test
+    fun anUnmixablePairsVocalOverlapIsMeasuredOnTheCappedCue() {
+        // Unmixable: tempi no stretch meets, and both sides sung through.
+        val out = singing(track(120.0).copy(vocalProbability = 0.9)) { true }
+        val capped = singing(track(160.0, duration = 60.0).copy(audibleStartTime = 20.0, vocalProbability = 0.9)) { it in 14.0..19.0 }
+        val moved = plan(out, capped)
+        assertTrue("unmixable-pair" in moved.policyReasons, "reasons ${moved.policyReasons}")
+        assertTrue(moved.incomingCueTime <= latestIncomingCue(60.0) + 1e-9, "cue ${moved.incomingCueTime}")
+        assertTrue(moved.vocalOverlap > 0.0, "the vocal the cap brings into the overlap is counted: ${moved.vocalOverlap}")
+
+        val kept = singing(track(160.0).copy(audibleStartTime = 20.0, vocalProbability = 0.9)) { it in 14.0..19.0 }
+        val unchanged = plan(out, kept)
+        assertTrue("unmixable-pair" in unchanged.policyReasons, "reasons ${unchanged.policyReasons}")
+        assertEquals(20.0, unchanged.incomingCueTime, 1e-9)
+        assertEquals(0.0, unchanged.vocalOverlap, 1e-9)
+    }
 }
