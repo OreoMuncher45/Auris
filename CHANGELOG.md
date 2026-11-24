@@ -7,6 +7,21 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The Apple home is Apple's own page now.** Instead of three chart rows, the
+  Home screen reads Apple's web player home (`serialized-server-data`) and draws
+  its real shelves: a leading editorial row of curated playlists, then a row per
+  genre — and the genre rows hold **collections** (playlists), not songs. When
+  the page cannot be read it falls back to the catalog API's charts plus a
+  collection row per genre.
+- **Apple Music in the Search tab.** The source switcher now cycles YouTube →
+  Spotify → **Apple Music** → Library, and Apple answers the same tabs — songs,
+  albums, artists, playlists — with paging, opened through the app's own rows.
+- **Your Apple Music library, if you connect it.** Settings → Account has an
+  **Apple Music** row: paste your `Music-User-Token` (stored encrypted) and Home
+  leads with **Your Playlists**, **Your Albums** and **Your Songs**, each opening
+  its own page. The credential is resolved pasted first, then an installed Apple
+  addon's configured token, then nothing — never invented. Apple's audio is DRM
+  and plays through the normal source match either way.
 - **The Apple home no longer flips to YouTube.** Pull-to-refresh ran the
   Spotify-or-YouTube refresh path, which special-cased Spotify only, so it
   rebuilt the page as YouTube's. It has its own refresh now,

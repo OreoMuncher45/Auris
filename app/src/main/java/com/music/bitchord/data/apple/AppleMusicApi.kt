@@ -22,7 +22,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
  */
 object AppleMusicApi {
 
-    private const val AMP = "https://amp-api.music.apple.com/v1/catalog"
+    private const val AMP_ROOT = "https://amp-api.music.apple.com/v1"
+    private const val AMP = "$AMP_ROOT/catalog"
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -52,8 +53,14 @@ object AppleMusicApi {
         return null
     }
 
-    /** A catalog search over [types] (`songs`, `albums`, `artists`, `playlists`). */
-    fun search(term: String, types: List<String>, limit: Int = 25): JsonObject? {
+    /**
+     * A catalog search over [types] (`songs`, `albums`, `artists`, `playlists`).
+     *
+     * [offset] pages the answer the way every amp-api list does; the catalog
+     * only returns [limit] rows at a time, so a search that asks for more
+     * reads the next slice.
+     */
+    fun search(term: String, types: List<String>, limit: Int = 25, offset: Int = 0): JsonObject? {
         val trimmed = term.trim()
         if (trimmed.isEmpty() || types.isEmpty()) return null
         return get(
@@ -62,7 +69,32 @@ object AppleMusicApi {
                 "term" to trimmed,
                 "types" to types.joinToString(","),
                 "limit" to limit.coerceIn(1, 25).toString(),
+                "offset" to offset.coerceAtLeast(0).toString(),
             ),
         )
+    }
+
+    /**
+     * GET [path] under the *listener's own library* — `library/playlists`,
+     * `library/albums/{id}/tracks`, … — with the resolved `Music-User-Token`.
+     *
+     * Returns null when no credential resolves, so the caller shows "connect
+     * Apple Music" rather than an empty library that looks like a real one.
+     * The same 401-retry as [get]: a rejected token re-scrapes the bearer.
+     */
+    suspend fun meGet(path: String, query: Map<String, String> = emptyMap()): JsonObject? {
+        val userToken = AppleMusicAuth.userToken() ?: return null
+        repeat(2) {
+            val bearer = AppleMusicCanvas.bearer() ?: return null
+            val url = "$AMP_ROOT/me/$path"
+                .toHttpUrl()
+                .newBuilder()
+                .apply { query.forEach { (name, value) -> addQueryParameter(name, value) } }
+                .build()
+                .toString()
+            val body = AppleMusicCanvas.catalogGet(url, bearer, userToken) ?: return@repeat
+            return runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+        }
+        return null
     }
 }

@@ -43,6 +43,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Language
@@ -426,6 +427,7 @@ private fun SearchBarPlaceholder(
                     imageVector = when (state.searchSource) {
                         SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
                         SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
                         SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,
@@ -560,6 +562,7 @@ private fun NavBarSearchInputBar(
                     imageVector = when (state.searchSource) {
                         SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
                         SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
                         SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,

@@ -73,7 +73,25 @@ data class AddonManifest(
      * Read through [requiresLosslessOutput].
      */
     @SerialName("checkValidLossless") val checkValidLossless: JsonElement? = null,
+    /**
+     * `catalogueProvider` — the catalogue this addon serves, e.g. `apple-music`.
+     *
+     * The manifest-level identity of the catalogue, independent of whether the
+     * addon also has a library. Read to route an addon's rows and, for Apple,
+     * to find its configured library credential.
+     */
+    @SerialName("catalogueProvider") val catalogueProvider: String = "",
+    /**
+     * `library` — the addon's account-library capability, when it has one.
+     *
+     * Absent for a search/stream-only addon: it remains a catalogue source and
+     * simply cannot answer library requests. See [AddonLibrary].
+     */
+    @SerialName("library") val library: AddonLibrary? = null,
 ) {
+    /** Whether this addon serves Apple Music's catalogue. */
+    val servesAppleMusic: Boolean get() = catalogueProvider.equals("apple-music", ignoreCase = true)
+
     val downloadsAllowed: Boolean get() = allowDownloads.asFlag() ?: true
 
     val requiresLosslessOutput: Boolean get() = checkValidLossless.asFlag() ?: false
@@ -98,6 +116,38 @@ data class AddonManifest(
     /** What to show when the user did not name the addon themselves. */
     val displayName: String get() = name.ifBlank { id }
 }
+
+/**
+ * An addon's account-library capability, as its manifest declares it.
+ *
+ * [provider] is the catalogue the library belongs to (`apple-music`);
+ * [collections] names what it can list; [authentication] says how the
+ * configured credential is presented. Only the parts this app reads are here —
+ * the wire spec is broader, and everything unread would be a field pretending
+ * to be load-bearing.
+ */
+@Serializable
+data class AddonLibrary(
+    @SerialName("provider") val provider: String = "",
+    @SerialName("collections") val collections: List<String> = emptyList(),
+    @SerialName("authentication") val authentication: AddonLibraryAuth? = null,
+) {
+    /** Whether this library is Apple Music's. */
+    val servesAppleMusic: Boolean get() = provider.equals("apple-music", ignoreCase = true)
+
+    /** The addon setting the credential is read from; defaults to `libraryToken`. */
+    val settingKey: String get() =
+        authentication?.setting?.takeIf { it.isNotBlank() } ?: "libraryToken"
+}
+
+/** How an addon wants the library credential presented. */
+@Serializable
+data class AddonLibraryAuth(
+    @SerialName("type") val type: String = "",
+    @SerialName("header") val header: String = "Authorization",
+    @SerialName("setting") val setting: String = "libraryToken",
+    @SerialName("required") val required: Boolean = true,
+)
 
 /**
  * One declared setting, reduced to the things this app does with it.

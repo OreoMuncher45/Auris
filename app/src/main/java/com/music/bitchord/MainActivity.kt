@@ -2786,12 +2786,13 @@ internal fun BitChordApp(
         },
         searchSource = searchSource,
         onToggleSource = {
-            // Three sources, so the button cycles: YouTube, Spotify, the
-            // device's own folder, and round again.
+            // Four sources, so the button cycles: YouTube, Spotify, Apple
+            // Music, the device's own folder, and round again.
             onSearchSourceChange(
                 when (searchSource) {
                     SearchSource.YOUTUBE -> SearchSource.SPOTIFY
-                    SearchSource.SPOTIFY -> SearchSource.LIBRARY
+                    SearchSource.SPOTIFY -> SearchSource.APPLE
+                    SearchSource.APPLE -> SearchSource.LIBRARY
                     SearchSource.LIBRARY -> SearchSource.YOUTUBE
                 },
             )
@@ -6393,6 +6394,14 @@ private fun RootPage(
                             // An account's YouTube library isn't Spotify's.
                             it != com.music.bitchord.data.model.SearchFilter.LIBRARY
                     }
+                // Apple's catalogue is the same shape: no videos, no shows,
+                // no account library behind these rows.
+                searchSource == SearchSource.APPLE ->
+                    com.music.bitchord.data.model.SearchFilter.entries.filter {
+                        it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
+                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS &&
+                            it != com.music.bitchord.data.model.SearchFilter.LIBRARY
+                    }
                 podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
                 else -> com.music.bitchord.data.model.SearchFilter.entries
                     .filter { it != com.music.bitchord.data.model.SearchFilter.PODCASTS }
@@ -6534,6 +6543,7 @@ private fun RootPage(
                     options = listOf(
                         stringResource(R.string.search_source_youtube),
                         stringResource(R.string.search_source_spotify),
+                        stringResource(R.string.search_source_apple),
                         stringResource(R.string.library),
                     ),
                     selectedIndex = searchSource.ordinal,

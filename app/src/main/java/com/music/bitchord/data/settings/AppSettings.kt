@@ -245,6 +245,12 @@ object AppSettings {
     private lateinit var authStore: AuthStore
 
     /**
+     * The encrypted store the Apple token lives in, kept apart from [prefs]:
+     * it is a bearer credential, and the settings file is plain text.
+     */
+    private var appleSecrets: SharedPreferences? = null
+
+    /**
      * Quality ceilings, one per kind of connection — the point of the split is
      * that Wi-Fi can stay on Lossless while mobile data is capped. Both
      * default to Lossless; the mobile plan is the user's to budget, not ours
@@ -806,6 +812,16 @@ object AppSettings {
 
     /** Whether the one-shot "Convert to Video" offer is shown over the artwork at all. */
     val videoConversionPromptEnabled = MutableStateFlow(true)
+
+    /**
+     * The listener's pasted Apple Music `Music-User-Token`, when they have one.
+     *
+     * Null means none was pasted, and Apple's account reads fall back to the
+     * addon's configured token, then to nothing. Kept in an encrypted store —
+     * see `EncryptedPrefs` — because it is an account credential; the public
+     * catalog needs no token at all.
+     */
+    val appleUserToken = MutableStateFlow<String?>(null)
 
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
@@ -1639,6 +1655,19 @@ object AppSettings {
         // them. Before [readAll], so nothing reads a key that is on its way out.
         com.music.bitchord.playback.smart.AutomixMigration.run(prefs, context.filesDir)
         readAll()
+        // The Apple account token, out of its own encrypted store. Opened
+        // defensively: this runs on every launch, and a Keystore that cannot be
+        // used must not take the launch down with it.
+        appleSecrets = runCatching {
+            com.music.bitchord.auth.EncryptedPrefs.open(
+                context.applicationContext,
+                "bitchord_apple",
+                "bitchord_apple_plain",
+            )
+        }.getOrNull()
+        appleUserToken.value = appleSecrets
+            ?.getString(KEY_APPLE_USER_TOKEN, null)
+            ?.takeIf { it.isNotBlank() }
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
         // app goes through — see [com.music.bitchord.data.NetworkPolicy].
@@ -2548,6 +2577,23 @@ object AppSettings {
     fun setVideoConversionPromptEnabled(value: Boolean) {
         videoConversionPromptEnabled.value = value
         prefs.edit().putBoolean(KEY_VIDEO_CONVERSION_PROMPT_ENABLED, value).apply()
+    }
+
+    /**
+     * Stores (or clears) the listener's pasted Apple `Music-User-Token`.
+     *
+     * A blank value removes the key rather than storing an empty one: "no
+     * token" and "an empty token" are the same state, and the resolver should
+     * fall through to the addon on either.
+     */
+    fun setAppleUserToken(token: String?) {
+        val clean = token?.trim()?.takeIf { it.isNotEmpty() }
+        appleUserToken.value = clean
+        appleSecrets?.let { store ->
+            store.edit().apply {
+                if (clean == null) remove(KEY_APPLE_USER_TOKEN) else putString(KEY_APPLE_USER_TOKEN, clean)
+            }.apply()
+        }
     }
 
     internal fun refreshVideoConversionPromptHistory() {
@@ -3554,6 +3600,7 @@ object AppSettings {
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
     private const val KEY_VIDEO_CONVERSION_PROMPTS = "video_conversion_prompts_shown"
     private const val KEY_VIDEO_CONVERSION_PROMPT_ENABLED = "video_conversion_prompt_enabled"
+    private const val KEY_APPLE_USER_TOKEN = "apple_user_token"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"

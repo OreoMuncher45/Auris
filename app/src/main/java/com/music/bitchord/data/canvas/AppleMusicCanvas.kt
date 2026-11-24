@@ -55,6 +55,14 @@ object AppleMusicCanvas {
     /** One authenticated catalog read, for [com.music.bitchord.data.apple.AppleMusicApi]. */
     internal fun catalogGet(url: String, bearer: String): String? = get(url, bearer)
 
+    /**
+     * As [catalogGet], with a `Music-User-Token` when [userToken] is given: the
+     * listener's own library is read under their account token, on top of the
+     * web player's developer bearer. The token travels only in the header.
+     */
+    internal fun catalogGet(url: String, bearer: String, userToken: String?): String? =
+        get(url, bearer, userToken)
+
     fun search(title: String, artist: String, album: String?): CanvasArtwork? {
         val bearer = token() ?: return null
 
@@ -404,9 +412,9 @@ object AppleMusicCanvas {
      * the next lookup re-scrapes and picks a different one — the alternative
      * is being locked out until the app restarts.
      */
-    private fun get(url: String, bearer: String): String? {
+    private fun get(url: String, bearer: String, userToken: String? = null): String? {
         val request = Request.Builder().url(url).apply {
-            authHeaders(bearer).forEach { (name, value) -> header(name, value) }
+            authHeaders(bearer, userToken).forEach { (name, value) -> header(name, value) }
         }.build()
         return runCatching {
             Http.client.newCall(request).execute().use { response ->
@@ -447,10 +455,13 @@ object AppleMusicCanvas {
         seconds?.toLong()?.times(1000)
     }.getOrDefault(null)
 
-    private fun authHeaders(bearer: String) = mapOf(
-        "Authorization" to "Bearer $bearer",
-        "Origin" to "https://music.apple.com",
-        "Referer" to "https://music.apple.com/",
-        "User-Agent" to CANVAS_UA,
-    )
+    private fun authHeaders(bearer: String, userToken: String? = null) = buildMap {
+        put("Authorization", "Bearer $bearer")
+        put("Origin", "https://music.apple.com")
+        put("Referer", "https://music.apple.com/")
+        put("User-Agent", CANVAS_UA)
+        // Only the account endpoints want this, and only when there is one; a
+        // public catalog read is answered on the bearer alone.
+        if (!userToken.isNullOrBlank()) put("Music-User-Token", userToken)
+    }
 }

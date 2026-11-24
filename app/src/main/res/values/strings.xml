@@ -32,6 +32,7 @@
     <string name="local_music">Local Music</string>
     <string name="search_source_youtube" translatable="false">YouTube</string>
     <string name="search_source_spotify" translatable="false">Spotify</string>
+    <string name="search_source_apple" translatable="false">Apple Music</string>
     <string name="audio_files_on_device">Audio files on device</string>
     <string name="on_device">On Device</string>
     <string name="playlists">Playlists</string>
@@ -1592,6 +1593,11 @@
     <string name="video_conversion_prompt" translatable="false">Offer to convert to video</string>
     <string name="video_conversion_prompt_help" translatable="false">Shows a one-time, five-second offer over the artwork on a song that has a music video. Off hides it; the song menu still has the switch.</string>
     <string name="apple_music" translatable="false">Apple Music</string>
+    <string name="apple_token_connected" translatable="false">Account token set</string>
+    <string name="apple_token_connect" translatable="false">Connect your Apple Music account</string>
+    <string name="apple_token_title" translatable="false">Apple Music account token</string>
+    <string name="apple_token_message" translatable="false">Paste your Apple Music Music-User-Token to read your library — your playlists, albums and songs. It is stored encrypted on this device. Leave it empty to fall back to an addon, if one is configured.</string>
+    <string name="apple_token_placeholder" translatable="false">Music-User-Token</string>
     <string name="home_provider_apple_subtitle" translatable="false">Apple Music&#8217;s charts and catalog. Audio is matched to a playable source.</string>
     <string name="player_backdrop_overlay">Overlay for better button visibility</string>
     <string name="player_backdrop_overlay_help">Lays a dark or bright wash over the blurred backdrop so the buttons stay readable. Off shows the blur as it is.</string>

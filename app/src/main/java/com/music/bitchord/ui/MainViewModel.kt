@@ -36,6 +36,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.HomeProvider
 import com.music.bitchord.data.apple.AppleMusicCatalog
 import com.music.bitchord.data.apple.AppleMusicHome
+import com.music.bitchord.data.apple.AppleMusicLibrary
 import com.music.bitchord.data.apple.AppleMusicSearch
 import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.data.settings.withoutBlockedArtists
@@ -148,6 +149,9 @@ enum class SearchSource {
 
     /** Spotify's own catalogue, read through the web player's backend. */
     SPOTIFY,
+
+    /** Apple Music's catalogue, read through the web player's own bearer. */
+    APPLE,
 
     /** The Local Music folder on this device. */
     LIBRARY,
@@ -2278,6 +2282,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (AppSettings.homeProvider.value == HomeProvider.SPOTIFY) {
             _searchSource.value = SearchSource.SPOTIFY
         }
+        // And an Apple session opens on Apple's, for the same reason.
+        if (AppSettings.homeProvider.value == HomeProvider.APPLE) {
+            _searchSource.value = SearchSource.APPLE
+        }
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
@@ -3719,6 +3727,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 submitSearch()
             }
+            SearchSource.APPLE -> {
+                // The same rule as Spotify's: Apple's catalogue has no videos
+                // and no account library, so a pill for either would answer
+                // from somewhere else.
+                if (_filter.value == SearchFilter.VIDEOS ||
+                    _filter.value == SearchFilter.PODCASTS ||
+                    _filter.value == SearchFilter.LIBRARY
+                ) {
+                    _filter.value = SearchFilter.ALL
+                }
+                submitSearch()
+            }
         }
     }
 
@@ -3940,6 +3960,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@collectLatest
                 }
 
+                // Apple's catalogue, the same arrangement as Spotify's: the
+                // search is asked through the web player's bearer, and the
+                // rows it answers with are this app's rows — an Apple album or
+                // playlist opens its own page, and an Apple track is matched to
+                // something that can play before it is drawn.
+                if (request.source == SearchSource.APPLE) {
+                    val page = runCatching {
+                        AppleMusicSearch.page(request.query, request.filter)
+                    }
+                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                    _results.value = page.fold(
+                        onSuccess = { apple ->
+                            val published = publishedRows(
+                                rows = apple.rows,
+                                continuation = null,
+                                nextOffset = apple.nextOffset,
+                                key = key,
+                                ticket = request.ticket,
+                                filter = request.filter,
+                                source = request.source,
+                            )
+                            if (published is UiState.Success) {
+                                published
+                            } else {
+                                UiState.Error(
+                                    "Apple Music found nothing for \"" + request.query +
+                                        "\" — " + apple.diagnostic,
+                                )
+                            }
+                        },
+                        onFailure = { failure -> UiState.Error(failure.friendly()) },
+                    )
+                    return@collectLatest
+                }
+
                 // A Library answer belongs to the listener, and a candidate
                 // account under validation signs requests before the listener
                 // moves. Wait it out, as [fetchLibrary] does; validation that
@@ -4005,6 +4060,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loadMoreSpotifyResults(session)
             return
         }
+        if (session.source == SearchSource.APPLE) {
+            loadMoreAppleResults(session)
+            return
+        }
         val token = session.continuation ?: return
         _searchLoadingMore.value = true
         viewModelScope.launch {
@@ -4059,6 +4118,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
                 // in flight by the time it resumes.
+                var owns = true
+                next.onSuccess { page ->
+                    val current = (_results.value as? UiState.Success)?.data.orEmpty()
+                    val merged = withContext(Dispatchers.Default) {
+                        (current + page.rows)
+                            .distinctBy(::searchResultKey)
+                            .withoutRepeatedRecordings()
+                            .withoutBlockedArtists()
+                    }
+                    // The merge suspended; a search started meanwhile owns the list now.
+                    owns = searchSession == session && searchOwnership.owns(session.ticket)
+                    if (owns) {
+                        searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
+                        searchSession = session.copy(nextOffset = page.nextOffset)
+                        _results.value = UiState.Success(merged)
+                    }
+                }
+                if (owns) _searchLoadingMore.value = false
+            }
+        }
+    }
+
+    /**
+     * The next page of an Apple search.
+     *
+     * Apple pages by offset the way Spotify does, so the session carries the
+     * offset the next page starts at. The rows are merged the same way.
+     */
+    private fun loadMoreAppleResults(session: SearchSession) {
+        val offset = session.nextOffset ?: return
+        _searchLoadingMore.value = true
+        viewModelScope.launch {
+            val next = runCatching {
+                AppleMusicSearch.page(session.query, session.filter, offset)
+            }
+            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
+            if (stillCurrent) {
                 var owns = true
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
@@ -4468,6 +4564,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openApplePage(browseId, title, subtitle, thumbnailUrl)
             return
         }
+        // The account's own playlists and albums: same page, same cards, read
+        // from Apple's `/me/library` instead of its catalog.
+        if (AppleMusicLibrary.isLibraryId(browseId)) {
+            openApplePage(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
         val resolved = browseTypeOf(browseId, type)
         val opened = markDetailOpened(browseId)
         _detailStack.value += DetailPage(
@@ -4836,13 +4938,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             thumbnailUrl = thumbnailUrl,
             songs = UiState.Loading,
             type = when {
-                browseId.startsWith(AppleMusicSearch.ALBUM_PREFIX) -> BrowseType.ALBUM
+                browseId.startsWith(AppleMusicSearch.ALBUM_PREFIX) ||
+                    browseId.startsWith(AppleMusicLibrary.ALBUM_PREFIX) -> BrowseType.ALBUM
                 else -> BrowseType.PLAYLIST
             },
         )
         viewModelScope.launch {
             val page = runCatching {
-                AppleMusicCatalog.detail(browseId, title, subtitle, thumbnailUrl)
+                if (AppleMusicLibrary.isLibraryId(browseId)) {
+                    AppleMusicLibrary.detail(browseId, title, subtitle, thumbnailUrl)
+                } else {
+                    AppleMusicCatalog.detail(browseId, title, subtitle, thumbnailUrl)
+                }
             }.getOrNull()
             _detailStack.value = _detailStack.value.map { current ->
                 if (current.browseId != browseId) return@map current

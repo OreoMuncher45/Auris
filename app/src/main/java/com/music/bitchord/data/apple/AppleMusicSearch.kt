@@ -2,8 +2,11 @@ package com.music.bitchord.data.apple
 
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -40,17 +43,76 @@ object AppleMusicSearch {
         return parse(body)
     }
 
+    /**
+     * One page of an Apple search, for whichever tab the filter names.
+     *
+     * The same shape [com.music.bitchord.data.spotify.SpotifySearch.Page]
+     * publishes, so the search pipeline treats the two catalogues alike: rows
+     * in this app's shape, and the offset the next page starts at (null when
+     * the catalogue is done).
+     */
+    suspend fun page(query: String, filter: SearchFilter, offset: Int = 0, limit: Int = 25): Page {
+        val types = typesFor(filter)
+        if (types.isEmpty()) {
+            return Page(emptyList(), null, "the filter is not one Apple's catalogue answers")
+        }
+        return withContext(Dispatchers.IO) {
+            val body = AppleMusicApi.search(query, types, limit, offset)
+                ?: return@withContext Page(emptyList(), null, "the catalogue did not answer")
+            val rows = parse(body, filter)
+            // A full page means there may be more; a short one is the end. Apple
+            // states no total for a search, so this is the only honest signal.
+            val next = if (rows.size >= limit) offset + limit else null
+            Page(
+                rows = rows,
+                nextOffset = next,
+                diagnostic = "${rows.size} row(s) for types=${types.joinToString(",")}",
+            )
+        }
+    }
+
+    /** The catalog types a search tab maps to; empty for a tab Apple has none of. */
+    private fun typesFor(filter: SearchFilter): List<String> = when (filter) {
+        SearchFilter.SONGS -> listOf("songs")
+        SearchFilter.ALBUMS -> listOf("albums")
+        SearchFilter.ARTISTS -> listOf("artists")
+        SearchFilter.PLAYLISTS -> listOf("playlists")
+        SearchFilter.ALL -> listOf("songs", "albums", "artists", "playlists")
+        else -> emptyList()
+    }
+
+    /**
+     * One page of Apple's answer.
+     *
+     * [nextOffset] is where the next page starts, or null at the end of the
+     * catalogue; [diagnostic] says what the answer held, because a blank list
+     * is three different faults and they have three different fixes.
+     */
+    data class Page(
+        val rows: List<SearchResult>,
+        val nextOffset: Int?,
+        val diagnostic: String = "",
+    )
+
     /** Pure JSON → rows, so the mapping is testable without a network. */
-    internal fun parse(body: JsonObject): List<SearchResult> {
+    internal fun parse(body: JsonObject, filter: SearchFilter = SearchFilter.ALL): List<SearchResult> {
         val results = body["results"]?.jsonObject ?: return emptyList()
         val out = mutableListOf<SearchResult>()
-        out += group(results, "songs").mapNotNull(::song).map { SearchResult.Track(it) }
-        out += group(results, "albums").mapNotNull { browse(it, BrowseType.ALBUM, ALBUM_PREFIX) }
-            .map { SearchResult.Browse(it) }
-        out += group(results, "artists").mapNotNull { browse(it, BrowseType.ARTIST, ARTIST_PREFIX) }
-            .map { SearchResult.Browse(it) }
-        out += group(results, "playlists").mapNotNull { browse(it, BrowseType.PLAYLIST, PLAYLIST_PREFIX) }
-            .map { SearchResult.Browse(it) }
+        if (filter == SearchFilter.SONGS || filter == SearchFilter.ALL) {
+            out += group(results, "songs").mapNotNull(::song).map { SearchResult.Track(it) }
+        }
+        if (filter == SearchFilter.ALBUMS || filter == SearchFilter.ALL) {
+            out += group(results, "albums").mapNotNull { browse(it, BrowseType.ALBUM, ALBUM_PREFIX) }
+                .map { SearchResult.Browse(it) }
+        }
+        if (filter == SearchFilter.ARTISTS || filter == SearchFilter.ALL) {
+            out += group(results, "artists").mapNotNull { browse(it, BrowseType.ARTIST, ARTIST_PREFIX) }
+                .map { SearchResult.Browse(it) }
+        }
+        if (filter == SearchFilter.PLAYLISTS || filter == SearchFilter.ALL) {
+            out += group(results, "playlists").mapNotNull { browse(it, BrowseType.PLAYLIST, PLAYLIST_PREFIX) }
+                .map { SearchResult.Browse(it) }
+        }
         return out
     }
 
