@@ -195,6 +195,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
             .getOrDefault(LastPlayerScreen.MAIN),
     )
     override val legacyMeshGradient = MutableStateFlow(false)
+    override val backdropOverlay = MutableStateFlow(false)
     override val lyricsBlur = MutableStateFlow(true)
     override val liveBlur = MutableStateFlow(false)
     override val textGlow = MutableStateFlow(true)
@@ -249,6 +250,10 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
 
     override fun setZoomOutAlbumArt(value: Boolean) {
         zoomOutAlbumArt.value = value
+    }
+
+    override fun setBackdropOverlay(value: Boolean) {
+        backdropOverlay.value = value
     }
 
     private const val KEY_LAST_SCREEN = "last_player_screen"

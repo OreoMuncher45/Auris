@@ -7,6 +7,15 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The Library is a list.** Playlists, On Device, Artists and Albums are rows
+  now — a small cover, the name, and the count or credit under it — instead of
+  rows of big squares. Playlists keeps its list/grid switch, which now opens on
+  the list.
+- **The player's blur without the overlay.** The Now Playing backdrop is the
+  record's blur again, not the dark-or-bright wash laid over it, so the picture
+  is seen as it is. A new Now Playing switch, **Overlay for better button
+  visibility**, puts that wash back — black over a bright cover, white over a
+  dark one — when the buttons should win over the artwork.
 - **Lyrics sharing, back to the 3.4 sheet.** The share is the record-coloured
   card and video it was before the BitChord port: the card is set in the song's
   own ink over the record's colour mesh, the sheet is in the player's dark

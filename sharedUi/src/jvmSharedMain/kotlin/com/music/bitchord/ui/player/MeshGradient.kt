@@ -128,6 +128,11 @@ fun MeshGradientBackground(
      */
     mix: AutoMixAmbientMix? = null,
     mixPalette: MeshPalette? = null,
+    /**
+     * The legibility scrim and the ink's dark-or-bright wash over the blobs. Off
+     * draws the blur bare, as 3.1 had it — the Now Playing setting's switch.
+     */
+    overlay: Boolean = true,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
@@ -249,17 +254,20 @@ fun MeshGradientBackground(
         }
 
         // Gentle scrim so white text stays legible over bright art, with the
-        // player ink's grade folded into the same draw.
-        val black = blackWash()
-        val white = whiteWash()
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(
-                    gradedScrimStop(LEGACY_SCRIM_TOP, black, white),
-                    gradedScrimStop(LEGACY_SCRIM_BOTTOM, black, white),
+        // player ink's grade folded into the same draw. Turned off, the blur
+        // is seen bare.
+        if (overlay) {
+            val black = blackWash()
+            val white = whiteWash()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        gradedScrimStop(LEGACY_SCRIM_TOP, black, white),
+                        gradedScrimStop(LEGACY_SCRIM_BOTTOM, black, white),
+                    ),
                 ),
-            ),
-        )
+            )
+        }
     }
 }
 

@@ -99,6 +99,9 @@ internal fun BoxScope.PortraitBackdrop(
      */
     ambientMix: () -> AutoMixAmbientMix? = { null },
 ) {
+    // The blur without its dark-or-bright overlay, as 3.1 had it, or with it so
+    // the buttons keep their contrast — the Now Playing setting's switch.
+    val overlay by PlayerSettings.backdropOverlay.collectAsStateWithLifecycle()
     // Anchored to the sleeve's bottom edge, so the screen carries on in the
     // colours the artwork ended in rather than in a quantiser's idea of what
     // the artwork was about. Position ticks recompose the player twice a
@@ -156,6 +159,7 @@ internal fun BoxScope.PortraitBackdrop(
             inkWhiteWash = inkWhiteWash,
             darkTheme = darkTheme,
             ambientMix = ambientMix,
+            overlay = overlay,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
         // Not drawn once the full-cover blur has taken the screen: a
@@ -177,6 +181,7 @@ internal fun BoxScope.PortraitBackdrop(
                 inkWhiteWash = inkWhiteWash,
                 darkTheme = darkTheme,
                 ambientMix = ambientMix,
+                overlay = overlay,
             )
         }
     }
@@ -387,6 +392,8 @@ private fun PlayerMeshBackdrop(
     inkWhiteWash: () -> Float,
     darkTheme: Boolean,
     ambientMix: () -> AutoMixAmbientMix?,
+    /** False draws the mesh bare: no legibility scrim, no ink wash. */
+    overlay: Boolean = true,
 ) {
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames, darkTheme = darkTheme)
@@ -429,6 +436,7 @@ private fun PlayerMeshBackdrop(
         whiteWash = inkWhiteWash,
         mix = mix,
         mixMesh = mixMesh,
+        overlay = overlay,
     )
 }
 
@@ -450,6 +458,8 @@ private fun LegacyMeshBackdrop(
     inkWhiteWash: () -> Float,
     darkTheme: Boolean,
     ambientMix: () -> AutoMixAmbientMix?,
+    /** False draws the blobs bare: no legibility scrim, no ink wash. */
+    overlay: Boolean = true,
 ) {
     // One frame at a time: the legacy backdrop takes a picture, not a stream.
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -479,5 +489,6 @@ private fun LegacyMeshBackdrop(
         darkTheme = darkTheme,
         mix = mix,
         mixPalette = mixPalette,
+        overlay = overlay,
     )
 }

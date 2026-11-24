@@ -308,6 +308,11 @@ interface PlayerSettingsSource {
     val hideVolumeBar: StateFlow<Boolean>
     val lastPlayerScreen: StateFlow<LastPlayerScreen>
     val legacyMeshGradient: StateFlow<Boolean>
+    /**
+     * Whether the player lays its dark-or-bright overlay over the blurred
+     * backdrop, so the buttons keep their contrast. Off shows the blur bare.
+     */
+    val backdropOverlay: StateFlow<Boolean>
     val lyricsBlur: StateFlow<Boolean>
     /**
      * Re-read a playing cover's frame often enough to follow it, rather than
@@ -361,6 +366,9 @@ interface PlayerSettingsSource {
      * lives rather than kept in the composition that asked for it.
      */
     fun setFullBleedArtwork(value: Boolean)
+
+    /** Lays the player's contrast overlay over the blurred backdrop, or takes it off. */
+    fun setBackdropOverlay(value: Boolean)
 
     /** Draws the album art a little smaller inside its card, or not. */
     fun setZoomOutAlbumArt(value: Boolean)

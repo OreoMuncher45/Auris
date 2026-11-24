@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOn
+import androidx.compose.material.icons.rounded.Contrast
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
@@ -76,6 +77,7 @@ internal fun NowPlayingSettings(
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
+    val backdropOverlay by AppSettings.backdropOverlay.collectAsStateWithLifecycle()
     val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
@@ -241,6 +243,29 @@ internal fun NowPlayingSettings(
                     )
                 },
                 onClick = { AppSettings.setLiveBlur(!liveBlur) },
+            )
+        }
+        val backdropOverlayTitle = stringResource(R.string.player_backdrop_overlay)
+        row(
+            backdropOverlayTitle,
+            "overlay",
+            "blur",
+            "background",
+            "buttons",
+            "contrast",
+            "visibility",
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.Contrast,
+                title = backdropOverlayTitle,
+                subtitle = stringResource(R.string.player_backdrop_overlay_help),
+                trailing = {
+                    SettingsSwitch(
+                        checked = backdropOverlay,
+                        onCheckedChange = AppSettings::setBackdropOverlay,
+                    )
+                },
+                onClick = { AppSettings.setBackdropOverlay(!backdropOverlay) },
             )
         }
         val perfMonitorTitle = stringResource(R.string.perf_monitor)

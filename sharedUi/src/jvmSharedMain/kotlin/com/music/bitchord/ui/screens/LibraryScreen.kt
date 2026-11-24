@@ -271,22 +271,20 @@ fun LibraryScreen(
                                     HomeShelf(title = stringResource(Res.string.folders), items = folders),
                                 ).items,
                             )
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = folderShelf,
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(folderShelf) },
                             )
                         }
                     }
                     if (deviceItems.isNotEmpty()) {
                         item(key = "shelf:$onDevice", contentType = LazyContent.SHELF) {
                             val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(onDeviceShelf),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(onDeviceShelf) },
                             )
                         }
                     } else if (links.isEmpty() && folders.isEmpty()) {
@@ -313,11 +311,10 @@ fun LibraryScreen(
                     // are shelves of the same kind as the playlists.
                     shelfNamed(PODCASTS)?.let { podcasts ->
                         item(key = "shelf:$PODCASTS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(podcasts),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(podcasts) },
                             )
                         }
                     }
@@ -331,21 +328,19 @@ fun LibraryScreen(
                     val subscriptions = shelfNamed(SUBSCRIPTIONS)
                     if (artists != null) {
                         item(key = "shelf:$ARTISTS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(artists),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(artists) },
                             )
                         }
                     }
                     if (subscriptions != null) {
                         item(key = "shelf:$SUBSCRIPTIONS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(subscriptions),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(subscriptions) },
                             )
                         }
                     }
@@ -358,11 +353,10 @@ fun LibraryScreen(
                     val albums = shelfNamed(ALBUMS)
                     if (albums != null) {
                         item(key = "shelf:$ALBUMS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(albums),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(albums) },
                             )
                         }
                     } else {
@@ -391,7 +385,7 @@ fun LibraryScreen(
             // segments (On device / Playlists / Artists / Albums).
             podcastShelves.forEach { shelf ->
                 item(key = "podcast:${shelf.title}", contentType = LazyContent.SHELF) {
-                    Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
+                    LibraryListShelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
                 }
             }
         }
@@ -595,7 +589,7 @@ private fun PlaylistShelf(
             Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
                 NewPlaylistRow(onClick = onNewPlaylist)
                 shelf.items.forEach { item ->
-                    PlaylistListRow(
+                    LibraryListRow(
                         item = item,
                         isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
                         onClick = { onItemClick(item) },
@@ -705,9 +699,9 @@ private fun NewPlaylistRow(onClick: () -> Unit) {
     }
 }
 
-/** One playlist, as a row: its cover, its name, how much is in it. */
+/** One shelf item as a row: its cover, its name, and what the feed says about it. */
 @Composable
-private fun PlaylistListRow(
+private fun LibraryListRow(
     item: ShelfItem,
     isPinned: Boolean,
     onClick: () -> Unit,
@@ -820,6 +814,45 @@ internal fun LibraryGridShelf(
             }
             trailingCard?.let { card ->
                 item(key = "trailing", contentType = LazyContent.LEADING_CARD) { card() }
+            }
+        }
+    }
+}
+
+/**
+ * A Library shelf as a list: the same heading, then one row per item — the
+ * cover, its name, and what the feed says about it.
+ *
+ * The library is a list of things a listener named. A row is how you find one
+ * among thirty of them; a row of big squares is the better look at five and the
+ * worse way to read the rest, which is why every segment here is a list now.
+ *
+ * [trailing] is the heading's own control — the list/grid switch, on a shelf
+ * that can still be either.
+ */
+@Composable
+internal fun LibraryListShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: (ShelfItem) -> Unit,
+    pinnedPlaylists: List<String> = emptyList(),
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
+    Column(Modifier.padding(bottom = 26.dp)) {
+        SectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            trailing = trailing,
+        )
+        Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
+            shelf.items.forEach { item ->
+                LibraryListRow(
+                    item = item,
+                    isPinned = item.browseId != null && item.browseId in pinned,
+                    onClick = { onItemClick(item) },
+                    onLongPress = { onItemLongPress(item) },
+                )
             }
         }
     }

@@ -668,6 +668,11 @@ fun ArtworkMeshBackdrop(
      */
     mix: AutoMixAmbientMix? = null,
     mixMesh: ArtworkMesh? = null,
+    /**
+     * The legibility scrim and the ink's dark-or-bright wash over the mesh. Off
+     * draws the blur bare, as 3.1 had it — the Now Playing setting's switch.
+     */
+    overlay: Boolean = true,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -817,17 +822,19 @@ fun ArtworkMeshBackdrop(
         // more. The mesh keeps the sleeve's own lightness now, so a bright
         // cover needs this underneath the controls; a sleeve that ends dark
         // leaves a dark screen. The ink's grade, when it asks for one, rides
-        // in the same draw.
-        val black = blackWash()
-        val white = whiteWash()
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(
-                    gradedScrimStop(MESH_SCRIM_TOP, black, white),
-                    gradedScrimStop(MESH_SCRIM_BOTTOM, black, white),
+        // in the same draw. Turned off, the blur is seen bare.
+        if (overlay) {
+            val black = blackWash()
+            val white = whiteWash()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        gradedScrimStop(MESH_SCRIM_TOP, black, white),
+                        gradedScrimStop(MESH_SCRIM_BOTTOM, black, white),
+                    ),
                 ),
-            ),
-        )
+            )
+        }
     }
 }
 

@@ -88,6 +88,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val hideVolumeBar get() = AppSettings.hideVolumeBar
         override val lastPlayerScreen get() = AppSettings.lastPlayerScreen
         override val legacyMeshGradient get() = AppSettings.legacyMeshGradient
+        override val backdropOverlay get() = AppSettings.backdropOverlay
         override val lyricsBlur get() = AppSettings.lyricsBlur
         override val liveBlur get() = AppSettings.liveBlur
         override val textGlow get() = AppSettings.textGlow
@@ -121,6 +122,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
         override fun setFullBleedArtwork(value: Boolean) = AppSettings.setFullBleedArtwork(value)
         override fun setZoomOutAlbumArt(value: Boolean) = AppSettings.setZoomOutAlbumArt(value)
+        override fun setBackdropOverlay(value: Boolean) = AppSettings.setBackdropOverlay(value)
 
     }
 

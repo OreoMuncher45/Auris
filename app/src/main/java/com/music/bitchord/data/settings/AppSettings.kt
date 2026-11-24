@@ -1027,6 +1027,15 @@ object AppSettings {
      */
     val legacyMeshGradient = MutableStateFlow(false)
 
+    /**
+     * The dark-or-bright overlay the player lays over its blurred backdrop so
+     * the buttons keep their contrast against it: black under light ink over a
+     * bright cover, white under dark ink over a dark one. Off by default, so
+     * the blur is seen as it is — the 3.1 look; on, the buttons win over the
+     * picture. See [com.music.bitchord.ui.player.PlayerInkContrast].
+     */
+    val backdropOverlay = MutableStateFlow(false)
+
     /** Restores the expanded player to the surface the listener left open. */
     val lastPlayerScreen = MutableStateFlow(LastPlayerScreen.MAIN)
 
@@ -1110,9 +1119,10 @@ object AppSettings {
      *
      * A grid of covers says nothing about how many tracks are in a playlist
      * or when it was last touched, and a listener with thirty playlists wants
-     * to read the names rather than look at thirty squares.
+     * to read the names rather than look at thirty squares. A list is the
+     * default; the switch still opens the covers.
      */
-    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.GRID)
+    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.LIST)
 
     /**
      * Whether the synthetic Flow card is offered on Home.
@@ -1830,6 +1840,7 @@ object AppSettings {
         showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
         replayPeriod.value = ReplayPeriod.named(prefs.getString(KEY_REPLAY_PERIOD, null))
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
+        backdropOverlay.value = prefs.getBoolean(KEY_BACKDROP_OVERLAY, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
                 prefs.getString(KEY_LAST_PLAYER_SCREEN, null) ?: LastPlayerScreen.MAIN.name,
@@ -1873,7 +1884,7 @@ object AppSettings {
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
         libraryPlaylistsViewType.value = readLibraryViewType(
             KEY_LIBRARY_PLAYLISTS_VIEW_TYPE,
-            fallback = LibraryViewType.GRID,
+            fallback = LibraryViewType.LIST,
         )
         homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
         homeReplayVisible.value = prefs.getBoolean(KEY_HOME_REPLAY_VISIBLE, true)
@@ -2804,6 +2815,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
     }
 
+    fun setBackdropOverlay(value: Boolean) {
+        backdropOverlay.value = value
+        prefs.edit().putBoolean(KEY_BACKDROP_OVERLAY, value).apply()
+    }
+
     fun setLastPlayerScreen(value: LastPlayerScreen) {
         if (lastPlayerScreen.value == value) return
         lastPlayerScreen.value = value
@@ -3538,6 +3554,7 @@ object AppSettings {
     private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
     private const val KEY_REPLAY_PERIOD = "replay_period"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
+    private const val KEY_BACKDROP_OVERLAY = "backdrop_overlay"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
