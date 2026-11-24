@@ -7,6 +7,16 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **The album / playlist page, and the cover that flies to it.** A playlist,
+  album or folder now opens on its own framed sleeve, centred at the head of the
+  page — the artwork, then the title, credit and meta centred under it, over the
+  record's colour wash — instead of a full-width picture band. Albums keep their
+  animated cover inside the frame. The artist page keeps its photo band.
+- **The cover flies from the library.** Tapping a playlist or album — in the
+  lists and in the grids — lifts its little cover and flies it into that framed
+  sleeve as the page opens: one picture growing from the row's 44dp square to the
+  full sleeve on a single curve (see ArtworkFlight). Tapping it again flies the
+  cover back to the row.
 - **The lyrics video has its audio.** An export now cuts from the audio the
   player is actually using — the same media item, read through the same cache
   and source resolver — so a downloaded, cached or source-substituted track

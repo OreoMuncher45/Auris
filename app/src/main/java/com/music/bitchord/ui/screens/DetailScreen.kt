@@ -102,6 +102,7 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -194,9 +195,6 @@ private const val ARTIST_ROW_MAX_ITEMS = 5
 
 /** The artist photo, very slightly taller than it is wide. */
 private const val ARTIST_PHOTO_RATIO = 0.95f
-
-/** A release's sleeve, given a little more height than the artist photo. */
-private const val SLEEVE_RATIO = 0.92f
 
 /** The sleeve on a release page, as a fraction of the page width. */
 private const val SLEEVE_FRACTION = 0.80f
@@ -526,18 +524,26 @@ fun DetailScreen(
                 // Capping against the window's own height is what keeps the ratio's
                 // math honest once the width it's fed is no longer guaranteed to be
                 // the narrow one it was written for.
-                val artHeight = (maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO)
-                    .coerceAtMost(maxHeight * 0.6f)
+                val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
+                // The release's framed sleeve: about four fifths of the width,
+                // capped so a wide window cannot make it taller than the list
+                // it heads.
+                val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * 0.5f)
 
-                PageBackground(
-                    page = page,
-                    palette = palette,
-                    canvas = canvas,
-                    artHeight = artHeight,
-                    listState = listState,
-                    heroUrl = appleArt?.heroUrl,
-                    modifier = Modifier.matchParentSize(),
-                )
+                // The photo band is the artist page's alone now: a release's
+                // artwork is the framed sleeve in its header, so there is no
+                // full-width picture behind the list to draw.
+                if (isArtist) {
+                    PageBackground(
+                        page = page,
+                        palette = palette,
+                        canvas = canvas,
+                        artHeight = artHeight,
+                        listState = listState,
+                        heroUrl = appleArt?.heroUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
 
                 LazyColumn(
                     state = listState,
@@ -553,7 +559,8 @@ fun DetailScreen(
                     ReleaseHeader(
                         page = page,
                         palette = palette,
-                        artHeight = artHeight,
+                        sleeveSize = sleeveSize,
+                        canvas = canvas,
                         trackCount = songs.size,
                         songs = songs,
                         onPlay = { onPlay(songs) },
@@ -929,7 +936,9 @@ fun DetailScreen(
 private fun ReleaseHeader(
     page: DetailPage,
     palette: ArtworkPalette,
-    artHeight: Dp,
+    /** The framed sleeve at the head of the page — the cover a card flies into. */
+    sleeveSize: Dp,
+    canvas: CanvasArtwork?,
     trackCount: Int,
     songs: List<Song>,
     onPlay: () -> Unit,
@@ -946,20 +955,47 @@ private fun ReleaseHeader(
     // own long-press "Open artist" already reads from.
     val artist = songs.firstOrNull()
 
-    // The outer Box just needs to be as tall as its content — we don't force
-    // an aspect ratio here so the action buttons can extend below the artwork.
-    Box(Modifier.fillMaxWidth()) {
-
-        Spacer(Modifier.fillMaxWidth().height(artHeight + HEADER_DROP))
-
-        // Text + action row stacked, pinned to the bottom of the Box.
-        Column(
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topBarContentPadding(), bottom = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // The release's own sleeve, framed and centred at the head of the page —
+        // the picture a card's cover flew into (see ArtworkFlight). The page
+        // behind it is one wash of the record's colour, so a landed cover has
+        // nothing to seam against.
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(bottom = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .size(sleeveSize)
+                .shadow(10.dp, SLEEVE_SHAPE)
+                .background(palette.elevated)
+                .thumbnailBorder(SLEEVE_SHAPE)
+                .artworkArrival(page.browseId, corner = 12.dp, wash = palette.wash),
         ) {
+            AsyncImage(
+                model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                // The moment the page's own sleeve has drawn, the cover that
+                // flew in may let go of it.
+                onState = {
+                    if (it is AsyncImagePainter.State.Success) artworkArrivalDrawn(page.browseId)
+                },
+                modifier = Modifier.matchParentSize(),
+            )
+            // Animated cover art inside the same frame, always running: this
+            // page is only up while it is being read.
+            canvas?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = true,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
             Text(
                 text = page.title,
                 style = MaterialTheme.typography.headlineMedium,
@@ -1089,7 +1125,6 @@ private fun ReleaseHeader(
                 }
             }
         }
-    }
 }
 
 /**

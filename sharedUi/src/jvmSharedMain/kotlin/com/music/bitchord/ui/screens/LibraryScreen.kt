@@ -13,6 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.components.SearchField
+import com.music.bitchord.ui.components.artworkDeparture
+import com.music.bitchord.ui.components.rememberArtworkTap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
@@ -59,8 +61,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.LibrarySort
@@ -709,11 +713,16 @@ private fun LibraryListRow(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    // Tapping the row lifts its little cover and flies it into the page it
+    // opens — see ArtworkFlight. A row's square is small, so the flight is
+    // where the size change happens: 44dp here, the page's framed sleeve there,
+    // one picture growing across the two.
+    val open = rememberArtworkTap(destination = item.browseId, token = item, onOpen = onClick)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .longPressMenuClickable(onClick = open, onLongClick = onLongPress)
             .padding(vertical = 6.dp),
     ) {
         AsyncImage(
@@ -723,7 +732,14 @@ private fun LibraryListRow(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                // The cover this row flies from: measured where it is, and drawn
+                // away while its own copy is in the air.
+                .artworkDeparture(
+                    token = item,
+                    model = item.thumbnailUrl?.artworkAt(CARD_ART_PX),
+                    corner = 8.dp,
+                ),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
