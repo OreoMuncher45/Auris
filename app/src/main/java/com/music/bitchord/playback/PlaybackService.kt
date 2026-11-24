@@ -1548,7 +1548,11 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun spotifyAccountKey(token: String? = currentSpotifyToken()): String? =
-        token?.let(com.music.bitchord.data.canvas.SpotifyToken::cookieKey)
+        token?.let { raw ->
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(Locale.ROOT, it) }
+        }
 
     private fun MediaItem.withAutoQueueToken(token: Long, spotifyToken: String? = null): MediaItem {
         val accountKey = spotifyAccountKey(spotifyToken)
@@ -12545,7 +12549,20 @@ class PlaybackService : MediaLibraryService() {
                     songCache.containsKey(id) -> {
                         val cached = songCache[id]!!
                         if (!AppSettings.isSongBlocked(cached)) {
-                            resolved.add(cached.toMediaItem(parentBrowseId = autoTrackParentById[id]))
+                            val storedAccountKey = item.mediaMetadata.extras?.getString(EXTRA_AUTO_SPOTIFY_TOKEN)
+                            val rebuilt = cached.toMediaItem(parentBrowseId = autoTrackParentById[id])
+                            resolved.add(
+                                if (storedAccountKey != null) {
+                                    val extras = Bundle(rebuilt.mediaMetadata.extras ?: Bundle()).apply {
+                                        putString(EXTRA_AUTO_SPOTIFY_TOKEN, storedAccountKey)
+                                    }
+                                    rebuilt.buildUpon()
+                                        .setMediaMetadata(rebuilt.mediaMetadata.buildUpon().setExtras(extras).build())
+                                        .build()
+                                } else {
+                                    rebuilt
+                                },
+                            )
                         }
                     }
                     id.startsWith(SpotifyHomeSource.SPOTIFY_KEY_PREFIX) -> {
