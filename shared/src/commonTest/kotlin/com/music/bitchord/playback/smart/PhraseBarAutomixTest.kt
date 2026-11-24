@@ -198,15 +198,16 @@ class PhraseBarAutomixTest {
     fun aPhraseWhoseStartMissesTheMeasuredBarLinesIsSnappedOntoThem() {
         // Phrase boundaries a quarter beat off the measured bar lines: the start
         // the planner aligns to is unmeasured, the end it would reach is measured.
+        // A phrase boundary a quarter beat after every bar line: the start the
+        // planner aligns to is never a measured downbeat (more than beat/8 off).
         val base = track("a", 120.0, "C major", vocal = 0.1)
-        val current = base.copy(phraseBoundaries = base.phraseBoundaries.map { it + 0.125 })
+        val current = base.copy(phraseBoundaries = base.downbeats.map { it + 0.125 })
         val next = track("b", 120.0, "C major", vocal = 0.1)
         val plan = plan(current, next, PHRASE_BARS_SHORT)
-        if (plan.reason.endsWith("phrase-8-bar")) {
-            val start = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
-            val end = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 }
-            kotlin.test.assertTrue(start >= 0 && end >= 0, "both phrase edges must be measured downbeats")
-            assertEquals(PHRASE_BARS_SHORT, end - start)
-        }
+        kotlin.test.assertTrue(plan.reason.endsWith("phrase-8-bar"), "a fixed phrase is still planned: ${plan.reason}")
+        val start = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionStart) < 1e-6 }
+        val end = current.downbeats.indexOfFirst { kotlin.math.abs(it - plan.transitionEnd) < 1e-6 }
+        kotlin.test.assertTrue(start >= 0 && end >= 0, "both phrase edges must be measured downbeats")
+        assertEquals(PHRASE_BARS_SHORT, end - start)
     }
 }
