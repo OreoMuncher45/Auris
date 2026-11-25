@@ -473,6 +473,37 @@ object Innertube {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
     }
 
+    /**
+     * Everything requests are signed with, as it was at [captureSession]:
+     * cookie, scope, adopted identity, chosen channel and visitor id.
+     * [restore] puts all of it back in one locked write — a candidate account
+     * that was never accepted leaves nothing of itself behind, its scope
+     * included, even under the same cookie.
+     */
+    class SessionState internal constructor(private val apply: () -> Unit) {
+        fun restore() = apply()
+    }
+
+    fun captureSession(): SessionState = synchronized(identityLock) {
+        val savedCookie = cookie
+        val savedScope = scope
+        val savedAdopted = adoptedIdentity
+        val savedChannel = channelOverride
+        val savedVisitor = visitorData
+        val savedVisitorBound = visitorDataIsSessionBound
+        SessionState {
+            synchronized(identityLock) {
+                cookie = savedCookie
+                scope = savedScope
+                adoptedIdentity = savedAdopted
+                channelOverride = savedChannel
+                visitorData = savedVisitor
+                visitorDataIsSessionBound = savedVisitorBound
+                refreshListener()
+            }
+        }
+    }
+
     /** Thrown when a request bound by [asListener] would go out as another listener. */
     class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
 
@@ -1417,9 +1448,13 @@ object Innertube {
             }.body<JsonObject>()
         }
 
-        if (visitorData == null) {
-            visitorData = response["responseContext"]?.jsonObject
-                ?.get("visitorData")?.jsonPrimitive?.content
+        // Kept only for the session the request went out as: an answer that
+        // lands after a sign-in or sign-out must not hand its visitor id to
+        // the next account's requests.
+        response["responseContext"]?.jsonObject?.get("visitorData")?.jsonPrimitive?.content?.let { answered ->
+            synchronized(identityLock) {
+                if (visitorData == null && cookie == credentials.cookie) visitorData = answered
+            }
         }
         return response
     }
