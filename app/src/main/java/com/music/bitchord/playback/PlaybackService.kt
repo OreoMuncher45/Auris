@@ -8688,7 +8688,11 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+            AppSettings.skipSilence.collect { on ->
+                // A loop mix is cut for the timing it was armed under: it settles first.
+                if (on) crossfade?.settleLoopForTimingChange("skip silence switched on")
+                eachPlayer { it.skipSilenceEnabled = on }
+            }
         }
         scope.launch {
             // A source switched off hands its pinned tracks over at the next

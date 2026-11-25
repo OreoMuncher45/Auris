@@ -3118,6 +3118,17 @@ class CrossfadeController(
     /** More than about half a decibel apart. */
     private fun levelMoved(built: Float, now: Float): Boolean = abs(now / built - 1f) > LOOP_LEVEL_TOLERANCE
 
+    /**
+     * A setting that changes the players' timing (skip silence) is about to be
+     * applied: an armed or running loop mix settles first, so neither player
+     * changes under a mix cut for the old timing. Call before applying it.
+     */
+    fun settleLoopForTimingChange(reason: String) {
+        if (phase == Phase.LOOP_ARMING || phase == Phase.LOOP_RUNNING) {
+            loopBail(reason, settle = phase == Phase.LOOP_RUNNING)
+        }
+    }
+
     private fun loopArmRefusal(out: ExoPlayer, nextStillIncoming: Boolean): String? = LoopArmGate.refusal(
         bitPerfect = AppSettings.bitPerfect.value,
         automixOn = AppSettings.smartFadeEnabled.value,
@@ -3181,7 +3192,7 @@ class CrossfadeController(
             if (into.playbackState != Player.STATE_READY) return loopBail("the incoming player wasn't ready", settle = true)
             // Nor onto one whose alignment never came within [LOOP_HANDOFF_MAX_ERROR_MS]
             // of the deck (NaN: never measured): its handover would be heard as a flam.
-            if (!(abs(session.alignedErrorMs) <= LOOP_HANDOFF_MAX_ERROR_MS)) {
+            if (!session.alignmentConfirmed || !(abs(session.alignedErrorMs) <= LOOP_HANDOFF_MAX_ERROR_MS)) {
                 return loopBail("the incoming player never aligned (${session.alignedErrorMs} ms)", settle = true)
             }
             if (!handOff(out, into, m, visualEnd)) return
@@ -3247,7 +3258,8 @@ class CrossfadeController(
                 delay(((lead + abs(error) + 0.4) * 1000).roundToLong().coerceIn(300L, 12_000L))
             }
             session.offsetNow(System.nanoTime())?.let {
-                session.recordAligned(it)
+                // After rounds that stalled or lacked readings: logged, never trusted for a handoff.
+                session.recordAligned(it, confirmed = false)
                 TrackLog.d(TAG, "loop align: left at ${"%+.2f".format(Locale.ROOT, it * 1000)}ms")
             }
         }
