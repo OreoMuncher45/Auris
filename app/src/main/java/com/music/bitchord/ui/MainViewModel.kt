@@ -5499,7 +5499,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _activeProfileId.value?.let { profileId -> "$accountId:$profileId" }
     }
 
+    /**
+     * Closes the detail pages the listener's account answered (YouTube Music
+     * pages, Liked Music among them); device folders, the cache folder and
+     * Spotify pages belong to no account and stay. Called whenever the
+     * listener changes, so one account's rows are never left up for another.
+     */
+    private fun dropListenerPages() {
+        val kept = _detailStack.value.filter {
+            it.browseId.startsWith("local:") || it.browseId.startsWith("spotify:")
+        }
+        if (kept.size != _detailStack.value.size) {
+            _detailStack.value = kept
+            cancelClosedSpotifyLoads()
+        }
+    }
+
     private fun clearListenerState(restoreCached: Boolean = false) {
+        dropListenerPages()
         _account.value = null
         likedSyncJob?.cancel()
         cancelRowRatings()
@@ -5563,6 +5580,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _googleAccounts.value = emptyList()
         _activeAccountId.value = null
         _activeProfileId.value = null
+        dropListenerPages()
         _library.value = UiState.Loading
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
