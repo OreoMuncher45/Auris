@@ -111,7 +111,7 @@ private val SPOKEN_TEXT = Regex(
 private val LIVE_TEXT = Regex(
     // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
     // "(Live 2016)", "(Live, 2016)".
-    """[(\[]\s*(?:[^)\]]*\s)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
+    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
         // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016".
         """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b.*)?\s*$""",
     RegexOption.IGNORE_CASE,
@@ -1558,6 +1558,11 @@ private fun clampToMixWindow(plan: TransitionPlan, length: Double, playbackTime:
             fadeSeconds = room,
             handoffDuration = min(result.handoffDuration, room),
         )
+    }
+    // The beat count follows the span actually scheduled.
+    if (result.transitionEnd - result.transitionStart != plan.transitionEnd - plan.transitionStart && plan.transitionBeats > 0) {
+        val beat = (plan.transitionEnd - plan.transitionStart) / plan.transitionBeats
+        if (beat > 0) result = result.copy(transitionBeats = ((result.transitionEnd - result.transitionStart) / beat).roundToInt())
     }
     return result
 }

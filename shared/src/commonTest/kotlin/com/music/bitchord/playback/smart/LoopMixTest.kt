@@ -450,9 +450,10 @@ class LoopMixTest {
     @Test
     fun theIncomingLoopStartsInsideTheOpeningSearch() {
         // Sung everywhere but one bar at 48.5-50.5 s: past the 45 s limit for a loop start.
-        val inn = analysis(120.0, 180.0, listOf(vocals(0.0, 70.0, 0.9f, listOf(48.4 to 50.6))))
+        val inn = analysis(120.0, 180.0, listOf(vocals(0.0, 70.0, 0.9f, listOf(48.0 to 50.6))))
         val plan = LoopMix.plan(analysis(120.0, 200.0), 200.0, inn, 180.0, 0.0, clear, null)
-        assertTrue(plan == null || plan.inn.loopStart <= LoopMix.IN_SEARCH_SEC, "incoming loop at ${plan?.inn?.loopStart}")
+        // Clean from its preceding beat on, so only the 45 s start limit rules the late loop out.
+        assertNull(plan, "incoming loop at ${plan?.inn?.loopStart}")
     }
 
     @Test
@@ -470,5 +471,22 @@ class LoopMixTest {
         val stats = assertNotNull(LoopMix.maskStats(listOf(w), 0.05, 0.25))
         // 50 ms sung at each edge, 100 ms clear between: half of it sung.
         assertEquals(0.5, stats.share, 1e-9)
+    }
+
+    @Test
+    fun aSungLaterWindowIsNotHiddenByAQuietEarlierOneOverTheSameTime() {
+        val quiet = CurveWindow(0.0, 10.0, FloatArray(10) { 0.05f })
+        val sung = CurveWindow(0.5, 10.0, FloatArray(5) { 0.9f })
+        val stats = assertNotNull(LoopMix.maskStats(listOf(quiet, sung), 0.0, 1.0))
+        assertEquals(0.5, stats.share, 1e-9)
+    }
+
+    @Test
+    fun aSungRunEndsAtAnUnmeasuredGapHoweverShort() {
+        // 8 Hz frames: sung 0-0.125 s and 0.15625-0.28125 s, nothing measured between.
+        val a = CurveWindow(0.0, 8.0, floatArrayOf(0.9f))
+        val b = CurveWindow(0.15625, 8.0, floatArrayOf(0.9f))
+        val stats = assertNotNull(LoopMix.maskStats(listOf(a, b), 0.0, 0.28125))
+        assertEquals(0.125, stats.longestRunSec, 1e-9)
     }
 }

@@ -111,4 +111,20 @@ class ModellessResultsTest {
         modelless.release("a") { current }
         assertFalse(modelless.isEmpty())
     }
+
+    @Test
+    fun anEvictedHeadResultGivesBackItsOwnPrefixClaim() {
+        val results = ModellessResults()
+        val head = TrackAnalysis(trackId = "a")
+        results.recordHead("a", head, "copy", 400_000L)
+        val claims = mutableMapOf("copy" to 400_000L, "other" to 800_000L)
+        results.release("a", claims) { null }
+        org.junit.Assert.assertNull(claims["copy"])
+        assertEquals(800_000L, claims["other"])
+        // A newer claim on the same copy is left alone.
+        results.recordHead("a", head, "copy", 400_000L)
+        claims["copy"] = 800_000L
+        results.release("a", claims) { null }
+        assertEquals(800_000L, claims["copy"])
+    }
 }
