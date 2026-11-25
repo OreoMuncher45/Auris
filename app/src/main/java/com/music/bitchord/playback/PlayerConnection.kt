@@ -1128,6 +1128,10 @@ suspend fun MediaController.playSongs(
             queue.map { it.toMediaItem() }
         }
     } ?: return false
+    // The session refuses a new queue while the party host holds the controls
+    // (SessionPlayer.setMediaItems), so a play built meanwhile installs
+    // nothing: shuffle and its saved order stay as they were.
+    if (com.music.bitchord.data.listentogether.ListenTogether.state.value.controlsLocked) return false
     QueueShuffle.applyForNextQueue(shuffleRequest)
     if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)

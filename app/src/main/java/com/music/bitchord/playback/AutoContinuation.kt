@@ -88,8 +88,9 @@ internal fun isAutoQueueInstalled(
 
 /**
  * [resolved] without the rows at [revoked] indices, and where [start] — an
- * index into [resolved] — lands once they are gone (clamped, so a revoked
- * start falls to the row that took its place).
+ * index into [resolved] — lands once they are gone: a revoked start falls to
+ * the row that took its place, or to the last kept row when none did. Empty
+ * when nothing survives; the caller then has no row to start.
  *
  * For Auto rows accepted for one account while a later item was still being
  * resolved: if the account changed meanwhile, those rows go, and the rows
@@ -103,5 +104,5 @@ internal fun <T> withoutRevoked(resolved: List<T>, revoked: Collection<Int>, sta
         if (index < start && index !in revoked) keptStart++
         if (index !in revoked) kept += item
     }
-    return kept to keptStart
+    return kept to if (kept.isEmpty()) 0 else keptStart.coerceAtMost(kept.lastIndex)
 }
