@@ -1718,7 +1718,7 @@ internal fun LyricsPanel(
     val clock = rememberLyricClock(trackKey, playhead, isPlaying, active)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
+    val isSynced = remember(lines) { lines.any { it.isTimed } }
     // Only a song that actually names a second voice is laid out as one. A
     // single-voice song has every line on the left already, so splitting the
     // panel into lanes for it would just be a narrower panel.
@@ -2675,7 +2675,7 @@ private fun CurrentLyricLine(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
+    val isSynced = remember(lines) { lines.any { it.isTimed } }
     // A pinned lyric colour wins; otherwise the strip follows the player ink,
     // which is always a light tint of the sleeve's accent — see
     // [computeNowPlayingPalette].
@@ -2810,9 +2810,10 @@ private fun CurrentLyricLine(
                 // The whole target, not the index alone: a source that swaps
                 // in a new version of the same line keeps its index, and the
                 // outgoing copy would glow alongside the incoming one. By
-                // reference — the target holds [current] itself — so the
-                // check costs nothing per frame.
-                val sung = itemIndex == index && lineItem === current && lineText == text
+                // reference first (the target usually holds [current] itself,
+                // at no cost per frame), then by value: a refresh can hand over
+                // an equal copy of the line, which must keep its glow.
+                val sung = itemIndex == index && (lineItem === current || lineItem == current) && lineText == text
                 SweptLyricLine(
                     line = swept,
                     clock = clock,

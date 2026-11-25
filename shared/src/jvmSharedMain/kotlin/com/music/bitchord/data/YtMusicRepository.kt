@@ -410,6 +410,11 @@ object YtMusicRepository {
     private suspend fun rawSuggestions(input: String): JsonObject {
         val generation = Innertube.listenerGeneration
         val pending = synchronized(suggestionsLock) {
+            // A reader from an older account must neither reuse, replace nor
+            // cancel the current account's answer.
+            if (Innertube.listenerGeneration != generation) {
+                throw IllegalStateException("account changed before suggestions were asked for")
+            }
             val last = lastSuggestions
             last?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
                 ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
@@ -1233,7 +1238,14 @@ object YtMusicRepository {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
                     throw failure
                 }
-                block()
+                // Checked again where the retry's credentials are taken, under
+                // the same lock, so a switch after the line above can't slip in.
+                try {
+                    Innertube.asListener(identity) { block() }
+                } catch (_: Innertube.ListenerChangedException) {
+                    Log.w(TAG, "$label not retried: the account changed before it was sent")
+                    throw failure
+                }
             }
                 // runCatching catches Throwable, cancellation included, which
                 // would turn "the user typed another letter" into a failed

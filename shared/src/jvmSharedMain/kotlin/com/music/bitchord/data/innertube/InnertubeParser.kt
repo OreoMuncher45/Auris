@@ -591,7 +591,17 @@ object InnertubeParser {
     }
 
     /** A playlist page's own tracks, the ones YouTube suggests adding, and the token for the rest. */
-    data class PlaylistShelfPage(val songs: List<Song>, val suggested: List<Song>, val continuation: String?)
+    data class PlaylistShelfPage(
+        val songs: List<Song>,
+        val suggested: List<Song>,
+        val continuation: String?,
+        /**
+         * Whether the page's own rows were recognised as the playlist's. False
+         * when only a "Suggestions" shelf was: the playlist part of the page
+         * was not read, so it is not evidence the playlist ended there.
+         */
+        val playlistRead: Boolean = true,
+    )
 
     /**
      * A playlist page's own track list, scoped rather than walked — plus
@@ -664,7 +674,7 @@ object InnertubeParser {
         // `reloadContinuationData` token). Only the playlist shelf's own
         // continuation means more real tracks.
         val token = playlistScope?.let { continuationToken(it) }
-        return PlaylistShelfPage(songs, suggested, token)
+        return PlaylistShelfPage(songs, suggested, token, playlistRead = playlistScope != null)
     }
 
     /**

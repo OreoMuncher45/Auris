@@ -306,7 +306,11 @@ class PrecisionAudioSink(
                 // A loop mix armed across a format change is over: its frames and
                 // timestamps are counted at the old rate, and it renders stereo
                 // into a block about to be replaced.
-                if (sampleRate != configuredSampleRate || channelCount != audioBlock.channelCount) {
+                // A first configure (nothing configured yet) is no change: an arm
+                // made for this sink before its player prepared must survive it.
+                if (configuredSampleRate > 0 &&
+                    (sampleRate != configuredSampleRate || channelCount != audioBlock.channelCount)
+                ) {
                     retireLoopForFormatChange()
                 }
 
