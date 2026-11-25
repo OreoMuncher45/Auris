@@ -81,4 +81,21 @@ class ListenerIdentityTest {
         Innertube.adoptSessionScope("pageB", "syncB", "1", null, null, loggedIn = true)
         assertEquals(second, Innertube.listener)
     }
+
+    @Test
+    fun `a captured session comes back whole under the same cookie, scope included`() {
+        // A profile with no channel ids and no account index of its own.
+        Innertube.cookie = "SID=one"
+        Innertube.adoptSessionScope(null, null, null, null, null, loggedIn = true)
+        val before = Innertube.listener
+        val saved = Innertube.captureSession()
+        // A channel switch under the same cookie: the candidate's scope and channel go in.
+        Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
+        Innertube.selectChannel("brand", "brand||owner", "1")
+        assertNotEquals(before, Innertube.listener)
+        // Not accepted: everything goes back, so requests sign as before.
+        saved.restore()
+        assertEquals(before, Innertube.listener)
+    }
 }
+
