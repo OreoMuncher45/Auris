@@ -479,11 +479,19 @@ class PlaybackService : MediaLibraryService() {
         }
         val songs = page?.songs.orEmpty()
         if (songs.isEmpty()) return null
-        // Read for an account that is no longer the one listening, or across
-        // a switch away and back, which can hand back the other account's rows.
-        if (stamp != listenerStamp()) return null
+        // Read for an account that is no longer the one listening, across a
+        // switch away and back, or while a candidate account was being
+        // validated (its credentials are installed before it is accepted): not
+        // this listener's likes. Checked and seeded in one step on the main
+        // thread, where a candidate is installed and restored, so a rejection
+        // can't land between the check and the seed.
+        val ours = withContext(Dispatchers.Main.immediate) {
+            (stamp == listenerStamp() && !com.music.bitchord.ui.CandidateValidation.session.active).also { current ->
+                if (current) LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
+            }
+        }
+        if (!ours) return null
         songs.forEach { songCache[it.videoId] = it }
-        LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
     }
 
