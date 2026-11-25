@@ -224,7 +224,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             measuredCopies.remove(trackId)
             // A model-less result was never stored, so nothing restores it;
             // its record goes with it rather than pinning its curves in memory.
-            modelless.release(trackId) { results[it] }
+            modelless.release(trackId, headAttempts) { results[it] }
         }
     }
     private val running = ConcurrentHashMap.newKeySet<String>()
@@ -2185,8 +2185,19 @@ internal class ModellessResults {
      * describes: after an eviction. A newer record whose result is still
      * cached is kept.
      */
-    fun release(trackId: String, cached: (String) -> TrackAnalysis?) {
-        entries.computeIfPresent(trackId) { _, entry -> entry.takeIf { cached(trackId) === it.analysis } }
+    fun release(
+        trackId: String,
+        headAttempts: MutableMap<String, Long>? = null,
+        cached: (String) -> TrackAnalysis?,
+    ) {
+        entries.computeIfPresent(trackId) { _, entry ->
+            if (cached(trackId) === entry.analysis) return@computeIfPresent entry
+            // An evicted head result gives its prefix claim back too (only that
+            // exact claim, never a newer one), or the unchanged prefix that
+            // produced it would have to grow before it may be tried again.
+            if (entry.headPrefix != null && entry.copyKey != null) headAttempts?.remove(entry.copyKey, entry.headPrefix)
+            null
+        }
     }
 
     fun clear() = entries.clear()
