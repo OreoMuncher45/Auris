@@ -233,13 +233,19 @@ object Innertube {
      */
     suspend fun ensureVisitorData(refresh: Boolean = false): String? {
         if (!refresh && visitorData != null) return visitorData
+        val generation = listenerGeneration
         runCatching { fetchVisitorData() }
             .onFailure { Log.w(TAG, "could not mint a visitor id: ${it.message}") }
             .getOrNull()
             ?.let {
-                if (refresh || !visitorDataIsSessionBound) {
-                    visitorData = it
-                    visitorDataIsSessionBound = false
+                // Under the lock the session writers hold, and only for the
+                // listener it was minted under: a session-bound id adopted
+                // meanwhile, or a switch, wins over this anonymous one.
+                synchronized(identityLock) {
+                    if (published.generation == generation && (refresh || !visitorDataIsSessionBound)) {
+                        visitorData = it
+                        visitorDataIsSessionBound = false
+                    }
                 }
             }
         return visitorData
@@ -461,6 +467,8 @@ object Innertube {
         val pageId: String?,
         val dataSyncId: String?,
         val visitorData: String?,
+        /** The [listenerGeneration] these credentials were published at. */
+        val generation: Long,
     )
 
     /**
@@ -526,7 +534,9 @@ object Innertube {
     /** Callers hold [identityLock]. */
     private fun snapshotCredentials(): RequestCredentials {
         val session = scope
-        return RequestCredentials(cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData)
+        return RequestCredentials(
+            cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData, published.generation,
+        )
     }
 
     /**
@@ -1445,7 +1455,9 @@ object Innertube {
         // the next account's requests.
         response["responseContext"]?.jsonObject?.get("visitorData")?.jsonPrimitive?.content?.let { answered ->
             synchronized(identityLock) {
-                if (visitorData == null && cookie == credentials.cookie) visitorData = answered
+                // The generation, not just the cookie: a channel switch under
+                // the same cookie is another listener too.
+                if (visitorData == null && published.generation == credentials.generation) visitorData = answered
             }
         }
         return response
