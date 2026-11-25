@@ -4653,10 +4653,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }
-            // Update by id — the user may have pushed another page meanwhile.
+            // Update this opening only — the user may have pushed another page
+            // meanwhile, or closed this one and opened it again.
             // A page showing its downloaded copy takes only a real listing: a
             // failed or empty fetch leaves the downloaded tracks up.
-            _detailStack.value = _detailStack.value.map {
+            _detailStack.value = _detailStack.value.updateOpening(browseId, opened) {
                 // Once the Liked cache has painted, `it.songs` is already a
                 // Success, so this test used to fail for every other field on
                 // the page: the network result was computed and dropped, and
@@ -4664,8 +4665,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // library" state and subscriber count. Metadata is merged in
                 // whatever state the rows are in; only the *rows* are withheld
                 // from a page showing a downloaded copy it already has.
-                if (it.browseId == browseId &&
-                    (it.songs is UiState.Loading ||
+                if ((it.songs is UiState.Loading ||
                         onDevice.isNotEmpty() && state is UiState.Success ||
                         state !is UiState.Error)
                 ) {
@@ -5199,20 +5199,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * there to shuffle from.
      */
     fun loadMoreDetail(browseId: String) {
-        val page = _detailStack.value.firstOrNull { it.browseId == browseId } ?: return
+        // The page on screen: the latest opening of this browse id.
+        val page = _detailStack.value.lastOrNull { it.browseId == browseId } ?: return
         val token = page.continuation ?: return
         if (page.loadingMore) return
-        _detailStack.value = _detailStack.value.map {
-            if (it.browseId == browseId) it.copy(loadingMore = true) else it
-        }
+        // Whose page this is, and the credentials the next page goes out with:
+        // an answer for anyone else, or for an earlier opening, is not appended.
+        val opened = page.opening
+        val listener = listenerKey()
+        val credentials = Innertube.listenerGeneration
+        _detailStack.value = _detailStack.value.updateOpening(browseId, opened) { it.copy(loadingMore = true) }
         viewModelScope.launch {
             val fetched = YtMusicRepository.moreSongs(token).getOrNull()
+                ?.takeIf { listenerKey() == listener && Innertube.listenerGeneration == credentials }
             val stack = _detailStack.value
-            val index = stack.indexOfFirst { it.browseId == browseId }
+            val index = stack.indexOfFirst { it.browseId == browseId && it.opening == opened }
             if (index < 0 || fetched == null) {
-                _detailStack.value = stack.map {
-                    if (it.browseId == browseId) it.copy(loadingMore = false) else it
-                }
+                _detailStack.value = stack.updateOpening(browseId, opened) { it.copy(loadingMore = false) }
                 return@launch
             }
             val current = stack[index]
