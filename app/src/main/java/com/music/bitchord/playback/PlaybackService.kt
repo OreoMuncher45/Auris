@@ -12750,7 +12750,7 @@ class PlaybackService : MediaLibraryService() {
 
         val hasContent = out.any { !it.mediaId.startsWith("msg:") }
         if (!hasContent) {
-            val fallbackDownloads = Downloads.getDownloadedSongs(this@PlaybackService)
+            val fallbackDownloads = Downloads.snapshotSongs()
                 .filterNot(AppSettings::isSongBlocked)
             val fallbackTitle = getString(R.string.auto_recent_and_downloads)
             fallbackDownloads.forEach { song ->
@@ -13066,7 +13066,7 @@ class PlaybackService : MediaLibraryService() {
         val apiResult = try {
             SpotifyGraphQL.withCallTimeout(4_500L) {
                 coroutineScope {
-                    val daylistJob = if (wantsDaylist) {
+                    val daylistJob: Deferred<List<SpotifyPlaylist>>? = if (wantsDaylist) {
                         async(Dispatchers.IO) {
                             try {
                                 listOfNotNull(cachedSpotifyDaylist())
