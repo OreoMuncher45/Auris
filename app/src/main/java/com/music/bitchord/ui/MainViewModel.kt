@@ -4457,7 +4457,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 resolved == BrowseType.ARTIST -> {
                     YtMusicRepository.artistPage(browseId).fold(
-                        onSuccess = { page ->
+                        onSuccess = artist@{ page ->
+                            // The subscription state is the listener's own: an
+                            // answer for anyone else is not written.
+                            if (listenerKey() != openedFor || Innertube.listenerGeneration != credentials) {
+                                return@artist UiState.Error(text(R.string.failed))
+                            }
                             sections = page.sections
                             artwork = page.thumbnailUrl
                             name = page.name
@@ -4478,8 +4483,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // Liked paints from its persistent cache instantly — a
                     // 1,600-track walk costs a minute of continuations, the
                     // snapshot is free. The fetch below replaces it.
-                    if (browseId == YtMusicRepository.LIKED_MUSIC) {
-                        LikedCache.read(listenerKey())?.takeIf { it.isNotEmpty() }?.let { cached ->
+                    // Only the opener's own cache, and only while they are still the listener.
+                    if (browseId == YtMusicRepository.LIKED_MUSIC && listenerKey() == openedFor) {
+                        LikedCache.read(openedFor)?.takeIf { it.isNotEmpty() }?.let { cached ->
                             val painted = cached.withLocalFiles()
                             _detailStack.value = _detailStack.value.map {
                                 if (it.browseId == browseId && it.songs is UiState.Loading) {
@@ -5293,6 +5299,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // cancellation included, the ViewModel cleared mid-request — puts the
         // previous session back before the validation reports settled.
         var accepted = false
+        // What requests were signed with before the candidate went in: put
+        // back whole, scope included, if it is not accepted.
+        val previous = Innertube.captureSession()
         try { run {
             Innertube.cookie = session.cookie
             Innertube.adoptSessionScope(
@@ -5383,7 +5392,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loadChannels(force = true)
             onComplete(true)
         } } finally {
-            if (!accepted) restoreActiveSession(oldAccountId, oldProfileId)
+            if (!accepted) previous.restore()
         }
     }
 
