@@ -274,7 +274,17 @@ object AutomixModels {
             Log.i(TAG, "Automix models ready")
         } catch (e: Exception) {
             Log.w(TAG, "Automix model download failed", e)
-            synchronized(lock) { failedAt = SystemClock.elapsedRealtime() }
+            synchronized(lock) {
+                failedAt = SystemClock.elapsedRealtime()
+                // The retry is armed here, from the failure, for the end of its
+                // cooldown: nothing else is sure to ask again. One timer, for
+                // the latest failure; [request] rechecks the gate when it runs.
+                retryJob?.cancel()
+                retryJob = scope.launch {
+                    delay(RETRY_AFTER_MS)
+                    request(force = false, explicit = false)
+                }
+            }
             _state.value = State.Failed
         }
     }

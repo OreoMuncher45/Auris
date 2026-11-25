@@ -132,4 +132,19 @@ class AutoContinuationTest {
         assertTrue(kept === resolved)
         assertEquals(1, start)
     }
+
+    @Test
+    fun `a revoked last start falls back to the last kept row`() {
+        // [public, account], playing the account row, which is revoked.
+        val (kept, start) = withoutRevoked(listOf("public", "account"), setOf(1), start = 1)
+        assertEquals(listOf("public"), kept)
+        assertEquals(0, start)
+    }
+
+    @Test
+    fun `nothing kept leaves no row to start`() {
+        val (kept, start) = withoutRevoked(listOf("account"), setOf(0), start = 0)
+        assertTrue(kept.isEmpty())
+        assertEquals(0, start)
+    }
 }

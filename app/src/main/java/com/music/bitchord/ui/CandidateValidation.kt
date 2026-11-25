@@ -22,6 +22,15 @@ import kotlinx.coroutines.sync.withLock
  * installed.
  */
 internal class CandidateValidation {
+    companion object {
+        /**
+         * The app's one sign-in gate. Shared because the playback service
+         * reads listener data too and must hold off a candidate's answers
+         * the same way the view model does.
+         */
+        val session = CandidateValidation()
+    }
+
     /** Validations running or queued behind the one that is. */
     private val pending = MutableStateFlow(0)
     private val serial = Mutex()

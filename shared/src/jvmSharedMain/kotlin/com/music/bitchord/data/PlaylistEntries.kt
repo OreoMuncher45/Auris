@@ -26,6 +26,9 @@ internal suspend fun collectPlaylistEntries(
     var page = 1
     while (true) {
         val shelf = InnertubeParser.parsePlaylistShelf(response, byEntry = true)
+            // A later page whose own rows weren't recognised can't end the
+            // list, even when a Suggestions shelf on it was read.
+            ?.takeIf { page == 1 || it.playlistRead }
             ?: if (page == 1) break else error("playlist page $page could not be read")
         shelf.songs.forEach { song ->
             val setVideoId = song.setVideoId ?: error("playlist entry without an id")

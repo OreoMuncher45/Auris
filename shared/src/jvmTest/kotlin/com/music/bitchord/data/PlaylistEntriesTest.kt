@@ -53,4 +53,28 @@ class PlaylistEntriesTest {
         val notAPlaylist = Json.parseToJsonElement("""{ "contents": {} }""")
         assertEquals(emptyList(), collectPlaylistEntries(notAPlaylist, maxPages = 10) { error("no next page") })
     }
+
+    @Test
+    fun `a later page read only for its suggestions still fails the read`() {
+        // Track rows and an episode (so the playlist rows aren't recognised), plus a Suggestions shelf.
+        val unreadable = appended(
+            row("bbbbbbbbbbb", "SET2"),
+            """{ "musicMultiRowListItemRenderer": { "title": { "runs": [ { "text": "Episode" } ] } } }""",
+            """{ "musicShelfRenderer": { "title": { "runs": [ { "text": "Suggestions" } ] }, "contents": [ ${row("sssssssssss", "SUGG")} ] } }""",
+        )
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { unreadable }
+            }
+        }
+    }
+
+    @Test
+    fun `a recognised empty last page ends the list normally`() = runBlocking {
+        val lastPage = Json.parseToJsonElement(
+            """{ "continuationContents": { "musicPlaylistShelfContinuation": { "contents": [] } } }""",
+        )
+        val entries = collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { lastPage }
+        assertEquals(listOf("SET1"), entries.map { it.setVideoId })
+    }
 }
