@@ -82,6 +82,7 @@ import com.music.bitchord.data.model.withoutRepeatedRecordings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -4696,6 +4697,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * before the last song has been found.
      */
     private fun openSpotifyPage(browseId: String, title: String, subtitle: String, thumbnailUrl: String?) {
+        // Every write below goes to this opening only: a load still running
+        // from an earlier opening of the same page must not fill this one.
+        val opened = markDetailOpened(browseId)
+        fun ours(page: DetailPage) = page.browseId == browseId && page.opening == opened
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4703,6 +4708,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             thumbnailUrl = thumbnailUrl,
             songs = UiState.Loading,
             type = BrowseType.PLAYLIST,
+            opening = opened,
         )
         // The page's own job, kept so that Play can wait for it. A Spotify
         // page is read in two stages — the tracks arrive, then each one is
@@ -4713,7 +4719,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val playlistId = browseId.removePrefix(SPOTIFY_PAGE_PREFIX)
             fun setSongs(songs: UiState<List<Song>>) {
                 _detailStack.value = _detailStack.value.map {
-                    if (it.browseId == browseId) it.copy(songs = songs) else it
+                    if (ours(it)) it.copy(songs = songs) else it
                 }
             }
             // The list only had a thumbnail; the full-size cover replaces it
@@ -4721,14 +4727,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             launch {
                 val cover = runCatching { SpotifyLibrary.cover(playlistId) }.getOrNull() ?: return@launch
                 _detailStack.value = _detailStack.value.map {
-                    if (it.browseId == browseId) it.copy(thumbnailUrl = cover) else it
+                    if (ours(it)) it.copy(thumbnailUrl = cover) else it
                 }
             }
             val tracks = runCatching {
                 SpotifyLibrary.tracks(playlistId) { soFar ->
-                    setSongs(UiState.Success(soFar.map { it.asPendingSong() }))
+                    // Called on the IO thread: the write goes to the main thread,
+                    // with the rest of this page's writes, and with this load.
+                    this@launch.launch(Dispatchers.Main.immediate) {
+                        setSongs(UiState.Success(soFar.map { it.asPendingSong() }))
+                    }
                 }
             }.getOrElse {
+                // A cancelled load (its page closed or reopened) writes nothing.
+                if (it is CancellationException) throw it
                 setSongs(UiState.Error(it.message ?: text(R.string.failed)))
                 return@launch
             }
@@ -4736,7 +4748,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 setSongs(UiState.Error(text(R.string.spotify_empty_tracks)))
                 return@launch
             }
-            matchSpotifyTracks(browseId, tracks, ::setSongs)
+            matchSpotifyTracks(browseId, opened, tracks, ::setSongs)
         }
         trackSpotifyLoad(browseId, job)
     }
@@ -4793,6 +4805,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val artist = browseId.startsWith(SPOTIFY_ARTIST_PREFIX)
         val album = browseId.startsWith(SPOTIFY_ALBUM_PREFIX)
+        // As [openSpotifyPage]: writes go to this opening only.
+        val opened = markDetailOpened(browseId)
+        fun ours(page: DetailPage) = page.browseId == browseId && page.opening == opened
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4804,16 +4819,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 album -> BrowseType.ALBUM
                 else -> BrowseType.OTHER
             },
+            opening = opened,
         )
         val job = viewModelScope.launch {
             fun setSongs(songs: UiState<List<Song>>) {
                 _detailStack.value = _detailStack.value.map {
-                    if (it.browseId == browseId) it.copy(songs = songs) else it
+                    if (ours(it)) it.copy(songs = songs) else it
                 }
             }
             fun fillIn(page: SpotifyPages.Page) {
                 _detailStack.value = _detailStack.value.map {
-                    if (it.browseId != browseId) return@map it
+                    if (!ours(it)) return@map it
                     it.copy(
                         title = page.title.ifBlank { it.title },
                         subtitle = page.subtitle.ifBlank { it.subtitle },
@@ -4829,6 +4845,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else -> SpotifyPages.category(browseId.removePrefix(SPOTIFY_CATEGORY_PREFIX))
                 }
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 // A category has no tracks of its own — it is shelves of
                 // playlists and albums — so an empty track list is not a
                 // failure there. It is only a failure when the page has
@@ -4842,7 +4859,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 setSongs(UiState.Success(emptyList()))
                 return@launch
             }
-            matchSpotifyTracks(browseId, page.tracks, ::setSongs)
+            matchSpotifyTracks(browseId, opened, page.tracks, ::setSongs)
         }
         trackSpotifyLoad(browseId, job)
     }
@@ -4858,6 +4875,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun matchSpotifyTracks(
         browseId: String,
+        /** The page opening the matches are for; see [openSpotifyPage]. */
+        opened: Long,
         tracks: List<SpotifyTrack>,
         setSongs: (UiState<List<Song>>) -> Unit,
     ) {
@@ -4877,8 +4896,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // The page may have been closed while the search was
                         // running; the match is then thrown away rather than
                         // pushed onto a page that is no longer there.
-                        if (_detailStack.value.none { it.browseId == browseId }) return@withPermit
-                        val match = runCatching { SpotifyImporter.matchTrack(track) }.getOrNull()
+                        if (_detailStack.value.none { it.browseId == browseId && it.opening == opened }) return@withPermit
+                        val match = runCatching { SpotifyImporter.matchTrack(track) }
+                            // Cancelled with its page: nothing more is written.
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
                         // A track no source could be matched to is still a row
                         // of Spotify's catalogue, and it is still playable: the
                         // player asks the enabled sources for the recording by
@@ -4895,7 +4917,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             ?: SpotifyHomeSource.songFor(track)
                         _detailStack.value = _detailStack.value.map { page ->
                             val list = (page.songs as? UiState.Success<List<Song>>)?.data
-                            if (page.browseId == browseId && list != null && index < list.size) {
+                            if (page.browseId == browseId && page.opening == opened && list != null && index < list.size) {
                                 page.copy(songs = UiState.Success(list.toMutableList().also { it[index] = found }))
                             } else page
                         }
