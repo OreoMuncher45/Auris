@@ -20,6 +20,7 @@ import com.google.android.gms.common.api.PendingResult
 import com.google.android.gms.common.api.Result
 import com.google.android.gms.common.images.WebImage
 import com.music.bitchord.R
+import com.music.bitchord.playback.StreamVolume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import kotlin.coroutines.resume
 
@@ -174,6 +176,34 @@ class CastPlayback(
         wantsPlay = false
         client?.pause()
         sink?.onRemotePlaybackChanged()
+    }
+
+    /**
+     * The receiver's stream volume for the sleep timer's fade, or null when
+     * this receiver can't set it. Never the device volume: that is the
+     * listener's speaker, and a fade must not leave it turned down.
+     */
+    fun streamVolume(): StreamVolume? {
+        if (!active) return null
+        val client = client ?: return null
+        val status = client.mediaStatus ?: return null
+        if (!status.isMediaCommandSupported(MediaStatus.COMMAND_SET_VOLUME)) return null
+        val start = status.streamVolume
+        return object : StreamVolume {
+            override val level = start
+
+            override suspend fun set(level: Double): Boolean {
+                // The session changed under the fade: this client is gone.
+                if (this@CastPlayback.client !== client) return false
+                return try {
+                    withTimeoutOrNull(STREAM_VOLUME_TIMEOUT_MS) {
+                        client.setStreamVolume(level.coerceIn(0.0, 1.0)).awaitResult()
+                    }?.status?.isSuccess == true
+                } catch (_: IllegalArgumentException) {
+                    false
+                }
+            }
+        }
     }
 
     fun seekTo(positionMs: Long) {
@@ -624,6 +654,9 @@ class CastPlayback(
 
     companion object {
         private const val TAG = "BitChordCast"
+
+        /** A stream-volume step not answered by then counts as refused. */
+        private const val STREAM_VOLUME_TIMEOUT_MS = 2_000L
         private const val KEY_MEDIA_ID = "mediaId"
 
         /** Tracks kept queued on the receiver after the playing one. */

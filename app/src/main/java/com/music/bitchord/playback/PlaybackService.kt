@@ -7913,6 +7913,21 @@ class PlaybackService : MediaLibraryService() {
                     val fadeMs = if (AppSettings.sleepTimerFadeOut.value) SleepTimer.FADE_OUT_DURATION_MS else 0L
                     val wait = deadline - SystemClock.elapsedRealtime() - fadeMs
                     if (wait > 0) delay(wait)
+                    if (castPlayback.active) {
+                        // The receiver is what is playing, and the phone's
+                        // player is held paused: the fade is the song's own
+                        // volume on the receiver, put back after the pause.
+                        SleepTimer.fadeOutCast(
+                            volume = if (fadeMs > 0) castPlayback.streamVolume() else null,
+                            spanMs = deadline - SystemClock.elapsedRealtime(),
+                            stepMs = SleepTimer.CAST_FADE_STEP_MS,
+                            now = SystemClock::elapsedRealtime,
+                            stillPlaying = { castPlayback.active && castPlayback.playWhenReady },
+                            pause = castPlayback::pause,
+                        )
+                        SleepTimer.cancel()
+                        return@collectLatest
+                    }
                     if (fadeMs > 0) {
                         // No new blend from here on — see [SleepTimer.fadingOut].
                         // One already running owns the volumes until it lands,
