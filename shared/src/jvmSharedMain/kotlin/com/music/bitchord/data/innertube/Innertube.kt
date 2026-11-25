@@ -219,13 +219,11 @@ object Innertube {
 
     /**
      * A visitor id for this session, minting one if there isn't one yet.
-     *
-     * @param refresh discard the current id and take a fresh one — worth doing
-     *   exactly once when a request comes back accusing us of being a bot,
-     *   since an id can be burned while the session around it is fine.
+     * Never replaces one already in hand: a session-bound id adopted while
+     * this one was being minted always wins.
      */
-    suspend fun ensureVisitorData(refresh: Boolean = false): String? {
-        if (!refresh && visitorData != null) return visitorData
+    suspend fun ensureVisitorData(): String? {
+        if (visitorData != null) return visitorData
         val generation = listenerGeneration
         runCatching { fetchVisitorData() }
             .onFailure { Log.w(TAG, "could not mint a visitor id: ${it.message}") }
@@ -235,7 +233,7 @@ object Innertube {
                 // listener it was minted under: a session-bound id adopted
                 // meanwhile, or a switch, wins over this anonymous one.
                 synchronized(identityLock) {
-                    if (published.generation == generation && (refresh || !visitorDataIsSessionBound)) {
+                    if (published.generation == generation && visitorData == null && !visitorDataIsSessionBound) {
                         visitorData = it
                         visitorDataIsSessionBound = false
                     }
