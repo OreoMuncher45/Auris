@@ -71,7 +71,7 @@ class AnalysisRoundLifecycleTest {
     private val heads get() = field("analysisHeads") as ConcurrentHashMap<String, Boolean>
 
     @Suppress("UNCHECKED_CAST")
-    private val removing get() = field("removing") as Set<String>
+    private val removing get() = (field("removing") as Map<*, *>).keys
 
     /** Registers a round that does not stop until [writerDone], claiming [id]. */
     private fun liveRound(): Job {

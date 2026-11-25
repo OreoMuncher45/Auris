@@ -1918,7 +1918,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // match: the copy it names is the matched YouTube copy.
             sourceAnalysisUris[trackId]
                 ?: results[trackId]?.measuredOn
-                    ?.let(AutomixAnalysisSource::videoIdOfAnalysisKey)
+                    // A bare video id is the canonical copy too; a source key
+                    // (`source|track`) names no YouTube copy.
+                    ?.let { key -> AutomixAnalysisSource.videoIdOfAnalysisKey(key) ?: key.takeIf(BARE_VIDEO_ID::matches) }
                     ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
                 ?: return null
         }
@@ -1974,6 +1976,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private companion object {
         const val TAG = "BitChordTrackAnalyzer"
+
+        /** A YouTube video id on its own: how a canonical copy's key reads. */
+        val BARE_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
 
         /** First wait before a failed catalogue search is retried; doubles per failure, to 16 minutes. */
         const val SOURCE_RETRY_BASE_MS = 30_000L
