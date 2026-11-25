@@ -358,6 +358,9 @@ object Downloads {
      * settled against the wrong one.
      */
     private class StartAttempt(val generation: Long, var waiters: Int)
+
+    /** The attempt a successful start last confirmed for each queued id, so its joined waiters see it. Under [lock]. */
+    private val confirmed = HashMap<String, Long>()
     private var startGeneration = 0L
 
     /** Joins [id]'s unanswered start, or begins one; returns the attempt waited on. Under [lock]. */
@@ -383,11 +386,23 @@ object Downloads {
     private fun settleStart(attempts: Map<String, Long>, started: Boolean): Pair<Set<String>, List<String>> =
         synchronized(lock) {
             val dropped = ArrayList<String>()
+            val kept = HashSet<String>()
             for ((id, generation) in attempts) {
-                // Cancelled, or replaced by a newer attempt: not this answer's to settle.
-                val attempt = starting[id]?.takeIf { it.generation == generation } ?: continue
+                // Cancelled, or replaced by a newer attempt: not this answer's to
+                // settle, and not this caller's to report as admitted either; a
+                // replacement that started is its own caller's.
+                val attempt = starting[id]?.takeIf { it.generation == generation }
+                if (attempt == null) {
+                    // Already confirmed by another waiter's successful answer to this
+                    // same attempt: admitted, whatever this call's own start did,
+                    // as long as [confirmed] still records this attempt for the id.
+                    if (confirmed[id] == generation && (id in pending || id in running)) kept += id
+                    continue
+                }
                 if (started) {
                     starting.remove(id)
+                    confirmed[id] = generation
+                    if (id in pending || id in running) kept += id
                 } else if (attempt.waiters > 1) {
                     attempt.waiters--
                 } else {
@@ -395,8 +410,6 @@ object Downloads {
                     if (pending.remove(id) != null) dropped += id
                 }
             }
-            // Really queued or running, and confirmed: a cancelled id is neither.
-            val kept = attempts.keys.filterTo(HashSet()) { it !in starting && (it in pending || it in running) }
             kept to dropped
         }
 
@@ -716,6 +729,7 @@ object Downloads {
             // Ends its unanswered start too: a retry queues afresh, and the old
             // start's answer settles nothing.
             starting.remove(videoId)
+            confirmed.remove(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
